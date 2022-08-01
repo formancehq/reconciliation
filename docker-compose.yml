@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: bitnami/mongodb:4.4
+    environment:
+      MONGODB_REPLICA_SET_MODE: primary
+      MONGODB_REPLICA_SET_KEY: abcdef
+      MONGODB_ADVERTISED_HOSTNAME: mongodb
+      MONGODB_ROOT_PASSWORD: root
+    ports:
+      - "27017:27017/tcp"
+
+  reconciliation:
+    image: golang:1.18-alpine
+    depends_on:
+      - mongodb
+    command:
+      - go
+      - run
+      - main.go
+      - server
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/src
+    working_dir: /src
+    environment:
+      DEBUG: ${DEBUG:-"true"}
+      MONGODB_URI: mongodb://root:root@mongodb:27017
