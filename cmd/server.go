@@ -14,7 +14,7 @@ import (
 	"github.com/numary/go-libs/sharedlogging"
 	"github.com/numary/go-libs/sharedotlp/sharedotlptraces"
 	"github.com/numary/reconciliation/pkg/api"
-	"github.com/numary/reconciliation/pkg/database"
+	"github.com/numary/reconciliation/pkg/storage"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -27,7 +27,7 @@ import (
 
 const (
 	mongodbUriFlag      = "mongodb-uri"
-	mongodbDatabaseFlag = "mongodb-database"
+	mongodbDatabaseFlag = "mongodb-storage"
 
 	bindFlag                             = "bind"
 	otelTracesFlag                       = "otel-traces"
@@ -85,11 +85,11 @@ func NewServer() *cobra.Command {
 
 			mongodbDatabase := viper.GetString(mongodbDatabaseFlag)
 			if mongodbDatabase == "" {
-				return errors.New("missing mongodb database name")
+				return errors.New("missing mongodb storage name")
 			}
 
 			options = append(options,
-				database.MongoModule(mongodbUri, mongodbDatabase),
+				storage.MongoModule(mongodbUri, mongodbDatabase),
 				sharedotlptraces.TracesModule(sharedotlptraces.ModuleConfig{
 					Exporter: viper.GetString(otelTracesExporterFlag),
 					OTLPConfig: &sharedotlptraces.OTLPConfig{

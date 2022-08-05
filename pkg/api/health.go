@@ -9,6 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
+//TODO: utiliser la lib partagée (cf template)
 func HealthHandler(client *mongo.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithDeadline(r.Context(), time.Now().Add(3*time.Second))

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -17,10 +16,10 @@ func ReconciliationRouter(db *mongo.Database) *mux.Router {
 		})
 	})
 
-	ctx := context.Background() // TODO: see if something better
-
-	router.Path("/reconciliation/amountmatch").Methods(http.MethodPost).Handler(AmountMatchingHandler(ctx, db))
-	router.Path("/reconciliation/endtoend").Methods(http.MethodPost).Handler(EndToEndHandler(ctx, db))
+	//TODO: enlever les ctx en param et utiliser celui de la request
+	//TODO: check la bonne pratique pour l'url (camelcase, etc)
+	router.Path("/amount-match").Methods(http.MethodPost).Handler(AmountMatchingHandler(ctx, db))
+	router.Path("/end-to-end").Methods(http.MethodPost).Handler(EndToEndHandler(ctx, db))
 
 	return router
 }

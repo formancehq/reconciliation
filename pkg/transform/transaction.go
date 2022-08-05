@@ -2,16 +2,16 @@ package transform
 
 import (
 	"fmt"
-	"github.com/numary/reconciliation/pkg/database"
+	"github.com/numary/reconciliation/pkg/storage"
 	"time"
 )
 
 type ReconTransaction struct {
 	ID           int64
 	Postings     []ReconPosting
-	PaymentIDs   []string
+	PaymentIDs   *[]string
 	CreationDate time.Time
-	ReconStatus  database.Statuses
+	ReconStatus  storage.Statuses
 	Type         string // Enum ? Pay-in Payout Internal Refund
 	OldBalances  map[string]map[string]int64
 	NewBalances  map[string]map[string]int64
@@ -24,7 +24,7 @@ type ReconPosting struct {
 	Asset       string
 }
 
-func MongoTxToReconciliation(tx database.FullReconTransaction) ReconTransaction {
+func MongoTxToReconciliation(tx storage.FullReconTransaction) ReconTransaction {
 	var reconPostings []ReconPosting
 
 	oldBalances := make(map[string]map[string]int64)

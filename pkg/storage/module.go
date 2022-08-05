@@ -1,4 +1,4 @@
-package database
+package storage
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
-	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
 	"go.uber.org/fx"
 )
 
@@ -39,7 +38,7 @@ func MongoModule(uri string, dbName string) fx.Option {
 					if err != nil {
 						return err
 					}
-					sharedlogging.Debug("Ping database...")
+					sharedlogging.Debug("Ping storage...")
 					ctx, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 					defer cancel()
 
@@ -57,11 +56,4 @@ func MongoModule(uri string, dbName string) fx.Option {
 			})
 		}),
 	)
-}
-
-func MongoMonitor() fx.Option {
-	return fx.Decorate(func(opts *options.ClientOptions) *options.ClientOptions {
-		opts.SetMonitor(otelmongo.NewMonitor())
-		return opts
-	})
 }

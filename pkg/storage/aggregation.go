@@ -1,4 +1,4 @@
-package database
+package storage
 
 import (
 	"context"
@@ -18,7 +18,7 @@ func GetTransactionsWithOrder(ctx context.Context, db *mongo.Database, flowIdPat
 				"transactions": bson.M{"$push": "$$ROOT"}},
 			},
 		},
-		options.Aggregate().SetAllowDiskUse(true))
+		options.Aggregate().SetAllowDiskUse(true)) //TODO: remove before prod lol
 	if err != nil {
 		fmt.Println("error: could not aggregate transactions by order_id")
 	}
@@ -30,7 +30,6 @@ func GetPaymentAndTransactionPayIn(ctx context.Context, db *mongo.Database, pspI
 	cursor, err := coll.Aggregate(ctx,
 		[]any{
 			bson.M{"$match": bson.M{"type": "pay-in"}},
-			bson.M{"$match": bson.M{"reconciliation_status.pay-in.status": "failure"}},
 			bson.M{
 				"$lookup": bson.M{
 					"from":         "LedgerStuff",

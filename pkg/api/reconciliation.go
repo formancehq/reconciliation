@@ -5,24 +5,25 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/numary/reconciliation/pkg/database"
 	"github.com/numary/reconciliation/pkg/reconciliation"
+	"github.com/numary/reconciliation/pkg/storage"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
 func EndToEndHandler(ctx context.Context, db *mongo.Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		flowIDpath := r.URL.Query().Get("flow_id_path")
+		flowIDpath := r.URL.Query().Get("flow_id_path") //TODO: see if camelcase standard
 		if flowIDpath == "" {
-			flowIDpath = "metadata.order_id"
+			//TODO: see if default is a good idea
+			flowIDpath = "metadata.order_id" //TODO: flow_id
 		}
 
 		// end to end
-		ledgerCursor, err := database.GetTransactionsWithOrder(ctx, db, flowIDpath)
+		ledgerCursor, err := storage.GetTransactionsWithOrder(ctx, db, flowIDpath)
 		if err != nil {
 			fmt.Printf("error: could not get payment/tx pay-in aggregation : %v\n", err)
 		} else {
-			err = reconciliation.ReconciliateEndToEnd(ctx, ledgerCursor, db)
+			err = reconciliation.ReconciliateEndToEnd(ctx, ledgerCursor, db) //TODO: async
 			if err != nil {
 				fmt.Printf("error: could not reconciliate flow : %v", err)
 			}
@@ -40,20 +41,20 @@ func AmountMatchingHandler(ctx context.Context, db *mongo.Database) http.Handler
 		}
 
 		// pay-in
-		paymentCursor, err := database.GetPaymentAndTransactionPayIn(ctx, db, pspIdPath)
+		paymentCursor, err := storage.GetPaymentAndTransactionPayIn(ctx, db, pspIdPath)
 		if err != nil {
 			fmt.Printf("error: could not get payment/tx pay-in aggregation : %v\n", err)
 		} else {
-			err = reconciliation.ReconciliationPayIn(ctx, paymentCursor, db)
+			err = reconciliation.ReconciliationPayIn(ctx, paymentCursor, db) //TODO: async
 			if err != nil {
 				fmt.Printf("error: could not reconciliate pay-ins : %v", err)
 			}
 		}
 
 		// payout
-		paymentCursor, err = database.GetPaymentAndTransactionPayOut(ctx, db, pspIdPath)
+		paymentCursor, err = storage.GetPaymentAndTransactionPayOut(ctx, db, pspIdPath)
 		if err != nil {
-			fmt.Printf("error: could not get payment/tx pay-in aggregation : %v\n", err)
+			fmt.Printf("error: could not get payment/tx pay-in aggregation : %v\n", err) //TODO: async
 		} else {
 			err = reconciliation.ReconciliationPayouts(ctx, paymentCursor, db)
 			if err != nil {
@@ -68,7 +69,7 @@ func AmountMatchingHandler(ctx context.Context, db *mongo.Database) http.Handler
 //func ListReconciliationsHandler(ctx context.Context, db *mongo.Database) http.HandlerFunc {
 //	return func(w http.ResponseWriter, r *http.Request) {
 //		// payout
-//		txCursor, err := database.GetReconciliationFailures(ctx, db)
+//		txCursor, err := storage.GetReconciliationFailures(ctx, db)
 //		if err != nil {
 //			fmt.Printf("error: could not get payment/tx pay-in aggregation : %v\n", err)
 //		} else {

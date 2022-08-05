@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/numary/reconciliation/pkg/database"
+	"github.com/numary/reconciliation/pkg/storage"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -16,7 +16,7 @@ func ReconciliationPayIn(ctx context.Context, paymentCursor *mongo.Cursor, db *m
 	var err error
 	for paymentCursor.Next(ctx) {
 		var agg payInReconciliation
-		reconStatus := make(database.Statuses)
+		reconStatus := make(storage.Statuses)
 
 		if err := bson.Unmarshal(paymentCursor.Current, &agg); err != nil {
 			fmt.Println("error: could not unmarshal payment to bson")
@@ -51,7 +51,7 @@ func ReconciliationPayIn(ctx context.Context, paymentCursor *mongo.Cursor, db *m
 			log.Fatal(err)
 		}
 		if _, err := db.
-			Collection(database.CollPayments).
+			Collection(storage.CollPayments).
 			UpdateByID(ctx, objID, bson.M{"$set": bson.M{"reconciliation_status": reconStatus}}); err != nil {
 			log.Fatal(err)
 		}
@@ -63,7 +63,7 @@ func ReconciliationPayIn(ctx context.Context, paymentCursor *mongo.Cursor, db *m
 		reconStatus["pay-in"] = payinStatus
 		// update txledger
 		if _, err := db.
-			Collection(database.CollLedger).
+			Collection(storage.CollLedger).
 			UpdateOne(ctx, bson.M{"txid": agg.Transactions[0].Txid}, bson.M{"$set": bson.M{"reconciliation_status": reconStatus}}); err != nil {
 			log.Fatal(err)
 		}
