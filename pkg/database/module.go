@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/numary/go-libs/sharedlogging"
+	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/bsontype"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -12,9 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
 	"go.uber.org/fx"
-
-	"github.com/numary/go-libs/sharedlogging"
-	"github.com/pkg/errors"
 )
 
 func MongoModule(uri string, dbName string) fx.Option {

@@ -3,16 +3,16 @@ package reconciliation
 import (
 	"context"
 	"fmt"
-	"log"
-	"sort"
-
+	ledgerclient "github.com/numary/numary-sdk-go"
+	"github.com/numary/reconciliation/pkg/database"
+	"github.com/numary/reconciliation/pkg/transform"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-
-	ledgerclient "github.com/numary/numary-sdk-go"
+	"log"
+	"sort"
 )
 
-type EndToEndReconciliation struct {
+type LedgerTransactions struct {
 	Transactions []ledgerclient.Transaction `bson:"transactions"`
 }
 
@@ -20,7 +20,7 @@ func ReconciliateEndToEnd(ctx context.Context, paymentCursor *mongo.Cursor, db *
 	var success, failure int64
 	var err error
 	for paymentCursor.Next(ctx) {
-		var txs EndToEndReconciliation
+		var txs LedgerTransactions
 
 		if err := bson.Unmarshal(paymentCursor.Current, &txs); err != nil {
 			fmt.Println("error: could not unmarshal transactions to bson")
@@ -31,7 +31,6 @@ func ReconciliateEndToEnd(ctx context.Context, paymentCursor *mongo.Cursor, db *
 		sort.Slice(txs.Transactions[:], func(i, j int) bool {
 			return txs.Transactions[i].Timestamp.Before(txs.Transactions[j].Timestamp)
 		})
-
 		badBalance := make(map[string]int32)
 		for _, tx := range txs.Transactions {
 			for keyAccount, elemAccount := range *tx.PostCommitVolumes {
@@ -57,10 +56,38 @@ func ReconciliateEndToEnd(ctx context.Context, paymentCursor *mongo.Cursor, db *
 		} else {
 			success++
 			//fmt.Println("success")
-			//TODO: add status to tx like we do in payin/payout
+		}
+
+		reconStatus := make(database.Statuses)
+		reconStatus["end-to-end"] = EndToEndMismatchStatus
+		// update txledger
+		for txID := range badBalance {
+			if _, err := db.
+				Collection(database.CollLedger).
+				UpdateOne(ctx, bson.M{"txid": txID}, bson.M{"$set": bson.M{"reconciliation_status": reconStatus}}); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println("update ledger recon status : OK")
 		}
 	}
 
 	fmt.Printf("end-to-end reconciliation ended with %d success and %d failures\n", success, failure)
 	return err
+}
+
+func ListFailures(ctx context.Context, txCursor *mongo.Cursor) ([]transform.ReconTransaction, error) {
+	var result []transform.ReconTransaction
+
+	for txCursor.Next(ctx) {
+		var tx database.FullReconTransaction
+
+		if err := bson.Unmarshal(txCursor.Current, &tx); err != nil {
+			fmt.Println("error: could not unmarshal transaction to bson")
+			log.Fatal(err)
+		}
+
+		// contrary to the figma screen, we don't have the old/new balance in this object...
+		result = append(result, transform.MongoTxToReconciliation(tx))
+	}
+	return result, nil
 }

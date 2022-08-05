@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
+	"net/http"
+
 	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/mongo"
-	"net/http"
 )
 
 func ReconciliationRouter(db *mongo.Database) *mux.Router {
@@ -14,8 +16,11 @@ func ReconciliationRouter(db *mongo.Database) *mux.Router {
 			h.ServeHTTP(w, r)
 		})
 	})
-	router.Path("/reconciliation/amountmatch").Methods(http.MethodGet).Handler(AmountMatchingHandler(db))
-	router.Path("/reconciliation/endtoend").Methods(http.MethodGet).Handler(EndToEndHandler(db))
+
+	ctx := context.Background() // TODO: see if something better
+
+	router.Path("/reconciliation/amountmatch").Methods(http.MethodPost).Handler(AmountMatchingHandler(ctx, db))
+	router.Path("/reconciliation/endtoend").Methods(http.MethodPost).Handler(EndToEndHandler(ctx, db))
 
 	return router
 }
