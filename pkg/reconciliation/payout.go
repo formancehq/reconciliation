@@ -16,7 +16,7 @@ func ReconciliationPayouts(ctx context.Context, paymentCursor *mongo.Cursor, db 
 	var err error
 	for paymentCursor.Next(ctx) {
 		var agg payInReconciliation
-		reconStatus := make(Statuses)
+		reconStatus := make(database.Statuses)
 
 		if err := bson.Unmarshal(paymentCursor.Current, &agg); err != nil {
 			fmt.Println("error: could not unmarshal payment to bson")
@@ -53,7 +53,7 @@ func ReconciliationPayouts(ctx context.Context, paymentCursor *mongo.Cursor, db 
 		fmt.Println("updating payment...")
 		if _, err := db.
 			Collection(database.CollPayments).
-			UpdateByID(ctx, objID, bson.D{{"$set", bson.D{{"reconciliation_status", reconStatus}}}}); err != nil {
+			UpdateByID(ctx, objID, bson.M{"$set": bson.M{"reconciliation_status": reconStatus}}); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println("update payment recon status : OK")
@@ -62,7 +62,7 @@ func ReconciliationPayouts(ctx context.Context, paymentCursor *mongo.Cursor, db 
 		fmt.Println("updating tx...")
 		if _, err := db.
 			Collection(database.CollLedger).
-			UpdateOne(ctx, bson.D{{"txid", agg.Transactions[0].Txid}}, bson.D{{"$set", bson.D{{"reconciliation_status", reconStatus}}}}); err != nil {
+			UpdateOne(ctx, bson.M{"txid": agg.Transactions[0].Txid}, bson.M{"$set": bson.M{"reconciliation_status": reconStatus}}); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println("update ledger recon status : OK")

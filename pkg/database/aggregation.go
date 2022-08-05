@@ -9,17 +9,13 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func GetTransactionsWithOrder(ctx context.Context, db *mongo.Database) (*mongo.Cursor, error) {
+func GetTransactionsWithOrder(ctx context.Context, db *mongo.Database, flowIdPath string) (*mongo.Cursor, error) {
 	coll := db.Collection(CollLedger)
 	cursor, err := coll.Aggregate(ctx,
-		bson.A{
-			bson.D{
-				{"$group",
-					bson.D{
-						{"_id", "$metadata.order_id"},
-						{"transactions", bson.D{{"$push", "$$ROOT"}}},
-					},
-				},
+		[]any{
+			bson.M{"$group": bson.M{
+				"_id":          fmt.Sprintf("$%s", flowIdPath),
+				"transactions": bson.M{"$push": "$$ROOT"}},
 			},
 		},
 		options.Aggregate().SetAllowDiskUse(true))
@@ -29,31 +25,25 @@ func GetTransactionsWithOrder(ctx context.Context, db *mongo.Database) (*mongo.C
 	return cursor, err
 }
 
-func GetPaymentAndTransactionPayIn(ctx context.Context, db *mongo.Database) (*mongo.Cursor, error) {
+func GetPaymentAndTransactionPayIn(ctx context.Context, db *mongo.Database, pspIdPath string) (*mongo.Cursor, error) {
 	coll := db.Collection(CollPayments)
 	cursor, err := coll.Aggregate(ctx,
-		bson.A{
-			bson.D{{"$match", bson.D{{"type", "pay-in"}}}},
-			bson.D{{"$match", bson.D{{"reconciliation_status.pay-in.status", "failure"}}}},
-			bson.D{
-				{"$lookup",
-					bson.D{
-						{"from", "LedgerStuff"},
-						{"localField", "reference"},
-						{"foreignField", "metadata.psp_id"},
-						{"as", "transaction_ledger"},
-					},
+		[]any{
+			bson.M{"$match": bson.M{"type": "pay-in"}},
+			bson.M{"$match": bson.M{"reconciliation_status.pay-in.status": "failure"}},
+			bson.M{
+				"$lookup": bson.M{
+					"from":         "LedgerStuff",
+					"localField":   "reference",
+					"foreignField": pspIdPath,
+					"as":           "transaction_ledger",
 				},
 			},
-			bson.D{
-				{"$match",
-					bson.D{
-						{"transaction_ledger",
-							bson.D{
-								{"$exists", true},
-								{"$ne", bson.A{}},
-							},
-						},
+			bson.M{
+				"$match": bson.M{
+					"transaction_ledger": []any{
+						bson.M{"$exists": true},
+						bson.M{"$ne": bson.M{}},
 					},
 				},
 			},
@@ -64,34 +54,28 @@ func GetPaymentAndTransactionPayIn(ctx context.Context, db *mongo.Database) (*mo
 	return cursor, err
 }
 
-func GetPaymentAndTransactionPayOut(ctx context.Context, db *mongo.Database) (*mongo.Cursor, error) {
+func GetPaymentAndTransactionPayOut(ctx context.Context, db *mongo.Database, pspIdPath string) (*mongo.Cursor, error) {
 	coll := db.Collection(CollPayments)
 	cursor, err := coll.Aggregate(ctx,
-		bson.A{
-			bson.D{{"$match", bson.D{{"type", "payout"}}}},
-			bson.D{
-				{"$lookup",
-					bson.D{
-						{"from", "LedgerStuff"},
-						{"localField", "reference"},
-						{"foreignField", "metadata.psp_id"},
-						{"as", "transaction_ledger"},
+		[]any{
+			bson.M{"$match": bson.M{"type": "payout"}},
+			bson.M{
+				"$lookup": bson.M{
+					"from":         "LedgerStuff",
+					"localField":   "reference",
+					"foreignField": pspIdPath,
+					"as":           "transaction_ledger",
+				},
+			},
+			bson.M{
+				"$match": bson.M{
+					"transaction_ledger": []any{
+						bson.M{"$exists": true},
+						bson.M{"$ne": bson.M{}},
 					},
 				},
 			},
-			bson.D{
-				{"$match",
-					bson.D{
-						{"transaction_ledger",
-							bson.D{
-								{"$exists", true},
-								{"$ne", bson.A{}},
-							},
-						},
-					},
-				},
-			},
-			bson.D{{"$match", bson.D{{"transaction_ledger.metadata.type", "payout"}}}},
+			bson.M{"$match": bson.M{"transaction_ledger.metadata.type": "payout"}},
 		})
 	if err != nil {
 		fmt.Println("error: could not aggregate payments and transactions for the pay-in lookup")

@@ -12,7 +12,7 @@ import (
 
 const (
 	paymentCollection = "Payments"
-	ledgerCollection  = "Ledger"
+	//ledgerCollection  = "Ledger" // TODO: index ledger
 )
 
 var indexes = map[string][]mongo.IndexModel{
