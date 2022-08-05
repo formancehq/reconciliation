@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
@@ -10,8 +9,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-func EndToEndHandler(ctx context.Context, db *mongo.Database) http.HandlerFunc {
+func EndToEndHandler(db *mongo.Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		
 		flowIDpath := r.URL.Query().Get("flow_id_path") //TODO: see if camelcase standard
 		if flowIDpath == "" {
 			//TODO: see if default is a good idea
@@ -32,8 +33,9 @@ func EndToEndHandler(ctx context.Context, db *mongo.Database) http.HandlerFunc {
 	}
 }
 
-func AmountMatchingHandler(ctx context.Context, db *mongo.Database) http.HandlerFunc {
+func AmountMatchingHandler(db *mongo.Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 
 		pspIdPath := r.URL.Query().Get("psp_id_path")
 		if pspIdPath == "" {
