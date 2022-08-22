@@ -1,30 +1,73 @@
 version: '3.8'
 
 services:
-  mongodb:
-    image: bitnami/mongodb:4.4
-    environment:
-      MONGODB_REPLICA_SET_MODE: primary
-      MONGODB_REPLICA_SET_KEY: abcdef
-      MONGODB_ADVERTISED_HOSTNAME: mongodb
-      MONGODB_ROOT_PASSWORD: root
-    ports:
-      - "27017:27017/tcp"
-
-  reconciliation:
-    image: golang:1.18-alpine
-    depends_on:
-      - mongodb
-    command:
-      - go
-      - run
-      - main.go
-      - server
+  server:
+    command: reflex -r '\.go' -s -- sh -c "go run . server"
+    build:
+      target: dev
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://127.0.0.1:8080/_healthcheck" ]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - .:/app
     ports:
       - "8080:8080"
-    volumes:
-      - .:/src
-    working_dir: /src
     environment:
-      DEBUG: ${DEBUG:-"true"}
-      MONGODB_URI: mongodb://root:root@mongodb:27017
+      STORAGE_MONGO_CONN_STRING: "mongodb://admin:admin@mongo:27017/"
+
+  worker:
+    command: reflex -r '\.go' -s -- sh -c "go run . worker"
+    build:
+      target: dev
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://127.0.0.1:8081/_healthcheck" ]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - .:/app
+    environment:
+      STORAGE_MONGO_CONN_STRING: "mongodb://admin:admin@mongo:27017/"
+      KAFKA_DEFAULT_TOPIC: "default"
+      KAFKA_BROKERS: "redpanda:29092"
+
+  mongo:
+    image: mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "admin"
+      MONGO_INITDB_ROOT_PASSWORD: "admin"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  redpanda:
+    image: docker.vectorized.io/vectorized/redpanda
+    command:
+      - redpanda
+      - start
+      - --smp
+      - '1'
+      - --reserve-memory
+      - 0M
+      - --overprovisioned
+      - --node-id
+      - '0'
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+    healthcheck:
+      test: curl -s -f -k http://127.0.0.1:9644/metrics >/dev/null || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+
+  collector:
+    image: otel/opentelemetry-collector
