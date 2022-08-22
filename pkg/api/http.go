@@ -16,8 +16,6 @@ func ReconciliationRouter(db *mongo.Database) *mux.Router {
 		})
 	})
 
-	//TODO: enlever les ctx en param et utiliser celui de la request
-	//TODO: check la bonne pratique pour l'url (camelcase, etc)
 	router.Path("/amount-match").Methods(http.MethodPost).Handler(AmountMatchingHandler(db))
 	router.Path("/end-to-end").Methods(http.MethodPost).Handler(EndToEndHandler(db))
 

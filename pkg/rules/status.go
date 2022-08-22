@@ -1,4 +1,4 @@
-package reconciliation
+package rules
 
 import "github.com/numary/reconciliation/pkg/storage"
 

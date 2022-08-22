@@ -3,28 +3,10 @@ package transform
 import (
 	"fmt"
 	"github.com/numary/reconciliation/pkg/storage"
-	"time"
+	"github.com/pkg/errors"
 )
 
-type ReconTransaction struct {
-	ID           int64
-	Postings     []ReconPosting
-	PaymentIDs   *[]string
-	CreationDate time.Time
-	ReconStatus  storage.Statuses
-	Type         string // Enum ? Pay-in Payout Internal Refund
-	OldBalances  map[string]map[string]int64
-	NewBalances  map[string]map[string]int64
-}
-
-type ReconPosting struct {
-	Source      string
-	Destination string
-	Amount      int64
-	Asset       string
-}
-
-func MongoTxToReconciliation(tx storage.FullReconTransaction) ReconTransaction {
+func FullTxToPaymentReconciliation(tx storage.FullReconTransaction) (ReconTransaction, error) {
 	var reconPostings []ReconPosting
 
 	oldBalances := make(map[string]map[string]int64)
@@ -38,19 +20,29 @@ func MongoTxToReconciliation(tx storage.FullReconTransaction) ReconTransaction {
 			Asset:       posting.Asset,
 		})
 
-		// TODO: test this
+		if tx.PreCommitVolumes == nil || tx.PostCommitVolumes == nil {
+			return ReconTransaction{}, errors.New("missing pre/post commit volumes")
+		}
+
 		for accountKey, account := range *tx.PreCommitVolumes {
 			for assetKey, volume := range account {
 				oldBalances[accountKey] = make(map[string]int64)
-				oldBalances[accountKey][assetKey] = int64(*volume.Balance)
+				if volume.Balance != nil {
+					oldBalances[accountKey][assetKey] = int64(*volume.Balance)
+				} else {
+					oldBalances[accountKey][assetKey] = int64(0)
+				}
 			}
 		}
 
-		// TODO: test that
 		for accountKey, account := range *tx.PostCommitVolumes {
 			for assetKey, volume := range account {
 				newBalances[accountKey] = make(map[string]int64)
-				newBalances[accountKey][assetKey] = int64(*volume.Balance)
+				if volume.Balance != nil {
+					newBalances[accountKey][assetKey] = int64(*volume.Balance)
+				} else {
+					newBalances[accountKey][assetKey] = int64(0)
+				}
 			}
 		}
 	}
@@ -58,11 +50,11 @@ func MongoTxToReconciliation(tx storage.FullReconTransaction) ReconTransaction {
 	return ReconTransaction{
 		ID:           int64(tx.Txid),
 		Postings:     reconPostings,
-		PaymentIDs:   nil,
+		PaymentIDs:   nil, // no payments in end_to_end rules
 		CreationDate: tx.Timestamp,
 		ReconStatus:  tx.ReconciliationStatus,
 		Type:         fmt.Sprintf("%s", tx.Metadata["type"]),
 		OldBalances:  oldBalances,
 		NewBalances:  newBalances,
-	}
+	}, nil
 }

@@ -3,54 +3,46 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
-	_ "github.com/bombsimon/logrusr/v3"
+	"github.com/numary/go-libs/sharedlogging"
+	"github.com/numary/go-libs/sharedlogging/sharedlogginglogrus"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-)
-
-var (
-	Version   = "develop"
-	BuildDate = "-"
-	Commit    = "-"
 )
 
 const (
 	debugFlag = "debug"
 )
 
-func NewRootCommand() *cobra.Command {
-	viper.SetDefault("version", Version)
+var rootCmd = &cobra.Command{
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 
-	root := &cobra.Command{
-		Use:               "reconciliation",
-		Short:             "reconciliation",
-		DisableAutoGenTag: true,
-	}
+		if err := bindFlagsToViper(cmd); err != nil {
+			return err
+		}
 
-	version := NewVersion()
-	root.AddCommand(version)
-	server := NewServer()
-	root.AddCommand(server)
+		logrusLogger := logrus.New()
+		if viper.GetBool(debugFlag) {
+			logrusLogger.SetLevel(logrus.DebugLevel)
+			logrusLogger.Infof("Debug mode enabled.")
+		}
+		logger := sharedlogginglogrus.New(logrusLogger)
+		sharedlogging.SetFactory(sharedlogging.StaticLoggerFactory(logger))
 
-	root.Flags().Bool(debugFlag, false, "debug mode")
-
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
-	viper.AutomaticEnv()
-	err := viper.BindPFlags(root.Flags())
-	if err != nil {
-		panic(err)
-	}
-
-	return root
+		return nil
+	},
 }
 
 func Execute() {
-	if err := NewRootCommand().Execute(); err != nil {
-		if _, err := fmt.Fprintln(os.Stderr, err); err != nil {
-			panic(err)
-		}
+	if err := rootCmd.Execute(); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		sharedlogging.Errorf("cobra.Command.Execute: %s", err)
 		os.Exit(1)
 	}
+}
+
+func init() {
+	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	rootCmd.PersistentFlags().BoolP(debugFlag, "d", false, "Debug mode")
 }
