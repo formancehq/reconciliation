@@ -1,0 +1,15 @@
+openapi: 3.0.3
+info:
+  title: Reconciliation server
+  version: 0.0.0
+paths:
+  /_healthcheck:
+    get:
+      summary: Health check of the server.
+      operationId: healthCheck
+      tags:
+        - Health check
+      responses:
+        "200":
+          description: The server is healthy.
+          content: {}

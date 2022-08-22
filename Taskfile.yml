@@ -1,21 +1,75 @@
 version: '3'
 
+env:
+  LOG_LEVEL: "debug"
+  KAFKA_DEFAULT_TOPIC: "default"
+
 vars:
-  COMPONENT:
-    sh: cat go.mod |head -1|cut -d \  -f2|cut -d / -f 3
+  SERVICE: "reconciliation"
+  APP_VERSION: "develop"
+  APP_SHA: "1a9c258ef"
+
+  PKG: "./..."
+  FAILFAST: "-failfast"
+  TIMEOUT: "1m"
+  RUN: "''"
 
 tasks:
+  default:
+    cmds:
+      - task: lint
+      - task: tests:local
+
   lint:
     cmds:
       - golangci-lint run -v --fix
+
+  tests:local:
+    cmds:
+      - task: docker
+      - >
+        go test -v {{.FAILFAST}} -race -coverpkg {{.PKG}} -coverprofile coverage.out
+        -run {{.RUN}} -timeout {{.TIMEOUT}} {{.PKG}} |
+        sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' |
+        sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/'' |
+        sed ''/RUN/s//$(printf "\033[34mRUN\033[0m")/''
+      - task: coverage
+
+  tests:
+    cmds:
+      - task: docker
+      - go test -race -coverpkg {{.PKG}} -coverprofile coverage.out {{.PKG}}
+
+  build:local:
+    cmds:
+      - go build -o {{.SERVICE}}
+
+  install:lint:
+    cmds:
+      - >
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh |
+        sh -s -- -b $(go env GOPATH)/bin latest
+
+  docker:
+    cmds:
+      - docker compose up -d mongo redpanda
+      - docker compose exec -ti redpanda rpk topic create {{.KAFKA_DEFAULT_TOPIC}} || exit 0
+
+  coverage:
+    cmds:
+      - go tool cover -html=coverage.out -o coverage.html
+      - echo "To open the html coverage file, use one of the following commands:"
+      - echo "open coverage.html on mac"
+      - echo "xdg-open coverage.html on linux"
+    silent: true
+
+  clean:
+    cmds:
+      - go clean
+      - rm -f {{.SERVICE}} coverage.out coverage.html
+      - docker compose down -v
+
   build:
+    run: once
     cmds:
-      - go build
-  build-image:
-    cmds:
-      - docker build -t github.com/numary/{{.COMPONENT}} .
-  run-image:
-    deps:
-      - build-image
-    cmds:
-      - docker run --rm github.com/numary/{{.COMPONENT}}
+      - docker build -t numary:{{.SERVICE}}-{{.APP_SHA}} --target app --build-arg APP_SHA={{.APP_SHA}} --build-arg APP_VERSION={{.APP_VERSION}} .

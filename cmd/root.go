@@ -5,33 +5,12 @@ import (
 	"os"
 
 	"github.com/numary/go-libs/sharedlogging"
-	"github.com/numary/go-libs/sharedlogging/sharedlogginglogrus"
-	"github.com/sirupsen/logrus"
+	"github.com/numary/reconciliation/internal/env"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-)
-
-const (
-	debugFlag = "debug"
 )
 
 var rootCmd = &cobra.Command{
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-
-		if err := bindFlagsToViper(cmd); err != nil {
-			return err
-		}
-
-		logrusLogger := logrus.New()
-		if viper.GetBool(debugFlag) {
-			logrusLogger.SetLevel(logrus.DebugLevel)
-			logrusLogger.Infof("Debug mode enabled.")
-		}
-		logger := sharedlogginglogrus.New(logrusLogger)
-		sharedlogging.SetFactory(sharedlogging.StaticLoggerFactory(logger))
-
-		return nil
-	},
+	Use: "reconciliation",
 }
 
 func Execute() {
@@ -43,6 +22,5 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-	rootCmd.PersistentFlags().BoolP(debugFlag, "d", false, "Debug mode")
+	cobra.CheckErr(env.Init(rootCmd.PersistentFlags()))
 }
