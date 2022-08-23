@@ -165,6 +165,8 @@ func (w *Worker) processMessage(ctx context.Context, msg kafkago.Message) error 
 		return fmt.Errorf("json.Unmarshal: %w", err)
 	}
 
+	sharedlogging.GetLogger(ctx).Debugf("worker: new kafka event fetched: %+v", ev)
+
 	if err := w.Reader.CommitMessages(ctx, msg); err != nil {
 		return fmt.Errorf("kafka.Reader.CommitMessages: %w", err)
 	}
