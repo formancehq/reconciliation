@@ -9,9 +9,9 @@ import (
 
 	"github.com/numary/go-libs/sharedlogging"
 	"github.com/numary/reconciliation/constants"
-	"github.com/numary/reconciliation/internal/kafka"
-	"github.com/numary/reconciliation/internal/server"
-	"github.com/numary/reconciliation/internal/worker"
+	"github.com/numary/reconciliation/pkg/kafka"
+	"github.com/numary/reconciliation/pkg/server"
+	"github.com/numary/reconciliation/pkg/worker"
 	kafkago "github.com/segmentio/kafka-go"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +20,9 @@ import (
 )
 
 func TestWorker(t *testing.T) {
-	workerApp := fxtest.New(t, worker.StartModule(httpClient))
+	workerApp := fxtest.New(t,
+		worker.StartModule(
+			httpClient, viper.GetString(constants.HttpBindAddressWorkerFlag)))
 	require.NoError(t, workerApp.Start(context.Background()))
 
 	var err error

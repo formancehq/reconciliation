@@ -4,14 +4,18 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/numary/reconciliation/internal/server"
+	"github.com/numary/reconciliation/constants"
+	"github.com/numary/reconciliation/pkg/server"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx/fxtest"
 )
 
 func TestServer(t *testing.T) {
-	serverApp := fxtest.New(t, server.StartModule(httpClient))
+	serverApp := fxtest.New(t,
+		server.StartModule(
+			httpClient, viper.GetString(constants.HttpBindAddressServerFlag)))
 
 	t.Run("start", func(t *testing.T) {
 		serverApp.RequireStart()

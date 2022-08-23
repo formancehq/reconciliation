@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/numary/go-libs/sharedlogging"
-	"github.com/numary/reconciliation/internal/env"
+	"github.com/numary/reconciliation/pkg/env"
 	"github.com/spf13/cobra"
 )
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/numary/reconciliation/constants"
-	"github.com/numary/reconciliation/internal/env"
+	"github.com/numary/reconciliation/pkg/env"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )

@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/numary/reconciliation/internal/env"
+	"github.com/numary/reconciliation/pkg/env"
 	"github.com/spf13/viper"
 )
 
