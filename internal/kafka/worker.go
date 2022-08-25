@@ -5,24 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/numary/reconciliation/internal/model"
 	"io"
 	"time"
 
 	"github.com/numary/go-libs/sharedlogging"
+	"github.com/numary/reconciliation/internal/rules"
 	"github.com/numary/reconciliation/internal/storage"
 	kafkago "github.com/segmentio/kafka-go"
 )
 
-type Event struct {
-	Date    time.Time      `json:"date"`
-	Type    string         `json:"type"`
-	Payload map[string]any `json:"payload"`
-}
-
 type Worker struct {
-	reader Reader
-	store  storage.Store
-
+	reader   Reader
+	store    storage.Store
 	stopChan chan chan struct{}
 }
 
@@ -100,12 +95,35 @@ func (w *Worker) processMessage(ctx context.Context, msg kafkago.Message) error 
 		"headers":   msg.Headers,
 	}).Debug("worker: new kafka message fetched")
 
-	ev := Event{}
+	ev := model.Event{}
 	if err := json.Unmarshal(msg.Value, &ev); err != nil {
 		return fmt.Errorf("json.Unmarshal: %w", err)
 	}
 
 	sharedlogging.GetLogger(ctx).Debugf("worker: new kafka event fetched: %+v", ev)
+
+	rulesMap, err := w.store.GetRules(ctx)
+	if err != nil {
+		//TODO: log
+		return err
+	}
+
+	switch ev.Type {
+	case "SAVED_PAYMENT":
+		if ev.Payload["type"] == "pay-in" {
+			payin := rules.PayInOut{Rule: rulesMap["pay-in"]}
+			if payin.Accept(ctx, ev) {
+				err := payin.Reconciliate(ctx, w.store, ev)
+				if err != nil {
+					return err
+				} else {
+					//TOOD: send new event to search
+				}
+			}
+		}
+	default:
+
+	}
 
 	if err := w.reader.CommitMessages(ctx, msg); err != nil {
 		return fmt.Errorf("kafka.Reader.CommitMessages: %w", err)

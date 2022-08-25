@@ -60,10 +60,24 @@ type PayInReconciliation struct {
 type EndToEndReconciliation struct {
 	Type         string
 	Transactions []ReconTransaction
-	Status       Statuses
+	Status       ReconciliationStatus
 }
 type EndToEndTransaction struct {
 	TxID   string
 	Amount int64
 	Status Statuses
 }
+
+type Rules map[string]Rule
+
+type Rule struct {
+	Name          string
+	Configuration map[string]string
+	Active        bool
+}
+
+//type PayinRule struct {
+//	Name      string
+//	PspIDPath string `bson:"psp_id_path"`
+//	Active    bool
+//}

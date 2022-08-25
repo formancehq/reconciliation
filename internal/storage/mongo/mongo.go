@@ -12,7 +12,6 @@ import (
 	"github.com/numary/go-libs/sharedlogging"
 	"github.com/numary/reconciliation/constants"
 	"github.com/numary/reconciliation/internal/model"
-	"github.com/numary/reconciliation/internal/rules"
 	"github.com/numary/reconciliation/internal/storage"
 	"github.com/spf13/viper"
 	"go.mongodb.org/mongo-driver/bson"
@@ -103,11 +102,11 @@ func (s Store) UpdateEndToEndStatus(ctx context.Context, agg model.LedgerTransac
 		fmt.Println("updating tx...")
 
 		reconStatus := make(model.Statuses)
-		reconStatus["end-to-end"] = rules.SuccessStatus
+		reconStatus["end-to-end"] = model.SuccessStatus
 		// update txledger
 		for _, txID := range badBalance { // do not like this loop
 			if tx.Txid == txID {
-				reconStatus["end-to-end"] = rules.EndToEndMismatchStatus
+				reconStatus["end-to-end"] = model.EndToEndMismatchStatus
 			}
 		}
 
@@ -125,105 +124,6 @@ func (s Store) UpdateEndToEndStatus(ctx context.Context, agg model.LedgerTransac
 	}
 
 	return fullTxs, nil
-}
-
-func (s Store) GetPaymentAndTransactionPayOut(ctx context.Context, pspIdPath string) ([]model.PaymentReconciliation, error) {
-	coll := s.client.
-		Database(viper.GetString(constants.StorageMongoDatabaseNameFlag)).
-		Collection(constants.CollPayments)
-
-	cursor, err := coll.Aggregate(ctx,
-		[]any{
-			bson.M{"$match": bson.M{"type": "payout"}},
-			bson.M{
-				"$lookup": bson.M{
-					"from":         "LedgerStuff",
-					"localField":   "reference",
-					"foreignField": pspIdPath,
-					"as":           "transaction_ledger",
-				},
-			},
-			bson.M{
-				"$match": bson.M{
-					"transaction_ledger": []any{
-						bson.M{"$exists": true},
-						bson.M{"$ne": bson.M{}},
-					},
-				},
-			},
-			bson.M{"$match": bson.M{"transaction_ledger.metadata.type": "payout"}},
-		})
-	if err != nil {
-		return []model.PaymentReconciliation{}, fmt.Errorf(
-			"could not aggregate payments and transactions for the pay-in lookup: %w", err)
-	}
-
-	var res []model.PaymentReconciliation
-
-	for cursor.Next(ctx) {
-		var agg model.PaymentReconciliation
-		if err := bson.Unmarshal(cursor.Current, &agg); err != nil {
-			return []model.PaymentReconciliation{}, fmt.Errorf(
-				"could not unmarshal payment to bson: %w", err)
-		}
-
-		res = append(res, agg)
-	}
-
-	if err := cursor.Err(); err != nil {
-		return []model.PaymentReconciliation{}, fmt.Errorf(
-			"something went wrong while going through mongo cursor: %w", err)
-	}
-
-	return res, nil
-}
-
-func (s Store) UpdatePayinStatus(ctx context.Context, agg model.PaymentReconciliation, status model.ReconciliationStatus) ([]model.FullReconTransaction, error) {
-	db := s.client.
-		Database(viper.GetString(constants.StorageMongoDatabaseNameFlag))
-	collLedger := db.Collection(constants.CollLedger)
-	collPayments := db.Collection(constants.CollPayments)
-
-	var payins []model.FullReconTransaction
-
-	// update payment
-	objID, err := primitive.ObjectIDFromHex(agg.ID)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("updating payment...")
-	// TODO: array ?
-	status.LinkedID = strconv.Itoa(int(agg.Transactions[0].Txid))
-	if _, err := collPayments.
-		UpdateByID(ctx, objID,
-			bson.M{"$set": bson.M{"reconciliation_status": status}},
-		); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("update payment recon status : OK")
-
-	// maybe not shadow external_id ?
-	status.LinkedID = agg.ID // this may not be the best id to use (it's mongodb id)
-	// update txledger
-	//TODO: we could maybe do an updateMany with the psp_id filter and type = payin ?
-	for _, tx := range agg.Transactions {
-		fmt.Println("updating tx...")
-		if _, err := collLedger.
-			UpdateOne(ctx,
-				bson.M{"txid": tx.Txid},
-				bson.M{"$set": bson.M{"reconciliation_status": status}},
-			); err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println("update ledger recon status : OK")
-
-		payins = append(payins, model.FullReconTransaction{
-			Transaction:          tx,
-			ReconciliationStatus: model.Statuses{"pay-in": status},
-		})
-	}
-
-	return payins, nil
 }
 
 func (s Store) UpdatePayoutStatus(ctx context.Context, agg model.PaymentReconciliation, status model.ReconciliationStatus) ([]model.FullReconTransaction, error) {

@@ -23,7 +23,7 @@ const (
 	DefaultBindAddressServer = ":8080"
 	DefaultBindAddressWorker = ":8081"
 
-	DefaultMongoConnString   = "mongodb://admin:admin@localhost:27017/"
+	DefaultMongoConnString   = "mongodb://root:root@localhost:27017/?directConnection=true"
 	DefaultMongoDatabaseName = "reconciliation"
 
 	DefaultKafkaTopic   = "default"
@@ -32,4 +32,5 @@ const (
 
 	CollPayments = "Payments"
 	CollLedger   = "Ledger"
+	CollRules    = "Rules"
 )

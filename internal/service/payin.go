@@ -11,7 +11,7 @@ import (
 )
 
 func ReconciliatePayins(ctx context.Context, store storage.Store, pspIdPath string) error {
-	reconciliations, err := store.GetPaymentAndTransactionPayOut(ctx, pspIdPath)
+	reconciliations, err := store.GetPaymentAndTransactionPayIn(ctx, pspIdPath)
 	if err != nil {
 		return fmt.Errorf("could not get payment/tx pay-in aggregation : %w", err)
 	}

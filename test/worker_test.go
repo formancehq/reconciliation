@@ -3,13 +3,13 @@ package test_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/numary/reconciliation/internal/model"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/numary/go-libs/sharedlogging"
 	"github.com/numary/reconciliation/constants"
-	"github.com/numary/reconciliation/internal/kafka"
 	"github.com/numary/reconciliation/internal/server"
 	"github.com/numary/reconciliation/internal/worker"
 	kafkago "github.com/segmentio/kafka-go"
@@ -59,7 +59,7 @@ func TestWorker(t *testing.T) {
 }
 
 func newEventMessage(t *testing.T, eventType string, id int) kafkago.Message {
-	ev := kafka.Event{
+	ev := model.Event{
 		Date: time.Now().UTC(),
 		Type: eventType,
 		Payload: map[string]any{
