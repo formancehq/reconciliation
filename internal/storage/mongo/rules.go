@@ -11,7 +11,6 @@ import (
 )
 
 // see if we'd rather have a struct for each struct ?
-
 func (s Store) GetRules(ctx context.Context) (model.Rules, error) {
 
 	coll := s.client.
@@ -25,6 +24,23 @@ func (s Store) GetRules(ctx context.Context) (model.Rules, error) {
 	}
 
 	return unmarshalRulesFromMongo(ctx, cursor)
+}
+
+func (s Store) GetRule(ctx context.Context, name string) (model.Rule, error) {
+
+	coll := s.client.
+		Database(viper.GetString(constants.StorageMongoDatabaseNameFlag)).
+		Collection(constants.CollRules)
+
+	result := coll.FindOne(ctx, bson.M{"name": name})
+
+	var rule model.Rule
+	if err := result.Decode(&rule); err != nil {
+		return model.Rule{}, fmt.Errorf(
+			"could not unmarshal payment to bson: %w", err)
+	}
+
+	return rule, nil
 }
 
 func unmarshalRulesFromMongo(ctx context.Context, cursor *mongo.Cursor) (model.Rules, error) {

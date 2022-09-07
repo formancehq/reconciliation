@@ -48,13 +48,15 @@ func NewStore() (storage.Store, error) {
 	}, nil
 }
 
-func (s Store) GetTransactionsWithOrder(ctx context.Context, flowIdPath string) ([]model.LedgerTransactions, error) {
+func (s Store) GetTransactionsWithOrder(ctx context.Context, flowIdPath string, flowId string) ([]model.LedgerTransactions, error) {
 	coll := s.client.
 		Database(viper.GetString(constants.StorageMongoDatabaseNameFlag)).
 		Collection(constants.CollLedger)
 
 	cursor, err := coll.Aggregate(ctx,
 		[]any{
+			bson.M{"$match": bson.M{
+				flowIdPath: flowId}},
 			bson.M{"$group": bson.M{
 				"_id":          fmt.Sprintf("$%s", flowIdPath),
 				"transactions": bson.M{"$push": "$$ROOT"}},
@@ -84,6 +86,18 @@ func (s Store) GetTransactionsWithOrder(ctx context.Context, flowIdPath string) 
 	}
 
 	return txs, nil
+}
+
+func (s Store) RemoveAllForTests(ctx context.Context, collection string) error {
+	collLedger := s.client.
+		Database(viper.GetString(constants.StorageMongoDatabaseNameFlag)).
+		Collection(collection)
+
+	_, err := collLedger.DeleteMany(ctx, bson.D{})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s Store) UpdateEndToEndStatus(ctx context.Context, agg model.LedgerTransactions, badBalance map[string]int32) ([]model.FullReconTransaction, error) {

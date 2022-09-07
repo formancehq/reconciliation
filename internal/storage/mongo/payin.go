@@ -3,8 +3,10 @@ package mongo
 import (
 	"context"
 	"fmt"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/numary/reconciliation/constants"
 	"github.com/numary/reconciliation/internal/model"
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -12,40 +14,21 @@ import (
 	"strconv"
 )
 
-func (s Store) GetPaymentAndTransactionPayInOut(ctx context.Context, paymentType string, pspIdPath string, psp_id string) (model.PaymentReconciliation, error) {
+func (s Store) GetPaymentAndTransactionPayInOut(ctx context.Context, paymentType string, pspIdPath string, pspID string) (model.PaymentReconciliation, error) {
 	coll := s.client.
 		Database(viper.GetString(constants.StorageMongoDatabaseNameFlag)).
 		Collection(constants.CollPayments)
 
-	//spew.Dump(paymentType)
-	//spew.Dump(pspIdPath)
-	//
-	//result := coll.FindOne(ctx, bson.M{"reference": "ch_3LIRpBFqW03ZYiNn1G7tFTgJ"})
-	//var agg map[string]any
-	//err := result.Decode(&agg)
-	//if err != nil {
-	//	return model.PaymentReconciliation{}, err
-	//}
-	//
-	//spew.Dump(agg)
-
-	//for cursorr.Next(ctx) {
-	//	if err := bson.Unmarshal(cursorr.Current, &agg); err != nil {
-	//		panic(err)
-	//	}
-	//	//spew.Dump(agg)
-	//}
-
 	cursor, err := coll.Aggregate(ctx,
 		bson.A{
-			bson.D{{"$match", bson.D{{"type", "pay-in"}}}},
-			bson.D{{"$match", bson.D{{"reference", "ch_3LIRpBFqW03ZYiNn1G7tFTgJ"}}}},
+			bson.D{{"$match", bson.D{{"type", paymentType}}}},
+			bson.D{{"$match", bson.D{{"reference", pspID}}}},
 			bson.D{
 				{"$lookup",
 					bson.D{
-						{"from", "LedgerStuff"},
+						{"from", constants.CollLedger},
 						{"localField", "reference"},
-						{"foreignField", "metadata.psp_id"},
+						{"foreignField", pspIdPath},
 						{"as", "transaction_ledger"},
 					},
 				},
@@ -68,7 +51,28 @@ func (s Store) GetPaymentAndTransactionPayInOut(ctx context.Context, paymentType
 			"could not aggregate payments and transactions for the pay-out lookup: %w", err)
 	}
 
-	return unmarshalPaymentsFromMongo(ctx, cursor)
+	var res []model.PaymentReconciliation
+	err = cursor.All(ctx, &res)
+	if err != nil {
+		fmt.Println("error decode all")
+		spew.Dump(err)
+		return model.PaymentReconciliation{}, err
+	}
+
+	if err := cursor.Err(); err != nil {
+		return model.PaymentReconciliation{}, fmt.Errorf(
+			"something went wrong while going through mongo cursor: %w", err)
+	}
+
+	if len(res) > 1 {
+		return model.PaymentReconciliation{}, errors.New("should not return more than one payment")
+	}
+
+	if res == nil {
+		return model.PaymentReconciliation{}, errors.New("no result returned")
+	}
+
+	return res[0], nil
 }
 
 func (s Store) UpdatePayinStatus(ctx context.Context, agg model.PaymentReconciliation, status model.ReconciliationStatus) ([]model.FullReconTransaction, error) {
@@ -119,10 +123,10 @@ func (s Store) UpdatePayinStatus(ctx context.Context, agg model.PaymentReconcili
 	return payins, nil
 }
 
-func (s Store) InsertObject(ctx context.Context, event model.Event) error {
+func (s Store) InsertObject(ctx context.Context, event model.Event, collection string) error {
 	coll := s.client.
 		Database(viper.GetString(constants.StorageMongoDatabaseNameFlag)).
-		Collection(constants.CollPayments)
+		Collection(collection)
 
 	_, err := coll.InsertOne(ctx, event.Payload)
 	return err

@@ -111,14 +111,29 @@ func (w *Worker) processMessage(ctx context.Context, msg kafkago.Message) error 
 	switch ev.Type {
 	case "SAVED_PAYMENT":
 		if ev.Payload["type"] == "pay-in" {
+
+			payin2 := model.Rule2[rules.EndToEndRule]{}
 			payin := rules.PayInOut{Rule: rulesMap["pay-in"]}
 			if payin.Accept(ctx, ev) {
 				err := payin.Reconciliate(ctx, w.store, ev)
 				if err != nil {
 					return err
 				} else {
-					//TOOD: send new event to search
+					//TODO: send new event to search
 				}
+			}
+		}
+	case "SAVED_TRANSACTION":
+		// for now, i think we always want to do endtoend recon
+		// but we could think about a list of tags to use in the metadata to activate some ?
+		endtoend := rules.EndToEndRule{Rule: rulesMap["end-to-end"]}
+		if endtoend.Accept(ctx, ev) {
+			err := endtoend.Reconciliate(ctx, w.store, ev)
+			if err != nil {
+				//TODO: log
+				return err
+			} else {
+				//TODO: send new event to search
 			}
 		}
 	default:

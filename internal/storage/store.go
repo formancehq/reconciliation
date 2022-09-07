@@ -7,11 +7,14 @@ import (
 )
 
 type Store interface {
-	GetTransactionsWithOrder(ctx context.Context, flowIdPath string) ([]model.LedgerTransactions, error)
+	GetTransactionsWithOrder(ctx context.Context, flowIdPath string, flowId string) ([]model.LedgerTransactions, error)
 	UpdateEndToEndStatus(ctx context.Context, agg model.LedgerTransactions, badBalance map[string]int32) ([]model.FullReconTransaction, error)
 	GetPaymentAndTransactionPayInOut(ctx context.Context, paymentType string, pspIdPath string, psp_id string) (model.PaymentReconciliation, error)
 	GetRules(ctx context.Context) (model.Rules, error)
-	InsertObject(ctx context.Context, event model.Event) error
+	GetRule(ctx context.Context, name string) (model.Rule, error)
+	InsertObject(ctx context.Context, event model.Event, collection string) error
+	GetTransaction(ctx context.Context, id int64) (model.FullReconTransaction, error)
+	RemoveAllForTests(ctx context.Context, collection string) error // ???
 	UpdatePayinStatus(ctx context.Context, agg model.PaymentReconciliation, status model.ReconciliationStatus) ([]model.FullReconTransaction, error)
 	UpdatePayoutStatus(ctx context.Context, agg model.PaymentReconciliation, status model.ReconciliationStatus) ([]model.FullReconTransaction, error)
 	CreateIndexes(ctx context.Context) error

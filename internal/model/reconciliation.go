@@ -29,8 +29,8 @@ type Statuses map[string]ReconciliationStatus
 
 type FullReconTransaction struct {
 	ledgerclient.Transaction `bson:",inline"`
-	ID                       string   `bson:"_id"`
-	ReconciliationStatus     Statuses `bson:"reconciliation_status,"`
+	//ID                       string   `bson:"_id"`
+	ReconciliationStatus Statuses `bson:"reconciliation_status,"`
 }
 
 type ReconTransaction struct {
@@ -68,12 +68,12 @@ type EndToEndTransaction struct {
 	Status Statuses
 }
 
-type Rules map[string]Rule
+type Rules map[string]Rule[]
 
-type Rule struct {
+type Rule[CONFIG any] struct {
 	Name          string
-	Configuration map[string]string
 	Active        bool
+	Configuration CONFIG
 }
 
 //type PayinRule struct {

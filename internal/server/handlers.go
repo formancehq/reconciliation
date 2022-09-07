@@ -1,18 +1,18 @@
 package server
 
 import (
-	"fmt"
+	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/numary/go-libs/sharedlogging"
-	"github.com/numary/reconciliation/internal/service"
 	"github.com/numary/reconciliation/internal/storage"
 )
 
 const (
 	PathHealthCheck = "/_healthcheck"
-	PathAmountMatch = "/amount-match"
+	PathGetTxCheck  = "/transaction"
 	PathEndToEnd    = "/end-to-end"
 
 	ParamPspId  = "psp_id_path"
@@ -35,8 +35,7 @@ func newServerHandler(store storage.Store) http.Handler {
 	}
 
 	h.Router.GET(PathHealthCheck, h.healthCheckHandle)
-	h.Router.POST(PathAmountMatch, h.amountMatchHandle)
-	h.Router.POST(PathEndToEnd, h.endToEndHandle)
+	h.Router.POST(PathGetTxCheck, h.getReconciliationHandle)
 
 	return h
 }
@@ -45,38 +44,25 @@ func (h *serverHandler) healthCheckHandle(w http.ResponseWriter, r *http.Request
 	sharedlogging.GetLogger(r.Context()).Infof("health check OK")
 }
 
-func (h *serverHandler) amountMatchHandle(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-	pspIdPath := p.ByName(ParamPspId)
-	if pspIdPath == "" {
-		pspIdPath = PspIdDefault
+func (h *serverHandler) getReconciliationHandle(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
+	paramTxID := p.ByName("txid")
+	if paramTxID == "" {
+
 	}
 
-	if err := service.ReconciliatePayins(r.Context(), h.store, pspIdPath); err != nil {
-		err = fmt.Errorf("service.ReconciliatePayins: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	txID, err := strconv.ParseInt(paramTxID, 10, 64)
+	if err == nil {
+		//todo
 	}
 
-	if err := service.ReconciliatePayouts(r.Context(), h.store, pspIdPath); err != nil {
-		err = fmt.Errorf("service.ReconciliatePayouts: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	transaction, err := h.store.GetTransaction(r.Context(), txID)
+	if err != nil {
+		//todo
 	}
 
-	sharedlogging.GetLogger(r.Context()).Infof("amount match OK")
-}
-
-func (h *serverHandler) endToEndHandle(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-	flowIdPath := p.ByName(ParamFlowId)
-	if flowIdPath == "" {
-		flowIdPath = FlowIdDefault
-	}
-
-	if err := service.ReconciliateEndToEnd(r.Context(), h.store, flowIdPath); err != nil {
-		err = fmt.Errorf("service.ReconciliateEndToEnd: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(transaction)
 
 	sharedlogging.GetLogger(r.Context()).Infof("end to end OK")
 }
