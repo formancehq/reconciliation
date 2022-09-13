@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/numary/reconciliation/constants"
 	"github.com/numary/reconciliation/internal/model"
+	"github.com/numary/reconciliation/internal/rules"
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -26,7 +28,7 @@ func (s Store) GetRules(ctx context.Context) (model.Rules, error) {
 	return unmarshalRulesFromMongo(ctx, cursor)
 }
 
-func (s Store) GetRule(ctx context.Context, name string) (model.Rule, error) {
+func (s Store) GetRule(ctx context.Context, name string) (model.Rule[any], error) {
 
 	coll := s.client.
 		Database(viper.GetString(constants.StorageMongoDatabaseNameFlag)).
@@ -34,13 +36,24 @@ func (s Store) GetRule(ctx context.Context, name string) (model.Rule, error) {
 
 	result := coll.FindOne(ctx, bson.M{"name": name})
 
-	var rule model.Rule
+	switch name {
+	case "end-to-end":
+		var rule model.Rule[rules.EndToEndRule]
+		if err := result.Decode(&rule); err != nil {
+			fmt.Println("could not decode mongodb result for end-to-end rule")
+			return model.Rule[any]{}, err
+		}
+		return rule, nil
+	case "payin":
+	case "payout":
+	default:
+		return model.Rule[any]{}, errors.New("this rule does not exist")
+	}
+
 	if err := result.Decode(&rule); err != nil {
 		return model.Rule{}, fmt.Errorf(
 			"could not unmarshal payment to bson: %w", err)
 	}
-
-	return rule, nil
 }
 
 func unmarshalRulesFromMongo(ctx context.Context, cursor *mongo.Cursor) (model.Rules, error) {

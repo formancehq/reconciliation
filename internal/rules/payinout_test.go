@@ -16,7 +16,7 @@ import (
 
 func TestPayinoutAccept(t *testing.T) {
 
-	rule := PayInOut{
+	rule := PayInOutRule{
 		Rule: model.Rule{
 			Name:          "RULE_TEST",
 			Configuration: map[string]string{"psp_id_path": "metadata.psp_id"},
@@ -63,7 +63,7 @@ func TestPayinoutReconciliate(t *testing.T) {
 	require.NoError(t, store.RemoveAllForTests(context.Background(), constants.CollLedger))
 	require.NoError(t, store.RemoveAllForTests(context.Background(), constants.CollPayments))
 
-	rule := PayInOut{
+	rule := PayInOutRule{
 		Rule: model.Rule{
 			Name:          "pay-in",
 			Configuration: map[string]string{"psp_id_path": "metadata.psp_id"},

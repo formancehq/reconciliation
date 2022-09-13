@@ -8,15 +8,12 @@ import (
 	"github.com/pkg/errors"
 )
 
-type PayInOut struct {
-	Rule model.Rule
-}
-
 type PayInOutRule struct {
+	Name      string `json:"name"`
 	PspIdPath string `json:"psp_id_path"`
 }
 
-func (p PayInOut) Accept(ctx context.Context, event model.Event) bool {
+func (p PayInOutRule) Accept(ctx context.Context, event model.Event) bool {
 	//TODO this need to be calculated at runtime maybe ? see with payment how we manage multple psp
 	if ref, ok := event.Payload["reference"]; ok {
 		if ref != "" {
@@ -27,8 +24,8 @@ func (p PayInOut) Accept(ctx context.Context, event model.Event) bool {
 	return false
 }
 
-func (p PayInOut) reconciliate(ctx context.Context, store storage.Store, event model.Event) (model.ReconciliationStatus, error) {
-	payment, err := store.GetPaymentAndTransactionPayInOut(ctx, p.Rule.Name, p.Rule.Configuration["psp_id_path"], event.Payload["reference"].(string))
+func (p PayInOutRule) reconciliate(ctx context.Context, store storage.Store, event model.Event) (model.ReconciliationStatus, error) {
+	payment, err := store.GetPaymentAndTransactionPayInOut(ctx, p.Name, p.PspIdPath, event.Payload["reference"].(string))
 	if err != nil {
 		//TODO: log
 		return model.ReconciliationStatus{}, err
@@ -42,7 +39,7 @@ func (p PayInOut) reconciliate(ctx context.Context, store storage.Store, event m
 	return model.ReconciliationStatus{}, err
 }
 
-func (p PayInOut) Reconciliate(ctx context.Context, store storage.Store, event model.Event) error {
+func (p PayInOutRule) Reconciliate(ctx context.Context, store storage.Store, event model.Event) error {
 
 	_, err := p.reconciliate(ctx, store, event)
 
