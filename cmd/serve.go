@@ -10,7 +10,7 @@ import (
 	"github.com/formancehq/go-libs/bun/bunconnect"
 	"github.com/formancehq/go-libs/licence"
 
-	sdk "github.com/formancehq/formance-sdk-go/v2"
+	sdk "github.com/formancehq/formance-sdk-go/v3"
 	sharedapi "github.com/formancehq/go-libs/api"
 	"github.com/formancehq/go-libs/auth"
 	"github.com/formancehq/go-libs/otlp"
