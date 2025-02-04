@@ -19,11 +19,11 @@ func e(msg string, err error) error {
 
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return ErrDuplicateKeyValue
+		return fmt.Errorf("%s: %w", msg, ErrDuplicateKeyValue)
 	}
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
+		return fmt.Errorf("%s: %w", msg, ErrNotFound)
 	}
 
 	return fmt.Errorf("%s: %w", msg, err)

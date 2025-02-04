@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -36,7 +37,7 @@ func isVersionSupported(
 func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName string, ledgerAggregatedBalanceQuery map[string]interface{}, at time.Time) (map[string]*big.Int, error) {
 	infoResponse, err := s.client.V2GetInfo(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get ledger info: %w", err)
 	}
 
 	if infoResponse.StatusCode != 200 {
@@ -56,7 +57,7 @@ func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName s
 		},
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get aggregated balances: %w", err)
 	}
 
 	if balances.StatusCode != 200 {
@@ -78,7 +79,7 @@ func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName s
 func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID string, at time.Time) (map[string]*big.Int, error) {
 	response, err := s.client.PaymentsgetServerInfo(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get payments info: %w", err)
 	}
 
 	if response.StatusCode != 200 {
@@ -97,7 +98,7 @@ func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID strin
 		},
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get pool balances: %w", err)
 	}
 
 	if balances.StatusCode != 200 {
