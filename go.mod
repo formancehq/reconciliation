@@ -17,7 +17,7 @@ require (
 	github.com/uptrace/bun v1.2.15
 	go.uber.org/fx v1.23.0
 	golang.org/x/mod v0.22.0
-	golang.org/x/oauth2 v0.25.0
+	golang.org/x/oauth2 v0.27.0
 	golang.org/x/sync v0.10.0
 )
 
