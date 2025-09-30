@@ -113,7 +113,7 @@ func TestReconciliationList(t *testing.T) {
 		require.Equal(t, reconciliations.Data[1].ID, r2.ID)
 	})
 
-	t.Run("with query unknown status not ok", func(t *testing.T) {
+	t.Run("with query status not ok", func(t *testing.T) {
 		reconciliations, err := store.ListReconciliations(context.Background(), GetReconciliationsQuery{
 			Options: PaginatedQueryOptions[ReconciliationsFilters]{
 				QueryBuilder: query.Match("status", models.ReconciliationNotOK),

@@ -87,7 +87,7 @@ func (s *Storage) policyQueryContext(qb query.Builder, q GetPoliciesQuery) (stri
 		switch key {
 		case "id", "name":
 			if operator != "$match" {
-				return "", nil, errors.Wrap(ErrInvalidQuery, "'id' and 'status' columns can only be used with $match")
+				return "", nil, errors.Wrap(ErrInvalidQuery, "'id' and 'name' columns can only be used with $match")
 			}
 
 			return fmt.Sprintf("%s = ?", key), []any{value}, nil
