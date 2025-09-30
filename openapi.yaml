@@ -42,6 +42,11 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryBuilder'
       responses:
         '200':
           $ref: '#/components/responses/Policies'
@@ -110,6 +115,11 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryBuilder'
       responses:
         '200':
           $ref: '#/components/responses/Reconciliations'
@@ -227,6 +237,9 @@ components:
           schema:
             $ref: '#/components/schemas/ReconciliationRequest'
   schemas:
+    QueryBuilder:
+      type: object
+      additionalProperties: true
     PoliciesCursorResponse:
       type: object
       required:
