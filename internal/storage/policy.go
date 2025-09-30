@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/query"
@@ -83,8 +84,16 @@ func (s *Storage) ListPolicies(ctx context.Context, q GetPoliciesQuery) (*bunpag
 
 func (s *Storage) policyQueryContext(qb query.Builder, q GetPoliciesQuery) (string, []any, error) {
 	return qb.Build(query.ContextFn(func(key, operator string, value any) (string, []any, error) {
-		switch {
-		case key == "ledgerQuery":
+		switch key {
+		case "id", "name":
+			if operator != "$match" {
+				return "", nil, errors.Wrap(ErrInvalidQuery, "'id' and 'status' columns can only be used with $match")
+			}
+
+			return fmt.Sprintf("%s = ?", key), []any{value}, nil
+		case "createdAt":
+			return fmt.Sprintf("created_at %s ?", query.DefaultComparisonOperatorsMapping[operator]), []any{value}, nil
+		case "ledgerQuery":
 			if operator != "$match" {
 				return "", nil, errors.Wrap(ErrInvalidQuery, "'ledgerQuery' column can only be used with $match")
 			}
@@ -94,7 +103,7 @@ func (s *Storage) policyQueryContext(qb query.Builder, q GetPoliciesQuery) (stri
 			default:
 				return "", nil, errors.Wrap(ErrInvalidQuery, "'ledgerQuery' column can only be used with string")
 			}
-		case key == "ledgerName":
+		case "ledgerName":
 			if operator != "$match" {
 				return "", nil, errors.Wrap(ErrInvalidQuery, "'ledgerName' column can only be used with $match")
 			}
@@ -104,7 +113,7 @@ func (s *Storage) policyQueryContext(qb query.Builder, q GetPoliciesQuery) (stri
 			default:
 				return "", nil, errors.Wrap(ErrInvalidQuery, "'ledgerName' column can only be used with string")
 			}
-		case key == "paymentsPoolID":
+		case "paymentsPoolID":
 			if operator != "$match" {
 				return "", nil, errors.Wrap(ErrInvalidQuery, "'paymentsPoolID' column can only be used with $match")
 			}

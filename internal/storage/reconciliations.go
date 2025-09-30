@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/query"
@@ -70,17 +71,24 @@ func (s *Storage) ListReconciliations(ctx context.Context, q GetReconciliationsQ
 
 func (s *Storage) reconciliationQueryContext(qb query.Builder, q GetReconciliationsQuery) (string, []any, error) {
 	return qb.Build(query.ContextFn(func(key, operator string, value any) (string, []any, error) {
-		switch {
-		case key == "policyID":
+		switch key {
+		case "id", "status":
+			if operator != "$match" {
+				return "", nil, errors.Wrap(ErrInvalidQuery, "'id' and 'status' columns can only be used with $match")
+			}
+			return fmt.Sprintf("%s = ?", key), []any{value}, nil
+		case "policyID":
 			if operator != "$match" {
 				return "", nil, errors.Wrap(ErrInvalidQuery, "'policyID' column can only be used with $match")
 			}
-			switch pID := value.(type) {
+			switch id := value.(type) {
 			case string:
-				return "policy_id = ?", []any{pID}, nil
+				return "policy_id = ?", []any{id}, nil
 			default:
 				return "", nil, errors.Wrap(ErrInvalidQuery, "'policyID' column can only be used with string")
 			}
+		case "createdAt":
+			return fmt.Sprintf("created_at %s ?", query.DefaultComparisonOperatorsMapping[operator]), []any{value}, nil
 		default:
 			return "", nil, errors.Wrapf(ErrInvalidQuery, "unknown key '%s' when building query", key)
 		}
