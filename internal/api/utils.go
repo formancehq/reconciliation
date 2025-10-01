@@ -18,7 +18,9 @@ func getQueryBuilder(r *http.Request) (query.Builder, error) {
 	if len(data) > 0 {
 		return query.ParseJSON(string(data))
 	}
-	return nil, nil
+
+	// If we don't have a body, we use the query param
+	return query.ParseJSON(r.URL.Query().Get("query"))
 }
 
 func getPaginatedQueryOptionsReconciliations(r *http.Request) (*storage.PaginatedQueryOptions[storage.ReconciliationsFilters], error) {
