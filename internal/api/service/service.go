@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 
@@ -66,7 +67,7 @@ func (s *sdkFormanceClient) V2GetInfo(ctx context.Context) (*operations.V2GetInf
 }
 
 func (s *sdkFormanceClient) V2GetBalancesAggregated(ctx context.Context, req operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error) {
-	return s.client.Ledger.V2.GetBalancesAggregated(ctx, req)
+	return s.client.Ledger.V2.GetBalancesAggregated(ctx, req, operations.WithOperationTimeout(24*time.Hour))
 }
 
 var _ SDKFormance = (*sdkFormanceClient)(nil)
