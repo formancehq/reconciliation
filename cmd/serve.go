@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/formancehq/go-libs/aws/iam"
 
@@ -40,6 +41,7 @@ func stackClientModule(cmd *cobra.Command) fx.Option {
 			}
 			underlyingHTTPClient := &http.Client{
 				Transport: otlp.NewRoundTripper(http.DefaultTransport, service.IsDebug(cmd)),
+				Timeout:   24 * time.Hour,
 			}
 			return sdk.New(
 				sdk.WithClient(
