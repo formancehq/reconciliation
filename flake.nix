@@ -13,6 +13,7 @@
       forEachSupportedSystem = f: nixpkgs.lib.genAttrs supportedSystems (system: f {
         pkgs = import nixpkgs {
           inherit system;
+          config.allowUnfree = true;
           overlays = [
             nur.overlays.default
             (final: prev: {
@@ -25,13 +26,13 @@
     {
       devShells = forEachSupportedSystem ({ pkgs }: {
         default = pkgs.mkShell {
-          packages = with pkgs; [
-            go
-            gotools
-            golangci-lint
-            ginkgo
-            nur.repos.goreleaser.goreleaser-pro
-            just
+          packages = [
+            pkgs.go
+            pkgs.gotools
+            pkgs.golangci-lint
+            pkgs.ginkgo
+            pkgs.nur.repos.goreleaser.goreleaser-pro
+            pkgs.just
           ];
         };
       });
