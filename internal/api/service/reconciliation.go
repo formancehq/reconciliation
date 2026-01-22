@@ -88,7 +88,6 @@ func (s *Service) Reconciliation(ctx context.Context, policyID string, req *Reco
 	if len(paymentsBalances) != len(ledgerBalances) {
 		res.Status = models.ReconciliationNotOK
 		res.Error = "different number of assets"
-		reconciliationError = true
 		return res, nil
 	}
 
