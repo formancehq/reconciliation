@@ -144,7 +144,6 @@ func (s *Service) computeDrift(
 		var balance big.Int
 		balance.Set(ledgerBalance).Abs(&balance)
 		res.DriftBalances[asset] = &balance
-		res.DriftBalances[asset] = ledgerBalance
 		return fmt.Errorf("missing asset %s in paymentBalances", asset)
 	case ledgerBalance != nil && paymentBalance != nil:
 		var drift big.Int
