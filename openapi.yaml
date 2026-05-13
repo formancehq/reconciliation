@@ -24,6 +24,11 @@ paths:
         - reconciliation.v1
       operationId: createPolicy
       description: Create a policy
+      # x-formance-* annotations: this operation creates a manifest-authoring
+      # resource. The request body schema (PolicyRequest) carries the per-field
+      # contract (refs, manifest-path regrouping, raw-JSON passthrough).
+      x-formance-resource: true
+      x-formance-terraform-type: stack_reconciliation_policy
       requestBody:
         $ref: '#/components/requestBodies/Policy'
       responses:
@@ -311,6 +316,12 @@ components:
           type: string
     PolicyRequest:
       type: object
+      # Natural key for the manifest authoring surface: `name` becomes the
+      # YAML map key under `policies:` and the label of the emitted HCL block.
+      # Note: the runtime API is id-keyed (GET/DELETE /policies/{policyID}),
+      # but the manifest UX is name-keyed — `id` is server-assigned and
+      # surfaced only in the response (see `Policy` schema below).
+      x-formance-name: name
       required:
         - name
         - ledgerName
@@ -320,15 +331,44 @@ components:
         name:
           type: string
           example: XXX
+          # Policy names are write-once: the create payload carries `name`,
+          # there is no PUT/PATCH endpoint, and updates require delete-and-
+          # recreate. Drives Terraform ForceNew on this attribute.
+          x-formance-immutable: true
         ledgerName:
           type: string
           example: default
+          # Cross-module reference: this string names a ledger.Ledger. The
+          # ledger API is name-keyed, so substitution resolves to the target
+          # ledger's `name` attribute on the emitted HCL traversal.
+          x-formance-ref:
+            module: ledger
+            kind: Ledger
+            as: name
+          # Manifest regrouping: the OpenAPI sibling `ledgerName` lives under
+          # `ledger.name` in the manifest authoring surface, alongside
+          # `ledgerQuery` (see below). Mirrors today's tfgen.yaml.
+          x-formance-manifest-path: ledger.name
         ledgerQuery:
           type: object
           additionalProperties: true
+          # Free-form JSON passthrough: the walker emits this via json.Marshal
+          # into the HCL `ledger_query` attribute. No field-level schema.
+          x-formance-raw-json: true
+          x-formance-manifest-path: ledger.query
         paymentsPoolID:
           type: string
           example: XXX
+          # Cross-module reference: this string names a payments.Pool. The
+          # payments-pool API returns a server-assigned id, so substitution
+          # resolves to the target pool's `id` attribute.
+          x-formance-ref:
+            module: payments
+            kind: Pool
+            as: id
+          # Manifest rename: `paymentsPoolID` in OpenAPI → `pool` in the
+          # manifest. Mirrors today's tfgen.yaml `source: $.pool`.
+          x-formance-manifest-path: pool
     PolicyResponse:
       type: object
       required:
@@ -359,6 +399,10 @@ components:
           $ref: '#/components/schemas/Reconciliation'
     Policy:
       type: object
+      # Response schema — observed state. Per-field x-formance-* annotations
+      # for the manifest authoring surface live on `PolicyRequest` and are not
+      # duplicated here. Only response-only fields are annotated below
+      # (server-assigned `id`, `createdAt`).
       required:
         - id
         - name
@@ -370,6 +414,9 @@ components:
         id:
           type: string
           example: XXX
+          # Server-assigned. Tracked as observed state for drift detection;
+          # excluded from the generated manifest authoring schema.
+          x-formance-computed: true
         name:
           type: string
           example: XXX
@@ -377,6 +424,8 @@ components:
           type: string
           format: date-time
           example: '2021-01-01T00:00:00.000Z'
+          # Server-assigned timestamp; observed-state only.
+          x-formance-computed: true
         ledgerName:
           type: string
           example: default
