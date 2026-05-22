@@ -3,9 +3,11 @@ package api
 import (
 	"net/http"
 
+	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/formancehq/go-libs/service"
+	"github.com/formancehq/go-libs/v5/pkg/audit/httpaudit"
 
 	"github.com/formancehq/go-libs/api"
 	"github.com/formancehq/go-libs/auth"
@@ -17,8 +19,11 @@ func newRouter(
 	b backend.Backend,
 	serviceInfo api.ServiceInfo,
 	authenticator auth.Authenticator,
-	healthController *health.HealthController) *chi.Mux {
+	healthController *health.HealthController,
+	publisher message.Publisher,
+) *chi.Mux {
 	r := chi.NewRouter()
+	r.Use(httpaudit.Middleware(publisher, "audit-events", "reconciliation", nil))
 	r.Use(func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
