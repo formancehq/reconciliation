@@ -3,7 +3,10 @@ package api
 import (
 	"net/http"
 
+	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/go-chi/chi/v5"
+
+	"github.com/formancehq/go-libs/v5/pkg/audit/httpaudit"
 
 	"github.com/formancehq/go-libs/service"
 
@@ -17,7 +20,9 @@ func newRouter(
 	b backend.Backend,
 	serviceInfo api.ServiceInfo,
 	authenticator auth.Authenticator,
-	healthController *health.HealthController) *chi.Mux {
+	healthController *health.HealthController,
+	publisher message.Publisher,
+) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,6 +30,7 @@ func newRouter(
 			handler.ServeHTTP(w, r)
 		})
 	})
+	r.Use(httpaudit.Middleware(publisher, "audit-events", "reconciliation", nil))
 	r.Get("/_healthcheck", healthController.Check)
 	r.Get("/_info", api.InfoHandler(serviceInfo))
 
