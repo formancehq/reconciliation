@@ -9,8 +9,13 @@ import (
 	"github.com/formancehq/reconciliation/internal/storage"
 )
 
+// maxQueryBuilderBodySize bounds the optional request body carrying query
+// filters on list endpoints: without it, io.ReadAll would buffer an
+// arbitrarily large body in memory.
+const maxQueryBuilderBodySize = 1 << 20 // 1MiB
+
 func getQueryBuilder(r *http.Request) (query.Builder, error) {
-	data, err := io.ReadAll(r.Body)
+	data, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, maxQueryBuilderBodySize))
 	if err != nil {
 		return nil, err
 	}
