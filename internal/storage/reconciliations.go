@@ -12,7 +12,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-func (s *Storage) CreateReconciation(ctx context.Context, reco *models.Reconciliation) error {
+func (s *Storage) CreateReconciliation(ctx context.Context, reco *models.Reconciliation) error {
 	_, err := s.db.NewInsert().
 		Model(reco).
 		Exec(ctx)

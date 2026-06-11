@@ -121,7 +121,7 @@ func (s *mockStore) ListPolicies(ctx context.Context, q storage.GetPoliciesQuery
 	return nil, nil
 }
 
-func (s *mockStore) CreateReconciation(ctx context.Context, reco *models.Reconciliation) error {
+func (s *mockStore) CreateReconciliation(ctx context.Context, reco *models.Reconciliation) error {
 	return nil
 }
 

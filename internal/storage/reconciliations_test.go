@@ -61,7 +61,7 @@ var (
 
 func insertReconciliations(t *testing.T, store *Storage, reconciliations ...*models.Reconciliation) {
 	for _, reconciliation := range reconciliations {
-		err := store.CreateReconciation(context.Background(), reconciliation)
+		err := store.CreateReconciliation(context.Background(), reconciliation)
 		require.NoError(t, err)
 	}
 }

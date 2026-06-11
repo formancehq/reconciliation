@@ -118,7 +118,7 @@ func (s *Service) Reconciliation(ctx context.Context, policyID string, req *Reco
 		}
 	}
 
-	if err := s.store.CreateReconciation(ctx, res); err != nil {
+	if err := s.store.CreateReconciliation(ctx, res); err != nil {
 		return nil, newStorageError(err, "failed to create reconciliation")
 	}
 
