@@ -149,10 +149,10 @@ func (s *Service) computeDrift(
 		var drift big.Int
 		drift.Set(paymentBalance).Add(&drift, ledgerBalance)
 
+		// A discrepancy in either direction is a reconciliation failure:
+		// the ledger and the payments side must cancel each other out.
 		var err error
-		switch drift.Cmp(big.NewInt(0)) {
-		case 0, 1:
-		default:
+		if drift.Sign() != 0 {
 			err = fmt.Errorf("balance drift for asset %s", asset)
 		}
 
