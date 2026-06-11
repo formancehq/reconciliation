@@ -94,7 +94,7 @@ func newMockStore() *mockStore {
 	return &mockStore{}
 }
 
-func (s *mockStore) Ping() error {
+func (s *mockStore) Ping(ctx context.Context) error {
 	return nil
 }
 

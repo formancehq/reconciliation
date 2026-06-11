@@ -25,9 +25,9 @@ const (
 func healthCheckModule() fx.Option {
 	return fx.Options(
 		health.Module(),
-		health.ProvideHealthCheck(func() health.NamedCheck {
-			return health.NewNamedCheck("default", health.CheckFn(func(ctx context.Context) error {
-				return nil
+		health.ProvideHealthCheck(func(store *storage.Storage) health.NamedCheck {
+			return health.NewNamedCheck("database", health.CheckFn(func(ctx context.Context) error {
+				return store.Ping(ctx)
 			}))
 		}),
 	)
