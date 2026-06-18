@@ -45,6 +45,23 @@ func newRouter(
 		r.Delete("/policies/{policyID}", deletePolicyHandler(b))
 		r.Get("/policies/{policyID}", getPolicyHandler(b))
 		r.Post("/policies/{policyID}/reconciliation", reconciliationHandler(b))
+
+		// V1 — Rule / Evaluation / Incident
+		r.Post("/rules", createRuleHandler(b))
+		r.Get("/rules", listRulesHandler(b))
+		r.Get("/rules/{ruleID}", getRuleHandler(b))
+		r.Patch("/rules/{ruleID}", patchRuleHandler(b))
+		r.Delete("/rules/{ruleID}", deleteRuleHandler(b))
+		r.Post("/rules/{ruleID}/evaluate", evaluateRuleHandler(b))
+
+		r.Get("/evaluations", listEvaluationsHandler(b))
+		r.Get("/evaluations/{evaluationID}", getEvaluationHandler(b))
+
+		r.Get("/incidents", listIncidentsHandler(b))
+		r.Get("/incidents/{incidentID}", getIncidentHandler(b))
+		r.Post("/incidents/{incidentID}/ack", ackIncidentHandler(b))
+		r.Post("/incidents/{incidentID}/resolve", resolveIncidentHandler(b))
+		r.Post("/incidents/{incidentID}/accept", acceptIncidentHandler(b))
 	})
 
 	return r

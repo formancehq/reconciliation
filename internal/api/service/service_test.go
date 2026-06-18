@@ -36,15 +36,6 @@ func newMockSDKFormanceClient(
 	}
 }
 
-func (s *mockSDKFormanceClient) PaymentsgetServerInfo(ctx context.Context) (*operations.PaymentsgetServerInfoResponse, error) {
-	return &operations.PaymentsgetServerInfoResponse{
-		ServerInfo: &shared.ServerInfo{
-			Version: s.paymentsVersion,
-		},
-		StatusCode: http.StatusOK,
-	}, nil
-}
-
 func (s *mockSDKFormanceClient) GetPoolBalances(ctx context.Context, req operations.GetPoolBalancesRequest) (*operations.GetPoolBalancesResponse, error) {
 	poolBalances := make([]shared.PoolBalance, 0, len(s.paymentsBalances))
 	for assetCode, balance := range s.paymentsBalances {
@@ -64,15 +55,6 @@ func (s *mockSDKFormanceClient) GetPoolBalances(ctx context.Context, req operati
 	}, nil
 }
 
-func (s *mockSDKFormanceClient) V2GetInfo(ctx context.Context) (*operations.V2GetInfoResponse, error) {
-	return &operations.V2GetInfoResponse{
-		StatusCode: http.StatusOK,
-		V2ConfigInfoResponse: &shared.V2ConfigInfoResponse{
-			Version: s.ledgerVersion,
-		},
-	}, nil
-}
-
 func (s *mockSDKFormanceClient) V2GetBalancesAggregated(ctx context.Context, req operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error) {
 	balances := make(map[string]*big.Int)
 	for assetCode, balance := range s.ledgerBalances {
@@ -84,6 +66,23 @@ func (s *mockSDKFormanceClient) V2GetBalancesAggregated(ctx context.Context, req
 		V2AggregateBalancesResponse: &shared.V2AggregateBalancesResponse{
 			Data: balances,
 		},
+	}, nil
+}
+
+// V1 engine stubs — the legacy /policies tests don't exercise these, so the
+// mock returns benign empty responses. Engine-specific tests use the engine
+// package's own fakes.
+func (s *mockSDKFormanceClient) V2GetLedger(ctx context.Context, req operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error) {
+	return &operations.V2GetLedgerResponse{
+		StatusCode:          http.StatusOK,
+		V2GetLedgerResponse: &shared.V2GetLedgerResponse{Data: shared.V2Ledger{Name: req.Ledger}},
+	}, nil
+}
+
+func (s *mockSDKFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
+	return &operations.V3GetPoolBalancesLatestResponse{
+		StatusCode:             http.StatusOK,
+		V3PoolBalancesResponse: &shared.V3PoolBalancesResponse{},
 	}, nil
 }
 
@@ -130,6 +129,53 @@ func (s *mockStore) GetReconciliation(ctx context.Context, id uuid.UUID) (*model
 }
 
 func (s *mockStore) ListReconciliations(ctx context.Context, q storage.GetReconciliationsQuery) (*bunpaginate.Cursor[models.Reconciliation], error) {
+	return nil, nil
+}
+
+// --- V1 stubs --------------------------------------------------------------
+// Legacy reconciliation_test.go does not exercise the V1 surface; these stubs
+// exist solely so mockStore satisfies the Store interface. V1 services have
+// their own dedicated mocks in v1_orchestration_test.go.
+
+func (s *mockStore) CreateRule(context.Context, *models.Rule) error { return nil }
+func (s *mockStore) GetRule(context.Context, uuid.UUID) (*models.Rule, error) {
+	return nil, nil
+}
+func (s *mockStore) DeleteRule(context.Context, uuid.UUID) error { return nil }
+func (s *mockStore) PatchRule(context.Context, uuid.UUID, storage.RulePatch) error {
+	return nil
+}
+func (s *mockStore) ListRules(context.Context, storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+	return nil, nil
+}
+func (s *mockStore) CreateEvaluation(context.Context, *models.Evaluation) error {
+	return nil
+}
+func (s *mockStore) GetEvaluation(context.Context, uuid.UUID) (*models.Evaluation, error) {
+	return nil, nil
+}
+func (s *mockStore) ListEvaluations(context.Context, storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error) {
+	return nil, nil
+}
+func (s *mockStore) OpenOrUpdateIncident(context.Context, storage.OpenIncidentInput) (*storage.OpenIncidentResult, error) {
+	return nil, nil
+}
+func (s *mockStore) AutoResolveIncident(context.Context, uuid.UUID, string, uuid.UUID, time.Time) (*models.Incident, error) {
+	return nil, nil
+}
+func (s *mockStore) AckIncident(context.Context, uuid.UUID, *models.Ack) (*models.Incident, error) {
+	return nil, nil
+}
+func (s *mockStore) ResolveIncidentManual(context.Context, uuid.UUID, *models.Resolution) (*models.Incident, error) {
+	return nil, nil
+}
+func (s *mockStore) AcceptIncident(context.Context, uuid.UUID, *models.Resolution) (*models.Incident, error) {
+	return nil, nil
+}
+func (s *mockStore) GetIncident(context.Context, uuid.UUID) (*models.Incident, error) {
+	return nil, nil
+}
+func (s *mockStore) ListIncidents(context.Context, storage.GetIncidentsQuery) (*bunpaginate.Cursor[models.Incident], error) {
 	return nil, nil
 }
 

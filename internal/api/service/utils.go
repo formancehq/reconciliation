@@ -8,46 +8,12 @@ import (
 	"time"
 
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
-	"golang.org/x/mod/semver"
 )
 
-type Version interface {
-	GetVersion() string
-}
-
-func isVersionSupported(
-	version Version,
-	minSupportedVersion string,
-) bool {
-	v := "v" + version.GetVersion()
-	if !semver.IsValid(v) {
-		// If semver is not valid, we assume it's a commit hash, so last version
-		return true
-	}
-
-	switch semver.Compare(v, minSupportedVersion) {
-	case 0, 1:
-		// Higher or equal, nothing to do
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName string, ledgerAggregatedBalanceQuery map[string]interface{}, at time.Time) (map[string]*big.Int, error) {
-	infoResponse, err := s.client.V2GetInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ledger info: %w", err)
-	}
-
-	if infoResponse.StatusCode != 200 {
-		return nil, errors.New("failed to get ledger info")
-	}
-
-	if !isVersionSupported(infoResponse.V2ConfigInfoResponse, "v2.0.0-beta.1") {
-		return nil, errors.New("ledger version not supported")
-	}
-
+	// Note: the historical V2GetInfo version gate was removed when we bumped the
+	// SDK to v3.7.2 — the global ledger-info endpoint has been replaced by
+	// per-ledger info and the minimum-version assertion no longer applies.
 	balances, err := s.client.V2GetBalancesAggregated(
 		ctx,
 		operations.V2GetBalancesAggregatedRequest{
@@ -77,19 +43,12 @@ func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName s
 }
 
 func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID string, at time.Time) (map[string]*big.Int, error) {
-	response, err := s.client.PaymentsgetServerInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get payments info: %w", err)
-	}
-
-	if response.StatusCode != 200 {
-		return nil, errors.New("failed to get payments info")
-	}
-
-	if !isVersionSupported(response.ServerInfo, "v1.0.0-rc.4") {
-		return nil, errors.New("payments version not supported")
-	}
-
+	// Note: the historical PaymentsgetServerInfo version gate was removed when
+	// we bumped the SDK to v3.7.2 (ServerInfo field was renamed). The
+	// minimum-version assertion is also no longer needed for the legacy /policies
+	// path. NB: the legacy GetPoolBalances PIT path is known empty under
+	// payments v3 — see ledger#1416 sibling and the V1 SDKPaymentsResolver
+	// which uses V3GetPoolBalancesLatest instead.
 	balances, err := s.client.GetPoolBalances(
 		ctx,
 		operations.GetPoolBalancesRequest{

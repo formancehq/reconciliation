@@ -1,0 +1,78 @@
+package models
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+)
+
+// TemplateKind is the V1 public-API surface for rules — a typed catalog entry
+// that compiles deterministically to an internal CEL expression. The kernel is
+// not exposed at V1 GA; templates are the entire customer-facing surface.
+// See ADR-001 for the rationale.
+type TemplateKind string
+
+const (
+	// TemplateLedgerVsPoolDrift is the port of today's Policy behaviour:
+	// compare a dynamic ledger account set against a dynamic payments pool.
+	TemplateLedgerVsPoolDrift TemplateKind = "ledger_vs_pool_drift"
+	// TemplateLedgerInvariant asserts that a signed sum of balance(source)
+	// terms is within tolerance — the Buildr-style trust integrity check.
+	TemplateLedgerInvariant TemplateKind = "ledger_invariant"
+	// TemplateAccountThreshold asserts that each (or aggregate) balance in
+	// a ledger set is within [min, max] bounds, per asset.
+	TemplateAccountThreshold TemplateKind = "account_threshold"
+)
+
+// Severity is shared between Rule (declared severity at creation) and Incident
+// (inherited from the rule, possibly escalated). The CHECK constraint in the
+// migration mirrors this set verbatim.
+type Severity string
+
+const (
+	SeverityInfo     Severity = "info"
+	SeverityLow      Severity = "low"
+	SeverityMedium   Severity = "medium"
+	SeverityHigh     Severity = "high"
+	SeverityCritical Severity = "critical"
+)
+
+// ScheduleKind discriminates the Schedule shape. V1 beta ships on_demand only;
+// cron lands at V1 GA. event_driven is V2.
+type ScheduleKind string
+
+const (
+	ScheduleOnDemand ScheduleKind = "on_demand"
+	ScheduleCron     ScheduleKind = "cron"
+)
+
+// Schedule controls when a rule is evaluated. Cron-specific fields are zero
+// for on_demand schedules; consumers should branch on Kind.
+type Schedule struct {
+	Kind         ScheduleKind  `json:"kind"`
+	Expr         string        `json:"expr,omitempty"`
+	TZ           string        `json:"tz,omitempty"`
+	SafetyMargin time.Duration `json:"safetyMargin,omitempty"`
+}
+
+// Rule is the customer-facing entity: a template + spec + schedule + delivery.
+// The compiled CEL is persisted for explainability and to support post-GA raw
+// expression mode without recompiling on every load.
+type Rule struct {
+	bun.BaseModel `bun:"reconciliations.rule" json:"-"`
+
+	ID            uuid.UUID         `bun:",pk,nullzero"           json:"id"`
+	Name          string            `bun:",notnull"               json:"name"`
+	TemplateKind  TemplateKind      `bun:"template_kind,notnull"  json:"templateKind"`
+	TemplateSpec  json.RawMessage   `bun:"template_spec,type:jsonb,notnull" json:"templateSpec"`
+	CompiledCEL   string            `bun:"compiled_cel,notnull"   json:"compiledCEL,omitempty"`
+	Enabled       bool              `bun:",notnull"               json:"enabled"`
+	Severity      Severity          `bun:",notnull"               json:"severity"`
+	Schedule      *Schedule         `bun:",type:jsonb"            json:"schedule,omitempty"`
+	Notifications []string          `bun:",type:jsonb"            json:"notifications,omitempty"`
+	Labels        map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`
+	CreatedAt     time.Time         `bun:"created_at,notnull,nullzero" json:"createdAt"`
+	UpdatedAt     time.Time         `bun:"updated_at,notnull,nullzero" json:"updatedAt"`
+}

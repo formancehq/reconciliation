@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -249,12 +250,18 @@ func TestReconciliation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			s := NewService(newMockStore(), newMockSDKFormanceClient(
-				tc.ledgerVersion,
-				tc.ledgerBalances,
-				tc.paymentsVersion,
-				tc.paymentsBalances,
-			))
+			// Legacy /policies test — V1 collaborators (engine, templates,
+			// resolvers) are not exercised, so passing nil/zero is intentional.
+			s := NewService(
+				newMockStore(),
+				newMockSDKFormanceClient(
+					tc.ledgerVersion,
+					tc.ledgerBalances,
+					tc.paymentsVersion,
+					tc.paymentsBalances,
+				),
+				nil, nil, engine.Resolvers{},
+			)
 
 			reco, err := s.Reconciliation(context.Background(), uuid.New().String(), &ReconciliationRequest{})
 			if tc.expectedError {

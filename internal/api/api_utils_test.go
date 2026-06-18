@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/formancehq/reconciliation/internal/api/backend"
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 )
 
 func newTestingBackend(t *testing.T) (*backend.MockBackend, *backend.MockService) {

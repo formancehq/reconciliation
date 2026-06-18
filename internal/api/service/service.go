@@ -2,45 +2,93 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 
 	sdk "github.com/formancehq/formance-sdk-go/v3"
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
+	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
 )
 
+// Store is the storage surface the Service depends on. Both the legacy
+// /policies methods and the V1 Rule/Evaluation/Incident methods live here so
+// there's one mockable boundary for tests.
 type Store interface {
 	Ping() error
+
+	// Legacy /policies path
 	CreatePolicy(ctx context.Context, policy *models.Policy) error
 	DeletePolicy(ctx context.Context, id uuid.UUID) error
 	GetPolicy(ctx context.Context, id uuid.UUID) (*models.Policy, error)
 	ListPolicies(ctx context.Context, q storage.GetPoliciesQuery) (*bunpaginate.Cursor[models.Policy], error)
-
 	CreateReconciation(ctx context.Context, reco *models.Reconciliation) error
 	GetReconciliation(ctx context.Context, id uuid.UUID) (*models.Reconciliation, error)
 	ListReconciliations(ctx context.Context, q storage.GetReconciliationsQuery) (*bunpaginate.Cursor[models.Reconciliation], error)
+
+	// V1 — Rule
+	CreateRule(ctx context.Context, rule *models.Rule) error
+	GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error)
+	DeleteRule(ctx context.Context, id uuid.UUID) error
+	PatchRule(ctx context.Context, id uuid.UUID, patch storage.RulePatch) error
+	ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error)
+
+	// V1 — Evaluation
+	CreateEvaluation(ctx context.Context, ev *models.Evaluation) error
+	GetEvaluation(ctx context.Context, id uuid.UUID) (*models.Evaluation, error)
+	ListEvaluations(ctx context.Context, q storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error)
+
+	// V1 — Incident
+	OpenOrUpdateIncident(ctx context.Context, in storage.OpenIncidentInput) (*storage.OpenIncidentResult, error)
+	AutoResolveIncident(ctx context.Context, ruleID uuid.UUID, fingerprint string, evaluationID uuid.UUID, at time.Time) (*models.Incident, error)
+	AckIncident(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Incident, error)
+	ResolveIncidentManual(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Incident, error)
+	AcceptIncident(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Incident, error)
+	GetIncident(ctx context.Context, id uuid.UUID) (*models.Incident, error)
+	ListIncidents(ctx context.Context, q storage.GetIncidentsQuery) (*bunpaginate.Cursor[models.Incident], error)
 }
 
+// Service is the orchestrator for both the legacy /policies path and the V1
+// rule/evaluation/incident surface. V1-only callers can ignore `client`;
+// legacy /policies callers can ignore `engine` and `templates`.
 type Service struct {
-	store  Store
-	client SDKFormance
+	store     Store
+	client    SDKFormance
+	engine    *engine.Engine
+	templates *templates.Registry
+	resolvers engine.Resolvers
 }
 
-func NewService(store Store, client SDKFormance) *Service {
+// NewService constructs the service with all collaborators. V1 work requires
+// non-nil engine + templates + resolvers; legacy /policies calls will still
+// work if those are nil (kept for tests / partial wiring).
+func NewService(store Store, client SDKFormance, eng *engine.Engine, reg *templates.Registry, res engine.Resolvers) *Service {
 	return &Service{
-		store:  store,
-		client: client,
+		store:     store,
+		client:    client,
+		engine:    eng,
+		templates: reg,
+		resolvers: res,
 	}
 }
 
+// SDKFormance is the SDK surface the service layer + engine consume. It
+// intentionally covers BOTH the legacy /policies path (GetPoolBalances on the
+// payments v1 namespace) and the V1 engine resolvers (V2GetLedger,
+// V2GetBalancesAggregated, V3GetPoolBalancesLatest). Mocks in tests implement
+// only the subset they need.
 type SDKFormance interface {
-	PaymentsgetServerInfo(ctx context.Context) (*operations.PaymentsgetServerInfoResponse, error)
+	// Legacy reconciliation /policies path
 	GetPoolBalances(ctx context.Context, req operations.GetPoolBalancesRequest) (*operations.GetPoolBalancesResponse, error)
-	V2GetInfo(ctx context.Context) (*operations.V2GetInfoResponse, error)
 	V2GetBalancesAggregated(ctx context.Context, req operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error)
+
+	// V1 engine resolvers
+	V2GetLedger(ctx context.Context, req operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error)
+	V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error)
 }
 
 type sdkFormanceClient struct {
@@ -48,25 +96,23 @@ type sdkFormanceClient struct {
 }
 
 func NewSDKFormance(client *sdk.Formance) *sdkFormanceClient {
-	return &sdkFormanceClient{
-		client: client,
-	}
-}
-
-func (s *sdkFormanceClient) PaymentsgetServerInfo(ctx context.Context) (*operations.PaymentsgetServerInfoResponse, error) {
-	return s.client.Payments.V1.PaymentsgetServerInfo(ctx)
+	return &sdkFormanceClient{client: client}
 }
 
 func (s *sdkFormanceClient) GetPoolBalances(ctx context.Context, req operations.GetPoolBalancesRequest) (*operations.GetPoolBalancesResponse, error) {
 	return s.client.Payments.V1.GetPoolBalances(ctx, req)
 }
 
-func (s *sdkFormanceClient) V2GetInfo(ctx context.Context) (*operations.V2GetInfoResponse, error) {
-	return s.client.Ledger.V2.GetInfo(ctx)
-}
-
 func (s *sdkFormanceClient) V2GetBalancesAggregated(ctx context.Context, req operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error) {
 	return s.client.Ledger.V2.GetBalancesAggregated(ctx, req)
+}
+
+func (s *sdkFormanceClient) V2GetLedger(ctx context.Context, req operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error) {
+	return s.client.Ledger.V2.GetLedger(ctx, req)
+}
+
+func (s *sdkFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
+	return s.client.Payments.V3.GetPoolBalancesLatest(ctx, req)
 }
 
 var _ SDKFormance = (*sdkFormanceClient)(nil)

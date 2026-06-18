@@ -144,6 +144,196 @@ paths:
       security:
         - Authorization:
             - reconciliation:read
+
+  # --- V1 Ledger Clarity surface ---------------------------------------------
+
+  /rules:
+    post:
+      summary: Create a rule
+      operationId: createRule
+      tags: [reconciliation.v1]
+      requestBody: { $ref: '#/components/requestBodies/Rule' }
+      responses:
+        '201': { $ref: '#/components/responses/Rule' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+    get:
+      summary: List rules
+      operationId: listRules
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryBuilder' }
+      responses:
+        '200': { $ref: '#/components/responses/Rules' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /rules/{ruleID}:
+    parameters: [{ $ref: '#/components/parameters/RuleID' }]
+    get:
+      summary: Get a rule
+      operationId: getRule
+      tags: [reconciliation.v1]
+      responses:
+        '200': { $ref: '#/components/responses/Rule' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+    patch:
+      summary: Patch a rule (partial update)
+      operationId: patchRule
+      tags: [reconciliation.v1]
+      requestBody: { $ref: '#/components/requestBodies/RulePatch' }
+      responses:
+        '200': { $ref: '#/components/responses/Rule' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+    delete:
+      summary: Delete a rule (cascades to evaluations + incidents)
+      operationId: deleteRule
+      tags: [reconciliation.v1]
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /rules/{ruleID}/evaluate:
+    post:
+      summary: Evaluate a rule now
+      operationId: evaluateRule
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/RuleID' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvaluateRuleRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Evaluation' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /evaluations:
+    get:
+      summary: List evaluations
+      operationId: listEvaluations
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryBuilder' }
+      responses:
+        '200': { $ref: '#/components/responses/Evaluations' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /evaluations/{evaluationID}:
+    get:
+      summary: Get an evaluation
+      operationId: getEvaluation
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/EvaluationID' }]
+      responses:
+        '200': { $ref: '#/components/responses/Evaluation' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /incidents:
+    get:
+      summary: List incidents
+      operationId: listIncidents
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryBuilder' }
+      responses:
+        '200': { $ref: '#/components/responses/Incidents' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /incidents/{incidentID}:
+    parameters: [{ $ref: '#/components/parameters/IncidentID' }]
+    get:
+      summary: Get an incident
+      operationId: getIncident
+      tags: [reconciliation.v1]
+      responses:
+        '200': { $ref: '#/components/responses/Incident' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /incidents/{incidentID}/ack:
+    post:
+      summary: Acknowledge an incident
+      operationId: ackIncident
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/IncidentID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AckIncidentRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Incident' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /incidents/{incidentID}/resolve:
+    post:
+      summary: Resolve an incident (fixed_by_booking)
+      operationId: resolveIncident
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/IncidentID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveIncidentRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Incident' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /incidents/{incidentID}/accept:
+    post:
+      summary: Accept an incident (accepted_by_business)
+      operationId: acceptIncident
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/IncidentID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptIncidentRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Incident' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
 components:
   parameters:
     PageSize:
@@ -184,6 +374,24 @@ components:
       description: The reconciliation ID.
       example: XXX
       required: true
+    RuleID:
+      name: ruleID
+      in: path
+      required: true
+      description: The rule ID.
+      schema: { type: string, format: uuid }
+    EvaluationID:
+      name: evaluationID
+      in: path
+      required: true
+      description: The evaluation ID.
+      schema: { type: string, format: uuid }
+    IncidentID:
+      name: incidentID
+      in: path
+      required: true
+      description: The incident ID.
+      schema: { type: string, format: uuid }
   responses:
     NoContent:
       description: No content
@@ -223,6 +431,36 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Rule:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RuleResponse' }
+    Rules:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RulesCursorResponse' }
+    Evaluation:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EvaluationResponse' }
+    Evaluations:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EvaluationsCursorResponse' }
+    Incident:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/IncidentResponse' }
+    Incidents:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/IncidentsCursorResponse' }
   requestBodies:
     Policy:
       required: true
@@ -236,6 +474,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ReconciliationRequest'
+    Rule:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RuleRequest' }
+    RulePatch:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RulePatchRequest' }
   schemas:
     QueryBuilder:
       type: object
@@ -450,3 +698,243 @@ components:
           type: string
         details:
           type: string
+
+    # --- V1 Ledger Clarity schemas -----------------------------------------
+
+    Severity:
+      type: string
+      enum: [info, low, medium, high, critical]
+    TemplateKind:
+      type: string
+      enum: [ledger_vs_pool_drift, ledger_invariant, account_threshold]
+    Schedule:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [on_demand, cron] }
+        expr: { type: string, example: "*/15 * * * *" }
+        tz: { type: string, example: "UTC" }
+        safetyMargin: { type: string, example: "30s", description: "Go duration string" }
+    Ack:
+      type: object
+      required: [by, at]
+      properties:
+        by: { type: string, example: "ops@buildr.com" }
+        at: { type: string, format: date-time }
+        note: { type: string }
+    Resolution:
+      type: object
+      required: [kind, by, at]
+      properties:
+        kind: { type: string, enum: [auto, fixed_by_booking, accepted] }
+        by: { type: string }
+        at: { type: string, format: date-time }
+        note: { type: string }
+        transactionRefs:
+          type: array
+          items: { type: string }
+        evidenceSnapshot:
+          type: object
+          additionalProperties: true
+        expiresAt: { type: string, format: date-time }
+
+    Rule:
+      type: object
+      required: [id, name, templateKind, templateSpec, enabled, severity, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        templateKind: { $ref: '#/components/schemas/TemplateKind' }
+        templateSpec:
+          type: object
+          additionalProperties: true
+        compiledCEL: { type: string }
+        enabled: { type: boolean }
+        severity: { $ref: '#/components/schemas/Severity' }
+        schedule: { $ref: '#/components/schemas/Schedule' }
+        notifications:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    RuleRequest:
+      type: object
+      required: [name, templateKind, templateSpec]
+      properties:
+        name: { type: string }
+        templateKind: { $ref: '#/components/schemas/TemplateKind' }
+        templateSpec:
+          type: object
+          additionalProperties: true
+        severity: { $ref: '#/components/schemas/Severity' }
+        schedule: { $ref: '#/components/schemas/Schedule' }
+        notifications:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        enabled: { type: boolean }
+    RulePatchRequest:
+      type: object
+      description: Partial update — only fields supplied are applied.
+      properties:
+        name: { type: string }
+        templateKind: { $ref: '#/components/schemas/TemplateKind' }
+        templateSpec:
+          type: object
+          additionalProperties: true
+        enabled: { type: boolean }
+        severity: { $ref: '#/components/schemas/Severity' }
+        schedule: { $ref: '#/components/schemas/Schedule' }
+        notifications:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+    RuleResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Rule' }
+    RulesCursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Rule' }
+
+    EvaluateRuleRequest:
+      type: object
+      properties:
+        at: { type: string, format: date-time, description: "PIT for the evaluation. Defaults to now." }
+        safetyMargin: { type: string, example: "30s", description: "Go duration string subtracted from `at`. Defaults to 30s." }
+    Evaluation:
+      type: object
+      required: [id, ruleID, startedAt, endedAt, result, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        ruleID: { type: string, format: uuid }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        pitPerSource:
+          type: object
+          additionalProperties: { type: string, format: date-time }
+        result: { type: string, enum: [PASS, FAIL, ERROR] }
+        evidence:
+          oneOf:
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
+            - type: object
+              additionalProperties: true
+        error: { type: string }
+        costUnits: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+    EvaluationResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Evaluation' }
+    EvaluationsCursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Evaluation' }
+
+    Incident:
+      type: object
+      required: [id, ruleID, fingerprint, status, severity, openedAt, lastSeenAt, occurrenceCount, firstEvaluationID, lastEvaluationID, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        ruleID: { type: string, format: uuid }
+        fingerprint: { type: string, example: "asset:USD/2" }
+        status: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
+        severity: { $ref: '#/components/schemas/Severity' }
+        openedAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        occurrenceCount: { type: integer }
+        firstEvaluationID: { type: string, format: uuid }
+        lastEvaluationID: { type: string, format: uuid }
+        evidence:
+          type: object
+          additionalProperties: true
+        ack: { $ref: '#/components/schemas/Ack' }
+        resolution: { $ref: '#/components/schemas/Resolution' }
+        parentIncidentID: { type: string, format: uuid }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    IncidentResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Incident' }
+    IncidentsCursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Incident' }
+
+    AckIncidentRequest:
+      type: object
+      required: [by]
+      properties:
+        by: { type: string, example: "ops@buildr.com" }
+        note: { type: string }
+    ResolveIncidentRequest:
+      type: object
+      required: [by]
+      description: |
+        Mark an incident resolved. When `transactionRefs` is non-empty the
+        resolution kind is recorded as `fixed_by_booking`.
+      properties:
+        by: { type: string }
+        note: { type: string }
+        transactionRefs:
+          type: array
+          items: { type: string }
+    AcceptIncidentRequest:
+      type: object
+      required: [by, note]
+      description: Business acceptance. `note` is required and the evidence is snapshotted onto the resolution.
+      properties:
+        by: { type: string }
+        note: { type: string, minLength: 1 }
+        expiresAt: { type: string, format: date-time }
