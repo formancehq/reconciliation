@@ -65,18 +65,28 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	})
 	ended := time.Now().UTC()
 
+	pitPerSource, mergeErr := mergePitPerSource(outcomes)
+	if mergeErr != nil {
+		// Promote to a kernel error: a kernel/template disagreement is an
+		// engine-health problem, not a data incident.
+		evalErr = mergeErr
+	}
 	evaluation := &models.Evaluation{
 		ID:           uuid.New(),
 		RuleID:       rule.ID,
 		StartedAt:    started,
 		EndedAt:      ended,
-		PitPerSource: mergePitPerSource(outcomes),
+		PitPerSource: pitPerSource,
 	}
 
 	if evalErr != nil {
 		evaluation.Result = models.EvaluationError
 		evaluation.Error = evalErr.Error()
-		evaluation.Evidence = marshalErrorEvidence(evalErr)
+		ev, err := marshalErrorEvidence(evalErr)
+		if err != nil {
+			return nil, err
+		}
+		evaluation.Evidence = ev
 		if err := s.store.CreateEvaluation(ctx, evaluation); err != nil {
 			return nil, err
 		}
@@ -93,7 +103,11 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 			break
 		}
 	}
-	evaluation.Evidence = marshalOutcomes(outcomes)
+	evidence, mErr := marshalOutcomes(outcomes)
+	if mErr != nil {
+		return nil, mErr
+	}
+	evaluation.Evidence = evidence
 
 	// Atomicity: persist the evaluation row AND drive every incident
 	// transition under a single transaction. A mid-loop failure would
@@ -198,10 +212,13 @@ func (s *Service) openEngineErrorIncident(ctx context.Context, rule *models.Rule
 	}
 	labels["kind"] = engineErrorFingerprint
 
-	evidence, _ := json.Marshal(map[string]any{
+	evidence, mErr := json.Marshal(map[string]any{
 		"error":        evalErr.Error(),
 		"evaluationId": ev.ID.String(),
 	})
+	if mErr != nil {
+		return nil, fmt.Errorf("marshal engine.error evidence: %w", mErr)
+	}
 
 	res, err := s.store.OpenOrUpdateIncident(ctx, storage.OpenIncidentInput{
 		RuleID:       rule.ID,
@@ -219,25 +236,32 @@ func (s *Service) openEngineErrorIncident(ctx context.Context, rule *models.Rule
 }
 
 // mergePitPerSource collapses per-outcome PIT maps into a single evaluation-row
-// map. Per-outcome maps are typically identical (same Source resolved at the
-// same PIT for every asset), so the merge is a straightforward "last write
-// wins" — different PIT values for the same Source key would be a kernel bug.
-func mergePitPerSource(outcomes []templates.Outcome) map[string]time.Time {
+// map. Per-outcome maps must be identical for the same Source key — every
+// template resolves a given Source at one PIT for the whole evaluation. A
+// disagreement is a kernel/template contract bug, not a "last write wins"
+// situation, so surface it as an error rather than silently picking one.
+func mergePitPerSource(outcomes []templates.Outcome) (map[string]time.Time, error) {
 	if len(outcomes) == 0 {
-		return map[string]time.Time{}
+		return map[string]time.Time{}, nil
 	}
 	out := map[string]time.Time{}
 	for _, o := range outcomes {
 		for k, v := range o.PitPerSource {
+			if existing, ok := out[k]; ok && !existing.Equal(v) {
+				return nil, fmt.Errorf(
+					"kernel/template contract violation: source %q reported PIT %s and %s in the same evaluation",
+					k, existing.Format(time.RFC3339Nano), v.Format(time.RFC3339Nano),
+				)
+			}
 			out[k] = v
 		}
 	}
-	return out
+	return out, nil
 }
 
-func marshalOutcomes(outcomes []templates.Outcome) json.RawMessage {
+func marshalOutcomes(outcomes []templates.Outcome) (json.RawMessage, error) {
 	if len(outcomes) == 0 {
-		return json.RawMessage("[]")
+		return json.RawMessage("[]"), nil
 	}
 	type encoded struct {
 		Fingerprint string         `json:"fingerprint"`
@@ -252,11 +276,17 @@ func marshalOutcomes(outcomes []templates.Outcome) json.RawMessage {
 			Evidence:    o.Evidence,
 		})
 	}
-	b, _ := json.Marshal(enc)
-	return b
+	b, err := json.Marshal(enc)
+	if err != nil {
+		return nil, fmt.Errorf("marshal outcomes evidence: %w", err)
+	}
+	return b, nil
 }
 
-func marshalErrorEvidence(err error) json.RawMessage {
-	b, _ := json.Marshal(map[string]any{"error": err.Error()})
-	return b
+func marshalErrorEvidence(err error) (json.RawMessage, error) {
+	b, mErr := json.Marshal(map[string]any{"error": err.Error()})
+	if mErr != nil {
+		return nil, fmt.Errorf("marshal error evidence: %w", mErr)
+	}
+	return b, nil
 }

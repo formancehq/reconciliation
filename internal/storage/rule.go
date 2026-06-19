@@ -104,6 +104,19 @@ func (s *Storage) PatchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 		touched = true
 	}
 	if !touched {
+		// Empty patch is a valid request shape, but the caller still needs to
+		// know whether the rule exists — otherwise a typo'd id returns 200 OK
+		// for a no-op that actually missed. Verify existence explicitly.
+		exists, err := s.db.NewSelect().
+			Model((*models.Rule)(nil)).
+			Where("id = ?", id).
+			Exists(ctx)
+		if err != nil {
+			return e("patch rule existence check", err)
+		}
+		if !exists {
+			return e("patch rule", ErrNotFound)
+		}
 		return nil
 	}
 	res, err := q.Exec(ctx)

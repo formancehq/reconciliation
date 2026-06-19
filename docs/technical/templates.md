@@ -65,7 +65,7 @@ Discovered at eval time = `union(ledgerBalances, poolBalances)`. **Every** asset
 
 **Per-asset CEL** (the runtime form)
 
-```
+```cel
 abs(balance(ledgerSet("buildr", "<query json>"), "USD/2")
   + balance(pool("0eb4a31f-…"), "USD/2")) <= 0
 ```
@@ -120,7 +120,7 @@ Buildr-style "sum of signed balances must net to zero (within tolerance)" check.
 
 **Per-asset CEL**
 
-```
+```cel
 abs(balance(ledgerSet("buildr", "<held query>"), "USD/2")
   + -balance(ledgerSet("buildr", "<obligation query>"), "USD/2")) <= 0
 ```
@@ -176,7 +176,7 @@ Per-asset min/max bounds on the aggregated balance of a ledger account set.
 
 **Per-asset CEL** (combines whichever bounds are set with `&&`)
 
-```
+```cel
 balance(ledgerSet("acme", "<query>"), "USD/2") >= 100000
   && balance(ledgerSet("acme", "<query>"), "USD/2") <= 5000000
 ```

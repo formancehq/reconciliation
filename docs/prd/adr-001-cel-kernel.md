@@ -191,7 +191,7 @@ The kernel uses CEL internally; templates are the entire customer-facing surface
 
 Rationale: once customer expressions exist in production, the builtin namespace (`balance`, `ledgerSet`, `pool`, …) is a binding API. We need at least one GA cycle of internal use to shake out the builtin naming and the object model before promising stability.
 
-See [project memory `reconciliation-v1-scope-discipline`](../../../.claude/projects/-Users-arnaud-Documents-GitHub-reconciliation/memory/reconciliation_v1_scope_discipline.md).
+Scope discipline for V1: CEL stays internal-only, templates are the public API, Webhooks deliver events, no vendor integrations.
 
 ### Other commitments
 
@@ -215,7 +215,7 @@ We would **not** revisit because (a) a customer wants a feature CEL can't expres
 
 ## 11. Engine sketch
 
-```
+```text
 POST /rules { template: "ledger_invariant", spec: {…} }
   │
   ├─ template compiler:   spec  →  CEL string
@@ -246,7 +246,7 @@ The kernel's Go code in the runtime path is ~200 lines. Everything else is templ
 
 For reviewers who want to feel the surface:
 
-```
+```cel
 # ledger_vs_pool_drift  (port of today)
 balance(ledgerSet("buildr","held=*")) + balance(pool("pool_xyz")) == 0
 

@@ -6,7 +6,7 @@ Where the pieces live and how they fit together. For the *why* behind the kernel
 
 ## Package layout
 
-```
+```text
 internal/
 ├── models/                 ✅ Go types — Rule, Evaluation, Incident, Resolution
 ├── storage/                ✅ Postgres CRUD via bun

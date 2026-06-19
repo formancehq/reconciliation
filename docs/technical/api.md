@@ -213,7 +213,7 @@ Published to the Webhooks module — same dispatch model as other Formance event
 
 Each payload carries the full `Incident` row plus the latest `Evaluation`'s `evidence`.
 
-Email digest is owned in-module (per-recipient aggregation is awkward to push down to Webhooks). All other delivery is the customer's problem (Jira / PagerDuty / Slack via their own Webhook consumer) — see [project memory `reconciliation-v1-scope-discipline`](../../../.claude/projects/-Users-arnaud-Documents-GitHub-reconciliation/memory/reconciliation_v1_scope_discipline.md).
+Email digest is owned in-module (per-recipient aggregation is awkward to push down to Webhooks). All other delivery is the customer's problem (Jira / PagerDuty / Slack via their own Webhook consumer).
 
 ---
 

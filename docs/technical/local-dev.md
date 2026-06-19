@@ -2,14 +2,14 @@
 
 The repo ships an **isolated** local stack at [`local/`](../../local/). It runs alongside (not on top of) the daily-driver `stack/` setup — different ports, different volumes, different Compose project name. Bringing it up does not touch anything in `stack/`.
 
-> Discipline: when adding new dev tooling, default to project-local files. The user's `stack/` is off-limits unless explicitly authorized. See [project memory `local-dev-isolation`](../../../.claude/projects/-Users-arnaud-Documents-GitHub-reconciliation/memory/local_dev_isolation.md).
+> Discipline: when adding new dev tooling, default to project-local files. A daily-driver `stack/` setup outside this repo is off-limits unless explicitly authorized.
 
 ---
 
 ## Bring it up
 
 ```bash
-cd /Users/arnaud/Documents/GitHub/reconciliation
+cd <path-to-reconciliation-checkout>
 just local-up        # start in background
 just local-ps        # see what's running
 just local-smoke     # connectivity check through the gateway
@@ -64,7 +64,7 @@ Downstream services (ledger, payments) don't enforce auth in local mode (no `--a
 
 `bash local/smoke.sh` (or `just local-smoke`) hits each service through the gateway:
 
-```
+```text
 Smoke-testing http://localhost:8180
 
   gateway /versions                200 OK

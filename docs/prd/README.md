@@ -119,7 +119,7 @@ The engine internals (rules, expressions, kernel) exist to serve this lifecycle,
 
 ## 6. Conceptual model
 
-```
+```text
 Rule          → Evaluation → (on fail)  Incident  →  Resolution
 (definition)    (one run,    (stateful,   (audit-trailed
                 always       dedup'd,      closure path)

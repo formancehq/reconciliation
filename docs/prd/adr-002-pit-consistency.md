@@ -119,7 +119,7 @@ The SDK's `GetPoolBalances` (legacy path) returns `[]` under payments v3 even wi
 
 When `ACCOUNT_METADATA_HISTORY: DISABLED` on a ledger, `/aggregate/balances?pit=…` with a metadata filter returns `{}` silently — the same call without `pit` works, the same call with an address filter works, and `/accounts` with `pit + metadata` returns matches. Endpoint-specific inconsistency.
 
-Filed: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416). Captured in [project memory `ledger-aggregate-pit-metadata`](../../../.claude/projects/-Users-arnaud-Documents-GitHub-reconciliation/memory/ledger_aggregate_pit_metadata.md). V1 mitigation: `SDKLedgerResolver.Features()` caches the flag; the service layer (task #5) will refuse metadata-based templates against history-off ledgers with a clear error.
+Filed: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416). V1 mitigation: `SDKLedgerResolver.Features()` caches the flag; the service layer (task #5) will refuse metadata-based templates against history-off ledgers with a clear error.
 
 ---
 

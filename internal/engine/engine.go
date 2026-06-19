@@ -22,7 +22,10 @@ type Engine struct {
 }
 
 // New constructs an Engine. Both resolvers must be non-nil for V1.
-// limits may be zero — DefaultLimits is applied in that case.
+// Partial Limits are filled in from DefaultLimits — any zero-valued field
+// inherits its default rather than disabling the check, so a caller passing
+// only a custom MaxCELCost still gets the standard MaxAccountsScanned /
+// MaxWallClock guards.
 func New(resolvers Resolvers, limits Limits) (*Engine, error) {
 	if resolvers.Ledger == nil {
 		return nil, errors.New("engine: LedgerResolver is required")
@@ -30,9 +33,7 @@ func New(resolvers Resolvers, limits Limits) (*Engine, error) {
 	if resolvers.Payments == nil {
 		return nil, errors.New("engine: PaymentsResolver is required")
 	}
-	if limits == (Limits{}) {
-		limits = DefaultLimits
-	}
+	limits = mergeLimits(limits, DefaultLimits)
 
 	env, err := cel.NewEnv(declarations()...)
 	if err != nil {

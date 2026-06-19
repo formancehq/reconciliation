@@ -36,6 +36,23 @@ var DefaultLimits = Limits{
 	MaxWallClock:       30 * time.Second,
 }
 
+// mergeLimits fills zero-valued fields in `override` with the corresponding
+// fields from `defaults`. Lets callers pass partial Limits — a zero
+// MaxCELCost or MaxAccountsScanned must not silently disable the check, since
+// disabling those guards was never a documented opt-in.
+func mergeLimits(override, defaults Limits) Limits {
+	if override.MaxCELCost == 0 {
+		override.MaxCELCost = defaults.MaxCELCost
+	}
+	if override.MaxAccountsScanned == 0 {
+		override.MaxAccountsScanned = defaults.MaxAccountsScanned
+	}
+	if override.MaxWallClock == 0 {
+		override.MaxWallClock = defaults.MaxWallClock
+	}
+	return override
+}
+
 // budgetTracker is the per-evaluation accumulator. Resolvers call its methods
 // before doing work; the engine reads .Cost() into the persisted evaluation row.
 type budgetTracker struct {

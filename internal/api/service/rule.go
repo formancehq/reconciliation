@@ -44,6 +44,9 @@ func (r *CreateRuleRequest) Validate() error {
 // CreateRule validates the spec via the relevant template, derives the
 // representative compiled_cel for explainability, and persists the row.
 func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*models.Rule, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request is nil", templates.ErrInvalidSpec)
+	}
 	if s.templates == nil {
 		return nil, errors.New("service: templates registry not configured")
 	}

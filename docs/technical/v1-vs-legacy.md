@@ -27,14 +27,14 @@ This document describes the diff between the legacy reconciliation behaviour (wh
 
 ### Legacy
 
-```
+```text
 reconciliations.policy           — config only
 reconciliations.reconciliation   — one row per POST /policies/{id}/reconciliation
 ```
 
 ### V1
 
-```
+```text
 reconciliations.rule         — typed template + spec + schedule + severity + labels (compiled_cel for explainability)
 reconciliations.evaluation   — one row per execution (PASS / FAIL / ERROR); pit_per_source + evidence
 reconciliations.incident     — stateful per-fingerprint failing record; ack + resolution + parent_incident_id
@@ -194,5 +194,5 @@ Every `Evaluation` row stores `pit_per_source` (the PIT each `Source` resolved a
 
 - The engine internals: [architecture.md](./architecture.md) and [ADR-001](../prd/adr-001-cel-kernel.md).
 - The PIT semantics & cross-source consistency: [ADR-002](../prd/adr-002-pit-consistency.md).
-- Why we're not exposing CEL at V1 GA: [project memory `reconciliation-v1-scope-discipline`](../../../.claude/projects/-Users-arnaud-Documents-GitHub-reconciliation/memory/reconciliation_v1_scope_discipline.md).
-- Product positioning ("business process, not rules engine"): [project memory `reconciliation-product-positioning`](../../../.claude/projects/-Users-arnaud-Documents-GitHub-reconciliation/memory/reconciliation_product_positioning.md).
+- Why we're not exposing CEL at V1 GA: see [ADR-001 §Future commitments](../prd/adr-001-cel-kernel.md).
+- Product positioning: reconciliation is a *business process*, not a generic rules engine — the lifecycle is observe → detect → resolve/accept.

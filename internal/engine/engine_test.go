@@ -188,7 +188,10 @@ func TestEvaluate_PerSourcePIT_Recorded(t *testing.T) {
 		"p": {"USD/2": big.NewInt(-100)},
 	}}
 	eng := newTestEngine(t, l, p)
-	c, _ := eng.Compile(`balance(ledgerSet("l","q"), "USD/2") + balance(pool("p"), "USD/2") == 0`)
+	c, err := eng.Compile(`balance(ledgerSet("l","q"), "USD/2") + balance(pool("p"), "USD/2") == 0`)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
 
 	out, err := eng.Evaluate(context.Background(), c, EvalInput{PIT: pit, SafetyMargin: 30 * time.Second})
 	if err != nil {
@@ -222,7 +225,10 @@ func TestEvaluate_SafetyMargin_Subtracts(t *testing.T) {
 	}
 	eng := newTestEngine(t, &l.fakeLedger, nil)
 	eng.resolvers.Ledger = l // override with capturing variant
-	c, _ := eng.Compile(`balance(ledgerSet("l","q")) == 1`)
+	c, err := eng.Compile(`balance(ledgerSet("l","q")) == 1`)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
 	if _, err := eng.Evaluate(context.Background(), c, EvalInput{PIT: pit, SafetyMargin: margin}); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -238,8 +244,11 @@ func TestEvaluate_ResolverError_Surfaces(t *testing.T) {
 	l := &fakeLedger{err: errors.New("ledger timeout")}
 	p := &fakePayments{}
 	eng := newTestEngine(t, l, p)
-	c, _ := eng.Compile(`balance(ledgerSet("l","q")) == 0`)
-	_, err := eng.Evaluate(context.Background(), c, EvalInput{PIT: time.Now()})
+	c, err := eng.Compile(`balance(ledgerSet("l","q")) == 0`)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	_, err = eng.Evaluate(context.Background(), c, EvalInput{PIT: time.Now()})
 	if !errors.Is(err, ErrEvaluate) {
 		t.Fatalf("expected ErrEvaluate wrap, got %v", err)
 	}
@@ -252,8 +261,11 @@ func TestEvaluate_BalanceSingleAsset_MultiAssetSource_Errors(t *testing.T) {
 		"l|q": {"USD/2": big.NewInt(100), "EUR/2": big.NewInt(200)},
 	}}
 	eng := newTestEngine(t, l, nil)
-	c, _ := eng.Compile(`balance(ledgerSet("l","q")) == 100`)
-	_, err := eng.Evaluate(context.Background(), c, EvalInput{PIT: time.Now()})
+	c, err := eng.Compile(`balance(ledgerSet("l","q")) == 100`)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	_, err = eng.Evaluate(context.Background(), c, EvalInput{PIT: time.Now()})
 	if !errors.Is(err, ErrEvaluate) {
 		t.Fatalf("expected ErrEvaluate on multi-asset balance(), got %v", err)
 	}
