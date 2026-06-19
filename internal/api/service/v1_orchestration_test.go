@@ -261,6 +261,25 @@ func (f *fakeV1Store) ListIncidents(context.Context, storage.GetIncidentsQuery) 
 	return nil, nil
 }
 
+func (f *fakeV1Store) ListActiveIncidentFingerprints(_ context.Context, ruleID uuid.UUID) ([]string, error) {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, inc := range f.incidents {
+		if inc.RuleID != ruleID {
+			continue
+		}
+		if inc.Status != models.IncidentOpen && inc.Status != models.IncidentAcknowledged {
+			continue
+		}
+		if _, dup := seen[inc.Fingerprint]; dup {
+			continue
+		}
+		seen[inc.Fingerprint] = struct{}{}
+		out = append(out, inc.Fingerprint)
+	}
+	return out, nil
+}
+
 // activeFor returns the one active incident for the given (rule, fingerprint),
 // or nil. Helper for assertions.
 func (f *fakeV1Store) activeFor(ruleID uuid.UUID, fingerprint string) *models.Incident {
@@ -494,6 +513,56 @@ func TestEvaluate_OpenAndUpdateAndAutoResolveAndReopen(t *testing.T) {
 	}
 	if reopen.ParentIncidentID == nil || *reopen.ParentIncidentID != firstID {
 		t.Errorf("re-opened parent_incident_id = %v, want %v", reopen.ParentIncidentID, firstID)
+	}
+}
+
+// TestEvaluate_FingerprintDisappears regression for the
+// "incident stays OPEN forever" gap: when an asset that was previously in
+// drift is cleared by *removing* it from both sides (rather than balancing
+// it), the asset union no longer contains that asset and the next evaluation
+// produces no outcome for it. The active incident must still be auto-resolved
+// — driven by the post-loop sweep against ListActiveIncidentFingerprints.
+func TestEvaluate_FingerprintDisappears(t *testing.T) {
+	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-300)}} // drift 50
+	svc, store := newOrchestrationService(t, l, p)
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+
+	// 1. Open an incident on USD/2.
+	_, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
+	if err != nil {
+		t.Fatalf("eval1: %v", err)
+	}
+	active := store.activeFor(rule.ID, "asset:USD/2")
+	if active == nil {
+		t.Fatalf("expected active USD/2 incident after first fail")
+	}
+
+	// 2. Remove USD/2 entirely from both sources — simulating the asset
+	//    being unwound on both sides. The template's asset union no longer
+	//    contains USD/2 → no outcome carries that fingerprint.
+	delete(l.current, "USD/2")
+	delete(p.current, "USD/2")
+
+	ev, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
+	if err != nil {
+		t.Fatalf("eval2: %v", err)
+	}
+	if ev.Result != models.EvaluationPass {
+		t.Errorf("eval2 expected PASS, got %v", ev.Result)
+	}
+
+	// 3. The USD/2 incident must now be RESOLVED via the disappearance sweep,
+	//    not left OPEN because no outcome named it.
+	if active := store.activeFor(rule.ID, "asset:USD/2"); active != nil {
+		t.Fatalf("expected USD/2 incident to be auto-resolved after fingerprint vanished, got active %v", active)
+	}
+	all := store.allFor(rule.ID, "asset:USD/2")
+	if len(all) != 1 || all[0].Status != models.IncidentResolved {
+		t.Fatalf("expected exactly 1 RESOLVED USD/2 incident, got %d (%v)", len(all), all)
+	}
+	if all[0].Resolution == nil || all[0].Resolution.Kind != models.ResolutionAuto {
+		t.Errorf("expected resolution.kind=auto, got %v", all[0].Resolution)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
@@ -25,8 +26,14 @@ type SDKClient interface {
 // SDKLedgerResolver implements LedgerResolver against the Formance SDK.
 // Features are cached in-process for the lifetime of the resolver because
 // they don't change at runtime (a ledger's feature flags are set at creation).
+//
+// The cache is guarded by mu — Features is called from the engine's
+// per-evaluation goroutines and concurrent rule-create/evaluate paths can
+// reach it in parallel. An RWMutex matches the access pattern: many reads
+// (one per evaluation), few writes (one per ledger, lifetime of the process).
 type SDKLedgerResolver struct {
 	client       SDKClient
+	mu           sync.RWMutex
 	featureCache map[string]LedgerFeatures
 }
 
@@ -41,10 +48,20 @@ func NewSDKLedgerResolver(client SDKClient) *SDKLedgerResolver {
 // the relevant ones into a LedgerFeatures struct. Cached after first call.
 // The engine consults this at rule-create time to refuse metadata-filtered
 // rules on history-off ledgers (see ledger#1416).
+//
+// Two concurrent callers racing on the same uncached ledger may both make the
+// SDK call — the second one's write to the cache wins. That's accepted: the
+// flags are immutable at the ledger level, so both calls produce identical
+// results. The alternative (a singleflight) is not worth the dependency cost
+// here.
 func (r *SDKLedgerResolver) Features(ctx context.Context, ledger string) (LedgerFeatures, error) {
-	if cached, ok := r.featureCache[ledger]; ok {
+	r.mu.RLock()
+	cached, ok := r.featureCache[ledger]
+	r.mu.RUnlock()
+	if ok {
 		return cached, nil
 	}
+
 	resp, err := r.client.V2GetLedger(ctx, operations.V2GetLedgerRequest{Ledger: ledger})
 	if err != nil {
 		return LedgerFeatures{}, fmt.Errorf("get ledger %q: %w", ledger, err)
@@ -57,7 +74,10 @@ func (r *SDKLedgerResolver) Features(ctx context.Context, ledger string) (Ledger
 		AccountMetadataHistory:     flags["ACCOUNT_METADATA_HISTORY"],
 		TransactionMetadataHistory: flags["TRANSACTION_METADATA_HISTORY"],
 	}
+
+	r.mu.Lock()
 	r.featureCache[ledger] = out
+	r.mu.Unlock()
 	return out, nil
 }
 

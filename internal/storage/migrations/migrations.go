@@ -175,5 +175,46 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// V1.1: parent_incident_id must reference an incident with the same
+		// rule_id. The base table FK only guarantees the parent row exists,
+		// not that it belongs to the same rule — leaving the schema open to
+		// cross-rule re-open chains that don't make sense for the lifecycle.
+		// A BEFORE-INSERT/UPDATE trigger enforces the invariant; a composite
+		// FK would also work but requires a (id, rule_id) unique index that
+		// duplicates the primary key.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					CREATE OR REPLACE FUNCTION reconciliations.incident_parent_same_rule()
+					RETURNS trigger AS $$
+					DECLARE
+						parent_rule uuid;
+					BEGIN
+						IF NEW.parent_incident_id IS NULL THEN
+							RETURN NEW;
+						END IF;
+						SELECT rule_id INTO parent_rule
+						FROM reconciliations.incident
+						WHERE id = NEW.parent_incident_id;
+						IF parent_rule IS NULL THEN
+							RAISE EXCEPTION 'parent_incident_id % does not exist', NEW.parent_incident_id
+								USING ERRCODE = '23503';
+						END IF;
+						IF parent_rule <> NEW.rule_id THEN
+							RAISE EXCEPTION 'parent_incident_id % belongs to rule %, not %', NEW.parent_incident_id, parent_rule, NEW.rule_id
+								USING ERRCODE = '23514';
+						END IF;
+						RETURN NEW;
+					END;
+					$$ LANGUAGE plpgsql;
+
+					DROP TRIGGER IF EXISTS incident_parent_same_rule ON reconciliations.incident;
+					CREATE TRIGGER incident_parent_same_rule
+						BEFORE INSERT OR UPDATE OF parent_incident_id ON reconciliations.incident
+						FOR EACH ROW EXECUTE FUNCTION reconciliations.incident_parent_same_rule();
+				`)
+				return err
+			},
+		},
 	)
 }

@@ -94,23 +94,61 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		}
 	}
 	evaluation.Evidence = marshalOutcomes(outcomes)
-	if err := s.store.CreateEvaluation(ctx, evaluation); err != nil {
+
+	// Atomicity: persist the evaluation row AND drive every incident
+	// transition under a single transaction. A mid-loop failure would
+	// otherwise leave a committed eval visible to the API while the
+	// incident table reflects only some of the outcomes — inconsistent
+	// state the UI cannot recover from.
+	//
+	// inTx falls back to a non-transactional pass when the underlying
+	// store doesn't expose RunInTx (in-memory test fakes), so the
+	// orchestration logic stays uniform.
+	err = s.inTx(ctx, func(ctx context.Context, store Store) error {
+		if err := store.CreateEvaluation(ctx, evaluation); err != nil {
+			return err
+		}
+		return driveIncidents(ctx, store, rule, evaluation, outcomes, ended)
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	// Drive the incident layer: open/update for failures, auto-resolve for passes.
+	return evaluation, nil
+}
+
+// driveIncidents applies the evaluation's outcomes to the incident layer.
+// Three cases:
+//   - failing outcome → OpenOrUpdate
+//   - passing outcome → AutoResolve for that fingerprint
+//   - fingerprint disappears entirely (no outcome at all) → AutoResolve too
+//
+// The third case matters for templates like ledger_vs_pool_drift whose
+// asset union is dynamic: when both sides of a USD imbalance clear to zero,
+// "USD/2" simply stops appearing as an outcome. Without the sweep below,
+// that incident would stay OPEN forever despite the condition having cleared.
+func driveIncidents(
+	ctx context.Context,
+	store Store,
+	rule *models.Rule,
+	evaluation *models.Evaluation,
+	outcomes []templates.Outcome,
+	ended time.Time,
+) error {
+	seenFingerprints := make(map[string]struct{}, len(outcomes))
 	for _, o := range outcomes {
+		seenFingerprints[o.Fingerprint] = struct{}{}
 		if o.Passed {
-			if _, err := s.store.AutoResolveIncident(ctx, rule.ID, o.Fingerprint, evaluation.ID, ended); err != nil {
-				return nil, fmt.Errorf("auto-resolve %s: %w", o.Fingerprint, err)
+			if _, err := store.AutoResolveIncident(ctx, rule.ID, o.Fingerprint, evaluation.ID, ended); err != nil {
+				return fmt.Errorf("auto-resolve %s: %w", o.Fingerprint, err)
 			}
 			continue
 		}
 		evidenceJSON, err := json.Marshal(o.Evidence)
 		if err != nil {
-			return nil, fmt.Errorf("marshal evidence for %s: %w", o.Fingerprint, err)
+			return fmt.Errorf("marshal evidence for %s: %w", o.Fingerprint, err)
 		}
-		_, err = s.store.OpenOrUpdateIncident(ctx, storage.OpenIncidentInput{
+		_, err = store.OpenOrUpdateIncident(ctx, storage.OpenIncidentInput{
 			RuleID:       rule.ID,
 			Fingerprint:  o.Fingerprint,
 			Severity:     rule.Severity,
@@ -120,11 +158,23 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 			OccurredAt:   ended,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("open/update incident for %s: %w", o.Fingerprint, err)
+			return fmt.Errorf("open/update incident for %s: %w", o.Fingerprint, err)
 		}
 	}
 
-	return evaluation, nil
+	activeFPs, err := store.ListActiveIncidentFingerprints(ctx, rule.ID)
+	if err != nil {
+		return fmt.Errorf("sweep active incidents: %w", err)
+	}
+	for _, fp := range activeFPs {
+		if _, seen := seenFingerprints[fp]; seen {
+			continue
+		}
+		if _, err := store.AutoResolveIncident(ctx, rule.ID, fp, evaluation.ID, ended); err != nil {
+			return fmt.Errorf("auto-resolve disappeared fingerprint %s: %w", fp, err)
+		}
+	}
+	return nil
 }
 
 // GetEvaluation is a passthrough.

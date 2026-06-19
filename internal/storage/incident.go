@@ -48,11 +48,36 @@ type OpenIncidentResult struct {
 // The function uses a transaction with SELECT FOR UPDATE to serialise concurrent
 // writers and the partial unique index `incident_active_per_fingerprint` as the
 // backstop invariant.
+//
+// Concurrent first-open: two transactions can both pass the SELECT FOR UPDATE
+// when no active row exists yet, then both attempt the INSERT — the unique
+// index rejects one with ErrDuplicateKeyValue. We retry the whole transaction:
+// the racing writer has committed by then, so the retry's SELECT finds the
+// active row and the UPDATE branch handles it. One retry is sufficient because
+// the unique index guarantees at most one active row per fingerprint at any
+// time; if the retry's SELECT still misses, something is structurally wrong
+// and we surface the error.
 func (s *Storage) OpenOrUpdateIncident(ctx context.Context, in OpenIncidentInput) (*OpenIncidentResult, error) {
 	if in.OccurredAt.IsZero() {
 		in.OccurredAt = time.Now().UTC()
 	}
 
+	const maxAttempts = 2
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		result, err := s.openOrUpdateIncidentOnce(ctx, in)
+		if err == nil {
+			return result, nil
+		}
+		if attempt < maxAttempts && errors.Is(err, ErrDuplicateKeyValue) {
+			continue
+		}
+		return nil, err
+	}
+	// Unreachable — the loop returns on every path.
+	return nil, errors.New("OpenOrUpdateIncident: retry budget exhausted")
+}
+
+func (s *Storage) openOrUpdateIncidentOnce(ctx context.Context, in OpenIncidentInput) (*OpenIncidentResult, error) {
 	var result *OpenIncidentResult
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// 1. Lock + look up the active incident, if any.
@@ -133,6 +158,27 @@ func (s *Storage) OpenOrUpdateIncident(ctx context.Context, in OpenIncidentInput
 	return result, nil
 }
 
+// ListActiveIncidentFingerprints returns the fingerprints of every OPEN /
+// ACKNOWLEDGED incident for the rule. The evaluation service uses this to
+// auto-resolve incidents whose fingerprint disappears from the next round of
+// outcomes — e.g. when both sides of a `ledger_vs_pool_drift` invariant clear
+// to zero and the asset is no longer in either source's balance map. Without
+// this sweep the active incident would stay OPEN forever even though the
+// underlying condition cleared.
+func (s *Storage) ListActiveIncidentFingerprints(ctx context.Context, ruleID uuid.UUID) ([]string, error) {
+	var fps []string
+	err := s.db.NewSelect().
+		Model((*models.Incident)(nil)).
+		Column("fingerprint").
+		Where("rule_id = ?", ruleID).
+		Where("status IN (?, ?)", string(models.IncidentOpen), string(models.IncidentAcknowledged)).
+		Scan(ctx, &fps)
+	if err != nil {
+		return nil, e("list active incident fingerprints", err)
+	}
+	return fps, nil
+}
+
 // AutoResolveIncident closes the active incident (if any) for (rule_id, fingerprint)
 // with resolution.kind = "auto". No-op if no active incident exists.
 // Returns the resolved incident or nil when nothing to do.
@@ -166,23 +212,42 @@ func (s *Storage) AutoResolveIncident(ctx context.Context, ruleID uuid.UUID, fin
 }
 
 // AckIncident transitions OPEN → ACKNOWLEDGED with the supplied Ack metadata.
-// Idempotent on already-ACKNOWLEDGED; rejects on RESOLVED.
+// Idempotent: re-ACK of an already-ACKNOWLEDGED incident returns the existing
+// row UNCHANGED — the original ack metadata (who/when/why) is the audit trail
+// and must not be overwritten by a second ack call. Rejects on RESOLVED.
 func (s *Storage) AckIncident(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Incident, error) {
 	var inc models.Incident
-	res, err := s.db.NewUpdate().
-		Model(&inc).
-		Set("status = ?", string(models.IncidentAcknowledged)).
-		Set("ack = ?", ack).
-		Where("id = ?", id).
-		Where("status IN (?, ?)", string(models.IncidentOpen), string(models.IncidentAcknowledged)).
-		Returning("*").
-		Exec(ctx)
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock the row first so a concurrent ack can't sneak in between
+		// the read and the conditional update.
+		if err := tx.NewSelect().
+			Model(&inc).
+			Where("id = ?", id).
+			For("UPDATE").
+			Scan(ctx); err != nil {
+			return e("ack incident", err)
+		}
+		if inc.Status == models.IncidentResolved {
+			return e("ack incident", ErrNotFound)
+		}
+		if inc.Status == models.IncidentAcknowledged {
+			// No-op: preserve the original ack metadata.
+			return nil
+		}
+		// inc.Status == OPEN → transition.
+		if _, err := tx.NewUpdate().
+			Model(&inc).
+			Set("status = ?", string(models.IncidentAcknowledged)).
+			Set("ack = ?", ack).
+			Where("id = ?", id).
+			Returning("*").
+			Exec(ctx); err != nil {
+			return e("ack incident", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, e("ack incident", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return nil, e("ack incident", ErrNotFound)
+		return nil, err
 	}
 	return &inc, nil
 }

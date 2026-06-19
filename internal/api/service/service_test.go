@@ -163,6 +163,9 @@ func (s *mockStore) OpenOrUpdateIncident(context.Context, storage.OpenIncidentIn
 func (s *mockStore) AutoResolveIncident(context.Context, uuid.UUID, string, uuid.UUID, time.Time) (*models.Incident, error) {
 	return nil, nil
 }
+func (s *mockStore) ListActiveIncidentFingerprints(context.Context, uuid.UUID) ([]string, error) {
+	return nil, nil
+}
 func (s *mockStore) AckIncident(context.Context, uuid.UUID, *models.Ack) (*models.Incident, error) {
 	return nil, nil
 }

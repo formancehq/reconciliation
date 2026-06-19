@@ -45,6 +45,7 @@ type Store interface {
 	// V1 — Incident
 	OpenOrUpdateIncident(ctx context.Context, in storage.OpenIncidentInput) (*storage.OpenIncidentResult, error)
 	AutoResolveIncident(ctx context.Context, ruleID uuid.UUID, fingerprint string, evaluationID uuid.UUID, at time.Time) (*models.Incident, error)
+	ListActiveIncidentFingerprints(ctx context.Context, ruleID uuid.UUID) ([]string, error)
 	AckIncident(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Incident, error)
 	ResolveIncidentManual(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Incident, error)
 	AcceptIncident(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Incident, error)
@@ -74,6 +75,27 @@ func NewService(store Store, client SDKFormance, eng *engine.Engine, reg *templa
 		templates: reg,
 		resolvers: res,
 	}
+}
+
+// inTx runs fn under a single transaction when the underlying store
+// supports it (the real *storage.Storage does), and forwards the store
+// through unchanged otherwise. Test fakes typically skip the transaction —
+// their in-memory state already gives all-or-nothing semantics naturally,
+// so they don't need to implement bun.RunInTx.
+//
+// The type assertion is defined inline rather than as a named interface
+// because keeping it here avoids dragging storage internals (sql.TxOptions
+// etc.) into the Store interface — Store stays purely about data shapes.
+func (s *Service) inTx(ctx context.Context, fn func(ctx context.Context, store Store) error) error {
+	type runner interface {
+		RunInTx(ctx context.Context, fn func(ctx context.Context, scoped *storage.Storage) error) error
+	}
+	if tx, ok := s.store.(runner); ok {
+		return tx.RunInTx(ctx, func(ctx context.Context, scoped *storage.Storage) error {
+			return fn(ctx, scoped)
+		})
+	}
+	return fn(ctx, s.store)
 }
 
 // SDKFormance is the SDK surface the service layer + engine consume. It
