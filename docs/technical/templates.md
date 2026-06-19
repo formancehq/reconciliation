@@ -49,13 +49,15 @@ Port of today's legacy reconciliation. Compares a dynamic ledger account set aga
   "ledger":         "buildr",
   "ledgerQuery":    { "$match": { "metadata[trust]": "true" } },
   "paymentsPoolID": "0eb4a31f-751e-42d4-8d5b-2129e6d4cf4c",
-  "tolerance":      { "USD/2": 0, "EUR/2": 50 }   // optional; defaults to 0 per asset
+  "ledgerSign":     -1,                              // optional; +1 (default) or -1
+  "tolerance":      { "USD/2": 0, "EUR/2": 50 }      // optional; defaults to 0 per asset
 }
 ```
 
 **Validation**
 
 - `ledger`, `ledgerQuery`, `paymentsPoolID` required
+- `ledgerSign` must be `+1`, `-1`, or omitted (defaults to `+1`)
 - `tolerance` values must be ≥ 0
 - `ledgerQuery` must be a non-null, non-empty JSON value
 
@@ -63,10 +65,10 @@ Port of today's legacy reconciliation. Compares a dynamic ledger account set aga
 
 Discovered at eval time = `union(ledgerBalances, poolBalances)`. **Every** asset present on either side is checked — including assets absent from `tolerance` (which then default to strict 0).
 
-**Per-asset CEL** (the runtime form)
+**Per-asset CEL** (the runtime form). With `ledgerSign: -1` the ledger term carries a leading minus:
 
 ```cel
-abs(balance(ledgerSet("buildr", "<query json>"), "USD/2")
+abs(-balance(ledgerSet("buildr", "<query json>"), "USD/2")
   + balance(pool("0eb4a31f-…"), "USD/2")) <= 0
 ```
 
@@ -76,17 +78,24 @@ abs(balance(ledgerSet("buildr", "<query json>"), "USD/2")
 
 ```jsonc
 {
-  "asset":          "USD/2",
-  "ledgerBalance":  "350",
-  "poolBalance":    "-350",
-  "drift":          "0",
-  "signedDrift":    "0",
-  "tolerance":      0,
-  "compiledCEL":    "abs(balance(ledgerSet(\"buildr\", \"…\"), \"USD/2\") + balance(pool(\"…\"), \"USD/2\")) <= 0"
+  "asset":            "USD/2",
+  "ledgerBalanceRaw": "350",   // raw, before ledgerSign
+  "ledgerBalance":    "-350",  // signed contribution to the sum
+  "ledgerSign":       -1,
+  "poolBalance":      "350",
+  "drift":            "0",
+  "signedDrift":      "0",
+  "tolerance":        0,
+  "compiledCEL":      "abs(-balance(ledgerSet(\"buildr\", \"…\"), \"USD/2\") + balance(pool(\"…\"), \"USD/2\")) <= 0"
 }
 ```
 
-**Sign convention** — the rule assumes `ledger + payments == 0` per asset; i.e. ledger balances are *negative* (obligations) and payments *positive* (cash held). This is inherited from the legacy semantics and is captured in the persisted `signedDrift` so the operator can see whether the asymmetry is "more cash than expected" or "less."
+**Sign convention** — the rule checks `abs(ledgerSign·ledger + pool) <= tolerance` per asset.
+
+- `ledgerSign = +1` (default) preserves legacy semantics: the ledger side is expected to be the *negative* of the pool side, so `ledger + pool == 0`. Customers porting from legacy `/policies` keep this default.
+- `ledgerSign = -1` is the symmetric case: both sides naturally positive (e.g. a "held" account on the ledger compared against the pool's cash balance). Lifts the prior limitation that ledger balances had to be negative for reconciliation to balance out.
+
+The signed contribution is captured in `evidence.ledgerBalance`; the pre-sign raw value is preserved in `evidence.ledgerBalanceRaw` so audit consumers can cross-check directly against the ledger UI.
 
 **Code**: [internal/templates/ledger_vs_pool_drift.go](../../internal/templates/ledger_vs_pool_drift.go)
 

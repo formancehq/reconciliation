@@ -11,7 +11,6 @@ Engineering reference for the V1 reconciliation work. Start with the diff doc if
 | [api.md](./api.md) | Legacy `/policies` API (preserved as a facade) **and** the V1 `/rules` / `/incidents` API. |
 | [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate → incident → resolve / accept, plus re-open and engine-error paths. |
 | [templates.md](./templates.md) | The V1 GA template catalog — spec shapes, validation rules, what each compiles to, evidence format. |
-| [local-dev.md](./local-dev.md) | Bringing up the isolated local stack (`reconciliation/local/`), smoke tests, the auth-mock Caddy snippet. |
 
 ## Status legend used throughout
 

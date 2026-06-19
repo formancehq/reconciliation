@@ -208,6 +208,98 @@ func TestDrift_Evaluate_OneAssetDrifts(t *testing.T) {
 	}
 }
 
+// TestDrift_Evaluate_LedgerSignNegative — `ledgerSign: -1` flips the ledger
+// term so two positively-signed sides (held=+350 on ledger, +350 on pool)
+// reconcile to zero. Without the sign, the legacy formulation would treat
+// this as a 700-unit drift.
+func TestDrift_Evaluate_LedgerSignNegative(t *testing.T) {
+	tmpl := NewLedgerVsPoolDrift()
+	l := &fakeLedger{balances: map[string]map[string]*big.Int{
+		`b|"q"`: {"USD/2": big.NewInt(350)},
+	}}
+	p := &fakePayments{pools: map[string]map[string]*big.Int{
+		"pool": {"USD/2": big.NewInt(350)}, // BOTH positive
+	}}
+	eng, res := newTestEngine(t, l, p)
+	spec := mustJSON(t, DriftSpec{
+		Ledger:         "b",
+		LedgerQuery:    json.RawMessage(`"q"`),
+		PaymentsPoolID: "pool",
+		LedgerSign:     -1,
+	})
+
+	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	usd := findOutcome(out, "asset:USD/2")
+	if usd == nil {
+		t.Fatalf("missing USD/2 outcome: %v", out)
+	}
+	if !usd.Passed {
+		t.Errorf("expected pass with ledgerSign=-1 and equal positive balances, got fail; evidence=%v", usd.Evidence)
+	}
+	if got := usd.Evidence["ledgerSign"]; got != -1 {
+		t.Errorf("evidence.ledgerSign = %v, want -1", got)
+	}
+	if got := usd.Evidence["ledgerBalanceRaw"]; got != "350" {
+		t.Errorf("evidence.ledgerBalanceRaw = %v, want %q (raw, pre-sign)", got, "350")
+	}
+	if got := usd.Evidence["ledgerBalance"]; got != "-350" {
+		t.Errorf("evidence.ledgerBalance = %v, want %q (signed contribution)", got, "-350")
+	}
+}
+
+// TestDrift_Evaluate_LedgerSignDefault — omitting ledgerSign defaults to +1,
+// preserving legacy semantics: positive ledger + positive pool = drift.
+func TestDrift_Evaluate_LedgerSignDefault(t *testing.T) {
+	tmpl := NewLedgerVsPoolDrift()
+	l := &fakeLedger{balances: map[string]map[string]*big.Int{
+		`b|"q"`: {"USD/2": big.NewInt(350)},
+	}}
+	p := &fakePayments{pools: map[string]map[string]*big.Int{
+		"pool": {"USD/2": big.NewInt(350)},
+	}}
+	eng, res := newTestEngine(t, l, p)
+	// No ledgerSign set → defaults to +1 → 350 + 350 = 700 drift
+	spec := mustJSON(t, DriftSpec{Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: "pool"})
+
+	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	usd := findOutcome(out, "asset:USD/2")
+	if usd == nil || usd.Passed {
+		t.Fatalf("expected FAIL with default ledgerSign and matching positives, got %+v", usd)
+	}
+	if got := usd.Evidence["ledgerSign"]; got != 1 {
+		t.Errorf("evidence.ledgerSign = %v, want 1 (default)", got)
+	}
+}
+
+// TestDrift_Validate_LedgerSignBounds — only +1 / -1 / unset are accepted.
+func TestDrift_Validate_LedgerSignBounds(t *testing.T) {
+	tmpl := NewLedgerVsPoolDrift()
+	for _, ok := range []int{0, 1, -1} {
+		spec := mustJSON(t, DriftSpec{
+			Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: "pool",
+			LedgerSign: ok,
+		})
+		if err := tmpl.Validate(spec); err != nil {
+			t.Errorf("Validate(ledgerSign=%d) unexpectedly errored: %v", ok, err)
+		}
+	}
+	for _, bad := range []int{2, -2, 100} {
+		spec := mustJSON(t, DriftSpec{
+			Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: "pool",
+			LedgerSign: bad,
+		})
+		if err := tmpl.Validate(spec); err == nil {
+			t.Errorf("Validate(ledgerSign=%d) accepted, want rejection", bad)
+		}
+	}
+}
+
 func TestDrift_Evaluate_ToleranceAbsorbs(t *testing.T) {
 	tmpl := NewLedgerVsPoolDrift()
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{

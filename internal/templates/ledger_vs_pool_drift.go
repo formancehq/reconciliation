@@ -14,22 +14,43 @@ import (
 // the legacy Policy shape so existing customers' policies port 1:1 via the
 // /policies facade (task #6).
 //
-// Sign convention (inherited from the legacy reconciliation):
+// Sign convention. The invariant checked per asset is:
 //
-//	ledger balance + pool balance == 0 (per asset)
+//	abs(ledgerSign * ledger_balance  +  pool_balance) <= tolerance
 //
-// i.e. the ledger side is expected to be the *negative* of the pool side
-// (obligations vs cash held). This is documented in spec §6.1 and surfaced
-// in the resulting `evidence.drift` field.
+// LedgerSign ∈ {+1, -1} flips the ledger term only. The legacy /policies
+// reconciliation hard-coded `ledger + pool == 0` (i.e. ledger expected to be
+// the negative of pool). That worked for "obligations vs cash held" topologies
+// where ledger balances are signed negative, but couldn't express the
+// opposite: e.g. a "held" account on the ledger (positive balance) being
+// compared against a positive pool balance. With LedgerSign = -1, both sides
+// can be naturally positive and still reconcile to zero. Default +1 (the
+// natural-signed case); legacy policies port through with LedgerSign = +1
+// because the legacy expectation that ledger is already signed negative
+// continues to balance out.
 type DriftSpec struct {
-	Ledger         string             `json:"ledger"`
-	LedgerQuery    json.RawMessage    `json:"ledgerQuery"`
-	PaymentsPoolID string             `json:"paymentsPoolID"`
+	Ledger         string          `json:"ledger"`
+	LedgerQuery    json.RawMessage `json:"ledgerQuery"`
+	PaymentsPoolID string          `json:"paymentsPoolID"`
+
+	// LedgerSign is +1 or -1. Defaults to +1 when zero. Applied to the
+	// ledger balance term only — the pool balance is taken as-is.
+	LedgerSign int `json:"ledgerSign,omitempty"`
 
 	// Tolerance is the per-asset acceptable drift. Missing assets default to 0
 	// (strict equality). Assets present on either side but missing from
 	// Tolerance are checked against 0.
 	Tolerance map[string]int64 `json:"tolerance,omitempty"`
+}
+
+// effectiveLedgerSign returns the sign to apply, defaulting unset (0) to +1.
+// Validate guarantees the value is either 0, +1, or -1, so this is a safe
+// 3-way collapse used inside Evaluate / Explain.
+func (s *DriftSpec) effectiveLedgerSign() int {
+	if s.LedgerSign == 0 {
+		return 1
+	}
+	return s.LedgerSign
 }
 
 // LedgerVsPoolDrift implements Evaluator for the ledger_vs_pool_drift template.
@@ -52,6 +73,11 @@ func (t *LedgerVsPoolDrift) Validate(raw json.RawMessage) error {
 	}
 	if spec.PaymentsPoolID == "" {
 		return fmt.Errorf("%w: paymentsPoolID is required", ErrInvalidSpec)
+	}
+	switch spec.LedgerSign {
+	case 0, 1, -1: // 0 means "unset → default +1"
+	default:
+		return fmt.Errorf("%w: ledgerSign must be +1 or -1, got %d", ErrInvalidSpec, spec.LedgerSign)
 	}
 	for asset, tol := range spec.Tolerance {
 		if tol < 0 {
@@ -79,9 +105,22 @@ func (t *LedgerVsPoolDrift) Explain(raw json.RawMessage) (string, error) {
 		}
 	}
 	return fmt.Sprintf(
-		`abs(balance(ledgerSet(%s, %s), "<asset>") + balance(pool(%s), "<asset>")) <= %s`,
-		celString(spec.Ledger), celJSON(spec.LedgerQuery), celString(spec.PaymentsPoolID), tol,
+		`abs(%s + balance(pool(%s), "<asset>")) <= %s`,
+		signedLedgerTerm(spec.effectiveLedgerSign(), spec.Ledger, spec.LedgerQuery, `"<asset>"`),
+		celString(spec.PaymentsPoolID), tol,
 	), nil
+}
+
+// signedLedgerTerm renders the ledger balance with its sign applied. For
+// +1 the leading sign is omitted; for -1 the term becomes `-balance(…)`.
+// Keeps the compiled CEL identical to the prior shape when ledgerSign is
+// the default, so legacy rules round-trip unchanged.
+func signedLedgerTerm(sign int, ledger string, query json.RawMessage, assetExpr string) string {
+	term := fmt.Sprintf(`balance(ledgerSet(%s, %s), %s)`, celString(ledger), celJSON(query), assetExpr)
+	if sign == -1 {
+		return "-" + term
+	}
+	return term
 }
 
 func (t *LedgerVsPoolDrift) Evaluate(
@@ -119,10 +158,12 @@ func (t *LedgerVsPoolDrift) Evaluate(
 	assets := unionAssets(ledgerBalances, poolBalances)
 	outcomes := make([]Outcome, 0, len(assets))
 
+	sign := spec.effectiveLedgerSign()
 	for _, asset := range assets {
 		tolerance := spec.Tolerance[asset] // 0 if absent
 
-		ledgerVal := zeroIfNil(ledgerBalances[asset])
+		rawLedger := zeroIfNil(ledgerBalances[asset])
+		ledgerVal := new(big.Int).Mul(big.NewInt(int64(sign)), rawLedger)
 		poolVal := zeroIfNil(poolBalances[asset])
 		drift := new(big.Int).Add(ledgerVal, poolVal)
 		driftAbs := new(big.Int).Abs(drift)
@@ -132,8 +173,8 @@ func (t *LedgerVsPoolDrift) Evaluate(
 		// CEL run, and so any future divergence between this template and
 		// raw-CEL semantics surfaces immediately.
 		expr := fmt.Sprintf(
-			`abs(balance(ledgerSet(%s, %s), %s) + balance(pool(%s), %s)) <= %d`,
-			celString(spec.Ledger), celJSON(spec.LedgerQuery), celString(asset),
+			`abs(%s + balance(pool(%s), %s)) <= %d`,
+			signedLedgerTerm(sign, spec.Ledger, spec.LedgerQuery, celString(asset)),
 			celString(spec.PaymentsPoolID), celString(asset), tolerance,
 		)
 		compiled, err := eng.Compile(expr)
@@ -157,13 +198,18 @@ func (t *LedgerVsPoolDrift) Evaluate(
 			Fingerprint: fingerprintFor("asset", asset),
 			Passed:      passed,
 			Evidence: map[string]any{
-				"asset":          asset,
-				"ledgerBalance":  ledgerVal.String(),
-				"poolBalance":    poolVal.String(),
-				"drift":          driftAbs.String(),
-				"tolerance":      tolerance,
-				"signedDrift":    drift.String(),
-				"compiledCEL":    expr,
+				"asset": asset,
+				// Raw value as fetched from the resolver, before LedgerSign.
+				// Audit consumers comparing against the ledger UI need this.
+				"ledgerBalanceRaw": rawLedger.String(),
+				// Effective ledger contribution to the sum (rawLedger * sign).
+				"ledgerBalance": ledgerVal.String(),
+				"ledgerSign":    sign,
+				"poolBalance":   poolVal.String(),
+				"drift":         driftAbs.String(),
+				"tolerance":     tolerance,
+				"signedDrift":   drift.String(),
+				"compiledCEL":   expr,
 			},
 			PitPerSource: evalOut.PitPerSource,
 		})

@@ -32,7 +32,6 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | **Lifecycle workflows** | [technical/workflows.md](./technical/workflows.md) |
 | **Template catalog** | [technical/templates.md](./technical/templates.md) |
 | **Architecture overview** | [technical/architecture.md](./technical/architecture.md) |
-| **Local dev stack** | [technical/local-dev.md](./technical/local-dev.md) |
 | **End-to-end demo UI** | [`../../poc-reconciliation-demo`](../../poc-reconciliation-demo) (sibling repo) |
 | **ADR-001 — CEL kernel choice** | [prd/adr-001-cel-kernel.md](./prd/adr-001-cel-kernel.md) |
 | **ADR-002 — PIT consistency model** | [prd/adr-002-pit-consistency.md](./prd/adr-002-pit-consistency.md) |

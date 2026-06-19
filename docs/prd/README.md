@@ -182,7 +182,6 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 
 ## 9. What's already proven (status as of 2026-06-17)
 
-- ✅ Local stack stands up end-to-end isolated from `stack/` ([docs/technical/local-dev.md](../technical/local-dev.md))
 - ✅ Storage layer for `Rule` / `Evaluation` / `Incident` / `Resolution` ([migration #4](../../internal/storage/migrations/migrations.go))
 - ✅ Internal CEL kernel with 11 passing tests ([internal/engine/](../../internal/engine/))
 - ✅ Three V1 GA template evaluators with 18 passing tests ([internal/templates/](../../internal/templates/))
@@ -200,6 +199,5 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 - [Template catalog reference](../technical/templates.md)
 - [Workflows](../technical/workflows.md)
 - [API reference](../technical/api.md)
-- [Local dev](../technical/local-dev.md)
 - [ADR-001 — CEL kernel choice](./adr-001-cel-kernel.md)
 - [ADR-002 — PIT consistency model](./adr-002-pit-consistency.md)
