@@ -726,7 +726,7 @@ components:
       type: object
       required: [kind, by, at]
       properties:
-        kind: { type: string, enum: [auto, fixed_by_booking, accepted] }
+        kind: { type: string, enum: [auto, fixed_by_booking, accepted_by_business] }
         by: { type: string }
         at: { type: string, format: date-time }
         note: { type: string }

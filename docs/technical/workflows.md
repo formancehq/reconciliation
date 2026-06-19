@@ -139,7 +139,7 @@ Stored as JSONB on `incident.resolution`:
 
 ```jsonc
 {
-  "kind": "accepted",
+  "kind": "accepted_by_business",
   "by":   "treasurer@buildr.com",
   "at":   "2026-06-17T12:34:56Z",
   "note": "Settlement lag on GBP corridor, confirmed by treasury.",

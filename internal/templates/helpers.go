@@ -2,11 +2,20 @@ package templates
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/formancehq/reconciliation/internal/engine"
 )
+
+// ErrResolverUnavailable is returned when a template requires a resolver
+// (ledger / payments) the engine wasn't wired with. Distinct from
+// ErrInvalidSpec so callers can decide whether the operator's config is
+// wrong (404-class) vs the engine's wiring is wrong (500-class).
+var ErrResolverUnavailable = errors.New("required resolver is not configured")
 
 // hasMeaningfulJSON returns true iff the RawMessage holds a non-null, non-empty
 // JSON value. Marshalling a struct with a nil json.RawMessage field produces
@@ -75,6 +84,29 @@ func unionAssets[V any](maps ...map[string]V) []string {
 		}
 	}
 	return sortedKeys(seen)
+}
+
+// requireResolvers checks that every resolver the caller names is wired up
+// before the template tries to call it. Calling AggregateBalance / etc. on a
+// nil interface value panics with a nil-pointer dereference, which surfaces
+// to the API as a 500 with no useful detail — this returns a clear error
+// instead so the operator sees "engine resolver X is not configured".
+func requireResolvers(r engine.Resolvers, needs ...string) error {
+	for _, name := range needs {
+		switch name {
+		case "ledger":
+			if r.Ledger == nil {
+				return fmt.Errorf("%w: ledger", ErrResolverUnavailable)
+			}
+		case "payments":
+			if r.Payments == nil {
+				return fmt.Errorf("%w: payments", ErrResolverUnavailable)
+			}
+		default:
+			return fmt.Errorf("%w: unknown resolver %q", ErrResolverUnavailable, name)
+		}
+	}
+	return nil
 }
 
 // unmarshalSpec is a thin wrapper that returns ErrInvalidSpec-wrapped errors so

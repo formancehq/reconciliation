@@ -90,6 +90,9 @@ func (t *AccountThreshold) Explain(raw json.RawMessage) (string, error) {
 		return "", err
 	}
 	assets := sortedKeys(spec.Bounds)
+	if len(assets) == 0 {
+		return "", fmt.Errorf("%w: bounds is empty — cannot pick a representative asset", ErrInvalidSpec)
+	}
 	return buildThresholdExpression(&spec, assets[0]), nil
 }
 
@@ -110,6 +113,9 @@ func (t *AccountThreshold) Evaluate(
 	if spec.Mode != ThresholdAggregate {
 		// Belt-and-braces: Validate should have caught this at create time.
 		return nil, fmt.Errorf("%w: per_account mode not implemented", ErrInvalidSpec)
+	}
+	if err := requireResolvers(resolvers, "ledger"); err != nil {
+		return nil, err
 	}
 
 	pit := in.PIT

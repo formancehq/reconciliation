@@ -211,6 +211,14 @@ func evaluateRuleHandler(b backend.Backend) http.HandlerFunc {
 				api.BadRequest(w, ErrValidation, errors.New("invalid safetyMargin: "+err.Error()))
 				return
 			}
+			// A negative margin would push PIT into the future, which is
+			// nonsensical for reconciliation (we always read history, not
+			// projections). Reject at the boundary rather than silently
+			// honouring it inside the engine.
+			if d < 0 {
+				api.BadRequest(w, ErrValidation, errors.New("safetyMargin must be >= 0"))
+				return
+			}
 			svcReq.SafetyMargin = d // honour exact value, including 0
 		}
 		ev, err := b.GetService().EvaluateRule(r.Context(), id, svcReq)

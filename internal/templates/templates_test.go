@@ -122,6 +122,26 @@ func TestDrift_Validate_RequiredFields(t *testing.T) {
 	}
 }
 
+// TestDrift_Evaluate_NilResolver — regression for the panic where the
+// template called resolvers.Ledger.AggregateBalance on a nil interface value.
+// Must return a clear ErrResolverUnavailable error instead.
+func TestDrift_Evaluate_NilResolver(t *testing.T) {
+	tmpl := NewLedgerVsPoolDrift()
+	// Engine still needs *something* for both, so use a payments-only
+	// resolver setup with a nil ledger to trigger the guard.
+	eng, _ := newTestEngine(t, &fakeLedger{}, &fakePayments{})
+	resolvers := engine.Resolvers{Ledger: nil, Payments: &fakePayments{}}
+	spec := mustJSON(t, DriftSpec{
+		Ledger:         "buildr",
+		LedgerQuery:    json.RawMessage(`{}`),
+		PaymentsPoolID: "pool_xyz",
+	})
+	_, err := tmpl.Evaluate(context.Background(), spec, eng, resolvers, engine.EvalInput{PIT: time.Now()})
+	if !errors.Is(err, ErrResolverUnavailable) {
+		t.Fatalf("expected ErrResolverUnavailable, got %v", err)
+	}
+}
+
 func TestDrift_Evaluate_AllZero_AllPass(t *testing.T) {
 	tmpl := NewLedgerVsPoolDrift()
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{

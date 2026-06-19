@@ -96,6 +96,10 @@ func (t *LedgerVsPoolDrift) Evaluate(
 		return nil, err
 	}
 
+	if err := requireResolvers(resolvers, "ledger", "payments"); err != nil {
+		return nil, err
+	}
+
 	// Discover the asset universe by querying both sides. This is the V1
 	// ledger_vs_pool_drift contract — check every asset present on either
 	// side, not just those mentioned in spec.Tolerance.

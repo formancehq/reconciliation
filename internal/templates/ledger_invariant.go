@@ -74,6 +74,9 @@ func (t *LedgerInvariant) Explain(raw json.RawMessage) (string, error) {
 	}
 	// Pick the first (lex-sorted) asset as the representative example.
 	assets := sortedKeys(spec.Tolerance)
+	if len(assets) == 0 {
+		return "", fmt.Errorf("%w: tolerance is empty — cannot pick a representative asset", ErrInvalidSpec)
+	}
 	return buildInvariantExpression(&spec, assets[0]), nil
 }
 
@@ -86,6 +89,10 @@ func (t *LedgerInvariant) Evaluate(
 ) ([]Outcome, error) {
 	var spec InvariantSpec
 	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+
+	if err := requireResolvers(resolvers, "ledger"); err != nil {
 		return nil, err
 	}
 

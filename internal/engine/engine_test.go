@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -255,6 +256,22 @@ func TestEvaluate_BalanceSingleAsset_MultiAssetSource_Errors(t *testing.T) {
 	_, err := eng.Evaluate(context.Background(), c, EvalInput{PIT: time.Now()})
 	if !errors.Is(err, ErrEvaluate) {
 		t.Fatalf("expected ErrEvaluate on multi-asset balance(), got %v", err)
+	}
+}
+
+// TestEvaluate_AbsMinInt64Overflow guards against a silent wrap where
+// abs(math.MinInt64) returns math.MinInt64 (negative). A naive
+// `if i < 0 { i = -i }` implementation has this bug. The builtin must
+// surface an evaluation error instead.
+func TestEvaluate_AbsMinInt64Overflow(t *testing.T) {
+	eng := newTestEngine(t, &fakeLedger{}, &fakePayments{})
+	c, err := eng.Compile(fmt.Sprintf(`abs(%d) >= 0`, int64(math.MinInt64)))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	_, err = eng.Evaluate(context.Background(), c, EvalInput{PIT: time.Now()})
+	if !errors.Is(err, ErrEvaluate) {
+		t.Fatalf("expected ErrEvaluate from abs(MinInt64), got %v", err)
 	}
 }
 

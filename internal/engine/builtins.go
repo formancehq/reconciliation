@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
@@ -150,6 +151,12 @@ func bindings(e *evalCtx) []cel.EnvOption {
 					i, ok := v.Value().(int64)
 					if !ok {
 						return types.NewErr("abs: expected int, got %T", v.Value())
+					}
+					// math.MinInt64's negation overflows back to math.MinInt64
+					// — a silent wrap that would let abs() return a negative
+					// value. Reject the input instead.
+					if i == math.MinInt64 {
+						return types.NewErr("abs: input %d overflows int64", i)
 					}
 					if i < 0 {
 						i = -i

@@ -160,6 +160,25 @@ func TestEvaluateRule_InvalidSafetyMargin(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestEvaluateRule_NegativeSafetyMargin a negative margin would push PIT into
+// the future, which is meaningless for reconciliation (always reads history,
+// never projections). Must be rejected at the boundary with 400.
+func TestEvaluateRule_NegativeSafetyMargin(t *testing.T) {
+	t.Parallel()
+	b, _ := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
+
+	id := uuid.New()
+	body := []byte(`{"safetyMargin": "-30s"}`)
+	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	// `>=` is HTML-escaped inside the JSON body, so match on the prefix only.
+	require.Contains(t, rec.Body.String(), "safetyMargin must be")
+}
+
 // --- Incident handler tests -------------------------------------------------
 
 func TestAckIncident_Nominal(t *testing.T) {

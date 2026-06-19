@@ -80,9 +80,22 @@ func (s *mockSDKFormanceClient) V2GetLedger(ctx context.Context, req operations.
 }
 
 func (s *mockSDKFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
+	// Both the legacy /policies path and the V1 ledger_vs_pool_drift template
+	// route through this method since the legacy GetPoolBalances PIT endpoint
+	// returns empty under payments v3. Mirror the V1 mock's behaviour so tests
+	// reach the same balances regardless of which surface they exercise.
+	balances := make([]shared.V3PoolBalance, 0, len(s.paymentsBalances))
+	for assetCode, balance := range s.paymentsBalances {
+		balances = append(balances, shared.V3PoolBalance{
+			Amount: balance,
+			Asset:  assetCode,
+		})
+	}
 	return &operations.V3GetPoolBalancesLatestResponse{
-		StatusCode:             http.StatusOK,
-		V3PoolBalancesResponse: &shared.V3PoolBalancesResponse{},
+		StatusCode: http.StatusOK,
+		V3PoolBalancesResponse: &shared.V3PoolBalancesResponse{
+			Data: balances,
+		},
 	}, nil
 }
 

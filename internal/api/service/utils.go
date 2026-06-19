@@ -42,19 +42,23 @@ func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName s
 	return balanceMap, nil
 }
 
-func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID string, at time.Time) (map[string]*big.Int, error) {
-	// Note: the historical PaymentsgetServerInfo version gate was removed when
-	// we bumped the SDK to v3.7.2 (ServerInfo field was renamed). The
-	// minimum-version assertion is also no longer needed for the legacy /policies
-	// path. NB: the legacy GetPoolBalances PIT path is known empty under
-	// payments v3 — see ledger#1416 sibling and the V1 SDKPaymentsResolver
-	// which uses V3GetPoolBalancesLatest instead.
-	balances, err := s.client.GetPoolBalances(
+func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID string, _ time.Time) (map[string]*big.Int, error) {
+	// Why not the V1 GetPoolBalances(at) endpoint:
+	// V1.GetPoolBalances takes a PIT but returns an empty payload under
+	// payments v3 — same root cause that drove the V1 SDKPaymentsResolver
+	// to V3GetPoolBalancesLatest. Calling it here used to mask real drift
+	// as a zero-balance result (every asset compared against 0 → "OK"),
+	// which is worse than failing loudly.
+	//
+	// Trade-off: V3GetPoolBalancesLatest doesn't accept a PIT, so the
+	// legacy /policies path now reads *current* pool balances even when
+	// the caller supplied an `at` time. Acceptable because (a) the
+	// previous PIT behaviour didn't actually work and (b) cross-source
+	// PIT consistency for pools was never tighter than seconds anyway.
+	// V1 rules express this trade-off explicitly via per-source tolerances.
+	balances, err := s.client.V3GetPoolBalancesLatest(
 		ctx,
-		operations.GetPoolBalancesRequest{
-			At:     at,
-			PoolID: paymentPoolID,
-		},
+		operations.V3GetPoolBalancesLatestRequest{PoolID: paymentPoolID},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pool balances: %w", err)
@@ -64,13 +68,16 @@ func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID strin
 		return nil, errors.New("failed to get pool balances")
 	}
 
-	if balances.PoolBalancesResponse == nil {
+	if balances.V3PoolBalancesResponse == nil {
 		return nil, errors.New("no pool balance")
 	}
 
 	balanceMap := make(map[string]*big.Int)
-	for _, balance := range balances.PoolBalancesResponse.Data.Balances {
-		balanceMap[balance.GetAsset()] = balance.GetAmount()
+	for _, balance := range balances.V3PoolBalancesResponse.Data {
+		if balance.Amount == nil {
+			continue
+		}
+		balanceMap[balance.Asset] = balance.Amount
 	}
 
 	return balanceMap, nil

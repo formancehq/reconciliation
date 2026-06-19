@@ -36,7 +36,12 @@ const (
 	// EvidenceSnapshot freezes the breaking evidence at decision time;
 	// ExpiresAt optionally re-raises the incident if it's still failing
 	// after the acceptance window.
-	ResolutionAcceptedByBusiness ResolutionKind = "accepted"
+	//
+	// The literal matches the OpenAPI enum, the storage.AcceptIncident
+	// docstring, and the user-facing docs — all use the same
+	// "accepted_by_business" form to mirror the "fixed_by_booking"
+	// naming pattern.
+	ResolutionAcceptedByBusiness ResolutionKind = "accepted_by_business"
 )
 
 // Ack captures who acknowledged an incident and when. One acknowledgement per
