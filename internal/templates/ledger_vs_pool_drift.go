@@ -98,9 +98,12 @@ func (t *LedgerVsPoolDrift) Explain(raw json.RawMessage) (string, error) {
 	}
 	tol := "0"
 	if len(spec.Tolerance) > 0 {
-		// Show the first (lex-sorted) tolerance value; runtime uses the actual map.
+		// Show the first (lex-sorted) tolerance value; runtime uses the actual
+		// map. Render a bare integer literal — CEL has no block-comment syntax,
+		// so an annotation like `50 /* tolerance for EUR/2 */` makes the
+		// representative expression fail the create-time compile check.
 		for _, asset := range sortedKeys(spec.Tolerance) {
-			tol = fmt.Sprintf("%d /* tolerance for %s */", spec.Tolerance[asset], asset)
+			tol = fmt.Sprintf("%d", spec.Tolerance[asset])
 			break
 		}
 	}

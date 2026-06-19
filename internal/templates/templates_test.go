@@ -341,6 +341,13 @@ func TestDrift_Explain_HasShape(t *testing.T) {
 			t.Errorf("explanation missing %q: %s", want, explained)
 		}
 	}
+	// The representative CEL must parse — CreateRule runs exactly this compile
+	// check at the API boundary, so an unparseable Explain (e.g. a stray block
+	// comment in the tolerance literal) rejects every rule create with a 400.
+	eng, _ := newTestEngine(t, &fakeLedger{}, &fakePayments{})
+	if _, err := eng.Compile(explained); err != nil {
+		t.Errorf("representative CEL did not compile: %v\n%s", err, explained)
+	}
 }
 
 // --- ledger_invariant -------------------------------------------------------
