@@ -179,83 +179,80 @@ func TestEvaluateRule_NegativeSafetyMargin(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "safetyMargin must be")
 }
 
-// --- Incident handler tests -------------------------------------------------
+// --- Alert handler tests -----------------------------------------------------
 
-func TestAckIncident_Nominal(t *testing.T) {
+func TestAckAlert_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
 	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
 
 	id := uuid.New()
-	req := &service.AckIncidentRequest{By: "ops@buildr.com", Note: "investigating"}
-	resp := &models.Incident{
-		ID:                id,
-		RuleID:            uuid.New(),
-		Fingerprint:       "asset:USD/2",
-		Status:            models.IncidentAcknowledged,
-		Severity:          models.SeverityHigh,
-		FirstEvaluationID: uuid.New(),
-		LastEvaluationID:  uuid.New(),
+	req := &service.AckAlertRequest{By: "ops@buildr.com", Note: "investigating"}
+	resp := &models.Alert{
+		ID:               id,
+		RuleID:           uuid.New(),
+		Fingerprint:      "asset:USD/2",
+		Status:           models.AlertAcknowledged,
+		Severity:         models.SeverityHigh,
+		LastEvaluationID: uuid.New(),
 	}
-	mockSvc.EXPECT().AckIncident(gomock.Any(), id, req).Return(resp, nil)
+	mockSvc.EXPECT().AckAlert(gomock.Any(), id, req).Return(resp, nil)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/incidents/"+id.String()+"/ack", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/ack", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	var got sharedapi.BaseResponse[incidentResponse]
+	var got sharedapi.BaseResponse[alertResponse]
 	sharedapi.Decode(t, rec.Body, &got)
-	require.Equal(t, string(models.IncidentAcknowledged), got.Data.Status)
+	require.Equal(t, string(models.AlertAcknowledged), got.Data.Status)
 }
 
-func TestResolveIncident_FixedByBooking(t *testing.T) {
+func TestResolveAlert_FixedByBooking(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
 	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
 
 	id := uuid.New()
-	req := &service.ResolveIncidentRequest{By: "ops", Note: "posted tx_abc", TransactionRefs: []string{"tx_abc"}}
-	resp := &models.Incident{
-		ID:                id,
-		RuleID:            uuid.New(),
-		Fingerprint:       "asset:USD/2",
-		Status:            models.IncidentResolved,
-		Severity:          models.SeverityHigh,
-		FirstEvaluationID: uuid.New(),
-		LastEvaluationID:  uuid.New(),
+	req := &service.ResolveAlertRequest{By: "ops", Note: "posted tx_abc", TransactionRefs: []string{"tx_abc"}}
+	resp := &models.Alert{
+		ID:               id,
+		RuleID:           uuid.New(),
+		Fingerprint:      "asset:USD/2",
+		Status:           models.AlertResolved,
+		Severity:         models.SeverityHigh,
+		LastEvaluationID: uuid.New(),
 		Resolution: &models.Resolution{
 			Kind: models.ResolutionFixedByBooking,
 			By:   req.By,
 			At:   time.Now().UTC(),
 		},
 	}
-	mockSvc.EXPECT().ResolveIncident(gomock.Any(), id, req).Return(resp, nil)
+	mockSvc.EXPECT().ResolveAlert(gomock.Any(), id, req).Return(resp, nil)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/incidents/"+id.String()+"/resolve", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/resolve", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestAcceptIncident_Nominal(t *testing.T) {
+func TestAcceptAlert_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
 	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
 
 	id := uuid.New()
-	req := &service.AcceptIncidentRequest{By: "treasurer", Note: "settlement lag"}
-	resp := &models.Incident{
-		ID:                id,
-		RuleID:            uuid.New(),
-		Fingerprint:       "asset:USD/2",
-		Status:            models.IncidentResolved,
-		Severity:          models.SeverityHigh,
-		FirstEvaluationID: uuid.New(),
-		LastEvaluationID:  uuid.New(),
+	req := &service.AcceptAlertRequest{By: "treasurer", Note: "settlement lag"}
+	resp := &models.Alert{
+		ID:               id,
+		RuleID:           uuid.New(),
+		Fingerprint:      "asset:USD/2",
+		Status:           models.AlertResolved,
+		Severity:         models.SeverityHigh,
+		LastEvaluationID: uuid.New(),
 		Resolution: &models.Resolution{
 			Kind: models.ResolutionAcceptedByBusiness,
 			By:   req.By,
@@ -263,14 +260,41 @@ func TestAcceptIncident_Nominal(t *testing.T) {
 			At:   time.Now().UTC(),
 		},
 	}
-	mockSvc.EXPECT().AcceptIncident(gomock.Any(), id, req).Return(resp, nil)
+	mockSvc.EXPECT().AcceptAlert(gomock.Any(), id, req).Return(resp, nil)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/incidents/"+id.String()+"/accept", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/accept", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+// TestListAlertEvents_Nominal — new endpoint surface for the event timeline.
+func TestListAlertEvents_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
+
+	id := uuid.New()
+	resolved := models.AlertResolved
+	events := []models.AlertEvent{
+		{ID: uuid.New(), AlertID: id, Type: models.AlertEventFail, PrevStatus: &resolved, NewStatus: models.AlertOpen, At: time.Now().UTC()},
+		{ID: uuid.New(), AlertID: id, Type: models.AlertEventFail, NewStatus: models.AlertOpen, At: time.Now().UTC().Add(-time.Hour)},
+	}
+	mockSvc.EXPECT().ListAlertEvents(gomock.Any(), id).Return(events, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/alerts/"+id.String()+"/events", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got sharedapi.BaseResponse[[]alertEventResponse]
+	sharedapi.Decode(t, rec.Body, &got)
+	require.Len(t, *got.Data, 2)
+	// First event was a reopen — predicate must propagate to the response.
+	require.True(t, (*got.Data)[0].IsReopen)
+	require.False(t, (*got.Data)[1].IsReopen)
 }
 
 // --- Evaluation handler tests -----------------------------------------------

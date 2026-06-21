@@ -28,13 +28,13 @@ type EvaluateRuleRequest struct {
 }
 
 // EvaluateRule runs the template for the rule, persists an Evaluation row, and
-// opens/updates/auto-resolves incidents per fingerprint. Returns the persisted
+// opens/updates/auto-resolves alerts per fingerprint. Returns the persisted
 // evaluation.
 //
 // On engine error (resolver timeout, CEL builtin throw, budget exceeded), an
-// `engine.error` meta-incident is opened — not data incidents — and the
+// `engine.error` meta-alert is opened — not data alerts — and the
 // evaluation is persisted with result=ERROR. This keeps engine-health noise off
-// the financial-incident channel.
+// the financial-alert channel.
 func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req EvaluateRuleRequest) (*models.Evaluation, error) {
 	if s.engine == nil || s.templates == nil {
 		return nil, errors.New("service: engine + templates registry are required to evaluate rules")
@@ -68,7 +68,7 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	pitPerSource, mergeErr := mergePitPerSource(outcomes)
 	if mergeErr != nil {
 		// Promote to a kernel error: a kernel/template disagreement is an
-		// engine-health problem, not a data incident.
+		// engine-health problem, not a data alert.
 		evalErr = mergeErr
 	}
 	evaluation := &models.Evaluation{
@@ -90,8 +90,8 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		if err := s.store.CreateEvaluation(ctx, evaluation); err != nil {
 			return nil, err
 		}
-		if _, mErr := s.openEngineErrorIncident(ctx, rule, evaluation, evalErr); mErr != nil {
-			return nil, fmt.Errorf("evaluation persisted but engine.error meta-incident failed: %w", mErr)
+		if _, mErr := s.openEngineErrorAlert(ctx, rule, evaluation, evalErr); mErr != nil {
+			return nil, fmt.Errorf("evaluation persisted but engine.error meta-alert failed: %w", mErr)
 		}
 		return evaluation, nil
 	}
@@ -109,20 +109,18 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	}
 	evaluation.Evidence = evidence
 
-	// Atomicity: persist the evaluation row AND drive every incident
-	// transition under a single transaction. A mid-loop failure would
-	// otherwise leave a committed eval visible to the API while the
-	// incident table reflects only some of the outcomes — inconsistent
-	// state the UI cannot recover from.
+	// Atomicity: persist the evaluation row AND drive every alert transition
+	// under a single transaction. A mid-loop failure would otherwise leave a
+	// committed eval visible to the API while the alert table reflects only
+	// some of the outcomes — inconsistent state the UI cannot recover from.
 	//
-	// inTx falls back to a non-transactional pass when the underlying
-	// store doesn't expose RunInTx (in-memory test fakes), so the
-	// orchestration logic stays uniform.
+	// Each call into driveAlerts also appends rows to alert_event, so the
+	// audit log stays consistent with the alert table by construction.
 	err = s.inTx(ctx, func(ctx context.Context, store Store) error {
 		if err := store.CreateEvaluation(ctx, evaluation); err != nil {
 			return err
 		}
-		return driveIncidents(ctx, store, rule, evaluation, outcomes, ended)
+		return driveAlerts(ctx, store, rule, evaluation, outcomes, ended)
 	})
 	if err != nil {
 		return nil, err
@@ -131,17 +129,18 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	return evaluation, nil
 }
 
-// driveIncidents applies the evaluation's outcomes to the incident layer.
+// driveAlerts applies the evaluation's outcomes to the alert layer.
 // Three cases:
-//   - failing outcome → OpenOrUpdate
-//   - passing outcome → AutoResolve for that fingerprint
-//   - fingerprint disappears entirely (no outcome at all) → AutoResolve too
+//   - failing outcome → OpenOrUpdateAlert (which handles first-open, reopen
+//     after resolve, and update-while-open all in one place)
+//   - passing outcome → AutoResolveAlert for that fingerprint
+//   - fingerprint disappears entirely (no outcome at all) → AutoResolveAlert
 //
 // The third case matters for templates like ledger_vs_pool_drift whose
 // asset union is dynamic: when both sides of a USD imbalance clear to zero,
 // "USD/2" simply stops appearing as an outcome. Without the sweep below,
-// that incident would stay OPEN forever despite the condition having cleared.
-func driveIncidents(
+// that alert would stay OPEN forever despite the condition having cleared.
+func driveAlerts(
 	ctx context.Context,
 	store Store,
 	rule *models.Rule,
@@ -153,7 +152,7 @@ func driveIncidents(
 	for _, o := range outcomes {
 		seenFingerprints[o.Fingerprint] = struct{}{}
 		if o.Passed {
-			if _, err := store.AutoResolveIncident(ctx, rule.ID, o.Fingerprint, evaluation.ID, ended); err != nil {
+			if _, err := store.AutoResolveAlert(ctx, rule.ID, o.Fingerprint, evaluation.ID, ended); err != nil {
 				return fmt.Errorf("auto-resolve %s: %w", o.Fingerprint, err)
 			}
 			continue
@@ -162,7 +161,7 @@ func driveIncidents(
 		if err != nil {
 			return fmt.Errorf("marshal evidence for %s: %w", o.Fingerprint, err)
 		}
-		_, err = store.OpenOrUpdateIncident(ctx, storage.OpenIncidentInput{
+		_, err = store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
 			RuleID:       rule.ID,
 			Fingerprint:  o.Fingerprint,
 			Severity:     rule.Severity,
@@ -172,19 +171,19 @@ func driveIncidents(
 			OccurredAt:   ended,
 		})
 		if err != nil {
-			return fmt.Errorf("open/update incident for %s: %w", o.Fingerprint, err)
+			return fmt.Errorf("open/update alert for %s: %w", o.Fingerprint, err)
 		}
 	}
 
-	activeFPs, err := store.ListActiveIncidentFingerprints(ctx, rule.ID)
+	activeFPs, err := store.ListActiveAlertFingerprints(ctx, rule.ID)
 	if err != nil {
-		return fmt.Errorf("sweep active incidents: %w", err)
+		return fmt.Errorf("sweep active alerts: %w", err)
 	}
 	for _, fp := range activeFPs {
 		if _, seen := seenFingerprints[fp]; seen {
 			continue
 		}
-		if _, err := store.AutoResolveIncident(ctx, rule.ID, fp, evaluation.ID, ended); err != nil {
+		if _, err := store.AutoResolveAlert(ctx, rule.ID, fp, evaluation.ID, ended); err != nil {
 			return fmt.Errorf("auto-resolve disappeared fingerprint %s: %w", fp, err)
 		}
 	}
@@ -201,11 +200,11 @@ func (s *Service) ListEvaluations(ctx context.Context, q storage.GetEvaluationsQ
 	return s.store.ListEvaluations(ctx, q)
 }
 
-// openEngineErrorIncident opens (or updates, if recurring) the synthetic
-// meta-incident that surfaces engine-side failures separately from data
-// incidents. Labelled with `kind: engine.error` so digests can route them to
+// openEngineErrorAlert opens (or updates / reopens, if recurring) the
+// synthetic meta-alert that surfaces engine-side failures separately from
+// data alerts. Labelled with `kind: engine.error` so digests can route them to
 // an engine-health channel.
-func (s *Service) openEngineErrorIncident(ctx context.Context, rule *models.Rule, ev *models.Evaluation, evalErr error) (*models.Incident, error) {
+func (s *Service) openEngineErrorAlert(ctx context.Context, rule *models.Rule, ev *models.Evaluation, evalErr error) (*models.Alert, error) {
 	labels := make(map[string]string, len(rule.Labels)+1)
 	for k, v := range rule.Labels {
 		labels[k] = v
@@ -220,7 +219,7 @@ func (s *Service) openEngineErrorIncident(ctx context.Context, rule *models.Rule
 		return nil, fmt.Errorf("marshal engine.error evidence: %w", mErr)
 	}
 
-	res, err := s.store.OpenOrUpdateIncident(ctx, storage.OpenIncidentInput{
+	res, err := s.store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
 		RuleID:       rule.ID,
 		Fingerprint:  engineErrorFingerprint,
 		Severity:     models.SeverityHigh,
@@ -232,7 +231,7 @@ func (s *Service) openEngineErrorIncident(ctx context.Context, rule *models.Rule
 	if err != nil {
 		return nil, err
 	}
-	return res.Incident, nil
+	return res.Alert, nil
 }
 
 // mergePitPerSource collapses per-outcome PIT maps into a single evaluation-row

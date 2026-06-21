@@ -35,12 +35,13 @@ type Service interface {
 	GetEvaluation(ctx context.Context, id uuid.UUID) (*models.Evaluation, error)
 	ListEvaluations(ctx context.Context, q storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error)
 
-	// V1 — Incident
-	GetIncident(ctx context.Context, id uuid.UUID) (*models.Incident, error)
-	ListIncidents(ctx context.Context, q storage.GetIncidentsQuery) (*bunpaginate.Cursor[models.Incident], error)
-	AckIncident(ctx context.Context, id uuid.UUID, req *service.AckIncidentRequest) (*models.Incident, error)
-	ResolveIncident(ctx context.Context, id uuid.UUID, req *service.ResolveIncidentRequest) (*models.Incident, error)
-	AcceptIncident(ctx context.Context, id uuid.UUID, req *service.AcceptIncidentRequest) (*models.Incident, error)
+	// V1 — Alert
+	GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error)
+	ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error)
+	ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]models.AlertEvent, error)
+	AckAlert(ctx context.Context, id uuid.UUID, req *service.AckAlertRequest) (*models.Alert, error)
+	ResolveAlert(ctx context.Context, id uuid.UUID, req *service.ResolveAlertRequest) (*models.Alert, error)
+	AcceptAlert(ctx context.Context, id uuid.UUID, req *service.AcceptAlertRequest) (*models.Alert, error)
 }
 
 type Backend interface {

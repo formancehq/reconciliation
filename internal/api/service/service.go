@@ -16,7 +16,7 @@ import (
 )
 
 // Store is the storage surface the Service depends on. Both the legacy
-// /policies methods and the V1 Rule/Evaluation/Incident methods live here so
+// /policies methods and the V1 Rule/Evaluation/Alert methods live here so
 // there's one mockable boundary for tests.
 type Store interface {
 	Ping() error
@@ -42,19 +42,20 @@ type Store interface {
 	GetEvaluation(ctx context.Context, id uuid.UUID) (*models.Evaluation, error)
 	ListEvaluations(ctx context.Context, q storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error)
 
-	// V1 — Incident
-	OpenOrUpdateIncident(ctx context.Context, in storage.OpenIncidentInput) (*storage.OpenIncidentResult, error)
-	AutoResolveIncident(ctx context.Context, ruleID uuid.UUID, fingerprint string, evaluationID uuid.UUID, at time.Time) (*models.Incident, error)
-	ListActiveIncidentFingerprints(ctx context.Context, ruleID uuid.UUID) ([]string, error)
-	AckIncident(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Incident, error)
-	ResolveIncidentManual(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Incident, error)
-	AcceptIncident(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Incident, error)
-	GetIncident(ctx context.Context, id uuid.UUID) (*models.Incident, error)
-	ListIncidents(ctx context.Context, q storage.GetIncidentsQuery) (*bunpaginate.Cursor[models.Incident], error)
+	// V1 — Alert
+	OpenOrUpdateAlert(ctx context.Context, in storage.OpenAlertInput) (*storage.OpenAlertResult, error)
+	AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fingerprint string, evaluationID uuid.UUID, at time.Time) (*models.Alert, error)
+	ListActiveAlertFingerprints(ctx context.Context, ruleID uuid.UUID) ([]string, error)
+	AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Alert, error)
+	ResolveAlertManual(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Alert, error)
+	AcceptAlert(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Alert, error)
+	GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error)
+	ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error)
+	ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]models.AlertEvent, error)
 }
 
 // Service is the orchestrator for both the legacy /policies path and the V1
-// rule/evaluation/incident surface. V1-only callers can ignore `client`;
+// rule/evaluation/alert surface. V1-only callers can ignore `client`;
 // legacy /policies callers can ignore `engine` and `templates`.
 type Service struct {
 	store     Store

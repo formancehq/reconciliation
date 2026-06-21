@@ -3,7 +3,7 @@
 Reconciliation exposes two API surfaces:
 
 - **Legacy `/policies`** — preserved verbatim for backwards compatibility. Existing customers keep working with no migration.
-- **V1 Ledger Clarity** (`/rules` / `/evaluations` / `/incidents`) — the new surface. EE-gated at V1 GA.
+- **V1 Ledger Clarity** (`/rules` / `/evaluations` / `/alerts`) — the new surface. EE-gated at V1 GA.
 
 Both share the same auth scopes (`reconciliation:read`, `reconciliation:write`) and the same `ErrorResponse` shape.
 
@@ -62,7 +62,7 @@ History of previous runs.
 
 ## V1 Ledger Clarity (✅ shipped)
 
-EE-gated. Same auth surface as the legacy API. The contracts below match what's wired in [`internal/api/router.go`](../../internal/api/router.go) and exposed via [`openapi.yaml`](../../openapi.yaml). Underlying models live in [models/rule.go](../../internal/models/rule.go), [models/evaluation.go](../../internal/models/evaluation.go), [models/incident.go](../../internal/models/incident.go).
+EE-gated. Same auth surface as the legacy API. The contracts below match what's wired in [`internal/api/router.go`](../../internal/api/router.go) and exposed via [`openapi.yaml`](../../openapi.yaml). Underlying models live in [models/rule.go](../../internal/models/rule.go), [models/evaluation.go](../../internal/models/evaluation.go), [models/alert.go](../../internal/models/alert.go).
 
 > Handler-level tests live in [v1_handlers_test.go](../../internal/api/v1_handlers_test.go); the end-to-end orchestration test ([v1_orchestration_test.go](../../internal/api/service/v1_orchestration_test.go)) is the canonical reference for the open/update/auto-resolve/re-open flow these endpoints drive.
 
@@ -100,11 +100,11 @@ Filterable via query builder: `?type=ledger_invariant`, `?ledger=buildr`, `?enab
 
 #### `PATCH /rules/{id}` — partial update
 
-Toggle `enabled`, change `severity`, edit `schedule`, replace `notifications` / `labels`. `templateSpec` edits require re-validation; the API rejects changes that would invalidate active incidents.
+Toggle `enabled`, change `severity`, edit `schedule`, replace `notifications` / `labels`. `templateSpec` edits require re-validation; the API rejects changes that would invalidate active alerts.
 
 #### `DELETE /rules/{id}` — cascade
 
-Drops the rule and (via FK) all its evaluations and incidents.
+Drops the rule and (via FK) all its evaluations, alerts, and alert events.
 
 ### Evaluations
 
@@ -137,35 +137,59 @@ Returns `200` + the evaluation record:
 
 Cursor-paginated, ordered by `created_at DESC`.
 
-### Incidents
+### Alerts
 
-#### `GET /incidents` — list
+An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint)` pair — at most one row per pair for the lifetime of the rule. Reopens after RESOLVED flip status back to OPEN **in place** (same id). The full transition history lives in `alert_event` and is exposed at `GET /alerts/{id}/events`.
 
-Filterable: `?status=open`, `?ruleId=…`, `?severity=high`, `?since=2026-06-01T00:00:00Z`.
+#### `GET /alerts` — list
 
-#### `GET /incidents/{id}` — fetch
+Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?since=2026-06-01T00:00:00Z`.
+
+#### `GET /alerts/{id}` — fetch
 
 ```json
 {
-  "id":               "inc_…",
+  "id":               "alr_…",
   "ruleId":           "rul_…",
   "fingerprint":      "asset:USD/2",
   "status":           "OPEN" | "ACKNOWLEDGED" | "RESOLVED",
   "severity":         "high",
-  "openedAt":         "…",
+  "firstSeenAt":      "…",
   "lastSeenAt":       "…",
   "occurrenceCount":  4,
-  "firstEvaluationId":"ev_…",
-  "lastEvaluationId": "ev_…",
+  "lastEvaluationID": "ev_…",
   "evidence":         { … },
   "ack":              { "by": "…", "at": "…", "note": "…" },
   "resolution":       null,
-  "parentIncidentId": null,
   "labels":           { "team": "treasury" }
 }
 ```
 
-#### `POST /incidents/{id}/ack`
+`occurrenceCount` is the **lifetime** count of FAIL events on this alert — it does not reset across reopen cycles. Per-episode counts can be derived from `/events`.
+
+#### `GET /alerts/{id}/events` — append-only timeline
+
+Returns every event recorded for this alert: every evaluation that touched it plus every manual transition. Most-recent-first.
+
+```json
+[
+  {
+    "id":         "evt_…",
+    "alertID":    "alr_…",
+    "evaluationID": "ev_…",
+    "type":       "fail",
+    "prevStatus": "RESOLVED",
+    "newStatus":  "OPEN",
+    "payload":    { "asset": "USD/2", "drift": "75", … },
+    "at":         "2026-06-21T08:42:00Z",
+    "isReopen":   true
+  }
+]
+```
+
+`type` is one of `fail` / `pass` / `ack` / `resolve` / `accept`. `prevStatus` is `null` only for the alert's inaugural event. `isReopen` is a derived boolean — true when a `fail` lands on a previously-RESOLVED alert.
+
+#### `POST /alerts/{id}/ack`
 
 ```json
 { "by": "ops@buildr.com", "note": "investigating" }
@@ -173,7 +197,7 @@ Filterable: `?status=open`, `?ruleId=…`, `?severity=high`, `?since=2026-06-01T
 
 Idempotent. Status transitions `OPEN → ACKNOWLEDGED`.
 
-#### `POST /incidents/{id}/resolve`
+#### `POST /alerts/{id}/resolve`
 
 Two body shapes — distinguished by presence of `transactionRefs`:
 
@@ -184,7 +208,7 @@ Two body shapes — distinguished by presence of `transactionRefs`:
 
 Status transitions to `RESOLVED` with `resolution.kind = "fixed_by_booking"` (or `"auto"` if the system path closed it).
 
-#### `POST /incidents/{id}/accept` — business acceptance
+#### `POST /alerts/{id}/accept` — business acceptance
 
 ```json
 {
@@ -194,7 +218,7 @@ Status transitions to `RESOLVED` with `resolution.kind = "fixed_by_booking"` (or
 }
 ```
 
-Note is **required**. Evidence at acceptance time is frozen onto `resolution.evidenceSnapshot`. If `expiresAt` is set and the rule still fails at expiry, a *new* incident opens with `parentIncidentId` pointing at this one — flapping stays visible.
+Note is **required**. Evidence at acceptance time is frozen onto `resolution.evidenceSnapshot`. If `expiresAt` is set and the rule still fails at expiry, the alert reopens in place (same id) — the prior resolution is preserved as an `alert_event` row, the alert row's current `resolution` is cleared.
 
 ---
 
@@ -204,14 +228,14 @@ Published to the Webhooks module — same dispatch model as other Formance event
 
 | Event | Fires when | Default delivery |
 |---|---|---|
-| `reconciliation.incident.opened`       | First failing eval for a fingerprint | ✅ webhook + email |
-| `reconciliation.incident.updated`      | Subsequent failure or severity change | digest only |
-| `reconciliation.incident.acknowledged` | Human ack'd | digest only |
-| `reconciliation.incident.resolved`     | Auto or `fixed_by_booking` | ✅ webhook + email |
-| `reconciliation.incident.accepted`     | Business acceptance | ✅ webhook + email |
-| `reconciliation.incident.reopened`     | Same fingerprint fails after a closed incident | ✅ webhook + email |
+| `reconciliation.alert.opened`       | First failing eval for a fingerprint | ✅ webhook + email |
+| `reconciliation.alert.updated`      | Subsequent failure or severity change | digest only |
+| `reconciliation.alert.acknowledged` | Human ack'd | digest only |
+| `reconciliation.alert.resolved`     | Auto or `fixed_by_booking` | ✅ webhook + email |
+| `reconciliation.alert.accepted`     | Business acceptance | ✅ webhook + email |
+| `reconciliation.alert.reopened`     | Same fingerprint fails after a closed alert (status → OPEN, same alert id) | ✅ webhook + email |
 
-Each payload carries the full `Incident` row plus the latest `Evaluation`'s `evidence`.
+Each payload carries the full `Alert` row plus the latest `Evaluation`'s `evidence`.
 
 Email digest is owned in-module (per-recipient aggregation is awkward to push down to Webhooks). All other delivery is the customer's problem (Jira / PagerDuty / Slack via their own Webhook consumer).
 
@@ -232,6 +256,6 @@ All endpoints share the existing `ErrorResponse` shape:
 | 401 | `UNAUTHORIZED`       | Missing/invalid token |
 | 403 | `FORBIDDEN`          | Token lacks the required scope |
 | 404 | `NOT_FOUND`          | Resource doesn't exist |
-| 409 | `CONFLICT`           | Active incident exists for same fingerprint (rare; safeguard) |
+| 409 | `CONFLICT`           | Concurrent first-open race rejected by unique constraint (the retry path catches this automatically — surfaced only when retries are exhausted) |
 | 422 | `BUSINESS_RULE`      | E.g. accept-without-note, resolve-on-already-resolved |
-| 500 | `INTERNAL`           | Engine error, resolver timeout — also raises an `engine.error` meta-incident |
+| 500 | `INTERNAL`           | Engine error, resolver timeout — also raises an `engine.error` meta-alert |

@@ -8,8 +8,8 @@ Engineering reference for the V1 reconciliation work. Start with the diff doc if
 |---|---|
 | [v1-vs-legacy.md](./v1-vs-legacy.md) | The **diff** between today's `/policies` behaviour and the V1 model. Read first. |
 | [architecture.md](./architecture.md) | How `internal/engine/`, `internal/templates/`, `internal/storage/`, and the service layer fit together. |
-| [api.md](./api.md) | Legacy `/policies` API (preserved as a facade) **and** the V1 `/rules` / `/incidents` API. |
-| [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate → incident → resolve / accept, plus re-open and engine-error paths. |
+| [api.md](./api.md) | Legacy `/policies` API (preserved as a facade) **and** the V1 `/rules` / `/alerts` API. |
+| [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate → alert → resolve / accept, plus reopen and engine-error paths. |
 | [templates.md](./templates.md) | The V1 GA template catalog — spec shapes, validation rules, what each compiles to, evidence format. |
 
 ## Status legend used throughout

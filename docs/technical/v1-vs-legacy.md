@@ -8,17 +8,17 @@ This document describes the diff between the legacy reconciliation behaviour (wh
 
 | Dimension | Legacy `/policies` | V1 Ledger Clarity |
 |---|---|---|
-| **Entity model** | `Policy` (config) + `Reconciliation` (one-shot result) | `Rule` + `Evaluation` (every run) + `Incident` (stateful) + `Resolution` (auditable closure) |
+| **Entity model** | `Policy` (config) + `Reconciliation` (one-shot result) | `Rule` + `Evaluation` (every run) + `Alert` (stable per rule+fingerprint) + `AlertEvent` (append-only history) + `Resolution` (auditable closure) |
 | **Surface** | Single hardcoded comparison: ledger query vs payments pool | Three typed templates over an internal CEL kernel; resolvers per `Source` kind |
 | **Schedule** | Manual `POST /policies/{id}/reconciliation` | On-demand at V1 beta; cron + safety-margin at V1 GA |
-| **Asset handling** | One pass/fail per request; "different number of assets" hard fails | Per-asset outcomes, fingerprint-dedup'd; one incident per asset |
+| **Asset handling** | One pass/fail per request; "different number of assets" hard fails | Per-asset outcomes, fingerprint-dedup'd; one alert per asset |
 | **Drift convention** | Implicit (`ledgerBalance + poolBalance == 0`) — only **negative** drift flags `NOT_OK` (legacy bug) | Same arithmetic; templates treat **any** drift outside tolerance as failure |
 | **Tolerance** | Strict zero only | Per-asset tolerance, configurable per template |
 | **Payments-side read** | Legacy SDK route `/api/payments/pools/{id}/balances?at=` — **silently empty** under payments v3 | V3 `/balances/latest` via `SDKPaymentsResolver` |
 | **Notifications** | None (HTTP response only) | Webhook events + email digest at V1 GA |
 | **Resolution** | None — every fail recomputes from scratch | Three paths: `auto` / `fixed_by_booking` / `accepted_by_business`, all audit-trailed |
-| **Re-open behaviour** | N/A | New incident parent-linked to the closed one — flapping is visible |
-| **Engine errors vs data incidents** | Mixed (any failure surfaces as `status: NOT_OK` w/ error string) | Separated: data → incident; engine error → `engine.error` meta-incident on a distinct channel |
+| **Reopen behaviour** | N/A | Same alert row flips back to OPEN in place; lifetime `occurrence_count` keeps growing; the prior resolution is preserved in the `alert_event` log |
+| **Engine errors vs data alerts** | Mixed (any failure surfaces as `status: NOT_OK` w/ error string) | Separated: data → alert; engine error → `engine.error` meta-alert on a distinct channel |
 | **Auditability** | Best-effort; no PIT recorded on the result | Every `Evaluation` persists the PITs each source resolved at; resolutions are immutable |
 
 ---
@@ -37,7 +37,8 @@ reconciliations.reconciliation   — one row per POST /policies/{id}/reconciliat
 ```text
 reconciliations.rule         — typed template + spec + schedule + severity + labels (compiled_cel for explainability)
 reconciliations.evaluation   — one row per execution (PASS / FAIL / ERROR); pit_per_source + evidence
-reconciliations.incident     — stateful per-fingerprint failing record; ack + resolution + parent_incident_id
+reconciliations.alert        — stable per-fingerprint record; ack + resolution + lifetime occurrence_count
+reconciliations.alert_event  — append-only log: one row per evaluation that touched the alert + one per manual transition
 reconciliations.policy       — preserved verbatim, backs the /policies facade
 reconciliations.reconciliation — preserved verbatim
 ```
@@ -84,7 +85,7 @@ One reconciliation = one pass/fail. Asset count mismatch short-circuits.
 
 - Each template discovers the asset universe at eval time (union of both sides for drift; spec keys for invariant/threshold).
 - Per-asset `Outcome { Fingerprint: "asset:USD/2", Passed: bool, Evidence: {...} }`.
-- One `Incident` opens per failing `Outcome` — USD breaking is a separate incident from EUR breaking, so they resolve independently.
+- One `Alert` row exists per `(rule, fingerprint)` pair (e.g. `asset:USD/2`). USD breaking is a separate alert from EUR breaking, so they resolve independently.
 
 ---
 
@@ -144,7 +145,7 @@ None. Every failing reconciliation just produces another `NOT_OK` row.
 
 ### V1
 
-Three closure paths on `Incident`, persisted in the `resolution` jsonb column:
+Three closure paths on `Alert`, persisted in the `resolution` jsonb column (current resolution) and in `alert_event` rows (historical resolutions across reopen cycles):
 
 | Kind | Trigger | Required artefacts |
 |---|---|---|
@@ -152,20 +153,20 @@ Three closure paths on `Incident`, persisted in the `resolution` jsonb column:
 | `fixed_by_booking` | Operator marks resolved, optionally referencing corrective transactions | Author, timestamp, transactionRefs (optional), note (optional) |
 | `accepted_by_business` | Operator declares the discrepancy acceptable | Author, timestamp, **note (required)**, evidence snapshot frozen at acceptance, optional `expiresAt` |
 
-Re-opens after RESOLVED create a *new* row with `parent_incident_id` pointing at the prior one — flapping is visible, MTTR is clean. See [workflows.md](./workflows.md) for the lifecycle diagram.
+Re-opens after RESOLVED create a *new* row with `—` pointing at the prior one — flapping is visible, MTTR is clean. See [workflows.md](./workflows.md) for the lifecycle diagram.
 
 ---
 
-## 8. Engine errors vs data incidents
+## 8. Engine errors vs data alerts
 
 ### Legacy
 
-A failed SDK call surfaces as `status: NOT_OK` with the SDK error as text. Mixed with real data incidents.
+A failed SDK call surfaces as `status: NOT_OK` with the SDK error as text. Mixed with real data discrepancies.
 
 ### V1
 
-- **Data incidents** — opened from per-fingerprint failing `Outcome`s.
-- **`engine.error` meta-incidents** — opened when the kernel or a resolver itself fails (CEL builtin throws, source resolver times out, budget exceeded). Distinct channel/digest so engine-health noise doesn't contaminate the financial-incident feed.
+- **Data alerts** — opened from per-fingerprint failing `Outcome`s.
+- **`engine.error` meta-alerts** — opened when the kernel or a resolver itself fails (CEL builtin throws, source resolver times out, budget exceeded). Distinct fingerprint + `kind: engine.error` label so digests can route them to an engine-health channel instead of the financial-alert feed.
 
 ---
 
@@ -177,7 +178,7 @@ A failed SDK call surfaces as `status: NOT_OK` with the SDK error as text. Mixed
 
 ### V1
 
-Every `Evaluation` row stores `pit_per_source` (the PIT each `Source` resolved at). Combined with the immutable `Resolution` record and the parent-linked re-open chain, an auditor query *"show every incident in Q3, who closed it, how, with what evidence"* becomes one SQL call.
+Every `Evaluation` row stores `pit_per_source` (the PIT each `Source` resolved at). Combined with the per-alert append-only `alert_event` log — which captures every transition, including each historical resolution across reopen cycles — an auditor query *"show every alert resolved in Q3, who closed it, how, with what evidence"* becomes one join.
 
 ---
 

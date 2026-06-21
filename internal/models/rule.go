@@ -27,7 +27,7 @@ const (
 	TemplateAccountThreshold TemplateKind = "account_threshold"
 )
 
-// Severity is shared between Rule (declared severity at creation) and Incident
+// Severity is shared between Rule (declared severity at creation) and Alert
 // (inherited from the rule, possibly escalated). The CHECK constraint in the
 // migration mirrors this set verbatim.
 type Severity string

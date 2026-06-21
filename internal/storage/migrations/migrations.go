@@ -216,5 +216,94 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// V1 design pivot: incidents → alerts.
+		//
+		// The previous model treated each resolve→reopen cycle as a fresh
+		// incident row chained via parent_incident_id. That produced a linked
+		// list of "incident episodes" — useful for narrative ("this is a
+		// re-open of #abc") but redundant for analytics, where every useful
+		// query already GROUP BY's (rule_id, fingerprint).
+		//
+		// The new shape:
+		//
+		//   alert        — one stable row per (rule_id, fingerprint). Status
+		//                  cycles in-place through OPEN/ACKNOWLEDGED/RESOLVED.
+		//                  Carries the *current* evidence / ack / resolution
+		//                  for fast UI reads. occurrence_count is the
+		//                  lifetime count of FAIL events on this alert.
+		//
+		//   alert_event  — append-only log: one row per evaluation that
+		//                  touched the alert, plus one row per manual
+		//                  transition (ack / resolve / accept). Carries
+		//                  prev_status / new_status so historical state
+		//                  transitions can be reconstructed without a join.
+		//
+		// alert_event is the seed of a future Ledger-style audit log: today
+		// it's append-only by convention (no UPDATE/DELETE in code paths),
+		// future work can add a per-alert sequence number + prev_hash/hash
+		// chain on top of the existing columns without breaking readers.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					-- Tear down the incident model in its entirety. Pre-GA, no
+					-- data preservation needed.
+					DROP TABLE IF EXISTS reconciliations.incident CASCADE;
+					DROP FUNCTION IF EXISTS reconciliations.incident_parent_same_rule();
+
+					CREATE TABLE IF NOT EXISTS reconciliations.alert (
+						id                  uuid NOT NULL,
+						rule_id             uuid NOT NULL,
+						fingerprint         text NOT NULL,
+						status              text NOT NULL DEFAULT 'OPEN',
+						severity            text NOT NULL,
+						first_seen_at       timestamp with time zone NOT NULL,
+						last_seen_at        timestamp with time zone NOT NULL,
+						occurrence_count    bigint NOT NULL DEFAULT 1,
+						last_evaluation_id  uuid NOT NULL,
+						evidence            jsonb,
+						ack                 jsonb,
+						resolution          jsonb,
+						labels              jsonb,
+						created_at          timestamp with time zone NOT NULL DEFAULT now(),
+						updated_at          timestamp with time zone NOT NULL DEFAULT now(),
+						CONSTRAINT alert_pk            PRIMARY KEY (id),
+						CONSTRAINT alert_unique_pair   UNIQUE (rule_id, fingerprint),
+						CONSTRAINT alert_status_chk    CHECK (status IN ('OPEN','ACKNOWLEDGED','RESOLVED')),
+						CONSTRAINT alert_severity_chk  CHECK (severity IN ('info','low','medium','high','critical')),
+						CONSTRAINT alert_rule_fk       FOREIGN KEY (rule_id)            REFERENCES reconciliations.rule(id) ON DELETE CASCADE,
+						CONSTRAINT alert_last_eval_fk  FOREIGN KEY (last_evaluation_id) REFERENCES reconciliations.evaluation(id)
+					);
+					CREATE INDEX IF NOT EXISTS alert_rule_id_idx   ON reconciliations.alert (rule_id, last_seen_at DESC);
+					CREATE INDEX IF NOT EXISTS alert_status_idx    ON reconciliations.alert (status, last_seen_at DESC);
+					DROP TRIGGER IF EXISTS alert_touch_updated_at ON reconciliations.alert;
+					CREATE TRIGGER alert_touch_updated_at BEFORE UPDATE ON reconciliations.alert
+						FOR EACH ROW EXECUTE FUNCTION reconciliations.touch_updated_at();
+
+					-- Append-only event log. prev_status is NULL only for the
+					-- inaugural event of an alert. type discriminates the
+					-- payload shape (evidence / ack / resolution).
+					CREATE TABLE IF NOT EXISTS reconciliations.alert_event (
+						id              uuid NOT NULL,
+						alert_id        uuid NOT NULL,
+						evaluation_id   uuid,
+						type            text NOT NULL,
+						prev_status     text,
+						new_status      text NOT NULL,
+						payload         jsonb,
+						at              timestamp with time zone NOT NULL,
+						created_at      timestamp with time zone NOT NULL DEFAULT now(),
+						CONSTRAINT alert_event_pk        PRIMARY KEY (id),
+						CONSTRAINT alert_event_type_chk  CHECK (type IN ('fail','pass','ack','resolve','accept')),
+						CONSTRAINT alert_event_prev_chk  CHECK (prev_status IS NULL OR prev_status IN ('OPEN','ACKNOWLEDGED','RESOLVED')),
+						CONSTRAINT alert_event_new_chk   CHECK (new_status IN ('OPEN','ACKNOWLEDGED','RESOLVED')),
+						CONSTRAINT alert_event_alert_fk  FOREIGN KEY (alert_id)      REFERENCES reconciliations.alert(id)      ON DELETE CASCADE,
+						CONSTRAINT alert_event_eval_fk   FOREIGN KEY (evaluation_id) REFERENCES reconciliations.evaluation(id)
+					);
+					CREATE INDEX IF NOT EXISTS alert_event_alert_idx ON reconciliations.alert_event (alert_id, at DESC);
+					CREATE INDEX IF NOT EXISTS alert_event_type_idx  ON reconciliations.alert_event (alert_id, type, at DESC);
+				`)
+				return err
+			},
+		},
 	)
 }

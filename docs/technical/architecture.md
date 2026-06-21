@@ -8,7 +8,7 @@ Where the pieces live and how they fit together. For the *why* behind the kernel
 
 ```text
 internal/
-├── models/                 ✅ Go types — Rule, Evaluation, Incident, Resolution
+├── models/                 ✅ Go types — Rule, Evaluation, Alert, AlertEvent, Resolution
 ├── storage/                ✅ Postgres CRUD via bun
 │   └── migrations/         ✅ Append-only Up migrations (v3.7.2 SDK)
 ├── engine/                 ✅ Internal CEL kernel
@@ -27,12 +27,12 @@ internal/
 │   ├── ledger_invariant.go
 │   └── account_threshold.go
 └── api/
-    ├── service/            ✅ Rule / Evaluation / Incident orchestration (rule.go, evaluation.go, incident.go)
+    ├── service/            ✅ Rule / Evaluation / Alert orchestration (rule.go, evaluation.go, alert.go)
     ├── backend/            ✅ Backend interface + generated mock (now covers all V1 methods)
     ├── rule.go             ✅ V1 rule HTTP handlers + Evaluate
     ├── evaluation.go       ✅ V1 evaluation HTTP handlers
-    ├── incident.go         ✅ V1 incident HTTP handlers (ack/resolve/accept)
-    └── router.go           ✅ Wires legacy /policies and V1 /rules /evaluations /incidents
+    ├── alert.go            ✅ V1 alert HTTP handlers (ack/resolve/accept + events timeline)
+    └── router.go           ✅ Wires legacy /policies and V1 /rules /evaluations /alerts
 ```
 
 ---
@@ -41,8 +41,8 @@ internal/
 
 ```mermaid
 flowchart TB
-    subgraph "API layer ⏳"
-        HTTP[HTTP handlers] --> Svc[Rule / Evaluation / Incident services]
+    subgraph "API layer ✅"
+        HTTP[HTTP handlers] --> Svc[Rule / Evaluation / Alert services]
     end
     Svc --> Reg[templates.Registry ✅]
     Svc --> Store[storage.Storage ✅]
@@ -56,11 +56,11 @@ flowchart TB
 | Layer | Responsibility | Key types |
 |---|---|---|
 | **HTTP** ✅ | OpenAPI-typed surface; auth scopes; cursor pagination | Handlers in [`internal/api/`](../../internal/api/); routes in [`router.go`](../../internal/api/router.go) |
-| **Service** ✅ | Validation, state changes, incident dedup, resolution lifecycle | Methods on `Service` (rule.go / evaluation.go / incident.go) |
+| **Service** ✅ | Validation, state changes, alert dedup, resolution lifecycle, event log append | Methods on `Service` (rule.go / evaluation.go / alert.go) |
 | **Templates** ✅ | Typed specs → CEL; per-fingerprint outcomes | `Evaluator`, `Outcome`, `Registry` |
 | **Engine** ✅ | CEL evaluation, budget, PIT propagation, resolver dispatch | `Engine`, `Source`, `Resolvers`, `Limits` |
 | **Resolvers** ✅ | SDK calls; feature-flag cache; data shaping | `SDKLedgerResolver`, `SDKPaymentsResolver` |
-| **Storage** ✅ | bun CRUD; partial unique index for incident dedup; cascade deletes | `Storage`, models |
+| **Storage** ✅ | bun CRUD; unique constraint per (rule, fingerprint); append-only `alert_event` log; cascade deletes | `Storage`, models |
 
 ---
 
@@ -85,7 +85,7 @@ See [engine/engine.go](../../internal/engine/engine.go) for the Compile/Evaluate
 
 ## Templates layer — one-paragraph view
 
-A template owns its own end-to-end evaluation. It scouts the asset universe by calling resolvers directly (e.g. union of ledger + pool balances for `ledger_vs_pool_drift`), then for each asset it renders a fresh CEL string, compiles + evaluates via the kernel, and emits an `Outcome` with a stable fingerprint. The service layer collects outcomes and opens/updates one incident per failing fingerprint.
+A template owns its own end-to-end evaluation. It scouts the asset universe by calling resolvers directly (e.g. union of ledger + pool balances for `ledger_vs_pool_drift`), then for each asset it renders a fresh CEL string, compiles + evaluates via the kernel, and emits an `Outcome` with a stable fingerprint. The service layer collects outcomes and opens/updates one alert per failing fingerprint (appending one `alert_event` row per outcome).
 
 ```mermaid
 flowchart LR
@@ -106,11 +106,12 @@ Each template also performs a **kernel/template consistency check** — it runs 
 
 ```mermaid
 erDiagram
-    RULE ||--o{ EVALUATION : "evaluated by"
-    RULE ||--o{ INCIDENT   : "opens"
-    EVALUATION ||--o{ INCIDENT : "first_/last_evaluation_id"
-    INCIDENT ||--o| INCIDENT : "parent_incident_id (re-open)"
-    POLICY ||--o{ RECONCILIATION : "legacy"
+    RULE       ||--o{ EVALUATION  : "evaluated by"
+    RULE       ||--o{ ALERT       : "raises"
+    EVALUATION ||--o{ ALERT       : "last_evaluation_id"
+    ALERT      ||--o{ ALERT_EVENT : "transitions / history"
+    EVALUATION ||--o{ ALERT_EVENT : "evaluation_id (per-eval row)"
+    POLICY     ||--o{ RECONCILIATION : "legacy"
 
     RULE {
         uuid id PK
@@ -137,22 +138,31 @@ erDiagram
         text error
         bigint cost_units
     }
-    INCIDENT {
+    ALERT {
         uuid id PK
         uuid rule_id FK
         text fingerprint
         text status
         text severity
-        ts opened_at
+        ts first_seen_at
         ts last_seen_at
-        int occurrence_count
-        uuid first_evaluation_id FK
+        bigint occurrence_count "lifetime"
         uuid last_evaluation_id FK
-        jsonb evidence
-        jsonb ack
-        jsonb resolution
-        uuid parent_incident_id FK
+        jsonb evidence "current"
+        jsonb ack "current"
+        jsonb resolution "current"
         jsonb labels
+    }
+    ALERT_EVENT {
+        uuid id PK
+        uuid alert_id FK
+        uuid evaluation_id FK "nullable"
+        text type "fail|pass|ack|resolve|accept"
+        text prev_status "nullable"
+        text new_status
+        jsonb payload
+        ts at
+        ts created_at
     }
     POLICY {
         uuid id PK
@@ -176,9 +186,11 @@ erDiagram
 
 ### Key invariants
 
-- **`incident_active_per_fingerprint`** — partial unique index on `(rule_id, fingerprint) WHERE status IN ('OPEN','ACKNOWLEDGED')`. Guarantees at most one active incident per fingerprint; concurrent failing evaluations always update the same row.
-- **`ON DELETE CASCADE`** — deleting a `Rule` cleans up its evaluations and incidents.
-- **`touch_updated_at` trigger** — `updated_at` advances on every UPDATE for `rule` and `incident`. Verified in [migrations.go](../../internal/storage/migrations/migrations.go) and exercised in storage tests.
+- **`alert_unique_pair`** — UNIQUE constraint on `(rule_id, fingerprint)` in the `alert` table. Exactly one alert row per pair for the lifetime of the rule; concurrent failing evaluations either update or (on a true first-open race) retry as update.
+- **`alert.occurrence_count`** is the **lifetime** count of FAIL events on the alert — it survives reopen cycles. Per-episode counts are derived by filtering `alert_event` between status transitions.
+- **`alert_event` is append-only by convention** — no code path issues UPDATE or DELETE against it. A future migration can layer a per-alert `seq` + `prev_hash`/`hash` chain on top without breaking readers (mirrors the Ledger transaction log shape).
+- **`ON DELETE CASCADE`** — deleting a `Rule` cleans up its evaluations, alerts, and alert events.
+- **`touch_updated_at` trigger** — `updated_at` advances on every UPDATE for `rule` and `alert`. Verified in [migrations.go](../../internal/storage/migrations/migrations.go) and exercised in storage tests.
 
 ---
 
@@ -188,7 +200,8 @@ erDiagram
 - **Per-eval CEL env** is built fresh per `Engine.Evaluate` call — no shared state between concurrent evaluations.
 - **Budget tracker** uses `atomic.Int64` for `accountsScanned`.
 - **Resolvers** cache feature flags but are otherwise stateless per call.
-- **Incident dedup** relies on the partial unique index, not application-level locking. Concurrent failing evaluations attempting to insert the same fingerprint will race, but only one succeeds — the loser does an UPDATE.
+- **Alert dedup** relies on the UNIQUE constraint on `(rule_id, fingerprint)`, not application-level locking. Concurrent failing evaluations attempting to insert the same fingerprint will race; one succeeds, the loser retries and falls into the update path. See [storage/alert.go](../../internal/storage/alert.go) and the concurrency regression test in [alert_test.go](../../internal/storage/alert_test.go).
+- **Alert event appends** happen in the same transaction as the alert UPDATE/INSERT — the log can never reflect a state the alert table doesn't.
 
 ---
 

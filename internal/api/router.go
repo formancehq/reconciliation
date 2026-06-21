@@ -46,7 +46,7 @@ func newRouter(
 		r.Get("/policies/{policyID}", getPolicyHandler(b))
 		r.Post("/policies/{policyID}/reconciliation", reconciliationHandler(b))
 
-		// V1 — Rule / Evaluation / Incident
+		// V1 — Rule / Evaluation / Alert
 		r.Post("/rules", createRuleHandler(b))
 		r.Get("/rules", listRulesHandler(b))
 		r.Get("/rules/{ruleID}", getRuleHandler(b))
@@ -57,11 +57,12 @@ func newRouter(
 		r.Get("/evaluations", listEvaluationsHandler(b))
 		r.Get("/evaluations/{evaluationID}", getEvaluationHandler(b))
 
-		r.Get("/incidents", listIncidentsHandler(b))
-		r.Get("/incidents/{incidentID}", getIncidentHandler(b))
-		r.Post("/incidents/{incidentID}/ack", ackIncidentHandler(b))
-		r.Post("/incidents/{incidentID}/resolve", resolveIncidentHandler(b))
-		r.Post("/incidents/{incidentID}/accept", acceptIncidentHandler(b))
+		r.Get("/alerts", listAlertsHandler(b))
+		r.Get("/alerts/{alertID}", getAlertHandler(b))
+		r.Get("/alerts/{alertID}/events", listAlertEventsHandler(b))
+		r.Post("/alerts/{alertID}/ack", ackAlertHandler(b))
+		r.Post("/alerts/{alertID}/resolve", resolveAlertHandler(b))
+		r.Post("/alerts/{alertID}/accept", acceptAlertHandler(b))
 	})
 
 	return r

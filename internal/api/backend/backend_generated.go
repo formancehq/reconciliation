@@ -45,34 +45,34 @@ func (m *MockService) EXPECT() *MockServiceMockRecorder {
 	return m.recorder
 }
 
-// AcceptIncident mocks base method.
-func (m *MockService) AcceptIncident(ctx context.Context, id uuid.UUID, req *service.AcceptIncidentRequest) (*models.Incident, error) {
+// AcceptAlert mocks base method.
+func (m *MockService) AcceptAlert(ctx context.Context, id uuid.UUID, req *service.AcceptAlertRequest) (*models.Alert, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AcceptIncident", ctx, id, req)
-	ret0, _ := ret[0].(*models.Incident)
+	ret := m.ctrl.Call(m, "AcceptAlert", ctx, id, req)
+	ret0, _ := ret[0].(*models.Alert)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// AcceptIncident indicates an expected call of AcceptIncident.
-func (mr *MockServiceMockRecorder) AcceptIncident(ctx, id, req any) *gomock.Call {
+// AcceptAlert indicates an expected call of AcceptAlert.
+func (mr *MockServiceMockRecorder) AcceptAlert(ctx, id, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcceptIncident", reflect.TypeOf((*MockService)(nil).AcceptIncident), ctx, id, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcceptAlert", reflect.TypeOf((*MockService)(nil).AcceptAlert), ctx, id, req)
 }
 
-// AckIncident mocks base method.
-func (m *MockService) AckIncident(ctx context.Context, id uuid.UUID, req *service.AckIncidentRequest) (*models.Incident, error) {
+// AckAlert mocks base method.
+func (m *MockService) AckAlert(ctx context.Context, id uuid.UUID, req *service.AckAlertRequest) (*models.Alert, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AckIncident", ctx, id, req)
-	ret0, _ := ret[0].(*models.Incident)
+	ret := m.ctrl.Call(m, "AckAlert", ctx, id, req)
+	ret0, _ := ret[0].(*models.Alert)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// AckIncident indicates an expected call of AckIncident.
-func (mr *MockServiceMockRecorder) AckIncident(ctx, id, req any) *gomock.Call {
+// AckAlert indicates an expected call of AckAlert.
+func (mr *MockServiceMockRecorder) AckAlert(ctx, id, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckIncident", reflect.TypeOf((*MockService)(nil).AckIncident), ctx, id, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckAlert", reflect.TypeOf((*MockService)(nil).AckAlert), ctx, id, req)
 }
 
 // CreatePolicy mocks base method.
@@ -148,6 +148,21 @@ func (mr *MockServiceMockRecorder) EvaluateRule(ctx, id, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EvaluateRule", reflect.TypeOf((*MockService)(nil).EvaluateRule), ctx, id, req)
 }
 
+// GetAlert mocks base method.
+func (m *MockService) GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAlert", ctx, id)
+	ret0, _ := ret[0].(*models.Alert)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAlert indicates an expected call of GetAlert.
+func (mr *MockServiceMockRecorder) GetAlert(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAlert", reflect.TypeOf((*MockService)(nil).GetAlert), ctx, id)
+}
+
 // GetEvaluation mocks base method.
 func (m *MockService) GetEvaluation(ctx context.Context, id uuid.UUID) (*models.Evaluation, error) {
 	m.ctrl.T.Helper()
@@ -161,21 +176,6 @@ func (m *MockService) GetEvaluation(ctx context.Context, id uuid.UUID) (*models.
 func (mr *MockServiceMockRecorder) GetEvaluation(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEvaluation", reflect.TypeOf((*MockService)(nil).GetEvaluation), ctx, id)
-}
-
-// GetIncident mocks base method.
-func (m *MockService) GetIncident(ctx context.Context, id uuid.UUID) (*models.Incident, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetIncident", ctx, id)
-	ret0, _ := ret[0].(*models.Incident)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetIncident indicates an expected call of GetIncident.
-func (mr *MockServiceMockRecorder) GetIncident(ctx, id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetIncident", reflect.TypeOf((*MockService)(nil).GetIncident), ctx, id)
 }
 
 // GetPolicy mocks base method.
@@ -223,6 +223,36 @@ func (mr *MockServiceMockRecorder) GetRule(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRule", reflect.TypeOf((*MockService)(nil).GetRule), ctx, id)
 }
 
+// ListAlertEvents mocks base method.
+func (m *MockService) ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]models.AlertEvent, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListAlertEvents", ctx, alertID)
+	ret0, _ := ret[0].([]models.AlertEvent)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListAlertEvents indicates an expected call of ListAlertEvents.
+func (mr *MockServiceMockRecorder) ListAlertEvents(ctx, alertID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAlertEvents", reflect.TypeOf((*MockService)(nil).ListAlertEvents), ctx, alertID)
+}
+
+// ListAlerts mocks base method.
+func (m *MockService) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListAlerts", ctx, q)
+	ret0, _ := ret[0].(*bunpaginate.Cursor[models.Alert])
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListAlerts indicates an expected call of ListAlerts.
+func (mr *MockServiceMockRecorder) ListAlerts(ctx, q any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAlerts", reflect.TypeOf((*MockService)(nil).ListAlerts), ctx, q)
+}
+
 // ListEvaluations mocks base method.
 func (m *MockService) ListEvaluations(ctx context.Context, q storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error) {
 	m.ctrl.T.Helper()
@@ -236,21 +266,6 @@ func (m *MockService) ListEvaluations(ctx context.Context, q storage.GetEvaluati
 func (mr *MockServiceMockRecorder) ListEvaluations(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEvaluations", reflect.TypeOf((*MockService)(nil).ListEvaluations), ctx, q)
-}
-
-// ListIncidents mocks base method.
-func (m *MockService) ListIncidents(ctx context.Context, q storage.GetIncidentsQuery) (*bunpaginate.Cursor[models.Incident], error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListIncidents", ctx, q)
-	ret0, _ := ret[0].(*bunpaginate.Cursor[models.Incident])
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListIncidents indicates an expected call of ListIncidents.
-func (mr *MockServiceMockRecorder) ListIncidents(ctx, q any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListIncidents", reflect.TypeOf((*MockService)(nil).ListIncidents), ctx, q)
 }
 
 // ListPolicies mocks base method.
@@ -327,19 +342,19 @@ func (mr *MockServiceMockRecorder) Reconciliation(ctx, policyID, req any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reconciliation", reflect.TypeOf((*MockService)(nil).Reconciliation), ctx, policyID, req)
 }
 
-// ResolveIncident mocks base method.
-func (m *MockService) ResolveIncident(ctx context.Context, id uuid.UUID, req *service.ResolveIncidentRequest) (*models.Incident, error) {
+// ResolveAlert mocks base method.
+func (m *MockService) ResolveAlert(ctx context.Context, id uuid.UUID, req *service.ResolveAlertRequest) (*models.Alert, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResolveIncident", ctx, id, req)
-	ret0, _ := ret[0].(*models.Incident)
+	ret := m.ctrl.Call(m, "ResolveAlert", ctx, id, req)
+	ret0, _ := ret[0].(*models.Alert)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ResolveIncident indicates an expected call of ResolveIncident.
-func (mr *MockServiceMockRecorder) ResolveIncident(ctx, id, req any) *gomock.Call {
+// ResolveAlert indicates an expected call of ResolveAlert.
+func (mr *MockServiceMockRecorder) ResolveAlert(ctx, id, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveIncident", reflect.TypeOf((*MockService)(nil).ResolveIncident), ctx, id, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveAlert", reflect.TypeOf((*MockService)(nil).ResolveAlert), ctx, id, req)
 }
 
 // MockBackend is a mock of Backend interface.

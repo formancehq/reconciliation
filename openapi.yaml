@@ -197,7 +197,7 @@ paths:
       security:
         - Authorization: [reconciliation:write]
     delete:
-      summary: Delete a rule (cascades to evaluations + incidents)
+      summary: Delete a rule (cascades to evaluations + alerts + alert events)
       operationId: deleteRule
       tags: [reconciliation.v1]
       responses:
@@ -253,10 +253,10 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
-  /incidents:
+  /alerts:
     get:
-      summary: List incidents
-      operationId: listIncidents
+      summary: List alerts
+      operationId: listAlerts
       tags: [reconciliation.v1]
       parameters:
         - $ref: '#/components/parameters/PageSize'
@@ -266,70 +266,86 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/QueryBuilder' }
       responses:
-        '200': { $ref: '#/components/responses/Incidents' }
+        '200': { $ref: '#/components/responses/Alerts' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
 
-  /incidents/{incidentID}:
-    parameters: [{ $ref: '#/components/parameters/IncidentID' }]
+  /alerts/{alertID}:
+    parameters: [{ $ref: '#/components/parameters/AlertID' }]
     get:
-      summary: Get an incident
-      operationId: getIncident
+      summary: Get an alert
+      operationId: getAlert
       tags: [reconciliation.v1]
       responses:
-        '200': { $ref: '#/components/responses/Incident' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
 
-  /incidents/{incidentID}/ack:
-    post:
-      summary: Acknowledge an incident
-      operationId: ackIncident
+  /alerts/{alertID}/events:
+    parameters: [{ $ref: '#/components/parameters/AlertID' }]
+    get:
+      summary: List alert events (append-only timeline)
+      operationId: listAlertEvents
+      description: |
+        Returns every event recorded for this alert — every evaluation that
+        touched it plus every manual transition. The list is append-only;
+        events are never modified or deleted. Ordered most-recent-first.
       tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/IncidentID' }]
+      responses:
+        '200': { $ref: '#/components/responses/AlertEvents' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /alerts/{alertID}/ack:
+    post:
+      summary: Acknowledge an alert
+      operationId: ackAlert
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/AckIncidentRequest' }
+            schema: { $ref: '#/components/schemas/AckAlertRequest' }
       responses:
-        '200': { $ref: '#/components/responses/Incident' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
 
-  /incidents/{incidentID}/resolve:
+  /alerts/{alertID}/resolve:
     post:
-      summary: Resolve an incident (fixed_by_booking)
-      operationId: resolveIncident
+      summary: Resolve an alert (fixed_by_booking)
+      operationId: resolveAlert
       tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/IncidentID' }]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ResolveIncidentRequest' }
+            schema: { $ref: '#/components/schemas/ResolveAlertRequest' }
       responses:
-        '200': { $ref: '#/components/responses/Incident' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
 
-  /incidents/{incidentID}/accept:
+  /alerts/{alertID}/accept:
     post:
-      summary: Accept an incident (accepted_by_business)
-      operationId: acceptIncident
+      summary: Accept an alert (accepted_by_business)
+      operationId: acceptAlert
       tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/IncidentID' }]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/AcceptIncidentRequest' }
+            schema: { $ref: '#/components/schemas/AcceptAlertRequest' }
       responses:
-        '200': { $ref: '#/components/responses/Incident' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
@@ -386,11 +402,11 @@ components:
       required: true
       description: The evaluation ID.
       schema: { type: string, format: uuid }
-    IncidentID:
-      name: incidentID
+    AlertID:
+      name: alertID
       in: path
       required: true
-      description: The incident ID.
+      description: The alert ID.
       schema: { type: string, format: uuid }
   responses:
     NoContent:
@@ -451,16 +467,21 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/EvaluationsCursorResponse' }
-    Incident:
+    Alert:
       description: OK
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/IncidentResponse' }
-    Incidents:
+          schema: { $ref: '#/components/schemas/AlertResponse' }
+    Alerts:
       description: OK
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/IncidentsCursorResponse' }
+          schema: { $ref: '#/components/schemas/AlertsCursorResponse' }
+    AlertEvents:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AlertEventsResponse' }
   requestBodies:
     Policy:
       required: true
@@ -866,37 +887,42 @@ components:
               type: array
               items: { $ref: '#/components/schemas/Evaluation' }
 
-    Incident:
+    Alert:
       type: object
-      required: [id, ruleID, fingerprint, status, severity, openedAt, lastSeenAt, occurrenceCount, firstEvaluationID, lastEvaluationID, createdAt, updatedAt]
+      description: |
+        An Alert is the stable, dedup'd record of a failing fingerprint for a
+        rule. There is exactly one Alert per (ruleID, fingerprint) for the
+        lifetime of the rule — re-opens after resolve flip the status back to
+        OPEN in place, they do not create a new row. The full history of
+        transitions lives in alert_event (see /alerts/{alertID}/events).
+        `occurrenceCount` is the LIFETIME count of FAIL events.
+      required: [id, ruleID, fingerprint, status, severity, firstSeenAt, lastSeenAt, occurrenceCount, lastEvaluationID, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         ruleID: { type: string, format: uuid }
         fingerprint: { type: string, example: "asset:USD/2" }
         status: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
         severity: { $ref: '#/components/schemas/Severity' }
-        openedAt: { type: string, format: date-time }
+        firstSeenAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
-        occurrenceCount: { type: integer }
-        firstEvaluationID: { type: string, format: uuid }
+        occurrenceCount: { type: integer, format: int64, description: Lifetime count of FAIL events on this alert. }
         lastEvaluationID: { type: string, format: uuid }
         evidence:
           type: object
           additionalProperties: true
         ack: { $ref: '#/components/schemas/Ack' }
         resolution: { $ref: '#/components/schemas/Resolution' }
-        parentIncidentID: { type: string, format: uuid }
         labels:
           type: object
           additionalProperties: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
-    IncidentResponse:
+    AlertResponse:
       type: object
       required: [data]
       properties:
-        data: { $ref: '#/components/schemas/Incident' }
-    IncidentsCursorResponse:
+        data: { $ref: '#/components/schemas/Alert' }
+    AlertsCursorResponse:
       type: object
       required: [cursor]
       properties:
@@ -910,19 +936,49 @@ components:
             next: { type: string }
             data:
               type: array
-              items: { $ref: '#/components/schemas/Incident' }
+              items: { $ref: '#/components/schemas/Alert' }
 
-    AckIncidentRequest:
+    AlertEvent:
+      type: object
+      description: |
+        One row of the alert's append-only event log. Captures every
+        evaluation that touched the alert plus every manual transition
+        (ack / resolve / accept). `prevStatus` is null only for the
+        inaugural event of an alert. `isReopen` is a derived predicate —
+        true when a FAIL event lands on a previously-RESOLVED alert.
+      required: [id, alertID, type, newStatus, at, isReopen]
+      properties:
+        id: { type: string, format: uuid }
+        alertID: { type: string, format: uuid }
+        evaluationID: { type: string, format: uuid, nullable: true }
+        type: { type: string, enum: [fail, pass, ack, resolve, accept] }
+        prevStatus: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED], nullable: true }
+        newStatus: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
+        payload:
+          description: Event-type-specific payload (evidence for fail, resolution for resolve/accept, ack object for ack).
+          type: object
+          additionalProperties: true
+        at: { type: string, format: date-time }
+        isReopen: { type: boolean }
+    AlertEventsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/AlertEvent' }
+
+    AckAlertRequest:
       type: object
       required: [by]
       properties:
         by: { type: string, example: "ops@buildr.com" }
         note: { type: string }
-    ResolveIncidentRequest:
+    ResolveAlertRequest:
       type: object
       required: [by]
       description: |
-        Mark an incident resolved. When `transactionRefs` is non-empty the
+        Mark an alert resolved. When `transactionRefs` is non-empty the
         resolution kind is recorded as `fixed_by_booking`.
       properties:
         by: { type: string }
@@ -930,7 +986,7 @@ components:
         transactionRefs:
           type: array
           items: { type: string }
-    AcceptIncidentRequest:
+    AcceptAlertRequest:
       type: object
       required: [by, note]
       description: Business acceptance. `note` is required and the evidence is snapshotted onto the resolution.

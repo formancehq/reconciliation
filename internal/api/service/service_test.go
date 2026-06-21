@@ -170,28 +170,31 @@ func (s *mockStore) GetEvaluation(context.Context, uuid.UUID) (*models.Evaluatio
 func (s *mockStore) ListEvaluations(context.Context, storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error) {
 	return nil, nil
 }
-func (s *mockStore) OpenOrUpdateIncident(context.Context, storage.OpenIncidentInput) (*storage.OpenIncidentResult, error) {
+func (s *mockStore) OpenOrUpdateAlert(context.Context, storage.OpenAlertInput) (*storage.OpenAlertResult, error) {
 	return nil, nil
 }
-func (s *mockStore) AutoResolveIncident(context.Context, uuid.UUID, string, uuid.UUID, time.Time) (*models.Incident, error) {
+func (s *mockStore) AutoResolveAlert(context.Context, uuid.UUID, string, uuid.UUID, time.Time) (*models.Alert, error) {
 	return nil, nil
 }
-func (s *mockStore) ListActiveIncidentFingerprints(context.Context, uuid.UUID) ([]string, error) {
+func (s *mockStore) ListActiveAlertFingerprints(context.Context, uuid.UUID) ([]string, error) {
 	return nil, nil
 }
-func (s *mockStore) AckIncident(context.Context, uuid.UUID, *models.Ack) (*models.Incident, error) {
+func (s *mockStore) AckAlert(context.Context, uuid.UUID, *models.Ack) (*models.Alert, error) {
 	return nil, nil
 }
-func (s *mockStore) ResolveIncidentManual(context.Context, uuid.UUID, *models.Resolution) (*models.Incident, error) {
+func (s *mockStore) ResolveAlertManual(context.Context, uuid.UUID, *models.Resolution) (*models.Alert, error) {
 	return nil, nil
 }
-func (s *mockStore) AcceptIncident(context.Context, uuid.UUID, *models.Resolution) (*models.Incident, error) {
+func (s *mockStore) AcceptAlert(context.Context, uuid.UUID, *models.Resolution) (*models.Alert, error) {
 	return nil, nil
 }
-func (s *mockStore) GetIncident(context.Context, uuid.UUID) (*models.Incident, error) {
+func (s *mockStore) GetAlert(context.Context, uuid.UUID) (*models.Alert, error) {
 	return nil, nil
 }
-func (s *mockStore) ListIncidents(context.Context, storage.GetIncidentsQuery) (*bunpaginate.Cursor[models.Incident], error) {
+func (s *mockStore) ListAlerts(context.Context, storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
+	return nil, nil
+}
+func (s *mockStore) ListAlertEvents(context.Context, uuid.UUID) ([]models.AlertEvent, error) {
 	return nil, nil
 }
 

@@ -87,7 +87,7 @@ func getPaginatedQueryOptionsEvaluations(r *http.Request) (*storage.PaginatedQue
 		WithPageSize(pageSize)), nil
 }
 
-func getPaginatedQueryOptionsIncidents(r *http.Request) (*storage.PaginatedQueryOptions[storage.IncidentsFilters], error) {
+func getPaginatedQueryOptionsAlerts(r *http.Request) (*storage.PaginatedQueryOptions[storage.AlertsFilters], error) {
 	qb, err := getQueryBuilder(r)
 	if err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func getPaginatedQueryOptionsIncidents(r *http.Request) (*storage.PaginatedQuery
 	if err != nil {
 		return nil, err
 	}
-	return pointer.For(storage.NewPaginatedQueryOptions(storage.IncidentsFilters{}).
+	return pointer.For(storage.NewPaginatedQueryOptions(storage.AlertsFilters{}).
 		WithQueryBuilder(qb).
 		WithPageSize(pageSize)), nil
 }

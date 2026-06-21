@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"sort"
 	"testing"
 	"time"
 
@@ -22,21 +21,28 @@ import (
 
 // fakeV1Store implements just enough of the Store interface to exercise the
 // V1 orchestration flows. Mirrors the real storage layer's semantics for:
-//   - OpenOrUpdateIncident dedup (one active per (rule, fingerprint))
-//   - AutoResolveIncident (closes active with kind=auto)
-//   - parent_incident_id chain on re-open
+//   - OpenOrUpdateAlert dedup (one stable alert per (rule, fingerprint))
+//   - AutoResolveAlert (closes active with kind=auto)
+//   - Reopen happens IN PLACE on the same alert id (no parent chain)
+//   - Every transition appends one row to alert_event
 type fakeV1Store struct {
 	rules       map[uuid.UUID]*models.Rule
 	evaluations map[uuid.UUID]*models.Evaluation
-	incidents   []*models.Incident // append-only chronological list
+	alerts      map[uuid.UUID]*models.Alert // keyed by alert id
+	byFP        map[string]uuid.UUID        // "ruleID|fingerprint" → alert id
+	events      []*models.AlertEvent        // chronological, append-only
 }
 
 func newFakeV1Store() *fakeV1Store {
 	return &fakeV1Store{
 		rules:       map[uuid.UUID]*models.Rule{},
 		evaluations: map[uuid.UUID]*models.Evaluation{},
+		alerts:      map[uuid.UUID]*models.Alert{},
+		byFP:        map[string]uuid.UUID{},
 	}
 }
+
+func fpKey(ruleID uuid.UUID, fp string) string { return ruleID.String() + "|" + fp }
 
 func (f *fakeV1Store) Ping() error { return nil }
 
@@ -141,167 +147,216 @@ func (f *fakeV1Store) ListEvaluations(context.Context, storage.GetEvaluationsQue
 	return nil, nil
 }
 
-// Incident — the load-bearing part of the orchestration tests.
-func (f *fakeV1Store) OpenOrUpdateIncident(_ context.Context, in storage.OpenIncidentInput) (*storage.OpenIncidentResult, error) {
-	if in.OccurredAt.IsZero() {
-		in.OccurredAt = time.Now().UTC()
-	}
-	// Look up active incident for the same fingerprint.
-	for _, inc := range f.incidents {
-		if inc.RuleID == in.RuleID && inc.Fingerprint == in.Fingerprint &&
-			(inc.Status == models.IncidentOpen || inc.Status == models.IncidentAcknowledged) {
-			inc.LastSeenAt = in.OccurredAt
-			inc.LastEvaluationID = in.EvaluationID
-			inc.OccurrenceCount++
-			inc.Evidence = in.Evidence
-			inc.UpdatedAt = time.Now().UTC()
-			copy := *inc
-			return &storage.OpenIncidentResult{Incident: &copy, Created: false}, nil
-		}
-	}
-	// No active — look for a parent (most recent RESOLVED for same fingerprint).
-	var parentID *uuid.UUID
-	for i := len(f.incidents) - 1; i >= 0; i-- {
-		inc := f.incidents[i]
-		if inc.RuleID == in.RuleID && inc.Fingerprint == in.Fingerprint && inc.Status == models.IncidentResolved {
-			p := inc.ID
-			parentID = &p
-			break
-		}
-	}
-	fresh := &models.Incident{
-		ID:                uuid.New(),
-		RuleID:            in.RuleID,
-		Fingerprint:       in.Fingerprint,
-		Status:            models.IncidentOpen,
-		Severity:          in.Severity,
-		OpenedAt:          in.OccurredAt,
-		LastSeenAt:        in.OccurredAt,
-		OccurrenceCount:   1,
-		FirstEvaluationID: in.EvaluationID,
-		LastEvaluationID:  in.EvaluationID,
-		Evidence:          in.Evidence,
-		ParentIncidentID:  parentID,
-		Labels:            in.Labels,
-		CreatedAt:         time.Now().UTC(),
-		UpdatedAt:         time.Now().UTC(),
-	}
-	f.incidents = append(f.incidents, fresh)
-	copy := *fresh
-	return &storage.OpenIncidentResult{Incident: &copy, Created: true}, nil
-}
-
-func (f *fakeV1Store) AutoResolveIncident(_ context.Context, ruleID uuid.UUID, fingerprint string, evID uuid.UUID, at time.Time) (*models.Incident, error) {
+// recordEvent is the fake's mirror of storage.appendAlertEvent. Centralised so
+// every transition writes the same shape and the test surface for events stays
+// honest.
+func (f *fakeV1Store) recordEvent(alertID uuid.UUID, t models.AlertEventType, prev *models.AlertStatus, next models.AlertStatus, evalID *uuid.UUID, payload json.RawMessage, at time.Time) *models.AlertEvent {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	for _, inc := range f.incidents {
-		if inc.RuleID == ruleID && inc.Fingerprint == fingerprint &&
-			(inc.Status == models.IncidentOpen || inc.Status == models.IncidentAcknowledged) {
-			inc.Status = models.IncidentResolved
-			inc.LastEvaluationID = evID
-			inc.Resolution = &models.Resolution{Kind: models.ResolutionAuto, By: "system", At: at}
-			inc.UpdatedAt = time.Now().UTC()
-			copy := *inc
-			return &copy, nil
-		}
+	event := &models.AlertEvent{
+		ID:           uuid.New(),
+		AlertID:      alertID,
+		EvaluationID: evalID,
+		Type:         t,
+		PrevStatus:   prev,
+		NewStatus:    next,
+		Payload:      payload,
+		At:           at,
+		CreatedAt:    time.Now().UTC(),
 	}
+	f.events = append(f.events, event)
+	return event
+}
+
+// Alert — the load-bearing part of the orchestration tests.
+func (f *fakeV1Store) OpenOrUpdateAlert(_ context.Context, in storage.OpenAlertInput) (*storage.OpenAlertResult, error) {
+	if in.OccurredAt.IsZero() {
+		in.OccurredAt = time.Now().UTC()
+	}
+	key := fpKey(in.RuleID, in.Fingerprint)
+
+	if id, ok := f.byFP[key]; ok {
+		alert := f.alerts[id]
+		prev := alert.Status
+		reopened := prev == models.AlertResolved
+
+		alert.Status = models.AlertOpen
+		alert.LastSeenAt = in.OccurredAt
+		alert.LastEvaluationID = in.EvaluationID
+		alert.OccurrenceCount++
+		alert.Evidence = in.Evidence
+		alert.UpdatedAt = time.Now().UTC()
+		if reopened {
+			alert.Resolution = nil
+			alert.Ack = nil
+		}
+		event := f.recordEvent(alert.ID, models.AlertEventFail, &prev, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt)
+		copy := *alert
+		return &storage.OpenAlertResult{Alert: &copy, Event: event, Created: false, Reopened: reopened}, nil
+	}
+
+	fresh := &models.Alert{
+		ID:               uuid.New(),
+		RuleID:           in.RuleID,
+		Fingerprint:      in.Fingerprint,
+		Status:           models.AlertOpen,
+		Severity:         in.Severity,
+		FirstSeenAt:      in.OccurredAt,
+		LastSeenAt:       in.OccurredAt,
+		OccurrenceCount:  1,
+		LastEvaluationID: in.EvaluationID,
+		Evidence:         in.Evidence,
+		Labels:           in.Labels,
+		CreatedAt:        time.Now().UTC(),
+		UpdatedAt:        time.Now().UTC(),
+	}
+	f.alerts[fresh.ID] = fresh
+	f.byFP[key] = fresh.ID
+	event := f.recordEvent(fresh.ID, models.AlertEventFail, nil, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt)
+	copy := *fresh
+	return &storage.OpenAlertResult{Alert: &copy, Event: event, Created: true}, nil
+}
+
+func (f *fakeV1Store) AutoResolveAlert(_ context.Context, ruleID uuid.UUID, fingerprint string, evID uuid.UUID, at time.Time) (*models.Alert, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	id, ok := f.byFP[fpKey(ruleID, fingerprint)]
+	if !ok {
+		return nil, nil
+	}
+	alert := f.alerts[id]
+	if alert.Status != models.AlertOpen && alert.Status != models.AlertAcknowledged {
+		return nil, nil
+	}
+	prev := alert.Status
+	res := &models.Resolution{Kind: models.ResolutionAuto, By: "system", At: at}
+	alert.Status = models.AlertResolved
+	alert.Resolution = res
+	alert.LastEvaluationID = evID
+	alert.UpdatedAt = time.Now().UTC()
+	payload, _ := json.Marshal(res)
+	f.recordEvent(alert.ID, models.AlertEventPass, &prev, models.AlertResolved, &evID, payload, at)
+	copy := *alert
+	return &copy, nil
+}
+
+func (f *fakeV1Store) AckAlert(_ context.Context, id uuid.UUID, ack *models.Ack) (*models.Alert, error) {
+	alert, ok := f.alerts[id]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	if alert.Status == models.AlertResolved {
+		return nil, storage.ErrNotFound
+	}
+	if alert.Status == models.AlertAcknowledged {
+		copy := *alert
+		return &copy, nil // no-op, preserve original ack
+	}
+	prev := alert.Status
+	alert.Status = models.AlertAcknowledged
+	alert.Ack = ack
+	alert.UpdatedAt = time.Now().UTC()
+	payload, _ := json.Marshal(ack)
+	f.recordEvent(alert.ID, models.AlertEventAck, &prev, models.AlertAcknowledged, nil, payload, ack.At)
+	copy := *alert
+	return &copy, nil
+}
+
+func (f *fakeV1Store) ResolveAlertManual(_ context.Context, id uuid.UUID, res *models.Resolution) (*models.Alert, error) {
+	return f.applyFakeResolution(id, res, models.AlertEventResolve)
+}
+
+func (f *fakeV1Store) AcceptAlert(_ context.Context, id uuid.UUID, res *models.Resolution) (*models.Alert, error) {
+	return f.applyFakeResolution(id, res, models.AlertEventAccept)
+}
+
+func (f *fakeV1Store) applyFakeResolution(id uuid.UUID, res *models.Resolution, eventType models.AlertEventType) (*models.Alert, error) {
+	alert, ok := f.alerts[id]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	if alert.Status == models.AlertResolved {
+		return nil, storage.ErrNotFound
+	}
+	prev := alert.Status
+	alert.Status = models.AlertResolved
+	alert.Resolution = res
+	alert.UpdatedAt = time.Now().UTC()
+	payload, _ := json.Marshal(res)
+	f.recordEvent(alert.ID, eventType, &prev, models.AlertResolved, nil, payload, res.At)
+	copy := *alert
+	return &copy, nil
+}
+
+func (f *fakeV1Store) GetAlert(_ context.Context, id uuid.UUID) (*models.Alert, error) {
+	alert, ok := f.alerts[id]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	copy := *alert
+	return &copy, nil
+}
+func (f *fakeV1Store) ListAlerts(context.Context, storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
 	return nil, nil
 }
 
-func (f *fakeV1Store) AckIncident(_ context.Context, id uuid.UUID, ack *models.Ack) (*models.Incident, error) {
-	for _, inc := range f.incidents {
-		if inc.ID == id && (inc.Status == models.IncidentOpen || inc.Status == models.IncidentAcknowledged) {
-			inc.Status = models.IncidentAcknowledged
-			inc.Ack = ack
-			inc.UpdatedAt = time.Now().UTC()
-			copy := *inc
-			return &copy, nil
+func (f *fakeV1Store) ListAlertEvents(_ context.Context, alertID uuid.UUID) ([]models.AlertEvent, error) {
+	out := []models.AlertEvent{}
+	for _, e := range f.events {
+		if e.AlertID == alertID {
+			out = append(out, *e)
 		}
-	}
-	return nil, storage.ErrNotFound
-}
-
-func (f *fakeV1Store) ResolveIncidentManual(_ context.Context, id uuid.UUID, res *models.Resolution) (*models.Incident, error) {
-	for _, inc := range f.incidents {
-		if inc.ID == id && (inc.Status == models.IncidentOpen || inc.Status == models.IncidentAcknowledged) {
-			inc.Status = models.IncidentResolved
-			inc.Resolution = res
-			inc.UpdatedAt = time.Now().UTC()
-			copy := *inc
-			return &copy, nil
-		}
-	}
-	return nil, storage.ErrNotFound
-}
-
-func (f *fakeV1Store) AcceptIncident(_ context.Context, id uuid.UUID, res *models.Resolution) (*models.Incident, error) {
-	for _, inc := range f.incidents {
-		if inc.ID == id && (inc.Status == models.IncidentOpen || inc.Status == models.IncidentAcknowledged) {
-			inc.Status = models.IncidentResolved
-			inc.Resolution = res
-			inc.UpdatedAt = time.Now().UTC()
-			copy := *inc
-			return &copy, nil
-		}
-	}
-	return nil, storage.ErrNotFound
-}
-
-func (f *fakeV1Store) GetIncident(_ context.Context, id uuid.UUID) (*models.Incident, error) {
-	for _, inc := range f.incidents {
-		if inc.ID == id {
-			copy := *inc
-			return &copy, nil
-		}
-	}
-	return nil, storage.ErrNotFound
-}
-func (f *fakeV1Store) ListIncidents(context.Context, storage.GetIncidentsQuery) (*bunpaginate.Cursor[models.Incident], error) {
-	return nil, nil
-}
-
-func (f *fakeV1Store) ListActiveIncidentFingerprints(_ context.Context, ruleID uuid.UUID) ([]string, error) {
-	seen := map[string]struct{}{}
-	out := []string{}
-	for _, inc := range f.incidents {
-		if inc.RuleID != ruleID {
-			continue
-		}
-		if inc.Status != models.IncidentOpen && inc.Status != models.IncidentAcknowledged {
-			continue
-		}
-		if _, dup := seen[inc.Fingerprint]; dup {
-			continue
-		}
-		seen[inc.Fingerprint] = struct{}{}
-		out = append(out, inc.Fingerprint)
 	}
 	return out, nil
 }
 
-// activeFor returns the one active incident for the given (rule, fingerprint),
-// or nil. Helper for assertions.
-func (f *fakeV1Store) activeFor(ruleID uuid.UUID, fingerprint string) *models.Incident {
-	for _, inc := range f.incidents {
-		if inc.RuleID == ruleID && inc.Fingerprint == fingerprint &&
-			(inc.Status == models.IncidentOpen || inc.Status == models.IncidentAcknowledged) {
-			return inc
+func (f *fakeV1Store) ListActiveAlertFingerprints(_ context.Context, ruleID uuid.UUID) ([]string, error) {
+	out := []string{}
+	for _, alert := range f.alerts {
+		if alert.RuleID != ruleID {
+			continue
 		}
+		if alert.Status != models.AlertOpen && alert.Status != models.AlertAcknowledged {
+			continue
+		}
+		out = append(out, alert.Fingerprint)
+	}
+	return out, nil
+}
+
+// activeFor returns the alert for (rule, fingerprint) if it's currently
+// OPEN/ACKNOWLEDGED, else nil. Helper for assertions.
+func (f *fakeV1Store) activeFor(ruleID uuid.UUID, fingerprint string) *models.Alert {
+	id, ok := f.byFP[fpKey(ruleID, fingerprint)]
+	if !ok {
+		return nil
+	}
+	alert := f.alerts[id]
+	if alert.Status == models.AlertOpen || alert.Status == models.AlertAcknowledged {
+		return alert
 	}
 	return nil
 }
 
-// allFor returns every incident for the given (rule, fingerprint) in
-// chronological order. Helper for assertions about re-open chains.
-func (f *fakeV1Store) allFor(ruleID uuid.UUID, fingerprint string) []*models.Incident {
-	out := []*models.Incident{}
-	for _, inc := range f.incidents {
-		if inc.RuleID == ruleID && inc.Fingerprint == fingerprint {
-			out = append(out, inc)
+// alertFor returns the alert row (any status) for (rule, fingerprint), or nil.
+func (f *fakeV1Store) alertFor(ruleID uuid.UUID, fingerprint string) *models.Alert {
+	id, ok := f.byFP[fpKey(ruleID, fingerprint)]
+	if !ok {
+		return nil
+	}
+	return f.alerts[id]
+}
+
+// eventsFor returns all events for the alert, chronologically.
+func (f *fakeV1Store) eventsFor(alertID uuid.UUID) []*models.AlertEvent {
+	out := []*models.AlertEvent{}
+	for _, e := range f.events {
+		if e.AlertID == alertID {
+			out = append(out, e)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].OpenedAt.Before(out[j].OpenedAt) })
 	return out
 }
 
@@ -424,7 +479,7 @@ func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
 	}
 }
 
-func TestEvaluate_PassNoIncidents(t *testing.T) {
+func TestEvaluate_PassNoAlerts(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-100)}}
 	svc, store := newOrchestrationService(t, l, p)
@@ -437,105 +492,128 @@ func TestEvaluate_PassNoIncidents(t *testing.T) {
 	if ev.Result != models.EvaluationPass {
 		t.Errorf("expected PASS, got %v", ev.Result)
 	}
-	if len(store.incidents) != 0 {
-		t.Errorf("expected no incidents, got %d", len(store.incidents))
+	if len(store.alerts) != 0 {
+		t.Errorf("expected no alerts, got %d", len(store.alerts))
 	}
 }
 
-func TestEvaluate_OpenAndUpdateAndAutoResolveAndReopen(t *testing.T) {
-	// The headline orchestration test: through one rule we exercise open →
-	// update → auto-resolve → reopen-with-parent in sequence.
+// TestEvaluate_LifecycleInPlace — the headline test for the new model: through
+// one rule we exercise open → update → auto-resolve → REOPEN-IN-PLACE in
+// sequence. The same alert id stays valid across the entire lifecycle; the
+// history lives in alert_event rows, not in chained alert rows.
+func TestEvaluate_LifecycleInPlace(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-300)}} // drift 50
 	svc, store := newOrchestrationService(t, l, p)
 	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	ctx := context.Background()
 
-	// 1. First failing eval → opens incident.
-	ev1, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
-	if err != nil {
+	// 1. First failing eval → opens alert. occurrence_count=1, first 'fail' event.
+	if _, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("eval1: %v", err)
 	}
-	if ev1.Result != models.EvaluationFail {
-		t.Fatalf("eval1 expected FAIL, got %v", ev1.Result)
+	alert := store.activeFor(rule.ID, "asset:USD/2")
+	if alert == nil {
+		t.Fatalf("expected active alert after first fail")
 	}
-	active := store.activeFor(rule.ID, "asset:USD/2")
-	if active == nil {
-		t.Fatalf("expected active incident after first fail")
+	if alert.OccurrenceCount != 1 {
+		t.Errorf("occurrenceCount = %d, want 1", alert.OccurrenceCount)
 	}
-	if active.OccurrenceCount != 1 {
-		t.Errorf("occurrenceCount = %d, want 1", active.OccurrenceCount)
-	}
-	firstID := active.ID
+	originalID := alert.ID
 
-	// 2. Second failing eval (same fingerprint) → updates in place.
-	_, err = svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
-	if err != nil {
+	// 2. Second failing eval → SAME alert id, occurrence_count=2, second event.
+	if _, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("eval2: %v", err)
 	}
-	active = store.activeFor(rule.ID, "asset:USD/2")
-	if active == nil || active.ID != firstID {
-		t.Fatalf("expected same incident updated, got %v", active)
+	alert = store.activeFor(rule.ID, "asset:USD/2")
+	if alert == nil || alert.ID != originalID {
+		t.Fatalf("expected same alert updated, got %v", alert)
 	}
-	if active.OccurrenceCount != 2 {
-		t.Errorf("occurrenceCount = %d, want 2", active.OccurrenceCount)
+	if alert.OccurrenceCount != 2 {
+		t.Errorf("occurrenceCount = %d, want 2", alert.OccurrenceCount)
 	}
 
-	// 3. Make the world consistent → next eval passes, auto-resolves.
+	// 3. Make the world consistent → eval passes, alert auto-resolves IN PLACE.
 	p.current["USD/2"] = big.NewInt(-350)
-	_, err = svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
-	if err != nil {
+	if _, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("eval3: %v", err)
 	}
 	if active := store.activeFor(rule.ID, "asset:USD/2"); active != nil {
-		t.Fatalf("expected no active incident after pass, got %v", active)
+		t.Fatalf("expected no active alert after pass, got %v", active)
 	}
-	all := store.allFor(rule.ID, "asset:USD/2")
-	if len(all) != 1 || all[0].Status != models.IncidentResolved {
-		t.Fatalf("expected 1 RESOLVED incident, got %d (%v)", len(all), all)
+	resolved := store.alertFor(rule.ID, "asset:USD/2")
+	if resolved == nil || resolved.ID != originalID {
+		t.Fatalf("alert id changed across resolve — expected in-place, got %v", resolved)
 	}
-	if all[0].Resolution == nil || all[0].Resolution.Kind != models.ResolutionAuto {
-		t.Errorf("expected resolution.kind=auto, got %v", all[0].Resolution)
+	if resolved.Status != models.AlertResolved {
+		t.Errorf("expected RESOLVED, got %v", resolved.Status)
+	}
+	if resolved.Resolution == nil || resolved.Resolution.Kind != models.ResolutionAuto {
+		t.Errorf("expected resolution.kind=auto, got %v", resolved.Resolution)
 	}
 
-	// 4. Break it again → new incident opens, parent_incident_id = the resolved one.
+	// 4. Break it again → SAME alert reopens IN PLACE (no new row, no parent
+	//    chain). occurrence_count keeps incrementing (lifetime count).
 	p.current["USD/2"] = big.NewInt(-200)
-	_, err = svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
-	if err != nil {
+	if _, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("eval4: %v", err)
 	}
-	all = store.allFor(rule.ID, "asset:USD/2")
-	if len(all) != 2 {
-		t.Fatalf("expected 2 incidents (resolved + new), got %d", len(all))
+	if got := len(store.alerts); got != 1 {
+		t.Fatalf("expected exactly 1 alert across the lifecycle, got %d", got)
 	}
-	reopen := all[1]
-	if reopen.Status != models.IncidentOpen {
-		t.Errorf("re-opened status = %v, want OPEN", reopen.Status)
+	reopened := store.alertFor(rule.ID, "asset:USD/2")
+	if reopened.ID != originalID {
+		t.Fatalf("reopen produced a new alert id (%v) instead of in-place transition (%v)", reopened.ID, originalID)
 	}
-	if reopen.ParentIncidentID == nil || *reopen.ParentIncidentID != firstID {
-		t.Errorf("re-opened parent_incident_id = %v, want %v", reopen.ParentIncidentID, firstID)
+	if reopened.Status != models.AlertOpen {
+		t.Errorf("expected OPEN after reopen, got %v", reopened.Status)
+	}
+	if reopened.OccurrenceCount != 3 {
+		t.Errorf("lifetime occurrenceCount = %d, want 3 (2 fails + 1 reopen)", reopened.OccurrenceCount)
+	}
+	if reopened.Resolution != nil {
+		t.Errorf("reopen must clear prior resolution, got %+v", reopened.Resolution)
+	}
+
+	// 5. The event log captures the full timeline: 2x fail (initial + repeat),
+	//    1x pass (auto-resolve), 1x fail (reopen, prev=RESOLVED).
+	events := store.eventsFor(originalID)
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events, got %d (%v)", len(events), events)
+	}
+
+	if e := events[0]; e.Type != models.AlertEventFail || e.PrevStatus != nil || e.NewStatus != models.AlertOpen {
+		t.Errorf("event[0] expected first-fail (prev=nil → OPEN), got %+v", e)
+	}
+	if e := events[1]; e.Type != models.AlertEventFail || e.PrevStatus == nil || *e.PrevStatus != models.AlertOpen {
+		t.Errorf("event[1] expected fail-on-open, got %+v", e)
+	}
+	if e := events[2]; e.Type != models.AlertEventPass || e.NewStatus != models.AlertResolved {
+		t.Errorf("event[2] expected pass→resolved, got %+v", e)
+	}
+	if e := events[3]; !e.IsReopen() {
+		t.Errorf("event[3] expected reopen (fail + prev=RESOLVED), got %+v", e)
 	}
 }
 
 // TestEvaluate_FingerprintDisappears regression for the
-// "incident stays OPEN forever" gap: when an asset that was previously in
+// "alert stays OPEN forever" gap: when an asset that was previously in
 // drift is cleared by *removing* it from both sides (rather than balancing
 // it), the asset union no longer contains that asset and the next evaluation
-// produces no outcome for it. The active incident must still be auto-resolved
-// — driven by the post-loop sweep against ListActiveIncidentFingerprints.
+// produces no outcome for it. The active alert must still be auto-resolved
+// — driven by the post-loop sweep against ListActiveAlertFingerprints.
 func TestEvaluate_FingerprintDisappears(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-300)}} // drift 50
 	svc, store := newOrchestrationService(t, l, p)
 	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
 
-	// 1. Open an incident on USD/2.
-	_, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
-	if err != nil {
+	// 1. Open an alert on USD/2.
+	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("eval1: %v", err)
 	}
-	active := store.activeFor(rule.ID, "asset:USD/2")
-	if active == nil {
-		t.Fatalf("expected active USD/2 incident after first fail")
+	if store.activeFor(rule.ID, "asset:USD/2") == nil {
+		t.Fatalf("expected active USD/2 alert after first fail")
 	}
 
 	// 2. Remove USD/2 entirely from both sources — simulating the asset
@@ -552,21 +630,20 @@ func TestEvaluate_FingerprintDisappears(t *testing.T) {
 		t.Errorf("eval2 expected PASS, got %v", ev.Result)
 	}
 
-	// 3. The USD/2 incident must now be RESOLVED via the disappearance sweep,
-	//    not left OPEN because no outcome named it.
-	if active := store.activeFor(rule.ID, "asset:USD/2"); active != nil {
-		t.Fatalf("expected USD/2 incident to be auto-resolved after fingerprint vanished, got active %v", active)
+	// 3. USD/2 alert must now be RESOLVED via the disappearance sweep.
+	if store.activeFor(rule.ID, "asset:USD/2") != nil {
+		t.Fatalf("expected USD/2 alert auto-resolved after fingerprint vanished")
 	}
-	all := store.allFor(rule.ID, "asset:USD/2")
-	if len(all) != 1 || all[0].Status != models.IncidentResolved {
-		t.Fatalf("expected exactly 1 RESOLVED USD/2 incident, got %d (%v)", len(all), all)
+	resolved := store.alertFor(rule.ID, "asset:USD/2")
+	if resolved == nil || resolved.Status != models.AlertResolved {
+		t.Fatalf("expected RESOLVED USD/2 alert, got %v", resolved)
 	}
-	if all[0].Resolution == nil || all[0].Resolution.Kind != models.ResolutionAuto {
-		t.Errorf("expected resolution.kind=auto, got %v", all[0].Resolution)
+	if resolved.Resolution == nil || resolved.Resolution.Kind != models.ResolutionAuto {
+		t.Errorf("expected resolution.kind=auto, got %v", resolved.Resolution)
 	}
 }
 
-func TestEvaluate_EngineError_RaisesMetaIncident(t *testing.T) {
+func TestEvaluate_EngineError_RaisesMetaAlert(t *testing.T) {
 	l := &orchestrationLedger{failErr: errors.New("ledger upstream timeout")}
 	svc, store := newOrchestrationService(t, l, &orchestrationPayments{current: map[string]*big.Int{}})
 	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
@@ -582,18 +659,22 @@ func TestEvaluate_EngineError_RaisesMetaIncident(t *testing.T) {
 		t.Errorf("expected non-empty Error on evaluation row")
 	}
 
-	if len(store.incidents) != 1 {
-		t.Fatalf("expected 1 incident (the meta), got %d", len(store.incidents))
+	if got := len(store.alerts); got != 1 {
+		t.Fatalf("expected 1 alert (the meta), got %d", got)
 	}
-	meta := store.incidents[0]
-	if !isEngineErrorIncident(meta) {
+	var meta *models.Alert
+	for _, a := range store.alerts {
+		meta = a
+		break
+	}
+	if !isEngineErrorAlert(meta) {
 		t.Errorf("expected engine.error fingerprint, got %q", meta.Fingerprint)
 	}
 	if meta.Labels["kind"] != engineErrorFingerprint {
 		t.Errorf("expected labels.kind = engine.error, got %v", meta.Labels)
 	}
 	if meta.Severity != models.SeverityHigh {
-		t.Errorf("expected meta-incident severity=high, got %v", meta.Severity)
+		t.Errorf("expected meta-alert severity=high, got %v", meta.Severity)
 	}
 }
 
@@ -606,17 +687,17 @@ func TestAckResolveAccept_StateTransitions(t *testing.T) {
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
 	}
-	inc := store.activeFor(rule.ID, "asset:USD/2")
-	if inc == nil {
-		t.Fatalf("expected open incident to test transitions")
+	alert := store.activeFor(rule.ID, "asset:USD/2")
+	if alert == nil {
+		t.Fatalf("expected open alert to test transitions")
 	}
 
 	// Ack
-	acked, err := svc.AckIncident(context.Background(), inc.ID, &AckIncidentRequest{By: "ops@buildr.com", Note: "investigating"})
+	acked, err := svc.AckAlert(context.Background(), alert.ID, &AckAlertRequest{By: "ops@buildr.com", Note: "investigating"})
 	if err != nil {
-		t.Fatalf("AckIncident: %v", err)
+		t.Fatalf("AckAlert: %v", err)
 	}
-	if acked.Status != models.IncidentAcknowledged {
+	if acked.Status != models.AlertAcknowledged {
 		t.Errorf("expected ACKNOWLEDGED, got %v", acked.Status)
 	}
 	if acked.Ack == nil || acked.Ack.By != "ops@buildr.com" {
@@ -624,15 +705,15 @@ func TestAckResolveAccept_StateTransitions(t *testing.T) {
 	}
 
 	// Resolve fixed_by_booking
-	resolved, err := svc.ResolveIncident(context.Background(), inc.ID, &ResolveIncidentRequest{
+	resolved, err := svc.ResolveAlert(context.Background(), alert.ID, &ResolveAlertRequest{
 		By:              "ops@buildr.com",
 		Note:            "posted correction tx_abc",
 		TransactionRefs: []string{"tx_abc"},
 	})
 	if err != nil {
-		t.Fatalf("ResolveIncident: %v", err)
+		t.Fatalf("ResolveAlert: %v", err)
 	}
-	if resolved.Status != models.IncidentResolved {
+	if resolved.Status != models.AlertResolved {
 		t.Errorf("expected RESOLVED, got %v", resolved.Status)
 	}
 	if resolved.Resolution == nil || resolved.Resolution.Kind != models.ResolutionFixedByBooking {
@@ -651,9 +732,9 @@ func TestAccept_RequiresNote(t *testing.T) {
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
 	}
-	inc := store.activeFor(rule.ID, "asset:USD/2")
+	alert := store.activeFor(rule.ID, "asset:USD/2")
 
-	_, err := svc.AcceptIncident(context.Background(), inc.ID, &AcceptIncidentRequest{By: "treasurer", Note: ""})
+	_, err := svc.AcceptAlert(context.Background(), alert.ID, &AcceptAlertRequest{By: "treasurer", Note: ""})
 	if err == nil {
 		t.Fatalf("expected error on accept-without-note")
 	}
@@ -670,16 +751,16 @@ func TestAccept_FreezesEvidence(t *testing.T) {
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
 	}
-	inc := store.activeFor(rule.ID, "asset:USD/2")
+	alert := store.activeFor(rule.ID, "asset:USD/2")
 
 	when := time.Now().Add(48 * time.Hour)
-	out, err := svc.AcceptIncident(context.Background(), inc.ID, &AcceptIncidentRequest{
+	out, err := svc.AcceptAlert(context.Background(), alert.ID, &AcceptAlertRequest{
 		By:        "treasurer",
 		Note:      "settlement lag",
 		ExpiresAt: &when,
 	})
 	if err != nil {
-		t.Fatalf("AcceptIncident: %v", err)
+		t.Fatalf("AcceptAlert: %v", err)
 	}
 	if out.Resolution == nil || out.Resolution.Kind != models.ResolutionAcceptedByBusiness {
 		t.Fatalf("expected accepted_by_business, got %v", out.Resolution)
@@ -694,7 +775,6 @@ func TestAccept_FreezesEvidence(t *testing.T) {
 
 func contains(haystack, needle string) bool {
 	return len(needle) == 0 || (len(haystack) >= len(needle) && (haystack == needle ||
-		// crude substring match without importing strings — keeps imports minimal
 		func() bool {
 			for i := 0; i+len(needle) <= len(haystack); i++ {
 				if haystack[i:i+len(needle)] == needle {
@@ -705,5 +785,4 @@ func contains(haystack, needle string) bool {
 		}()))
 }
 
-// silence unused-import flagger if the package gets refactored
 var _ = fmt.Sprintf

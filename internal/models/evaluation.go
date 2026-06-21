@@ -9,9 +9,9 @@ import (
 )
 
 // EvaluationResult is the outcome of a single rule execution. PASS / FAIL drive
-// the incident layer; ERROR is reserved for engine-side failures (CEL builtin
+// the alert layer; ERROR is reserved for engine-side failures (CEL builtin
 // threw, source resolver timed out, budget exceeded) and raises a separate
-// engine.error meta-incident rather than a data incident.
+// engine.error meta-alert rather than a data alert.
 type EvaluationResult string
 
 const (

@@ -153,7 +153,7 @@ func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch storage.Rul
 	return s.store.PatchRule(ctx, id, patch)
 }
 
-// DeleteRule cascades to evaluations + incidents via FK.
+// DeleteRule cascades to evaluations + alerts (and their events) via FK.
 func (s *Service) DeleteRule(ctx context.Context, id uuid.UUID) error {
 	return s.store.DeleteRule(ctx, id)
 }

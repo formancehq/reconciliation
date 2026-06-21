@@ -17,7 +17,7 @@ Documented in the main PRD ([§6.2 fast-follow catalog](../prd/README.md#62-v11-
 | `posting_rate` template             | `postings(source).count` builtin |
 | `metadata_invariant` template       | `accounts(source).all(a, has(a.metadata.X))` |
 | `cross_account_ratio` template      | Per-account iteration + multi-source comparison |
-| Snooze + flap suppression           | Incident-layer feature; new state + lifecycle transitions |
+| Snooze + flap suppression           | Alert-layer feature; new state + lifecycle transitions |
 | Daily digest                        | Per-recipient aggregation owned in-module |
 | fctl `rules explain` command        | Pretty-print `rule.compiled_cel` with spec context |
 
@@ -41,7 +41,7 @@ Open questions:
 | Question | Notes |
 |---|---|
 | Product name — Ledger Clarity vs Ledger Transparency | Awaiting input from Maxence / Clem + the three design partners |
-| Acceptance expiry — new incident parent-linked or re-open same | Leaning new incident, parent-linked (cleaner MTTR) |
+| Acceptance expiry — auto-reopen the alert in place at `expiresAt`, or wait for the next eval to flip it? | Leaning auto-reopen at `expiresAt` (predictable timing for ops) — design partner feedback to confirm |
 | Daily digest scope — per-recipient only, or per-team / per-ledger | Leaning per-recipient first |
 | Scheduler host — in-process vs Temporal | Leaning Temporal (already in stack); needs architecture review |
 | Raw CEL exposure post-GA | Likely design-partner-gated initially; mature into general EE access once builtin namespace stabilizes |

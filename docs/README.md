@@ -1,6 +1,6 @@
 # Reconciliation — Ledger Clarity Documentation
 
-Reconciliation is evolving from a one-shot drift check between Ledger and Payments into a **continuous-controls product for ledger state** (working name: *Ledger Clarity*). It observes financial invariants you define, produces evidence whenever an invariant breaks, opens a business incident, and supports a documented resolution — either by booking a corrective transaction or by formally accepting the discrepancy with note, author, and audit trail.
+Reconciliation is evolving from a one-shot drift check between Ledger and Payments into a **continuous-controls product for ledger state** (working name: *Ledger Clarity*). It observes financial invariants you define, produces evidence whenever an invariant breaks, raises a stable, dedup'd alert, and supports a documented resolution — either by booking a corrective transaction or by formally accepting the discrepancy with note, author, and audit trail.
 
 The internal kernel that powers it (CEL over a typed object model + `Source` abstraction) is implementation detail. Customers buy *clarity over their ledger*, not a rules engine.
 
@@ -43,10 +43,10 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | # | Scope | Status |
 |---|-------|--------|
 | 1 | Local docker stack isolated from `stack/` | ✅ shipped |
-| 2 | Migrations + Go models for `Rule` / `Evaluation` / `Incident` / `Resolution` | ✅ shipped |
+| 2 | Migrations + Go models for `Rule` / `Evaluation` / `Alert` / `AlertEvent` / `Resolution` | ✅ shipped |
 | 3 | Internal CEL kernel (`internal/engine/`) — types, Source, builtins, resolvers, budget | ✅ shipped |
 | 4 | V1 GA template catalog — `ledger_vs_pool_drift` / `ledger_invariant` / `account_threshold` | ✅ shipped (per-account threshold deferred to V1.1) |
-| 5 | Service layer — Rule / Evaluation / Incident orchestration + resolution paths | ✅ shipped |
+| 5 | Service layer — Rule / Evaluation / Alert orchestration + resolution paths + event-log append | ✅ shipped |
 | 6 | API endpoints + legacy `/policies` facade + OpenAPI | ✅ shipped |
 | 7 | End-to-end demo UI ([poc-reconciliation-demo](../../poc-reconciliation-demo)) — replaces the planned dockertest harness | ✅ shipped |
 | 8 | V1 GA additions — scheduler, webhook events, email digest, fctl, EE gating, metering | 🚧 next |

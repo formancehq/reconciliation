@@ -14,13 +14,13 @@
 
 ## 1. TL;DR
 
-**Ledger Clarity** is Formance's continuous-controls product for ledger state. It observes financial invariants you define (drift, balance thresholds, account-set equality), produces **evidence** whenever an invariant breaks, opens a **business incident**, and supports a documented **resolution** — either by **booking a corrective transaction** or by **formally accepting the discrepancy** with note, author, evidence, and audit trail.
+**Ledger Clarity** is Formance's continuous-controls product for ledger state. It observes financial invariants you define (drift, balance thresholds, account-set equality), produces **evidence** whenever an invariant breaks, raises a stable **alert** with a full transition history, and supports a documented **resolution** — either by **booking a corrective transaction** or by **formally accepting the discrepancy** with note, author, evidence, and audit trail.
 
 The source-agnostic engine that powers it (see [ADR-001](./adr-001-cel-kernel.md)) is implementation detail. **Customers buy clarity over their ledger, not a rule engine.**
 
 The product narrative is a five-stage business lifecycle:
 
-> **Observe → Detect → Incident → Evidence → Resolve or Accept**
+> **Observe → Detect → Alert → Evidence → Resolve or Accept**
 
 ---
 
@@ -38,7 +38,7 @@ Reconciliation v1 ([`internal/api/service/reconciliation.go:43`](../../internal/
 
 - **Symmetry of sources.** The two sides are hardcoded as "ledger query" and "payments pool" — no way to compose N sides, swap in a different source kind.
 - **Operators beyond `drift == 0`.** Equality is the only predicate.
-- **Time, repetition, delivery.** No scheduler, no incident lifecycle, no notification surface.
+- **Time, repetition, delivery.** No scheduler, no alert lifecycle, no notification surface.
 - **Resolution.** No way to mark "fixed by booking" or "accepted by business" — every break is just a recomputed comparison.
 
 ### Strategic vector
@@ -60,8 +60,8 @@ The product surface centres on the five-stage lifecycle:
 | Stage         | What the customer sees                                                                  | What the system does                                                                |
 | ------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | **Observe**   | A library of pre-built controls (templates) over their ledger state                     | Rule definitions, scheduled or on-demand                                            |
-| **Detect**    | A break is identified at a known point in time                                          | Evaluator runs predicate; failure becomes a fingerprinted candidate incident         |
-| **Incident**  | A dedup'd, ack-able, severity-tagged record they can operate against                    | Open / acknowledged / resolved lifecycle; flap-aware                                |
+| **Detect**    | A break is identified at a known point in time                                          | Evaluator runs predicate; failure becomes a fingerprinted candidate alert            |
+| **Alert**     | A stable, ack-able, severity-tagged record per (rule, fingerprint) they can operate against | Open / acknowledged / resolved lifecycle, in place; full append-only history per alert |
 | **Evidence**  | The exact numbers and accounts that made the rule fail, frozen at break time            | Evaluation record with PIT-consistent snapshot                                      |
 | **Resolve or Accept** | Either *booked a correction* or *formally accepted the discrepancy*               | Two resolution paths, both audit-trailed                                            |
 
@@ -75,8 +75,8 @@ The engine internals (rules, expressions, kernel) exist to serve this lifecycle,
 
 - Three template types: `ledger_vs_pool_drift` (port of today), `ledger_invariant`, `account_threshold`.
 - Cron + on-demand evaluation.
-- **Incident lifecycle including resolution** — auto-resolve on passing evaluation, manual *fixed by booking* (optional transaction refs), manual *accepted by business* (required note + author + evidence snapshot + optional expiry).
-- Event publication: `reconciliation.incident.opened | updated | acknowledged | resolved | accepted | reopened`.
+- **Alert lifecycle including resolution** — auto-resolve on passing evaluation, manual *fixed by booking* (optional transaction refs), manual *accepted by business* (required note + author + evidence snapshot + optional expiry). Full append-only event log per alert (one row per evaluation + one per manual transition) — the audit substrate for `/alerts/{id}/events`.
+- Event publication: `reconciliation.alert.opened | updated | acknowledged | resolved | accepted | reopened`.
 - Webhook delivery via the existing Webhooks module + an email digest owned in-module.
 - Backwards compatibility: existing `Policy` evaluates as `ledger_vs_pool_drift`.
 - EE gating + usage metering.
@@ -120,7 +120,9 @@ The engine internals (rules, expressions, kernel) exist to serve this lifecycle,
 ## 6. Conceptual model
 
 ```text
-Rule          → Evaluation → (on fail)  Incident  →  Resolution
+Rule          → Evaluation → (on fail)  Alert     →  Resolution
+                                          ↑
+                                          └─ append-only AlertEvent log per transition
 (definition)    (one run,    (stateful,   (audit-trailed
                 always       dedup'd,      closure path)
                 persisted)   ack-able)
@@ -159,7 +161,7 @@ See [docs/technical/templates.md](../technical/templates.md) for the live refere
 
 | Phase        | Scope                                                                                                                                                                                                                                          | Why                                                                                                |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| **V1 beta**  | `ledger_vs_pool_drift` (port), `ledger_invariant`, `account_threshold` (aggregate). **On-demand evaluation only.** Persisted evidence. Minimal incident lifecycle (open → resolved + acceptance). Internal CEL kernel. No scheduler, notifications, fctl, or metering. | Validates rule → evaluation → incident → resolution model with design partners before scheduler/ops complexity lands |
+| **V1 beta**  | `ledger_vs_pool_drift` (port), `ledger_invariant`, `account_threshold` (aggregate). **On-demand evaluation only.** Persisted evidence. Minimal alert lifecycle (open → resolved + acceptance) with append-only event log. Internal CEL kernel. No scheduler, notifications, fctl, or metering. | Validates rule → evaluation → alert → resolution model with design partners before scheduler/ops complexity lands |
 | **V1 GA**    | Cron scheduler · webhook + email digest · full resolution model · fctl · EE gating · usage metering                                                                                                                                            | Production-ready for the three named clients                                                       |
 | **V1.1**     | `account_inactivity`, posting-window rules, `metadata_invariant`, `cross_account_ratio` · snooze · flap suppression · richer resolution UX                                                                                                     | Catalog-only & lifecycle polish — no engine change                                                 |
 | **V2**       | External GL adapters · cross-ledger on Ledger v3 · richer resolution workflows · raw-CEL design-partner GA                                                                                                                                     | Opens EE+ Finance-Ops product line                                                                 |
@@ -173,16 +175,16 @@ See [docs/technical/templates.md](../technical/templates.md) for the live refere
 See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 
 - **Product name.** Ledger Clarity (lean) vs Ledger Transparency.
-- **Acceptance expiry behaviour.** New incident parent-linked, or re-open same? Lean **new incident**, parent-linked.
+- **Acceptance expiry behaviour.** Alert reopens **in place** (same id, status → OPEN) — the prior acceptance is preserved as an `alert_event` row, the alert row's current `resolution` is cleared. Flapping stays visible via the event timeline.
 - **Scheduler host.** In-process vs Temporal. Lean Temporal; needs architecture review.
 - **CEL builtin naming review** before any post-GA exposure to customers.
-- **Notification fatigue** is the biggest product risk. Mitigation: incident dedup, severity-aware delivery, digest mode default for low/medium.
+- **Notification fatigue** is the biggest product risk. Mitigation: stable alert per (rule, fingerprint), severity-aware delivery, digest mode default for low/medium.
 
 ---
 
 ## 9. What's already proven (status as of 2026-06-17)
 
-- ✅ Storage layer for `Rule` / `Evaluation` / `Incident` / `Resolution` ([migration #4](../../internal/storage/migrations/migrations.go))
+- ✅ Storage layer for `Rule` / `Evaluation` / `Alert` / `AlertEvent` / `Resolution` ([migrations](../../internal/storage/migrations/migrations.go))
 - ✅ Internal CEL kernel with 11 passing tests ([internal/engine/](../../internal/engine/))
 - ✅ Three V1 GA template evaluators with 18 passing tests ([internal/templates/](../../internal/templates/))
 - ⏳ Service layer wiring (task #5 next)

@@ -177,7 +177,7 @@ accounts.exists(a, <predicate>)                   // V1.1
 - **No stateful computation across evaluations.** Want "alert when balance drops 10% WoW"? We provide a `previousBalance(source, "1w")` builtin and the kernel resolves it.
 - **No iteration beyond bounded comprehensions.** No `while`, no recursion. If we need that, we extend the object model with the right pre-computed shape — not the language.
 - **Limited string manipulation.** Adequate for our domain.
-- **No multi-rule correlation.** Each rule evaluates in isolation; cross-rule patterns live in the incident layer.
+- **No multi-rule correlation.** Each rule evaluates in isolation; cross-rule patterns live in the alert layer.
 
 All four are **features**, not bugs — they're how CEL keeps its safety properties.
 
@@ -196,7 +196,7 @@ Scope discipline for V1: CEL stays internal-only, templates are the public API, 
 ### Other commitments
 
 1. **A stable CEL builtin namespace.** Renames are breaking changes for EE+ customers. Versioning policy, deprecation cycle, naming review for additions — same rigor as a REST API.
-2. **An eval budget.** Per-evaluation hard ceilings on CEL cost, accounts scanned, wall-clock. Budget exceeded → evaluation errors, raises a meta-incident.
+2. **An eval budget.** Per-evaluation hard ceilings on CEL cost, accounts scanned, wall-clock. Budget exceeded → evaluation errors, raises a meta-alert.
 3. **Two API surfaces.** Templates (typed structs in OpenAPI) compile down to CEL. Power-mode raw CEL for the 20%.
 4. **A compiler from template specs to CEL strings.** Each catalog entry has a deterministic `compile(spec) → cel_expression`. The compiled string is **stored on the rule** for debuggability.
 
@@ -235,10 +235,10 @@ Scheduler tick
   │     │      (memoized within this eval context)
   │     └─ CEL evaluates arithmetic / comparison → bool
   ├─ persist Evaluation { result, cost, evidence, duration }
-  └─ if FAIL → Incident layer (fingerprint, open/update/notify)
+  └─ if FAIL → Alert layer (fingerprint, open/update/notify; append AlertEvent)
 ```
 
-The kernel's Go code in the runtime path is ~200 lines. Everything else is template compilers, resolvers, scheduler, incident layer. **Small kernel, large composable periphery** — that's the bet.
+The kernel's Go code in the runtime path is ~200 lines. Everything else is template compilers, resolvers, scheduler, alert layer. **Small kernel, large composable periphery** — that's the bet.
 
 ---
 

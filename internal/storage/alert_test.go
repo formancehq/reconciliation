@@ -1,0 +1,272 @@
+package storage
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/formancehq/reconciliation/internal/models"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+)
+
+// seedRuleAndEval inserts a minimum-viable rule + a single evaluation row so
+// alert tests can reference real foreign keys without setting up the full
+// template machinery.
+func seedRuleAndEval(t *testing.T, s *Storage) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	rule := &models.Rule{
+		ID:           uuid.New(),
+		Name:         "test",
+		TemplateKind: models.TemplateLedgerInvariant,
+		TemplateSpec: json.RawMessage(`{}`),
+		CompiledCEL:  "true",
+		Enabled:      true,
+		Severity:     models.SeverityHigh,
+	}
+	require.NoError(t, s.CreateRule(ctx, rule))
+
+	ev := &models.Evaluation{
+		ID:           uuid.New(),
+		RuleID:       rule.ID,
+		StartedAt:    time.Now().UTC(),
+		EndedAt:      time.Now().UTC(),
+		PitPerSource: map[string]time.Time{},
+		Result:       models.EvaluationPass,
+	}
+	require.NoError(t, s.CreateEvaluation(ctx, ev))
+	return rule.ID, ev.ID
+}
+
+func defaultOpenInput(t *testing.T, ruleID, evID uuid.UUID) OpenAlertInput {
+	t.Helper()
+	return OpenAlertInput{
+		RuleID:       ruleID,
+		Fingerprint:  "asset:USD/2",
+		Severity:     models.SeverityHigh,
+		EvaluationID: evID,
+		Evidence:     json.RawMessage(`{"drift":"50"}`),
+		OccurredAt:   time.Now().UTC(),
+	}
+}
+
+// TestOpenOrUpdateAlert_FirstFailureOpens — the first failing eval for a
+// fingerprint INSERTs a fresh alert AND writes one inaugural alert_event with
+// prev_status=NULL.
+func TestOpenOrUpdateAlert_FirstFailureOpens(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+
+	res, err := s.OpenOrUpdateAlert(ctx, defaultOpenInput(t, ruleID, evID))
+	require.NoError(t, err)
+	require.True(t, res.Created)
+	require.False(t, res.Reopened)
+	require.Equal(t, models.AlertOpen, res.Alert.Status)
+	require.Equal(t, int64(1), res.Alert.OccurrenceCount)
+
+	events, err := s.ListAlertEvents(ctx, res.Alert.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, models.AlertEventFail, events[0].Type)
+	require.Nil(t, events[0].PrevStatus, "inaugural event has no prev_status")
+	require.Equal(t, models.AlertOpen, events[0].NewStatus)
+}
+
+// TestOpenOrUpdateAlert_RepeatedFailureUpdates — same fingerprint, alert
+// stays at the same ID, occurrence_count++, fresh fail event appended each
+// time.
+func TestOpenOrUpdateAlert_RepeatedFailureUpdates(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	in := defaultOpenInput(t, ruleID, evID)
+
+	first, err := s.OpenOrUpdateAlert(ctx, in)
+	require.NoError(t, err)
+
+	second, err := s.OpenOrUpdateAlert(ctx, in)
+	require.NoError(t, err)
+	require.False(t, second.Created, "second fail must update, not insert")
+	require.Equal(t, first.Alert.ID, second.Alert.ID)
+	require.Equal(t, int64(2), second.Alert.OccurrenceCount)
+
+	events, err := s.ListAlertEvents(ctx, first.Alert.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 2, "every fail evaluation appends one event")
+	open := models.AlertOpen
+	for _, e := range events {
+		require.Equal(t, models.AlertEventFail, e.Type)
+		if e.ID == first.Event.ID {
+			require.Nil(t, e.PrevStatus)
+		} else {
+			require.NotNil(t, e.PrevStatus)
+			require.Equal(t, open, *e.PrevStatus)
+		}
+	}
+}
+
+// TestOpenOrUpdateAlert_ReopenInPlace — the headline behavioural change:
+// after a RESOLVED alert sees another FAIL, the same row reopens (no new ID,
+// no chain) and a fail event with prev_status=RESOLVED lands in the log.
+func TestOpenOrUpdateAlert_ReopenInPlace(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	in := defaultOpenInput(t, ruleID, evID)
+
+	first, err := s.OpenOrUpdateAlert(ctx, in)
+	require.NoError(t, err)
+	originalID := first.Alert.ID
+
+	resolved, err := s.AutoResolveAlert(ctx, ruleID, "asset:USD/2", evID, time.Now().UTC())
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+	require.Equal(t, models.AlertResolved, resolved.Status)
+	require.Equal(t, originalID, resolved.ID, "auto-resolve keeps the same alert id")
+
+	in.OccurredAt = time.Now().UTC()
+	reopen, err := s.OpenOrUpdateAlert(ctx, in)
+	require.NoError(t, err)
+	require.False(t, reopen.Created, "reopen must NOT create a new alert")
+	require.True(t, reopen.Reopened)
+	require.Equal(t, originalID, reopen.Alert.ID)
+	require.Equal(t, models.AlertOpen, reopen.Alert.Status)
+	require.Equal(t, int64(2), reopen.Alert.OccurrenceCount, "lifetime count carries across the cycle")
+	require.Nil(t, reopen.Alert.Resolution, "reopen clears the prior resolution")
+
+	// Event log captures: initial fail (open), pass (auto-resolve), fail (reopen).
+	events, err := s.ListAlertEvents(ctx, originalID)
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+
+	// Events are returned most-recent-first.
+	require.Equal(t, models.AlertEventFail, events[0].Type)
+	require.True(t, events[0].IsReopen(), "newest event must be the reopen")
+	require.Equal(t, models.AlertEventPass, events[1].Type)
+	require.Equal(t, models.AlertEventFail, events[2].Type)
+	require.Nil(t, events[2].PrevStatus, "oldest event is the inaugural open")
+}
+
+// TestOpenOrUpdateAlert_ConcurrentFirstOpen exercises the unique-violation
+// retry path: many goroutines call OpenOrUpdateAlert for the same
+// (rule, fingerprint) simultaneously. Without the retry, one would error out
+// on the UNIQUE constraint; with the retry, exactly one INSERTs and the rest
+// UPDATE the same row.
+func TestOpenOrUpdateAlert_ConcurrentFirstOpen(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	in := defaultOpenInput(t, ruleID, evID)
+
+	const writers = 6
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		results = make([]*OpenAlertResult, 0, writers)
+		errs    = make([]error, 0, writers)
+		start   = make(chan struct{})
+	)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			res, err := s.OpenOrUpdateAlert(ctx, in)
+			mu.Lock()
+			results = append(results, res)
+			errs = append(errs, err)
+			mu.Unlock()
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	created := 0
+	for i, err := range errs {
+		require.NoError(t, err, "writer %d", i)
+		require.NotNil(t, results[i])
+		if results[i].Created {
+			created++
+		}
+	}
+	require.Equal(t, 1, created, "exactly one writer must INSERT, the rest must UPDATE")
+
+	final, err := s.GetAlert(ctx, results[0].Alert.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(writers), final.OccurrenceCount)
+
+	events, err := s.ListAlertEvents(ctx, final.ID)
+	require.NoError(t, err)
+	require.Len(t, events, writers, "every concurrent writer appends one fail event")
+}
+
+// TestAckAlert_IdempotentPreservesMetadata — a second ACK on an already-ACK'd
+// alert must NOT overwrite the original ack metadata AND must NOT append a
+// second ack event. That metadata is the audit trail of who first
+// acknowledged the alert.
+func TestAckAlert_IdempotentPreservesMetadata(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	res, err := s.OpenOrUpdateAlert(ctx, defaultOpenInput(t, ruleID, evID))
+	require.NoError(t, err)
+	id := res.Alert.ID
+
+	firstAt := time.Now().UTC().Add(-time.Hour)
+	firstAck := &models.Ack{By: "alice@formance.com", At: firstAt, Note: "looking into it"}
+	_, err = s.AckAlert(ctx, id, firstAck)
+	require.NoError(t, err)
+
+	secondAck := &models.Ack{By: "bob@formance.com", At: time.Now().UTC(), Note: "second acknowledger"}
+	second, err := s.AckAlert(ctx, id, secondAck)
+	require.NoError(t, err, "re-ACK must be idempotent")
+	require.Equal(t, models.AlertAcknowledged, second.Status)
+	require.NotNil(t, second.Ack)
+	require.Equal(t, "alice@formance.com", second.Ack.By)
+	require.WithinDuration(t, firstAt, second.Ack.At, time.Second)
+	require.Equal(t, "looking into it", second.Ack.Note)
+
+	events, err := s.ListAlertEvents(ctx, id)
+	require.NoError(t, err)
+	ackEvents := 0
+	for _, e := range events {
+		if e.Type == models.AlertEventAck {
+			ackEvents++
+		}
+	}
+	require.Equal(t, 1, ackEvents, "idempotent re-ACK must not append a second ack event")
+}
+
+// TestRunInTx_RollsBackOnError confirms the transactional helper actually
+// rolls back when its callback errors — guarantees that the evaluation +
+// alert orchestration is atomic. The rolled-back insert must leave no alert
+// AND no event behind.
+func TestRunInTx_RollsBackOnError(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+
+	wantErr := errors.New("callback failed")
+	err := s.RunInTx(ctx, func(ctx context.Context, txStore *Storage) error {
+		_, _ = txStore.OpenOrUpdateAlert(ctx, defaultOpenInput(t, ruleID, evID))
+		return wantErr
+	})
+	require.ErrorIs(t, err, wantErr)
+
+	fps, err := s.ListActiveAlertFingerprints(ctx, ruleID)
+	require.NoError(t, err)
+	require.Empty(t, fps, "rollback must discard the alert")
+
+	var count int
+	err = s.db.NewSelect().
+		Model((*models.AlertEvent)(nil)).
+		ColumnExpr("count(*)").
+		Scan(ctx, &count)
+	require.NoError(t, err)
+	require.Zero(t, count, "rollback must discard the appended event")
+}
