@@ -25,6 +25,7 @@ type ruleResponse struct {
 	CompiledCEL   string            `json:"compiledCEL,omitempty"`
 	Enabled       bool              `json:"enabled"`
 	Severity      string            `json:"severity"`
+	Cadence       string            `json:"cadence"`
 	Schedule      *models.Schedule  `json:"schedule,omitempty"`
 	Notifications []string          `json:"notifications,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
@@ -41,6 +42,7 @@ func renderRule(r *models.Rule) *ruleResponse {
 		CompiledCEL:   r.CompiledCEL,
 		Enabled:       r.Enabled,
 		Severity:      string(r.Severity),
+		Cadence:       string(r.Cadence),
 		Schedule:      r.Schedule,
 		Notifications: r.Notifications,
 		Labels:        r.Labels,
