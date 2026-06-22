@@ -20,8 +20,13 @@ import (
 // first open, re-open, and on-going failures — the storage layer figures out
 // what kind of transition is happening based on the current row state.
 type OpenAlertInput struct {
-	RuleID       uuid.UUID
-	Fingerprint  string
+	RuleID      uuid.UUID
+	Fingerprint string
+	// PeriodID scopes the alert to a reconciliation period. Empty defaults to
+	// models.ContinuousPeriod, which reproduces the original
+	// (rule_id, fingerprint) dedup. The caller (the evaluation service)
+	// derives it from the rule's cadence and the evaluation PIT.
+	PeriodID     string
 	Severity     models.Severity
 	EvaluationID uuid.UUID
 	Evidence     json.RawMessage // jsonb
@@ -34,8 +39,8 @@ type OpenAlertInput struct {
 type OpenAlertResult struct {
 	Alert    *models.Alert
 	Event    *models.AlertEvent
-	Created  bool // true only on first-ever fail for this (rule, fingerprint)
-	Reopened bool // true on transition from RESOLVED → OPEN
+	Created  bool // true only on the first fail for this (rule, fingerprint, period)
+	Reopened bool // true on a within-period transition from RESOLVED → OPEN
 }
 
 // OpenOrUpdateAlert is the single dedup-aware write the EvaluationService
@@ -49,13 +54,19 @@ type OpenAlertResult struct {
 //  3. Existing OPEN/ACK alert → update in place (occurrence_count++, fresh
 //     evidence + eval id), append `fail` event with prev_status=new_status.
 //
+// All three are scoped to in.PeriodID: the same fingerprint failing in a new
+// period is a fresh case (path 1), never a reopen of a prior period's alert.
+//
 // SELECT FOR UPDATE serialises concurrent writers. The unique constraint on
-// (rule_id, fingerprint) is the structural backstop. Concurrent first-opens
-// race the INSERT — one wins, the other gets ErrDuplicateKeyValue and we
-// retry; the retry's SELECT now finds the row and falls into path 3.
+// (rule_id, fingerprint, period_id) is the structural backstop. Concurrent
+// first-opens race the INSERT — one wins, the other gets ErrDuplicateKeyValue
+// and we retry; the retry's SELECT now finds the row and falls into path 3.
 func (s *Storage) OpenOrUpdateAlert(ctx context.Context, in OpenAlertInput) (*OpenAlertResult, error) {
 	if in.OccurredAt.IsZero() {
 		in.OccurredAt = time.Now().UTC()
+	}
+	if in.PeriodID == "" {
+		in.PeriodID = models.ContinuousPeriod
 	}
 
 	const maxAttempts = 2
@@ -81,17 +92,19 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 		var current models.Alert
 		err := tx.NewSelect().
 			Model(&current).
-			Where("rule_id = ? AND fingerprint = ?", in.RuleID, in.Fingerprint).
+			Where("rule_id = ? AND fingerprint = ? AND period_id = ?", in.RuleID, in.Fingerprint, in.PeriodID).
 			For("UPDATE").
 			Scan(ctx)
 
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			// Path 1 — first-ever fail. INSERT, append inaugural event.
+			// Path 1 — first fail for this fingerprint in this period. INSERT,
+			// append inaugural event.
 			fresh := &models.Alert{
 				ID:               uuid.New(),
 				RuleID:           in.RuleID,
 				Fingerprint:      in.Fingerprint,
+				PeriodID:         in.PeriodID,
 				Status:           models.AlertOpen,
 				Severity:         in.Severity,
 				FirstSeenAt:      in.OccurredAt,
@@ -161,16 +174,23 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 }
 
 // ListActiveAlertFingerprints returns the fingerprints of every OPEN /
-// ACKNOWLEDGED alert for the rule. The evaluation service uses this to
-// auto-resolve alerts whose fingerprint disappears from the next round of
-// outcomes — e.g. when both sides of a `ledger_vs_pool_drift` invariant clear
-// to zero and the asset is no longer in either source's balance map.
-func (s *Storage) ListActiveAlertFingerprints(ctx context.Context, ruleID uuid.UUID) ([]string, error) {
+// ACKNOWLEDGED alert for the rule WITHIN the given period. The evaluation
+// service uses this to auto-resolve alerts whose fingerprint disappears from
+// the next round of outcomes — e.g. when both sides of a `ledger_vs_pool_drift`
+// invariant clear to zero and the asset is no longer in either source's balance
+// map. Scoping to periodID is essential: a fresh evaluation of period N must
+// never sweep (auto-resolve) a prior period's open cases — those stand as the
+// historical reconciliation record for their own period.
+func (s *Storage) ListActiveAlertFingerprints(ctx context.Context, ruleID uuid.UUID, periodID string) ([]string, error) {
+	if periodID == "" {
+		periodID = models.ContinuousPeriod
+	}
 	var fps []string
 	err := s.db.NewSelect().
 		Model((*models.Alert)(nil)).
 		Column("fingerprint").
 		Where("rule_id = ?", ruleID).
+		Where("period_id = ?", periodID).
 		Where("status IN (?, ?)", string(models.AlertOpen), string(models.AlertAcknowledged)).
 		Scan(ctx, &fps)
 	if err != nil {
@@ -179,10 +199,13 @@ func (s *Storage) ListActiveAlertFingerprints(ctx context.Context, ruleID uuid.U
 	return fps, nil
 }
 
-// AutoResolveAlert closes the active alert (if any) for (rule_id, fingerprint)
-// with resolution.kind = "auto", and appends a `pass` event. No-op + nil
-// return when no active alert exists.
-func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fingerprint string, evaluationID uuid.UUID, at time.Time) (*models.Alert, error) {
+// AutoResolveAlert closes the active alert (if any) for
+// (rule_id, fingerprint, period_id) with resolution.kind = "auto", and appends
+// a `pass` event. No-op + nil return when no active alert exists in that period.
+func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fingerprint, periodID string, evaluationID uuid.UUID, at time.Time) (*models.Alert, error) {
+	if periodID == "" {
+		periodID = models.ContinuousPeriod
+	}
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
@@ -199,12 +222,12 @@ func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, finger
 		var current models.Alert
 		serr := tx.NewSelect().
 			Model(&current).
-			Where("rule_id = ? AND fingerprint = ?", ruleID, fingerprint).
+			Where("rule_id = ? AND fingerprint = ? AND period_id = ?", ruleID, fingerprint, periodID).
 			Where("status IN (?, ?)", string(models.AlertOpen), string(models.AlertAcknowledged)).
 			For("UPDATE").
 			Scan(ctx)
 		if errors.Is(serr, sql.ErrNoRows) {
-			return nil // nothing to do — alert already resolved or doesn't exist
+			return nil // nothing to do — no active alert for this period
 		}
 		if serr != nil {
 			return e("lookup alert for auto-resolve", serr)
@@ -454,6 +477,11 @@ func (s *Storage) alertQueryContext(qb query.Builder) (string, []any, error) {
 				return "", nil, pkgErrors.Wrap(ErrInvalidQuery, "'ruleID' can only be used with $match")
 			}
 			return "rule_id = ?", []any{value}, nil
+		case "periodID":
+			if operator != "$match" {
+				return "", nil, pkgErrors.Wrap(ErrInvalidQuery, "'periodID' can only be used with $match")
+			}
+			return "period_id = ?", []any{value}, nil
 		case "firstSeenAt", "lastSeenAt":
 			col := map[string]string{"firstSeenAt": "first_seen_at", "lastSeenAt": "last_seen_at"}[key]
 			return fmt.Sprintf("%s %s ?", col, query.DefaultComparisonOperatorsMapping[operator]), []any{value}, nil

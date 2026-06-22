@@ -109,6 +109,12 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	}
 	evaluation.Evidence = evidence
 
+	// The period this evaluation reconciles, derived from the rule's cadence
+	// and the evaluation PIT. Every alert this evaluation opens/resolves is
+	// scoped to it, so a new period's run never rewrites a prior period's
+	// cases (see models.Cadence.PeriodID).
+	periodID := rule.Cadence.PeriodID(req.PIT)
+
 	// Atomicity: persist the evaluation row AND drive every alert transition
 	// under a single transaction. A mid-loop failure would otherwise leave a
 	// committed eval visible to the API while the alert table reflects only
@@ -120,7 +126,7 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		if err := store.CreateEvaluation(ctx, evaluation); err != nil {
 			return err
 		}
-		return driveAlerts(ctx, store, rule, evaluation, outcomes, ended)
+		return driveAlerts(ctx, store, rule, evaluation, outcomes, periodID, ended)
 	})
 	if err != nil {
 		return nil, err
@@ -146,13 +152,14 @@ func driveAlerts(
 	rule *models.Rule,
 	evaluation *models.Evaluation,
 	outcomes []templates.Outcome,
+	periodID string,
 	ended time.Time,
 ) error {
 	seenFingerprints := make(map[string]struct{}, len(outcomes))
 	for _, o := range outcomes {
 		seenFingerprints[o.Fingerprint] = struct{}{}
 		if o.Passed {
-			if _, err := store.AutoResolveAlert(ctx, rule.ID, o.Fingerprint, evaluation.ID, ended); err != nil {
+			if _, err := store.AutoResolveAlert(ctx, rule.ID, o.Fingerprint, periodID, evaluation.ID, ended); err != nil {
 				return fmt.Errorf("auto-resolve %s: %w", o.Fingerprint, err)
 			}
 			continue
@@ -164,6 +171,7 @@ func driveAlerts(
 		_, err = store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
 			RuleID:       rule.ID,
 			Fingerprint:  o.Fingerprint,
+			PeriodID:     periodID,
 			Severity:     rule.Severity,
 			EvaluationID: evaluation.ID,
 			Evidence:     evidenceJSON,
@@ -175,7 +183,10 @@ func driveAlerts(
 		}
 	}
 
-	activeFPs, err := store.ListActiveAlertFingerprints(ctx, rule.ID)
+	// Sweep is scoped to this period: a fingerprint that cleared this round
+	// auto-resolves its case for THIS period only. Prior periods' open cases
+	// are untouched — they remain the historical record for their period.
+	activeFPs, err := store.ListActiveAlertFingerprints(ctx, rule.ID, periodID)
 	if err != nil {
 		return fmt.Errorf("sweep active alerts: %w", err)
 	}
@@ -183,7 +194,7 @@ func driveAlerts(
 		if _, seen := seenFingerprints[fp]; seen {
 			continue
 		}
-		if _, err := store.AutoResolveAlert(ctx, rule.ID, fp, evaluation.ID, ended); err != nil {
+		if _, err := store.AutoResolveAlert(ctx, rule.ID, fp, periodID, evaluation.ID, ended); err != nil {
 			return fmt.Errorf("auto-resolve disappeared fingerprint %s: %w", fp, err)
 		}
 	}
@@ -220,8 +231,12 @@ func (s *Service) openEngineErrorAlert(ctx context.Context, rule *models.Rule, e
 	}
 
 	res, err := s.store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
-		RuleID:       rule.ID,
-		Fingerprint:  engineErrorFingerprint,
+		RuleID:      rule.ID,
+		Fingerprint: engineErrorFingerprint,
+		// Engine-health is operational, not a per-period reconciliation fact:
+		// a resolver timeout means "the check couldn't run", not "March didn't
+		// reconcile". Keep it in the continuous scope regardless of cadence.
+		PeriodID:     models.ContinuousPeriod,
 		Severity:     models.SeverityHigh,
 		EvaluationID: ev.ID,
 		Evidence:     evidence,

@@ -15,6 +15,12 @@ import (
 // CreateRule inserts a new rule. compiled_cel must already be populated by the
 // service layer (template Explain output) — the storage layer doesn't compile.
 func (s *Storage) CreateRule(ctx context.Context, rule *models.Rule) error {
+	// Storage invariant: cadence is never empty in the DB (the rule_cadence_chk
+	// CHECK rejects ''). Default the zero value so direct inserts are safe even
+	// if a caller skipped the service-layer default.
+	if rule.Cadence == "" {
+		rule.Cadence = models.CadenceContinuous
+	}
 	_, err := s.db.NewInsert().Model(rule).Exec(ctx)
 	if err != nil {
 		return e("failed to create rule", err)

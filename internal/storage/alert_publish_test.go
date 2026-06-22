@@ -81,7 +81,7 @@ func TestPublishAlertEvents_AllTransitions(t *testing.T) {
 	_, err = s.OpenOrUpdateAlert(ctx, in) // reopened (prev=RESOLVED)
 	require.NoError(t, err)
 
-	_, err = s.AutoResolveAlert(ctx, ruleID, fp, evID, time.Now().UTC()) // resolved (pass)
+	_, err = s.AutoResolveAlert(ctx, ruleID, fp, models.ContinuousPeriod, evID, time.Now().UTC()) // resolved (pass)
 	require.NoError(t, err)
 
 	_, err = s.OpenOrUpdateAlert(ctx, in) // reopened again
@@ -142,7 +142,7 @@ func TestPublishAlertEvents_AutoResolveNoOpEmitsNothing(t *testing.T) {
 	ctx := context.Background()
 	ruleID, evID := seedRuleAndEval(t, s)
 
-	resolved, err := s.AutoResolveAlert(ctx, ruleID, "no-such-fingerprint", evID, time.Now().UTC())
+	resolved, err := s.AutoResolveAlert(ctx, ruleID, "no-such-fingerprint", models.ContinuousPeriod, evID, time.Now().UTC())
 	require.NoError(t, err)
 	require.Nil(t, resolved)
 	require.Zero(t, fake.count())

@@ -42,7 +42,12 @@ func newFakeV1Store() *fakeV1Store {
 	}
 }
 
-func fpKey(ruleID uuid.UUID, fp string) string { return ruleID.String() + "|" + fp }
+func fpKey(ruleID uuid.UUID, fp, periodID string) string {
+	if periodID == "" {
+		periodID = models.ContinuousPeriod
+	}
+	return ruleID.String() + "|" + fp + "|" + periodID
+}
 
 func (f *fakeV1Store) Ping() error { return nil }
 
@@ -174,7 +179,10 @@ func (f *fakeV1Store) OpenOrUpdateAlert(_ context.Context, in storage.OpenAlertI
 	if in.OccurredAt.IsZero() {
 		in.OccurredAt = time.Now().UTC()
 	}
-	key := fpKey(in.RuleID, in.Fingerprint)
+	if in.PeriodID == "" {
+		in.PeriodID = models.ContinuousPeriod
+	}
+	key := fpKey(in.RuleID, in.Fingerprint, in.PeriodID)
 
 	if id, ok := f.byFP[key]; ok {
 		alert := f.alerts[id]
@@ -200,6 +208,7 @@ func (f *fakeV1Store) OpenOrUpdateAlert(_ context.Context, in storage.OpenAlertI
 		ID:               uuid.New(),
 		RuleID:           in.RuleID,
 		Fingerprint:      in.Fingerprint,
+		PeriodID:         in.PeriodID,
 		Status:           models.AlertOpen,
 		Severity:         in.Severity,
 		FirstSeenAt:      in.OccurredAt,
@@ -218,11 +227,11 @@ func (f *fakeV1Store) OpenOrUpdateAlert(_ context.Context, in storage.OpenAlertI
 	return &storage.OpenAlertResult{Alert: &copy, Event: event, Created: true}, nil
 }
 
-func (f *fakeV1Store) AutoResolveAlert(_ context.Context, ruleID uuid.UUID, fingerprint string, evID uuid.UUID, at time.Time) (*models.Alert, error) {
+func (f *fakeV1Store) AutoResolveAlert(_ context.Context, ruleID uuid.UUID, fingerprint, periodID string, evID uuid.UUID, at time.Time) (*models.Alert, error) {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	id, ok := f.byFP[fpKey(ruleID, fingerprint)]
+	id, ok := f.byFP[fpKey(ruleID, fingerprint, periodID)]
 	if !ok {
 		return nil, nil
 	}
@@ -312,10 +321,13 @@ func (f *fakeV1Store) ListAlertEvents(_ context.Context, alertID uuid.UUID) ([]m
 	return out, nil
 }
 
-func (f *fakeV1Store) ListActiveAlertFingerprints(_ context.Context, ruleID uuid.UUID) ([]string, error) {
+func (f *fakeV1Store) ListActiveAlertFingerprints(_ context.Context, ruleID uuid.UUID, periodID string) ([]string, error) {
+	if periodID == "" {
+		periodID = models.ContinuousPeriod
+	}
 	out := []string{}
 	for _, alert := range f.alerts {
-		if alert.RuleID != ruleID {
+		if alert.RuleID != ruleID || alert.PeriodID != periodID {
 			continue
 		}
 		if alert.Status != models.AlertOpen && alert.Status != models.AlertAcknowledged {
@@ -329,7 +341,7 @@ func (f *fakeV1Store) ListActiveAlertFingerprints(_ context.Context, ruleID uuid
 // activeFor returns the alert for (rule, fingerprint) if it's currently
 // OPEN/ACKNOWLEDGED, else nil. Helper for assertions.
 func (f *fakeV1Store) activeFor(ruleID uuid.UUID, fingerprint string) *models.Alert {
-	id, ok := f.byFP[fpKey(ruleID, fingerprint)]
+	id, ok := f.byFP[fpKey(ruleID, fingerprint, models.ContinuousPeriod)]
 	if !ok {
 		return nil
 	}
@@ -342,7 +354,7 @@ func (f *fakeV1Store) activeFor(ruleID uuid.UUID, fingerprint string) *models.Al
 
 // alertFor returns the alert row (any status) for (rule, fingerprint), or nil.
 func (f *fakeV1Store) alertFor(ruleID uuid.UUID, fingerprint string) *models.Alert {
-	id, ok := f.byFP[fpKey(ruleID, fingerprint)]
+	id, ok := f.byFP[fpKey(ruleID, fingerprint, models.ContinuousPeriod)]
 	if !ok {
 		return nil
 	}
@@ -783,6 +795,69 @@ func contains(haystack, needle string) bool {
 			}
 			return false
 		}()))
+}
+
+// TestEvaluate_PeriodicOpensFreshCasePerPeriod proves the period-scoping
+// behaviour end-to-end through EvaluateRule: a monthly rule that keeps failing
+// across two months opens a *distinct* case per month (not one immortal
+// alert), and evaluating April never closes March's still-open case.
+func TestEvaluate_PeriodicOpensFreshCasePerPeriod(t *testing.T) {
+	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-300)}} // drift 50 → fails
+	svc, store := newOrchestrationService(t, l, p)
+	rule, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
+		Name:         "monthly-recon",
+		TemplateKind: models.TemplateLedgerVsPoolDrift,
+		TemplateSpec: driftSpec(t, "buildr", `"q"`, "pool", nil),
+		Severity:     models.SeverityHigh,
+		Cadence:      models.CadenceMonthly,
+	})
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	ctx := context.Background()
+
+	mar := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC)
+	if _, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: mar}); err != nil {
+		t.Fatalf("eval March: %v", err)
+	}
+	if _, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: apr}); err != nil {
+		t.Fatalf("eval April: %v", err)
+	}
+
+	byPeriod := map[string]*models.Alert{}
+	for _, a := range store.alerts {
+		byPeriod[a.PeriodID] = a
+	}
+	if len(store.alerts) != 2 {
+		t.Fatalf("expected 2 alerts (one per period), got %d", len(store.alerts))
+	}
+	marAlert, aprAlert := byPeriod["2026-03"], byPeriod["2026-04"]
+	if marAlert == nil || aprAlert == nil {
+		t.Fatalf("expected a case in both 2026-03 and 2026-04, got periods %v", keysOf(byPeriod))
+	}
+	if marAlert.ID == aprAlert.ID {
+		t.Errorf("expected distinct alert ids per period, both = %s", marAlert.ID)
+	}
+	if marAlert.Fingerprint != "asset:USD/2" {
+		t.Errorf("unexpected fingerprint %q", marAlert.Fingerprint)
+	}
+	// April's evaluation must not have swept/closed March's open case.
+	if marAlert.Status != models.AlertOpen {
+		t.Errorf("March case must stay OPEN after April's run, got %v", marAlert.Status)
+	}
+	if aprAlert.Status != models.AlertOpen {
+		t.Errorf("April case should be OPEN, got %v", aprAlert.Status)
+	}
+}
+
+func keysOf(m map[string]*models.Alert) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 var _ = fmt.Sprintf

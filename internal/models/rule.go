@@ -40,6 +40,55 @@ const (
 	SeverityCritical Severity = "critical"
 )
 
+// Cadence is the reconciliation rhythm of a rule — it decides how a failing
+// fingerprint is scoped into a period. A fresh alert is opened per period, so a
+// March break and an April break of the same fingerprint are distinct,
+// independently-closable cases; resolving April never rewrites March's record.
+// See docs/technical/alert-period-model.md.
+type Cadence string
+
+const (
+	// CadenceContinuous is live monitoring: a single unbounded period. A
+	// failing fingerprint reopens in place until resolved, like a classic
+	// monitoring alert. Default — periodic scoping is opt-in per rule.
+	CadenceContinuous Cadence = "continuous"
+	// CadenceDaily buckets cases by UTC calendar day (period id "2006-01-02").
+	CadenceDaily Cadence = "daily"
+	// CadenceMonthly buckets cases by UTC calendar month (period id "2006-01").
+	CadenceMonthly Cadence = "monthly"
+)
+
+// ContinuousPeriod is the sentinel period id for CadenceContinuous and the safe
+// fallback for an unset/unknown cadence: one unbounded scope, which reproduces
+// the original (rule_id, fingerprint) dedup exactly.
+const ContinuousPeriod = "continuous"
+
+// PeriodID maps an evaluation's point-in-time to the period a failing
+// fingerprint belongs to under this cadence. Deterministic: any instant in the
+// same bucket yields the same id, so re-evaluating a period continues its
+// existing case rather than spawning a new one. Bucketing is UTC — the
+// accounting-period timezone is a known V1 simplification (see docs).
+func (c Cadence) PeriodID(pit time.Time) string {
+	switch c {
+	case CadenceDaily:
+		return pit.UTC().Format("2006-01-02")
+	case CadenceMonthly:
+		return pit.UTC().Format("2006-01")
+	default:
+		return ContinuousPeriod
+	}
+}
+
+// Valid reports whether c is a recognised cadence.
+func (c Cadence) Valid() bool {
+	switch c {
+	case CadenceContinuous, CadenceDaily, CadenceMonthly:
+		return true
+	default:
+		return false
+	}
+}
+
 // ScheduleKind discriminates the Schedule shape. V1 beta ships on_demand only;
 // cron lands at V1 GA. event_driven is V2.
 type ScheduleKind string
@@ -117,6 +166,7 @@ type Rule struct {
 	CompiledCEL   string            `bun:"compiled_cel,notnull"   json:"compiledCEL,omitempty"`
 	Enabled       bool              `bun:",notnull"               json:"enabled"`
 	Severity      Severity          `bun:",notnull"               json:"severity"`
+	Cadence       Cadence           `bun:",notnull"               json:"cadence"`
 	Schedule      *Schedule         `bun:",type:jsonb"            json:"schedule,omitempty"`
 	Notifications []string          `bun:",type:jsonb"            json:"notifications,omitempty"`
 	Labels        map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`

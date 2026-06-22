@@ -173,10 +173,10 @@ func (s *mockStore) ListEvaluations(context.Context, storage.GetEvaluationsQuery
 func (s *mockStore) OpenOrUpdateAlert(context.Context, storage.OpenAlertInput) (*storage.OpenAlertResult, error) {
 	return nil, nil
 }
-func (s *mockStore) AutoResolveAlert(context.Context, uuid.UUID, string, uuid.UUID, time.Time) (*models.Alert, error) {
+func (s *mockStore) AutoResolveAlert(context.Context, uuid.UUID, string, string, uuid.UUID, time.Time) (*models.Alert, error) {
 	return nil, nil
 }
-func (s *mockStore) ListActiveAlertFingerprints(context.Context, uuid.UUID) ([]string, error) {
+func (s *mockStore) ListActiveAlertFingerprints(context.Context, uuid.UUID, string) ([]string, error) {
 	return nil, nil
 }
 func (s *mockStore) AckAlert(context.Context, uuid.UUID, *models.Ack) (*models.Alert, error) {

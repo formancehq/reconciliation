@@ -312,5 +312,58 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// V1: period-scoped alert identity.
+		//
+		// Reconciliation is periodic: "March reconciled" is a permanent claim
+		// about a bounded accounting period. An immortal (rule_id, fingerprint)
+		// alert that resolves and reopens forever lets a later green state mask
+		// that an earlier period had an open case — the books look clean during
+		// an audit, then the discrepancy resurfaces (cf. Wirecard). It also
+		// conflates genuinely distinct incidents (a March break and an
+		// unrelated November break of the same asset) into one timeline.
+		//
+		// Fix: scope the dedup identity by period. A rule declares a `cadence`
+		// (continuous | daily | monthly); each failing evaluation derives a
+		// `period_id` from (cadence, evaluation PIT). The alert's identity
+		// becomes (rule_id, fingerprint, period_id), so:
+		//   - a new period opens a *fresh* case (new id) instead of reopening a
+		//     prior period's — past periods are immutable historical record;
+		//   - reopen-in-place is bounded to within a period (a flap window);
+		//   - `continuous` keeps the original single-scope behaviour for live
+		//     monitoring (period_id = 'continuous'), which is also the default,
+		//     so this migration is behaviour-preserving for existing rows.
+		//
+		// See docs/technical/alert-period-model.md for the full reasoning.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					-- Rule cadence drives period derivation. Default 'continuous'
+					-- preserves prior behaviour; periodic scoping is opt-in.
+					ALTER TABLE reconciliations.rule
+						ADD COLUMN IF NOT EXISTS cadence text NOT NULL DEFAULT 'continuous';
+					ALTER TABLE reconciliations.rule DROP CONSTRAINT IF EXISTS rule_cadence_chk;
+					ALTER TABLE reconciliations.rule ADD CONSTRAINT rule_cadence_chk
+						CHECK (cadence IN ('continuous','daily','monthly'));
+
+					-- Period the alert belongs to. Existing rows default to the
+					-- 'continuous' scope, under which (rule_id, fingerprint,
+					-- 'continuous') is equivalent to the old (rule_id, fingerprint).
+					ALTER TABLE reconciliations.alert
+						ADD COLUMN IF NOT EXISTS period_id text NOT NULL DEFAULT 'continuous';
+
+					-- Identity is now the triple. Swap the unique constraint.
+					ALTER TABLE reconciliations.alert DROP CONSTRAINT IF EXISTS alert_unique_pair;
+					ALTER TABLE reconciliations.alert DROP CONSTRAINT IF EXISTS alert_unique_scope;
+					ALTER TABLE reconciliations.alert ADD CONSTRAINT alert_unique_scope
+						UNIQUE (rule_id, fingerprint, period_id);
+
+					-- Backs "is (rule, period) reconciled?" — i.e. are there any
+					-- active (OPEN/ACKNOWLEDGED) alerts scoped to the period.
+					CREATE INDEX IF NOT EXISTS alert_period_status_idx
+						ON reconciliations.alert (rule_id, period_id, status);
+				`)
+				return err
+			},
+		},
 	)
 }

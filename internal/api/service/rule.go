@@ -17,14 +17,18 @@ import (
 // CreateRuleRequest is what the API hands to the service. The service validates,
 // derives compiled_cel via the template's Explain, and persists.
 type CreateRuleRequest struct {
-	Name          string                 `json:"name"`
-	TemplateKind  models.TemplateKind    `json:"templateKind"`
-	TemplateSpec  json.RawMessage        `json:"templateSpec"`
-	Schedule      *models.Schedule       `json:"schedule,omitempty"`
-	Severity      models.Severity        `json:"severity,omitempty"`
-	Notifications []string               `json:"notifications,omitempty"`
-	Labels        map[string]string      `json:"labels,omitempty"`
-	Enabled       *bool                  `json:"enabled,omitempty"`
+	Name         string              `json:"name"`
+	TemplateKind models.TemplateKind `json:"templateKind"`
+	TemplateSpec json.RawMessage     `json:"templateSpec"`
+	Schedule     *models.Schedule    `json:"schedule,omitempty"`
+	Severity     models.Severity     `json:"severity,omitempty"`
+	// Cadence is the reconciliation rhythm — continuous (default), daily, or
+	// monthly. It scopes alerts into periods so each period is an
+	// independently-closable, immutable case. See models.Cadence.
+	Cadence       models.Cadence    `json:"cadence,omitempty"`
+	Notifications []string          `json:"notifications,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Enabled       *bool             `json:"enabled,omitempty"`
 }
 
 // Validate is invoked at the API boundary; surface the result as 400 VALIDATION.
@@ -37,6 +41,9 @@ func (r *CreateRuleRequest) Validate() error {
 	}
 	if len(r.TemplateSpec) == 0 {
 		return errors.New("templateSpec is required")
+	}
+	if r.Cadence != "" && !r.Cadence.Valid() {
+		return fmt.Errorf("cadence must be one of continuous, daily, monthly (got %q)", r.Cadence)
 	}
 	return nil
 }
@@ -82,6 +89,10 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 	if severity == "" {
 		severity = models.SeverityMedium
 	}
+	cadence := req.Cadence
+	if cadence == "" {
+		cadence = models.CadenceContinuous
+	}
 
 	rule := &models.Rule{
 		ID:            uuid.New(),
@@ -91,6 +102,7 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 		CompiledCEL:   compiled,
 		Enabled:       enabled,
 		Severity:      severity,
+		Cadence:       cadence,
 		Schedule:      req.Schedule,
 		Notifications: req.Notifications,
 		Labels:        req.Labels,

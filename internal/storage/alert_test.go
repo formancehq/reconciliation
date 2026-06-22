@@ -124,7 +124,7 @@ func TestOpenOrUpdateAlert_ReopenInPlace(t *testing.T) {
 	require.NoError(t, err)
 	originalID := first.Alert.ID
 
-	resolved, err := s.AutoResolveAlert(ctx, ruleID, "asset:USD/2", evID, time.Now().UTC())
+	resolved, err := s.AutoResolveAlert(ctx, ruleID, "asset:USD/2", models.ContinuousPeriod, evID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NotNil(t, resolved)
 	require.Equal(t, models.AlertResolved, resolved.Status)
@@ -414,7 +414,7 @@ func TestRunInTx_RollsBackOnError(t *testing.T) {
 	})
 	require.ErrorIs(t, err, wantErr)
 
-	fps, err := s.ListActiveAlertFingerprints(ctx, ruleID)
+	fps, err := s.ListActiveAlertFingerprints(ctx, ruleID, models.ContinuousPeriod)
 	require.NoError(t, err)
 	require.Empty(t, fps, "rollback must discard the alert")
 

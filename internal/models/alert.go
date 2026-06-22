@@ -9,9 +9,10 @@ import (
 )
 
 // AlertStatus is the lifecycle state of an Alert. An alert is the stable
-// entity identified by (rule_id, fingerprint) and stays at the same id for
-// its entire life — re-opens are status transitions in place, not new rows.
-// The audit trail of every transition lives in AlertEvent.
+// entity identified by (rule_id, fingerprint, period_id) and stays at the same
+// id for its period's lifetime — re-opens within the period are status
+// transitions in place, not new rows. The audit trail of every transition
+// lives in AlertEvent.
 type AlertStatus string
 
 const (
@@ -70,20 +71,27 @@ type Resolution struct {
 	ExpiresAt        *time.Time      `json:"expiresAt,omitempty"`
 }
 
-// Alert is the stable, dedup'd record of a failing fingerprint. A UNIQUE
-// constraint on (rule_id, fingerprint) guarantees one alert per pair across
-// the lifetime of the rule — concurrent failing evaluations update the
-// same row, and re-opens transition status back to OPEN in place.
+// Alert is the stable, dedup'd record of a failing fingerprint within a
+// reconciliation period. A UNIQUE constraint on (rule_id, fingerprint,
+// period_id) guarantees one alert per triple — concurrent failing evaluations
+// of the same period update the same row, and re-opens within the period
+// transition status back to OPEN in place. The same fingerprint failing in a
+// new period is a separate alert (see PeriodID / models.Cadence).
 //
-// OccurrenceCount is the LIFETIME count of FAIL events on this alert
-// (i.e. summed across reopen cycles). For per-episode counts, query
-// AlertEvent filtered to the current episode boundaries.
+// OccurrenceCount is the count of FAIL events on this alert across reopen
+// cycles within its period (for a continuous-cadence rule, that is the lifetime
+// count). For finer per-episode counts, query AlertEvent.
 type Alert struct {
 	bun.BaseModel `bun:"reconciliations.alert" json:"-"`
 
-	ID               uuid.UUID         `bun:",pk,nullzero"                  json:"id"`
-	RuleID           uuid.UUID         `bun:"rule_id,notnull"               json:"ruleID"`
-	Fingerprint      string            `bun:",notnull"                      json:"fingerprint"`
+	ID          uuid.UUID `bun:",pk,nullzero"                  json:"id"`
+	RuleID      uuid.UUID `bun:"rule_id,notnull"               json:"ruleID"`
+	Fingerprint string    `bun:",notnull"                      json:"fingerprint"`
+	// PeriodID scopes the alert to a reconciliation period (e.g. "2026-03",
+	// or "continuous" for a live-monitoring rule). The dedup identity is
+	// (rule_id, fingerprint, period_id): a new period opens a fresh case
+	// rather than reopening a prior period's. See models.Cadence.PeriodID.
+	PeriodID         string            `bun:"period_id,notnull"             json:"periodID"`
 	Status           AlertStatus       `bun:",notnull"                      json:"status"`
 	Severity         Severity          `bun:",notnull"                      json:"severity"`
 	FirstSeenAt      time.Time         `bun:"first_seen_at,notnull,nullzero" json:"firstSeenAt"`
@@ -126,15 +134,15 @@ const (
 type AlertEvent struct {
 	bun.BaseModel `bun:"reconciliations.alert_event" json:"-"`
 
-	ID            uuid.UUID       `bun:",pk,nullzero"          json:"id"`
-	AlertID       uuid.UUID       `bun:"alert_id,notnull"       json:"alertID"`
-	EvaluationID  *uuid.UUID      `bun:"evaluation_id,nullzero" json:"evaluationID,omitempty"`
-	Type          AlertEventType  `bun:",notnull"                json:"type"`
-	PrevStatus    *AlertStatus    `bun:"prev_status,nullzero"    json:"prevStatus,omitempty"`
-	NewStatus     AlertStatus     `bun:"new_status,notnull"      json:"newStatus"`
-	Payload       json.RawMessage `bun:",type:jsonb"             json:"payload,omitempty"`
-	At            time.Time       `bun:",notnull,nullzero"       json:"at"`
-	CreatedAt     time.Time       `bun:"created_at,notnull,nullzero" json:"createdAt"`
+	ID           uuid.UUID       `bun:",pk,nullzero"          json:"id"`
+	AlertID      uuid.UUID       `bun:"alert_id,notnull"       json:"alertID"`
+	EvaluationID *uuid.UUID      `bun:"evaluation_id,nullzero" json:"evaluationID,omitempty"`
+	Type         AlertEventType  `bun:",notnull"                json:"type"`
+	PrevStatus   *AlertStatus    `bun:"prev_status,nullzero"    json:"prevStatus,omitempty"`
+	NewStatus    AlertStatus     `bun:"new_status,notnull"      json:"newStatus"`
+	Payload      json.RawMessage `bun:",type:jsonb"             json:"payload,omitempty"`
+	At           time.Time       `bun:",notnull,nullzero"       json:"at"`
+	CreatedAt    time.Time       `bun:"created_at,notnull,nullzero" json:"createdAt"`
 }
 
 // IsReopen returns true when this fail event lands on a previously-resolved

@@ -83,12 +83,15 @@ EE-gated. Same auth surface as the legacy API. The contracts below match what's 
   },
   "schedule": { "kind": "on_demand" },
   "severity": "high",
+  "cadence": "monthly",
   "notifications": ["wh_xyz", "email:ops@buildr.com"],
   "labels": { "team": "treasury", "env": "prod" }
 }
 ```
 
 Returns `201` + the rule with `id` and the derived `compiledCEL` for explainability. Validation failures return `400 VALIDATION` (e.g. unknown `templateKind`, invalid spec).
+
+`cadence` (`continuous` *(default)* · `daily` · `monthly`) sets the reconciliation rhythm: it scopes each failing fingerprint into a period, so a March break and an April break are distinct, independently-closable cases and resolving April never rewrites March. `continuous` keeps a single ongoing case per fingerprint (live monitoring). See [alert-period-model.md](./alert-period-model.md).
 
 See [templates.md](./templates.md) for per-template spec schemas.
 
@@ -139,11 +142,11 @@ Cursor-paginated, ordered by `created_at DESC`.
 
 ### Alerts
 
-An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint)` pair — at most one row per pair for the lifetime of the rule. Reopens after RESOLVED flip status back to OPEN **in place** (same id). The full transition history lives in `alert_event` and is exposed at `GET /alerts/{id}/events`.
+An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one row per triple. Within a period, reopens after RESOLVED flip status back to OPEN **in place** (same id); the same fingerprint failing in a *new* period is a fresh case (new id). For a `continuous`-cadence rule there is a single ongoing period, so it behaves as one immortal case per `(rule, fingerprint)`. The full transition history lives in `alert_event` and is exposed at `GET /alerts/{id}/events`. See [alert-period-model.md](./alert-period-model.md).
 
 #### `GET /alerts` — list
 
-Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?since=2026-06-01T00:00:00Z`.
+Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?periodID=2026-03`, `?since=2026-06-01T00:00:00Z`. Filtering by `periodID` answers "is this period reconciled?" — a period with no OPEN/ACKNOWLEDGED alerts is green.
 
 #### `GET /alerts/{id}` — fetch
 
@@ -152,6 +155,7 @@ Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?since=2026-06-01T
   "id":               "alr_…",
   "ruleId":           "rul_…",
   "fingerprint":      "asset:USD/2",
+  "periodID":         "2026-03",
   "status":           "OPEN" | "ACKNOWLEDGED" | "RESOLVED",
   "severity":         "high",
   "firstSeenAt":      "…",
@@ -165,7 +169,7 @@ Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?since=2026-06-01T
 }
 ```
 
-`occurrenceCount` is the **lifetime** count of FAIL events on this alert — it does not reset across reopen cycles. Per-episode counts can be derived from `/events`.
+`occurrenceCount` is the count of FAIL events on this alert across its reopen cycles **within its period** (for a `continuous`-cadence rule, that's the lifetime count, since there is one unbounded period). Finer per-episode counts can be derived from `/events`.
 
 #### `GET /alerts/{id}/events` — append-only timeline
 
@@ -258,7 +262,7 @@ publish to a single logical topic (`reconciliation`); the operator's
 
 ```json
 {
-  "alert": { "id": "…", "ruleID": "…", "fingerprint": "asset:USD/2", "status": "RESOLVED", "evidence": { … }, "resolution": { … }, … },
+  "alert": { "id": "…", "ruleID": "…", "fingerprint": "asset:USD/2", "periodID": "2026-03", "status": "RESOLVED", "evidence": { … }, "resolution": { … }, … },
   "event": { "id": "…", "alertID": "…", "type": "resolve", "prevStatus": "ACKNOWLEDGED", "newStatus": "RESOLVED", "evaluationID": "…", "payload": { … }, "at": "2026-06-22T10:00:00Z" }
 }
 ```

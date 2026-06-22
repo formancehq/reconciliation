@@ -44,8 +44,8 @@ type Store interface {
 
 	// V1 — Alert
 	OpenOrUpdateAlert(ctx context.Context, in storage.OpenAlertInput) (*storage.OpenAlertResult, error)
-	AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fingerprint string, evaluationID uuid.UUID, at time.Time) (*models.Alert, error)
-	ListActiveAlertFingerprints(ctx context.Context, ruleID uuid.UUID) ([]string, error)
+	AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fingerprint, periodID string, evaluationID uuid.UUID, at time.Time) (*models.Alert, error)
+	ListActiveAlertFingerprints(ctx context.Context, ruleID uuid.UUID, periodID string) ([]string, error)
 	AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Alert, error)
 	ResolveAlertManual(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Alert, error)
 	AcceptAlert(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Alert, error)
