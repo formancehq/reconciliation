@@ -297,7 +297,14 @@ func registerMigrations(migrator *migrations.Migrator) {
 						CONSTRAINT alert_event_prev_chk  CHECK (prev_status IS NULL OR prev_status IN ('OPEN','ACKNOWLEDGED','RESOLVED')),
 						CONSTRAINT alert_event_new_chk   CHECK (new_status IN ('OPEN','ACKNOWLEDGED','RESOLVED')),
 						CONSTRAINT alert_event_alert_fk  FOREIGN KEY (alert_id)      REFERENCES reconciliations.alert(id)      ON DELETE CASCADE,
-						CONSTRAINT alert_event_eval_fk   FOREIGN KEY (evaluation_id) REFERENCES reconciliations.evaluation(id)
+						-- ON DELETE CASCADE so deleting a rule (which cascades to its
+						-- evaluations) doesn't trip this FK from the surviving event
+						-- rows. Without it, no rule that ever fired an alert can be
+						-- deleted: the rule→evaluation cascade collides with the
+						-- alert_event→evaluation reference. The alert→alert_event
+						-- cascade above already removes these rows on the alert path;
+						-- this covers the evaluation path too.
+						CONSTRAINT alert_event_eval_fk   FOREIGN KEY (evaluation_id) REFERENCES reconciliations.evaluation(id) ON DELETE CASCADE
 					);
 					CREATE INDEX IF NOT EXISTS alert_event_alert_idx ON reconciliations.alert_event (alert_id, at DESC);
 					CREATE INDEX IF NOT EXISTS alert_event_type_idx  ON reconciliations.alert_event (alert_id, type, at DESC);

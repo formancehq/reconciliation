@@ -51,21 +51,26 @@ func TestRule_DeleteCascadesAndNotFound(t *testing.T) {
 	// First delete on a never-existed id is ErrNotFound.
 	require.ErrorIs(t, s.DeleteRule(ctx, uuid.New()), ErrNotFound)
 
-	// Create a rule + a child evaluation + a child alert + a child event;
-	// deleting the rule must cascade to all of them (FK ON DELETE CASCADE).
-	rule := makeRule("doomed")
-	require.NoError(t, s.CreateRule(ctx, rule))
-	_, evID := seedRuleAndEval(t, s) // adds another rule too, fine
+	// Rule + its OWN evaluation + an alert + an alert_event whose
+	// evaluation_id points at that same rule's evaluation. Deleting the rule
+	// must cascade through all of them. The alert_event → evaluation FK is the
+	// trap: the rule→evaluation cascade deletes the evaluation, so without
+	// ON DELETE CASCADE on that FK the surviving event row blocks the delete
+	// (regression: "no rule that ever fired can be deleted"). Using the rule's
+	// own eval here is load-bearing — a foreign eval would never exercise it.
+	ruleID, evID := seedRuleAndEval(t, s)
 
-	in := defaultOpenInput(t, rule.ID, evID)
-	res, err := s.OpenOrUpdateAlert(ctx, in)
+	res, err := s.OpenOrUpdateAlert(ctx, defaultOpenInput(t, ruleID, evID))
 	require.NoError(t, err)
+	require.NotEmpty(t, res.Alert.ID)
 
-	require.NoError(t, s.DeleteRule(ctx, rule.ID))
+	require.NoError(t, s.DeleteRule(ctx, ruleID))
 
-	// Rule + alert + alert event should all be gone.
-	_, err = s.GetRule(ctx, rule.ID)
+	// Rule + evaluation + alert + alert_event should all be gone.
+	_, err = s.GetRule(ctx, ruleID)
 	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.GetEvaluation(ctx, evID)
+	require.ErrorIs(t, err, ErrNotFound, "evaluation must be cascaded away with the rule")
 	_, err = s.GetAlert(ctx, res.Alert.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	events, err := s.ListAlertEvents(ctx, res.Alert.ID)
