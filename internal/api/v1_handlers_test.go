@@ -479,7 +479,6 @@ func TestPatchRule_InvalidBody(t *testing.T) {
 // errNotFoundForTest returns the sentinel storage.ErrNotFound without forcing
 // the test to import storage just for one line.
 func errNotFoundForTest() error {
-	type errType interface{ Error() string }
 	return notFoundErr{}
 }
 
