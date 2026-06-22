@@ -222,22 +222,53 @@ Note is **required**. Evidence at acceptance time is frozen onto `resolution.evi
 
 ---
 
-## Events (⏳ planned — task #8 / V1 GA)
+## Events (✅ implemented)
 
-Published to the Webhooks module — same dispatch model as other Formance events.
+Every alert state transition publishes one message to the Formance message bus
+(go-libs/v5 `messagingfx`), consumed by the **Webhooks** module exactly like
+`ledger.*` / `payments.*` events. One `alert_event` row ⇒ one outbound message:
+emission is hooked at the single write point (`appendAlertEvent`) and dispatched
+**after the transaction commits**, so a rolled-back evaluation emits nothing.
 
-| Event | Fires when | Default delivery |
+| Event | Fires when | `alert_event` row |
 |---|---|---|
-| `reconciliation.alert.opened`       | First failing eval for a fingerprint | ✅ webhook + email |
-| `reconciliation.alert.updated`      | Subsequent failure or severity change | digest only |
-| `reconciliation.alert.acknowledged` | Human ack'd | digest only |
-| `reconciliation.alert.resolved`     | Auto or `fixed_by_booking` | ✅ webhook + email |
-| `reconciliation.alert.accepted`     | Business acceptance | ✅ webhook + email |
-| `reconciliation.alert.reopened`     | Same fingerprint fails after a closed alert (status → OPEN, same alert id) | ✅ webhook + email |
+| `reconciliation.alert.opened`       | First failing eval for a fingerprint | `fail`, `prevStatus = null` |
+| `reconciliation.alert.updated`      | Subsequent failure while OPEN/ACKNOWLEDGED | `fail`, `prevStatus ∈ {OPEN, ACKNOWLEDGED}` |
+| `reconciliation.alert.acknowledged` | Human ack'd | `ack` |
+| `reconciliation.alert.resolved`     | Auto-resolve (`pass`) or `fixed_by_booking` (`resolve`) | `pass` / `resolve` |
+| `reconciliation.alert.accepted`     | Business acceptance | `accept` |
+| `reconciliation.alert.reopened`     | Same fingerprint fails after a closed alert (status → OPEN, same alert id) | `fail`, `prevStatus = RESOLVED` |
 
-Each payload carries the full `Alert` row plus the latest `Evaluation`'s `evidence`.
+The event name is a pure function of the row (`events.EventTypeFor`) — there is
+no separate event-kind column to keep in sync. An idempotent no-op (e.g. re-ack
+of an already-acknowledged alert) writes no row and therefore emits no event.
 
-Email digest is owned in-module (per-recipient aggregation is awkward to push down to Webhooks). All other delivery is the customer's problem (Jira / PagerDuty / Slack via their own Webhook consumer).
+**Envelope.** Standard `publish.EventMessage`: `app = "reconciliation"`,
+`version = "v1"`, `type ∈ {alert.opened, alert.updated, alert.acknowledged,
+alert.resolved, alert.accepted, alert.reopened}`, `idempotencyKey =` the
+`alert_event` id. The Webhooks worker lowercases and joins `app` + `type`, so
+subscribers match against the full names in the table above. All six events
+publish to a single logical topic (`reconciliation`); the operator's
+`--publisher-topic-mapping` routes it to the bus subject Webhooks subscribes to.
+
+**Payload.** The full current `Alert` row (which carries the latest evaluation's
+`evidence`, plus `resolution` / `ack` / `labels`) paired with the triggering
+`alert_event` row (transition `type`, `prevStatus` → `newStatus`, originating
+`evaluationID`, and the resolution/ack detail in its `payload`):
+
+```json
+{
+  "alert": { "id": "…", "ruleID": "…", "fingerprint": "asset:USD/2", "status": "RESOLVED", "evidence": { … }, "resolution": { … }, … },
+  "event": { "id": "…", "alertID": "…", "type": "resolve", "prevStatus": "ACKNOWLEDGED", "newStatus": "RESOLVED", "evaluationID": "…", "payload": { … }, "at": "2026-06-22T10:00:00Z" }
+}
+```
+
+Delivery routing (which event goes to which endpoint) is configured per
+subscription in the Webhooks module — every event above is published
+unconditionally; the customer subscribes to what they care about and fans out to
+Jira / PagerDuty / Slack via their own Webhook consumer. The per-recipient
+**email digest** is owned in-module and ships separately at V1 GA (its
+aggregation is awkward to push down to Webhooks).
 
 ---
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/formancehq/go-libs/api"
@@ -15,6 +16,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/api/backend"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/engine"
+	"github.com/formancehq/reconciliation/internal/events"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"go.uber.org/fx"
@@ -46,6 +48,12 @@ func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
 		fx.Provide(func(store *storage.Storage) service.Store {
 			return store
 		}),
+
+		// Alert lifecycle → webhook events. The publisher is bound to the
+		// storage seam so every alert_event row produces one outbound message
+		// (see internal/events). The message bus publisher is optional: with
+		// no broker configured, NewPublisher yields a silent no-op.
+		fx.Provide(provideAlertEventPublisher),
 		fx.Supply(serviceInfo),
 		fx.Provide(fx.Annotate(service.NewSDKFormance, fx.As(new(service.SDKFormance)))),
 
@@ -72,6 +80,19 @@ func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
 		fx.Provide(backend.NewDefaultBackend),
 		fx.Provide(newRouter),
 	)
+}
+
+// alertPublisherParams optionally receives the message-bus publisher
+// messagingfx wires from --publisher-* flags. fx provides no message.Publisher
+// when no broker is enabled, so the field is optional and resolves to nil;
+// events.NewPublisher then returns a no-op publisher.
+type alertPublisherParams struct {
+	fx.In
+	Publisher message.Publisher `optional:"true"`
+}
+
+func provideAlertEventPublisher(p alertPublisherParams) storage.AlertEventPublisher {
+	return events.NewPublisher(p.Publisher)
 }
 
 // provideResolvers builds the engine.Resolvers fan-out from a single SDK

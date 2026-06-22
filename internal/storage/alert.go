@@ -62,6 +62,9 @@ func (s *Storage) OpenOrUpdateAlert(ctx context.Context, in OpenAlertInput) (*Op
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result, err := s.openOrUpdateAlertOnce(ctx, in)
 		if err == nil {
+			// Emit only the committed attempt's event: a retried duplicate-key
+			// race rolled its first attempt back and produced no row.
+			s.recordAlertEvent(ctx, result.Alert, result.Event)
 			return result, nil
 		}
 		if attempt < maxAttempts && errors.Is(err, ErrDuplicateKeyValue) {
@@ -188,7 +191,10 @@ func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, finger
 		By:   "system",
 		At:   at,
 	}
-	var resolved *models.Alert
+	var (
+		resolved *models.Alert
+		event    *models.AlertEvent
+	)
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var current models.Alert
 		serr := tx.NewSelect().
@@ -215,15 +221,17 @@ func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, finger
 			return e("auto-resolve alert", uerr)
 		}
 		payload, _ := json.Marshal(resolution)
-		if _, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventPass, &prev, models.AlertResolved, &evaluationID, payload, at); aerr != nil {
+		ev, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventPass, &prev, models.AlertResolved, &evaluationID, payload, at)
+		if aerr != nil {
 			return aerr
 		}
-		resolved = &current
+		resolved, event = &current, ev
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.recordAlertEvent(ctx, resolved, event)
 	return resolved, nil
 }
 
@@ -233,7 +241,10 @@ func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, finger
 // original ack metadata (who/when/why) is the audit trail and must not be
 // overwritten by a second ack call. Rejects on RESOLVED.
 func (s *Storage) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Alert, error) {
-	var alert models.Alert
+	var (
+		alert models.Alert
+		event *models.AlertEvent
+	)
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := tx.NewSelect().
 			Model(&alert).
@@ -259,14 +270,19 @@ func (s *Storage) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (
 			return e("ack alert", err)
 		}
 		payload, _ := json.Marshal(ack)
-		if _, err := appendAlertEvent(ctx, tx, alert.ID, models.AlertEventAck, &prev, models.AlertAcknowledged, nil, payload, ack.At); err != nil {
+		ev, err := appendAlertEvent(ctx, tx, alert.ID, models.AlertEventAck, &prev, models.AlertAcknowledged, nil, payload, ack.At)
+		if err != nil {
 			return err
 		}
+		event = ev
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	// event is nil on the idempotent re-ack no-op — recordAlertEvent skips it,
+	// so a duplicate ack does not re-emit reconciliation.alert.acknowledged.
+	s.recordAlertEvent(ctx, &alert, event)
 	return &alert, nil
 }
 
@@ -294,7 +310,10 @@ func (s *Storage) AcceptAlert(ctx context.Context, id uuid.UUID, resolution *mod
 }
 
 func (s *Storage) applyResolution(ctx context.Context, id uuid.UUID, resolution *models.Resolution, eventType models.AlertEventType) (*models.Alert, error) {
-	var alert models.Alert
+	var (
+		alert models.Alert
+		event *models.AlertEvent
+	)
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := tx.NewSelect().
 			Model(&alert).
@@ -315,14 +334,17 @@ func (s *Storage) applyResolution(ctx context.Context, id uuid.UUID, resolution 
 			return e("resolve alert", err)
 		}
 		payload, _ := json.Marshal(resolution)
-		if _, err := appendAlertEvent(ctx, tx, alert.ID, eventType, &prev, models.AlertResolved, nil, payload, resolution.At); err != nil {
+		ev, err := appendAlertEvent(ctx, tx, alert.ID, eventType, &prev, models.AlertResolved, nil, payload, resolution.At)
+		if err != nil {
 			return err
 		}
+		event = ev
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.recordAlertEvent(ctx, &alert, event)
 	return &alert, nil
 }
 
