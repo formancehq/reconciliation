@@ -10,6 +10,7 @@ import (
 
 	sharedapi "github.com/formancehq/go-libs/api"
 	"github.com/formancehq/go-libs/auth"
+	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -316,6 +317,161 @@ func TestGetEvaluation_Nominal(t *testing.T) {
 	var got sharedapi.BaseResponse[evaluationResponse]
 	sharedapi.Decode(t, rec.Body, &got)
 	require.Equal(t, string(models.EvaluationFail), got.Data.Result)
+}
+
+// --- List handlers ----------------------------------------------------------
+
+func TestListRules_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
+
+	cursor := &bunpaginate.Cursor[models.Rule]{
+		PageSize: 15,
+		Data: []models.Rule{
+			{ID: uuid.New(), Name: "a", TemplateKind: models.TemplateLedgerInvariant},
+			{ID: uuid.New(), Name: "b", TemplateKind: models.TemplateAccountThreshold},
+		},
+	}
+	mockSvc.EXPECT().ListRules(gomock.Any(), gomock.Any()).Return(cursor, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/rules", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got sharedapi.BaseResponse[models.Rule]
+	sharedapi.Decode(t, rec.Body, &got)
+	require.Len(t, got.Cursor.Data, 2)
+}
+
+// TestListRules_InvalidPageSize the pageSize param must reject non-integer
+// values; the handler short-circuits at the boundary rather than handing
+// garbage to storage.
+func TestListRules_InvalidPageSize(t *testing.T) {
+	t.Parallel()
+	b, _ := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
+
+	r := httptest.NewRequest(http.MethodGet, "/rules?pageSize=not-a-number", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestListEvaluations_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
+
+	cursor := &bunpaginate.Cursor[models.Evaluation]{
+		PageSize: 15,
+		Data: []models.Evaluation{
+			{ID: uuid.New(), RuleID: uuid.New(), Result: models.EvaluationFail, StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+		},
+	}
+	mockSvc.EXPECT().ListEvaluations(gomock.Any(), gomock.Any()).Return(cursor, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/evaluations", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestListAlerts_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
+
+	cursor := &bunpaginate.Cursor[models.Alert]{
+		PageSize: 15,
+		Data: []models.Alert{
+			{
+				ID: uuid.New(), RuleID: uuid.New(),
+				Fingerprint: "asset:USD/2",
+				Status:      models.AlertOpen,
+				Severity:    models.SeverityHigh,
+			},
+		},
+	}
+	mockSvc.EXPECT().ListAlerts(gomock.Any(), gomock.Any()).Return(cursor, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/alerts", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got sharedapi.BaseResponse[models.Alert]
+	sharedapi.Decode(t, rec.Body, &got)
+	require.Len(t, got.Cursor.Data, 1)
+	require.Equal(t, "asset:USD/2", got.Cursor.Data[0].Fingerprint)
+}
+
+func TestGetAlert_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
+
+	id := uuid.New()
+	alert := &models.Alert{
+		ID:          id,
+		RuleID:      uuid.New(),
+		Fingerprint: "asset:USD/2",
+		Status:      models.AlertResolved,
+		Severity:    models.SeverityHigh,
+	}
+	mockSvc.EXPECT().GetAlert(gomock.Any(), id).Return(alert, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/alerts/"+id.String(), nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got sharedapi.BaseResponse[alertResponse]
+	sharedapi.Decode(t, rec.Body, &got)
+	require.Equal(t, id.String(), got.Data.ID)
+	require.Equal(t, string(models.AlertResolved), got.Data.Status)
+}
+
+// --- PATCH /rules handler ---------------------------------------------------
+
+func TestPatchRule_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
+
+	id := uuid.New()
+	// PATCH handler does PatchRule + GetRule (re-fetch after patch). Both must
+	// be mocked, in order.
+	mockSvc.EXPECT().PatchRule(gomock.Any(), id, gomock.Any()).Return(nil)
+	mockSvc.EXPECT().GetRule(gomock.Any(), id).Return(&models.Rule{
+		ID: id, Name: "patched", TemplateKind: models.TemplateLedgerInvariant, Enabled: false,
+	}, nil)
+
+	body := []byte(`{"name":"patched","enabled":false}`)
+	r := httptest.NewRequest(http.MethodPatch, "/rules/"+id.String(), bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got sharedapi.BaseResponse[ruleResponse]
+	sharedapi.Decode(t, rec.Body, &got)
+	require.Equal(t, "patched", got.Data.Name)
+	require.False(t, got.Data.Enabled)
+}
+
+func TestPatchRule_InvalidBody(t *testing.T) {
+	t.Parallel()
+	b, _ := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory())
+
+	r := httptest.NewRequest(http.MethodPatch, "/rules/"+uuid.New().String(), bytes.NewReader([]byte(`not-json`)))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // --- helpers ---------------------------------------------------------------

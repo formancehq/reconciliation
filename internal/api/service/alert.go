@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
@@ -118,28 +117,8 @@ func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]mod
 }
 
 // engineErrorFingerprint is the synthetic fingerprint used by the evaluation
-// orchestrator when a kernel/resolver failure raises a meta-alert. Lifting
-// it to a package-level constant makes the alert layer's "is this a data
-// or an engine alert?" check trivial and grep-able.
+// orchestrator when a kernel/resolver failure raises a meta-alert (see
+// openEngineErrorAlert in evaluation.go). Promoted to a package-level
+// constant so the value lives in one place — anywhere we route or filter
+// engine-health alerts can match on this literal.
 const engineErrorFingerprint = "engine.error"
-
-func isEngineErrorAlert(a *models.Alert) bool {
-	if a == nil {
-		return false
-	}
-	return a.Fingerprint == engineErrorFingerprint
-}
-
-// FormatAlertSummary is a convenience for logs / digests. Kept here so the
-// alert-layer concerns aren't littered across the service.
-func FormatAlertSummary(a *models.Alert) string {
-	if a == nil {
-		return ""
-	}
-	tag := "data"
-	if isEngineErrorAlert(a) {
-		tag = "engine.error"
-	}
-	return fmt.Sprintf("[%s/%s] rule=%s fingerprint=%s status=%s severity=%s",
-		tag, a.ID, a.RuleID, a.Fingerprint, a.Status, a.Severity)
-}

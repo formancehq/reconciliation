@@ -667,7 +667,7 @@ func TestEvaluate_EngineError_RaisesMetaAlert(t *testing.T) {
 		meta = a
 		break
 	}
-	if !isEngineErrorAlert(meta) {
+	if meta.Fingerprint != engineErrorFingerprint {
 		t.Errorf("expected engine.error fingerprint, got %q", meta.Fingerprint)
 	}
 	if meta.Labels["kind"] != engineErrorFingerprint {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/formancehq/go-libs/query"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -240,6 +241,161 @@ func TestAckAlert_IdempotentPreservesMetadata(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, ackEvents, "idempotent re-ACK must not append a second ack event")
+}
+
+// TestResolveAlertManual_FixedByBooking — manual close path with kind=fixed,
+// records a `resolve` event, and rejects on already-resolved.
+func TestResolveAlertManual_FixedByBooking(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	res, err := s.OpenOrUpdateAlert(ctx, defaultOpenInput(t, ruleID, evID))
+	require.NoError(t, err)
+
+	resolution := &models.Resolution{
+		Kind:            models.ResolutionFixedByBooking,
+		By:              "ops@formance.com",
+		At:              time.Now().UTC(),
+		Note:            "posted correction tx_abc",
+		TransactionRefs: []string{"tx_abc"},
+	}
+	closed, err := s.ResolveAlertManual(ctx, res.Alert.ID, resolution)
+	require.NoError(t, err)
+	require.Equal(t, models.AlertResolved, closed.Status)
+	require.NotNil(t, closed.Resolution)
+	require.Equal(t, models.ResolutionFixedByBooking, closed.Resolution.Kind)
+	require.Equal(t, []string{"tx_abc"}, closed.Resolution.TransactionRefs)
+
+	events, err := s.ListAlertEvents(ctx, res.Alert.ID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(events), 2) // initial fail + resolve
+	require.Equal(t, models.AlertEventResolve, events[0].Type, "resolve event must be the latest")
+
+	// Second manual resolve on the already-resolved row must error (no row matches the WHERE).
+	_, err = s.ResolveAlertManual(ctx, res.Alert.ID, resolution)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+// TestResolveAlertManual_RejectsWrongKind — only fixed_by_booking or auto.
+// Belt-and-braces; the API layer also gates this.
+func TestResolveAlertManual_RejectsWrongKind(t *testing.T) {
+	s := newStore(t)
+	_, err := s.ResolveAlertManual(context.Background(), uuid.New(), &models.Resolution{
+		Kind: models.ResolutionAcceptedByBusiness,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported resolution kind")
+}
+
+// TestAcceptAlert_Path — accepted_by_business writes the right event + the
+// resolution carries note + evidence snapshot.
+func TestAcceptAlert_Path(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	res, err := s.OpenOrUpdateAlert(ctx, defaultOpenInput(t, ruleID, evID))
+	require.NoError(t, err)
+
+	resolution := &models.Resolution{
+		Kind:             models.ResolutionAcceptedByBusiness,
+		By:               "treasurer@formance.com",
+		At:               time.Now().UTC(),
+		Note:             "settlement lag confirmed",
+		EvidenceSnapshot: json.RawMessage(`{"asset":"USD/2","drift":"50"}`),
+	}
+	closed, err := s.AcceptAlert(ctx, res.Alert.ID, resolution)
+	require.NoError(t, err)
+	require.Equal(t, models.AlertResolved, closed.Status)
+	require.Equal(t, models.ResolutionAcceptedByBusiness, closed.Resolution.Kind)
+	require.Equal(t, "settlement lag confirmed", closed.Resolution.Note)
+
+	events, err := s.ListAlertEvents(ctx, res.Alert.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.AlertEventAccept, events[0].Type)
+}
+
+// TestAcceptAlert_RequiresNote — note is mandatory per V1 spec §5.4.
+func TestAcceptAlert_RequiresNote(t *testing.T) {
+	s := newStore(t)
+	_, err := s.AcceptAlert(context.Background(), uuid.New(), &models.Resolution{
+		Kind: models.ResolutionAcceptedByBusiness,
+		By:   "treasurer",
+		At:   time.Now().UTC(),
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "note is required")
+}
+
+// TestAcceptAlert_RejectsWrongKind — defensive type-check at the storage edge.
+func TestAcceptAlert_RejectsWrongKind(t *testing.T) {
+	s := newStore(t)
+	_, err := s.AcceptAlert(context.Background(), uuid.New(), &models.Resolution{
+		Kind: models.ResolutionFixedByBooking,
+		Note: "x",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "expected kind")
+}
+
+// TestListAlerts_Filters exercises the cursor list + filter pipeline.
+func TestListAlerts_Filters(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+
+	openIn := defaultOpenInput(t, ruleID, evID)
+	openIn.Fingerprint = "asset:USD/2"
+	_, err := s.OpenOrUpdateAlert(ctx, openIn)
+	require.NoError(t, err)
+
+	eurIn := defaultOpenInput(t, ruleID, evID)
+	eurIn.Fingerprint = "asset:EUR/2"
+	_, err = s.OpenOrUpdateAlert(ctx, eurIn)
+	require.NoError(t, err)
+
+	q := NewGetAlertsQuery(NewPaginatedQueryOptions(AlertsFilters{}).WithPageSize(15))
+	cursor, err := s.ListAlerts(ctx, q)
+	require.NoError(t, err)
+	require.Len(t, cursor.Data, 2)
+
+	// Filter by fingerprint
+	filtered := NewGetAlertsQuery(
+		NewPaginatedQueryOptions(AlertsFilters{}).
+			WithQueryBuilder(query.Match("fingerprint", "asset:EUR/2")).
+			WithPageSize(15),
+	)
+	cursor, err = s.ListAlerts(ctx, filtered)
+	require.NoError(t, err)
+	require.Len(t, cursor.Data, 1)
+	require.Equal(t, "asset:EUR/2", cursor.Data[0].Fingerprint)
+
+	// Filter by ruleID
+	byRule := NewGetAlertsQuery(
+		NewPaginatedQueryOptions(AlertsFilters{}).
+			WithQueryBuilder(query.Match("ruleID", ruleID)).
+			WithPageSize(15),
+	)
+	cursor, err = s.ListAlerts(ctx, byRule)
+	require.NoError(t, err)
+	require.Len(t, cursor.Data, 2)
+
+	// Unknown key surfaces ErrInvalidQuery
+	bad := NewGetAlertsQuery(
+		NewPaginatedQueryOptions(AlertsFilters{}).
+			WithQueryBuilder(query.Match("not_a_column", true)).
+			WithPageSize(15),
+	)
+	_, err = s.ListAlerts(ctx, bad)
+	require.ErrorIs(t, err, ErrInvalidQuery)
+
+	// Non-$match on enum-style key is rejected
+	wrongOp := NewGetAlertsQuery(
+		NewPaginatedQueryOptions(AlertsFilters{}).
+			WithQueryBuilder(query.Gt("status", "OPEN")).
+			WithPageSize(15),
+	)
+	_, err = s.ListAlerts(ctx, wrongOp)
+	require.ErrorIs(t, err, ErrInvalidQuery)
 }
 
 // TestRunInTx_RollsBackOnError confirms the transactional helper actually
