@@ -107,19 +107,20 @@ func (t *LedgerVsPoolDrift) Explain(raw json.RawMessage) (string, error) {
 			break
 		}
 	}
+	poolSrc := SourceSpec{Kind: SourcePaymentsPool, PoolID: spec.PaymentsPoolID}
 	return fmt.Sprintf(
-		`abs(%s + balance(pool(%s), "<asset>")) <= %s`,
+		`abs(%s + %s) <= %s`,
 		signedLedgerTerm(spec.effectiveLedgerSign(), spec.Ledger, spec.LedgerQuery, `"<asset>"`),
-		celString(spec.PaymentsPoolID), tol,
+		poolSrc.celTerm(`"<asset>"`), tol,
 	), nil
 }
 
 // signedLedgerTerm renders the ledger balance with its sign applied. For
 // +1 the leading sign is omitted; for -1 the term becomes `-balance(…)`.
-// Keeps the compiled CEL identical to the prior shape when ledgerSign is
-// the default, so legacy rules round-trip unchanged.
+// The balance term is rendered by the shared SourceSpec primitive so drift and
+// source_parity emit identical ledger CEL; this template only adds the sign.
 func signedLedgerTerm(sign int, ledger string, query json.RawMessage, assetExpr string) string {
-	term := fmt.Sprintf(`balance(ledgerSet(%s, %s), %s)`, celString(ledger), celJSON(query), assetExpr)
+	term := SourceSpec{Kind: SourceLedger, Ledger: ledger, Query: query}.celTerm(assetExpr)
 	if sign == -1 {
 		return "-" + term
 	}
@@ -142,6 +143,13 @@ func (t *LedgerVsPoolDrift) Evaluate(
 		return nil, err
 	}
 
+	// Drift is a source_parity-shaped check (ledger vs pool) with a sign +
+	// sum-to-zero convention layered on. Resolve and render both sides through
+	// the shared SourceSpec primitive so there is one code path for "read a
+	// balance source"; this template owns only the sign arithmetic.
+	ledgerSrc := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.LedgerQuery}
+	poolSrc := SourceSpec{Kind: SourcePaymentsPool, PoolID: spec.PaymentsPoolID}
+
 	// Discover the asset universe by querying both sides. This is the V1
 	// ledger_vs_pool_drift contract — check every asset present on either
 	// side, not just those mentioned in spec.Tolerance.
@@ -149,11 +157,11 @@ func (t *LedgerVsPoolDrift) Evaluate(
 	if in.SafetyMargin > 0 {
 		pit = pit.Add(-in.SafetyMargin)
 	}
-	ledgerBalances, err := resolvers.Ledger.AggregateBalance(ctx, spec.Ledger, spec.LedgerQuery, pit)
+	ledgerBalances, err := ledgerSrc.resolve(ctx, resolvers, pit)
 	if err != nil {
 		return nil, fmt.Errorf("scout ledger balances: %w", err)
 	}
-	poolBalances, err := resolvers.Payments.PoolBalanceLatest(ctx, spec.PaymentsPoolID)
+	poolBalances, err := poolSrc.resolve(ctx, resolvers, pit)
 	if err != nil {
 		return nil, fmt.Errorf("scout pool balances: %w", err)
 	}
@@ -176,9 +184,9 @@ func (t *LedgerVsPoolDrift) Evaluate(
 		// CEL run, and so any future divergence between this template and
 		// raw-CEL semantics surfaces immediately.
 		expr := fmt.Sprintf(
-			`abs(%s + balance(pool(%s), %s)) <= %d`,
+			`abs(%s + %s) <= %d`,
 			signedLedgerTerm(sign, spec.Ledger, spec.LedgerQuery, celString(asset)),
-			celString(spec.PaymentsPoolID), celString(asset), tolerance,
+			poolSrc.celTerm(celString(asset)), tolerance,
 		)
 		compiled, err := eng.Compile(expr)
 		if err != nil {
@@ -218,11 +226,4 @@ func (t *LedgerVsPoolDrift) Evaluate(
 		})
 	}
 	return outcomes, nil
-}
-
-func zeroIfNil(v *big.Int) *big.Int {
-	if v == nil {
-		return big.NewInt(0)
-	}
-	return v
 }

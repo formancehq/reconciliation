@@ -2,7 +2,7 @@
 
 Templates are the **entire public V1 GA surface** — raw CEL is internal-only (see [ADR-001](../prd/adr-001-cel-kernel.md)). Each template is a typed spec, a validator, an explainer (for the persisted `compiled_cel`), and an end-to-end evaluator that produces one `Outcome` per fingerprint axis (per-asset for V1 GA).
 
-> Status: all three templates are ✅ shipped in [internal/templates/](../../internal/templates/). The `account_threshold` per-account mode is rejected at validate-time with a clear "V1.1" message.
+> Status: all four templates are ✅ shipped in [internal/templates/](../../internal/templates/). The `account_threshold` per-account mode is rejected at validate-time with a clear "V1.1" message.
 
 ---
 
@@ -33,6 +33,8 @@ Every template:
 5. **Returns `[]Outcome`** — one per asset, with fingerprint, pass/fail, and evidence.
 
 A **kernel/template consistency guard** in each template double-checks the kernel's verdict against direct big.Int math and errors loudly on divergence. Catches future kernel drift.
+
+Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` and `ledger_vs_pool_drift` both compose sources through it, so there is one code path for "read a balance source".
 
 ---
 
@@ -208,6 +210,44 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 ```
 
 **Code**: [internal/templates/account_threshold.go](../../internal/templates/account_threshold.go)
+
+---
+
+### 4. `source_parity` (✅ shipped)
+
+"Two independent records of the same money agree, per asset, within tolerance." Each side is a **Source** — a ledger account set *or* a payments pool — so one template expresses ledger↔pool (the drift use case), **ledger↔ledger** (a sub-ledger reconciled against a control account on another ledger), and pool↔pool, without a bespoke template per pairing.
+
+**Spec**
+
+```jsonc
+{
+  "left":      { "kind": "ledger",        "ledger": "main", "query": { "$match": { "address": "stripe-clearing" } } },
+  "right":     { "kind": "payments_pool", "poolID": "0eb4a31f-…" },
+  "tolerance": { "USD/2": 0, "EUR/2": 50 }   // optional; defaults to 0 per asset
+}
+```
+
+A `SourceSpec` is `{ "kind": "ledger" | "payments_pool", ... }`:
+- `ledger` → requires `ledger` + `query` (read at the eval PIT)
+- `payments_pool` → requires `poolID` (always latest; payments v3 has no faithful PIT read, so cross-system skew is absorbed by `tolerance`)
+
+**Validation** — each side: known `kind` with its required fields; `tolerance` values ≥ 0.
+
+**Asset universe** — `union(leftBalances, rightBalances)`; every asset on either side is checked, missing-side defaults to 0.
+
+**Per-asset CEL** (runtime form)
+
+```cel
+abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(pool("0eb4a31f-…"), "USD/2")) <= 0
+```
+
+**Fingerprint** — `asset:<asset>`
+
+**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `pool:…`).
+
+**Relation to `ledger_vs_pool_drift`** — `source_parity` is the equality primitive (`abs(left − right) ≤ tol`). `ledger_vs_pool_drift` is a sum-to-zero relation with a configurable `ledgerSign`; it now resolves and renders both sides through the same shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source" — and layers only its sign arithmetic on top. (Collapsing drift's signed sum and `ledger_invariant`'s N-term sum into a single signed-combination template is a possible future consolidation.) An external bank/PSP-account source kind is a natural next addition once it has a resolver + kernel builtin.
+
+**Code**: [internal/templates/source_parity.go](../../internal/templates/source_parity.go), [internal/templates/source.go](../../internal/templates/source.go)
 
 ---
 

@@ -98,6 +98,7 @@ func DefaultRegistry() *Registry {
 		NewLedgerVsPoolDrift(),
 		NewLedgerInvariant(),
 		NewAccountThreshold(),
+		NewSourceParity(),
 	)
 }
 

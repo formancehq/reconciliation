@@ -25,6 +25,11 @@ const (
 	// TemplateAccountThreshold asserts that each (or aggregate) balance in
 	// a ledger set is within [min, max] bounds, per asset.
 	TemplateAccountThreshold TemplateKind = "account_threshold"
+	// TemplateSourceParity asserts that two balance sources (ledger query or
+	// payments pool — either side) agree within a per-asset tolerance. The
+	// generalised "two independent records of the same money match" check;
+	// see internal/templates/source.go.
+	TemplateSourceParity TemplateKind = "source_parity"
 )
 
 // Severity is shared between Rule (declared severity at creation) and Alert

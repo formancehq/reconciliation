@@ -1,0 +1,154 @@
+package templates
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math/big"
+
+	"github.com/formancehq/reconciliation/internal/engine"
+	"github.com/formancehq/reconciliation/internal/models"
+)
+
+// ParitySpec is the typed spec for source_parity: two balance sources that
+// should agree, per asset, within tolerance. The invariant checked per asset is:
+//
+//	abs(balance(left) - balance(right)) <= tolerance
+//
+// Each side is a SourceSpec, so the same template expresses ledger↔pool
+// (today's ledger_vs_pool_drift use case), ledger↔ledger (sub-ledger vs control
+// account), and pool↔pool — without a bespoke template per pairing. This is the
+// "two independent records of the same money match" primitive.
+type ParitySpec struct {
+	Left  SourceSpec `json:"left"`
+	Right SourceSpec `json:"right"`
+
+	// Tolerance is the per-asset acceptable absolute difference. Missing assets
+	// default to 0 (strict equality). Assets present on either side but absent
+	// from Tolerance are checked against 0.
+	Tolerance map[string]int64 `json:"tolerance,omitempty"`
+}
+
+// SourceParity implements Evaluator for the source_parity template.
+type SourceParity struct{}
+
+func NewSourceParity() *SourceParity { return &SourceParity{} }
+
+func (*SourceParity) Kind() models.TemplateKind { return models.TemplateSourceParity }
+
+func (t *SourceParity) Validate(raw json.RawMessage) error {
+	var spec ParitySpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return err
+	}
+	if err := spec.Left.Validate("left"); err != nil {
+		return err
+	}
+	if err := spec.Right.Validate("right"); err != nil {
+		return err
+	}
+	for asset, tol := range spec.Tolerance {
+		if tol < 0 {
+			return fmt.Errorf("%w: tolerance for %s must be >= 0, got %d", ErrInvalidSpec, asset, tol)
+		}
+	}
+	return nil
+}
+
+// Explain returns the canonical per-asset CEL form with `<asset>` as a literal
+// placeholder (see LedgerVsPoolDrift.Explain for the convention).
+func (t *SourceParity) Explain(raw json.RawMessage) (string, error) {
+	var spec ParitySpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return "", err
+	}
+	tol := "0"
+	for _, asset := range sortedKeys(spec.Tolerance) {
+		tol = fmt.Sprintf("%d", spec.Tolerance[asset])
+		break
+	}
+	return fmt.Sprintf(
+		`abs(%s - %s) <= %s`,
+		spec.Left.celTerm(`"<asset>"`), spec.Right.celTerm(`"<asset>"`), tol,
+	), nil
+}
+
+func (t *SourceParity) Evaluate(
+	ctx context.Context,
+	raw json.RawMessage,
+	eng *engine.Engine,
+	resolvers engine.Resolvers,
+	in engine.EvalInput,
+) ([]Outcome, error) {
+	var spec ParitySpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+	if err := requireResolvers(resolvers, spec.Left.resolverNeed(), spec.Right.resolverNeed()); err != nil {
+		return nil, err
+	}
+
+	pit := in.PIT
+	if in.SafetyMargin > 0 {
+		pit = pit.Add(-in.SafetyMargin)
+	}
+	leftBalances, err := spec.Left.resolve(ctx, resolvers, pit)
+	if err != nil {
+		return nil, fmt.Errorf("scout %s: %w", spec.Left.label(), err)
+	}
+	rightBalances, err := spec.Right.resolve(ctx, resolvers, pit)
+	if err != nil {
+		return nil, fmt.Errorf("scout %s: %w", spec.Right.label(), err)
+	}
+
+	assets := unionAssets(leftBalances, rightBalances)
+	outcomes := make([]Outcome, 0, len(assets))
+	for _, asset := range assets {
+		tolerance := spec.Tolerance[asset] // 0 if absent
+
+		leftVal := zeroIfNil(leftBalances[asset])
+		rightVal := zeroIfNil(rightBalances[asset])
+		diff := new(big.Int).Sub(leftVal, rightVal)
+		diffAbs := new(big.Int).Abs(diff)
+		passed := diffAbs.Cmp(big.NewInt(tolerance)) <= 0
+
+		// Cross-check against the kernel so the audit trail captures the exact
+		// CEL run and any template/kernel divergence surfaces immediately.
+		expr := fmt.Sprintf(
+			`abs(%s - %s) <= %d`,
+			spec.Left.celTerm(celString(asset)), spec.Right.celTerm(celString(asset)), tolerance,
+		)
+		compiled, err := eng.Compile(expr)
+		if err != nil {
+			return nil, fmt.Errorf("compile per-asset expression for %s: %w", asset, err)
+		}
+		evalOut, err := eng.Evaluate(ctx, compiled, in)
+		if err != nil {
+			return nil, fmt.Errorf("evaluate per-asset expression for %s: %w", asset, err)
+		}
+		if evalOut.Passed != passed {
+			return nil, fmt.Errorf(
+				"kernel/template disagreement on %s: kernel=%v, direct=%v (diff=%s tolerance=%d)",
+				asset, evalOut.Passed, passed, diffAbs.String(), tolerance,
+			)
+		}
+
+		outcomes = append(outcomes, Outcome{
+			Fingerprint: fingerprintFor("asset", asset),
+			Passed:      passed,
+			Evidence: map[string]any{
+				"asset":        asset,
+				"leftSource":   spec.Left.label(),
+				"leftBalance":  leftVal.String(),
+				"rightSource":  spec.Right.label(),
+				"rightBalance": rightVal.String(),
+				"difference":   diffAbs.String(),
+				"signedDiff":   diff.String(),
+				"tolerance":    tolerance,
+				"compiledCEL":  expr,
+			},
+			PitPerSource: evalOut.PitPerSource,
+		})
+	}
+	return outcomes, nil
+}

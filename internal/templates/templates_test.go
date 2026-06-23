@@ -88,6 +88,7 @@ func TestDefaultRegistry_ContainsAllV1Templates(t *testing.T) {
 		models.TemplateLedgerVsPoolDrift,
 		models.TemplateLedgerInvariant,
 		models.TemplateAccountThreshold,
+		models.TemplateSourceParity,
 	} {
 		if _, err := r.Get(kind); err != nil {
 			t.Errorf("registry missing %s: %v", kind, err)
@@ -108,10 +109,10 @@ func TestRegistry_UnknownKind(t *testing.T) {
 func TestDrift_Validate_RequiredFields(t *testing.T) {
 	tmpl := NewLedgerVsPoolDrift()
 	cases := map[string]DriftSpec{
-		"missing ledger":      {LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "p"},
-		"missing query":       {Ledger: "l", PaymentsPoolID: "p"},
-		"missing pool":        {Ledger: "l", LedgerQuery: json.RawMessage(`{}`)},
-		"negative tolerance":  {Ledger: "l", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "p", Tolerance: map[string]int64{"USD": -1}},
+		"missing ledger":     {LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "p"},
+		"missing query":      {Ledger: "l", PaymentsPoolID: "p"},
+		"missing pool":       {Ledger: "l", LedgerQuery: json.RawMessage(`{}`)},
+		"negative tolerance": {Ledger: "l", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "p", Tolerance: map[string]int64{"USD": -1}},
 	}
 	for name, spec := range cases {
 		t.Run(name, func(t *testing.T) {

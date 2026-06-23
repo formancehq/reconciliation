@@ -4,12 +4,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 )
+
+// zeroIfNil normalises a missing per-asset balance to 0. Shared by every
+// template that diffs/aggregates balances across an asset union (a source
+// absent for an asset reads as 0).
+func zeroIfNil(v *big.Int) *big.Int {
+	if v == nil {
+		return big.NewInt(0)
+	}
+	return v
+}
 
 // ErrResolverUnavailable is returned when a template requires a resolver
 // (ledger / payments) the engine wasn't wired with. Distinct from

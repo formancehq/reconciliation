@@ -143,6 +143,7 @@ See [docs/technical/architecture.md](../technical/architecture.md) for the imple
 | `ledger_vs_pool_drift`  | Port of today's drift check                              | ✅ [ledger_vs_pool_drift.go](../../internal/templates/ledger_vs_pool_drift.go) |
 | `ledger_invariant`      | Σ signed balances ≤ tolerance                            | ✅ [ledger_invariant.go](../../internal/templates/ledger_invariant.go) |
 | `account_threshold`     | Each / aggregate balance within `[lo, hi]`               | ✅ [account_threshold.go](../../internal/templates/account_threshold.go) (aggregate mode only — per-account is V1.1) |
+| `source_parity`         | Two balance sources agree within tolerance (post-spec addition; built on the shared `Source` primitive) | ✅ [source_parity.go](../../internal/templates/source_parity.go) |
 
 ### 6.2 V1.1 fast-follow catalog
 
@@ -182,15 +183,16 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 
 ---
 
-## 9. What's already proven (status as of 2026-06-17)
+## 9. What's already proven (status as of 2026-06-23)
 
 - ✅ Storage layer for `Rule` / `Evaluation` / `Alert` / `AlertEvent` / `Resolution` ([migrations](../../internal/storage/migrations/migrations.go))
-- ✅ Internal CEL kernel with 11 passing tests ([internal/engine/](../../internal/engine/))
-- ✅ Three V1 GA template evaluators with 18 passing tests ([internal/templates/](../../internal/templates/))
-- ⏳ Service layer wiring (task #5 next)
-- ⏳ API endpoints + legacy `/policies` facade (task #6)
-- ⏳ Integration test suite via dockertest (task #7)
-- ⏳ V1 GA additions: scheduler, webhooks, digest, fctl, EE gating, metering (task #8)
+- ✅ Internal CEL kernel ([internal/engine/](../../internal/engine/))
+- ✅ Four V1 GA template evaluators — `ledger_vs_pool_drift`, `ledger_invariant`, `account_threshold`, `source_parity` — on a shared `Source` primitive ([internal/templates/](../../internal/templates/))
+- ✅ Service layer — rule / evaluation / alert orchestration + resolution paths + append-only event log
+- ✅ API endpoints + legacy `/policies` facade + OpenAPI
+- ✅ End-to-end demo UI ([poc-reconciliation-demo](../../../poc-reconciliation-demo)) — replaces the planned dockertest harness
+- ✅ Period-scoped alert identity (rule `cadence`) + webhook event publication on alert transitions
+- 🚧 Remaining V1 GA additions: cron scheduler, email digest, fctl, EE gating, usage metering
 
 ---
 

@@ -22,10 +22,12 @@ internal/
 │   └── sdk_resolvers.go    SDK-backed resolver impls (V2.GetLedger, V2.GetBalancesAggregated, V3.GetPoolBalancesLatest)
 ├── templates/              ✅ V1 GA template catalog
 │   ├── template.go         Evaluator interface, Outcome, Registry
-│   ├── helpers.go          CEL string rendering, fingerprint, sorted-keys
+│   ├── helpers.go          CEL string rendering, fingerprint, sorted-keys, zeroIfNil
+│   ├── source.go           Shared Source primitive (ledger / payments_pool): resolve + celTerm
 │   ├── ledger_vs_pool_drift.go
 │   ├── ledger_invariant.go
-│   └── account_threshold.go
+│   ├── account_threshold.go
+│   └── source_parity.go
 └── api/
     ├── service/            ✅ Rule / Evaluation / Alert orchestration (rule.go, evaluation.go, alert.go)
     ├── backend/            ✅ Backend interface + generated mock (now covers all V1 methods)
