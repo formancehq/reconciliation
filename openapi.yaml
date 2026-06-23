@@ -727,7 +727,15 @@ components:
       enum: [info, low, medium, high, critical]
     TemplateKind:
       type: string
-      enum: [ledger_vs_pool_drift, ledger_invariant, account_threshold]
+      enum: [ledger_vs_pool_drift, ledger_invariant, account_threshold, source_parity]
+    Cadence:
+      type: string
+      description: |
+        Reconciliation rhythm. Scopes each failing fingerprint into a period so a
+        March break and an April break are distinct, independently-closable cases.
+        `continuous` (default) is a single unbounded period (live monitoring).
+      enum: [continuous, daily, monthly]
+      default: continuous
     Schedule:
       type: object
       required: [kind]
@@ -761,7 +769,7 @@ components:
 
     Rule:
       type: object
-      required: [id, name, templateKind, templateSpec, enabled, severity, createdAt, updatedAt]
+      required: [id, name, templateKind, templateSpec, enabled, severity, cadence, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -772,6 +780,7 @@ components:
         compiledCEL: { type: string }
         enabled: { type: boolean }
         severity: { $ref: '#/components/schemas/Severity' }
+        cadence: { $ref: '#/components/schemas/Cadence' }
         schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
@@ -791,6 +800,7 @@ components:
           type: object
           additionalProperties: true
         severity: { $ref: '#/components/schemas/Severity' }
+        cadence: { $ref: '#/components/schemas/Cadence' }
         schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
@@ -890,22 +900,25 @@ components:
     Alert:
       type: object
       description: |
-        An Alert is the stable, dedup'd record of a failing fingerprint for a
-        rule. There is exactly one Alert per (ruleID, fingerprint) for the
-        lifetime of the rule — re-opens after resolve flip the status back to
-        OPEN in place, they do not create a new row. The full history of
-        transitions lives in alert_event (see /alerts/{alertID}/events).
-        `occurrenceCount` is the LIFETIME count of FAIL events.
-      required: [id, ruleID, fingerprint, status, severity, firstSeenAt, lastSeenAt, occurrenceCount, lastEvaluationID, createdAt, updatedAt]
+        An Alert is the stable, dedup'd record of a failing fingerprint within a
+        reconciliation period. There is exactly one Alert per
+        (ruleID, fingerprint, periodID) — within a period, re-opens after resolve
+        flip the status back to OPEN in place; the same fingerprint failing in a
+        new period is a separate Alert. For a `continuous`-cadence rule there is
+        one unbounded period, so it behaves as one Alert per (ruleID, fingerprint).
+        The full history of transitions lives in alert_event
+        (see /alerts/{alertID}/events).
+      required: [id, ruleID, fingerprint, periodID, status, severity, firstSeenAt, lastSeenAt, occurrenceCount, lastEvaluationID, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         ruleID: { type: string, format: uuid }
         fingerprint: { type: string, example: "asset:USD/2" }
+        periodID: { type: string, example: "2026-03", description: "Reconciliation period this alert is scoped to ('continuous' for live-monitoring rules)." }
         status: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
         severity: { $ref: '#/components/schemas/Severity' }
         firstSeenAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
-        occurrenceCount: { type: integer, format: int64, description: Lifetime count of FAIL events on this alert. }
+        occurrenceCount: { type: integer, format: int64, description: "Count of FAIL events on this alert across reopen cycles within its period (lifetime, for a continuous-cadence rule)." }
         lastEvaluationID: { type: string, format: uuid }
         evidence:
           type: object
