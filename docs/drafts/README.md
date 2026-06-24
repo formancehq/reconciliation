@@ -12,7 +12,6 @@ Documented in the main PRD ([§6.2 fast-follow catalog](../prd/README.md#62-v11-
 
 | Item | What's needed |
 |---|---|
-| `account_threshold` per_account mode | `accounts(source)` CEL builtin + `Account` as a CEL struct (field access on `.balance`, `.metadata`, etc.) |
 | `account_inactivity` template       | `ledgerPostings(...)` source + `lastActivity(source)` builtin + `now()` |
 | `posting_rate` template             | `postings(source).count` builtin |
 | `metadata_invariant` template       | `accounts(source).all(a, has(a.metadata.X))` |

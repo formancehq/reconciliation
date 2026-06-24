@@ -11,6 +11,30 @@ import (
 	"github.com/formancehq/reconciliation/internal/engine"
 )
 
+// Scope selects how a template reads the accounts a source matches:
+//   - aggregate  (default): sum the matched set into one balance per asset.
+//     A query matching a single account is the degenerate case.
+//   - per_account: fan out — evaluate each matched account individually,
+//     producing one Outcome per (account, asset). Only available when every
+//     source involved is a ledger source (pools have no per-account
+//     breakdown); the account address is the alignment key and fingerprint axis.
+type Scope string
+
+const (
+	ScopeAggregate  Scope = "aggregate"
+	ScopePerAccount Scope = "per_account"
+)
+
+// Valid reports whether s is a recognised scope (empty defaults to aggregate).
+func (s Scope) Valid() bool {
+	switch s {
+	case "", ScopeAggregate, ScopePerAccount:
+		return true
+	default:
+		return false
+	}
+}
+
 // SourceKind discriminates where a balance source reads from. Both kinds map to
 // an existing resolver AND an existing kernel builtin (ledgerSet / pool), so a
 // template built on Source can both compute directly and cross-check against
@@ -104,6 +128,46 @@ func (s SourceSpec) celTerm(assetExpr string) string {
 	default:
 		return ""
 	}
+}
+
+// supportsPerAccount reports whether this source can fan out per account. Only
+// ledger sources can — a payments pool exposes a single aggregate balance with
+// no per-account breakdown keyed to ledger addresses.
+func (s SourceSpec) supportsPerAccount() bool { return s.Kind == SourceLedger }
+
+// resolveAccounts fans the source out into one balance map per matched account.
+// Ledger sources only; pools are aggregate-only (returns ErrInvalidSpec). limit
+// is the evaluation's accounts budget — the resolver errors rather than
+// silently truncating past it.
+func (s SourceSpec) resolveAccounts(ctx context.Context, resolvers engine.Resolvers, pit time.Time, limit int) ([]engine.Account, error) {
+	if s.Kind != SourceLedger {
+		return nil, fmt.Errorf("%w: per-account scope is not supported for source kind %q (pools are aggregate-only)", ErrInvalidSpec, s.Kind)
+	}
+	return resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, pit, limit)
+}
+
+// accountAddressQuery renders the metadata-query JSON selecting exactly one
+// account by address. json.Marshal escapes the address safely.
+func accountAddressQuery(address string) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"$match": map[string]any{"address": address}})
+	return b
+}
+
+// celTermForAccount renders the kernel term reading one account's balance:
+// balance(ledgerSet(ledger, {address: addr}), asset). Used for the per-account
+// evidence.compiledCEL (explainability). Ledger sources only.
+func (s SourceSpec) celTermForAccount(address, assetExpr string) string {
+	return fmt.Sprintf("balance(ledgerSet(%s, %s), %s)", celString(s.Ledger), celJSON(accountAddressQuery(address)), assetExpr)
+}
+
+// accountsByAddress indexes resolved accounts by address → per-asset balances,
+// so two per-account sources can be aligned by address for comparison.
+func accountsByAddress(accts []engine.Account) map[string]map[string]*big.Int {
+	out := make(map[string]map[string]*big.Int, len(accts))
+	for _, a := range accts {
+		out[a.Address] = a.Balances
+	}
+	return out
 }
 
 // label is a short, human-readable identifier for this source, used in evidence

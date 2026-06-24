@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -63,10 +64,8 @@ func (t *AccountThreshold) Validate(raw json.RawMessage) error {
 		spec.Mode = ThresholdAggregate
 	}
 	switch spec.Mode {
-	case ThresholdAggregate:
+	case ThresholdAggregate, ThresholdPerAccount:
 		// ok
-	case ThresholdPerAccount:
-		return fmt.Errorf("%w: mode 'per_account' is not yet implemented in V1 GA — landing with the accounts() CEL builtin in V1.1", ErrInvalidSpec)
 	default:
 		return fmt.Errorf("%w: mode must be 'aggregate' or 'per_account' (got %q)", ErrInvalidSpec, spec.Mode)
 	}
@@ -110,10 +109,6 @@ func (t *AccountThreshold) Evaluate(
 	if spec.Mode == "" {
 		spec.Mode = ThresholdAggregate
 	}
-	if spec.Mode != ThresholdAggregate {
-		// Belt-and-braces: Validate should have caught this at create time.
-		return nil, fmt.Errorf("%w: per_account mode not implemented", ErrInvalidSpec)
-	}
 	if err := requireResolvers(resolvers, "ledger"); err != nil {
 		return nil, err
 	}
@@ -122,8 +117,13 @@ func (t *AccountThreshold) Evaluate(
 	if in.SafetyMargin > 0 {
 		pit = pit.Add(-in.SafetyMargin)
 	}
+	src := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.Query}
 
-	ledgerBalances, err := resolvers.Ledger.AggregateBalance(ctx, spec.Ledger, spec.Query, pit)
+	if spec.Mode == ThresholdPerAccount {
+		return t.evaluatePerAccount(ctx, &spec, src, eng, resolvers, pit)
+	}
+
+	ledgerBalances, err := src.resolve(ctx, resolvers, pit)
 	if err != nil {
 		return nil, fmt.Errorf("scout ledger balances: %w", err)
 	}
@@ -177,6 +177,81 @@ func (t *AccountThreshold) Evaluate(
 		})
 	}
 	return outcomes, nil
+}
+
+// evaluatePerAccount fans the rule out into one Outcome per (account, asset).
+// Unlike the aggregate path it reads each matched account's balance directly
+// via ListAccounts (volumes), so there is no kernel cross-check — the value
+// does not come from a balance(ledgerSet) CEL call, and re-querying every
+// account through the kernel would be N extra ledger round-trips comparing two
+// different SDK paths. The per-account CEL is still rendered into evidence for
+// explainability. The accounts budget (eng.MaxAccountsScanned) bounds the
+// fan-out; the resolver errors rather than truncating past it.
+func (t *AccountThreshold) evaluatePerAccount(
+	ctx context.Context,
+	spec *ThresholdSpec,
+	src SourceSpec,
+	eng *engine.Engine,
+	resolvers engine.Resolvers,
+	pit time.Time,
+) ([]Outcome, error) {
+	accounts, err := src.resolveAccounts(ctx, resolvers, pit, eng.MaxAccountsScanned())
+	if err != nil {
+		return nil, fmt.Errorf("scout accounts on %s: %w", src.label(), err)
+	}
+	pitPerSource := map[string]time.Time{src.label(): pit}
+	assets := sortedKeys(spec.Bounds)
+	outcomes := make([]Outcome, 0, len(accounts)*len(assets))
+	for _, acct := range accounts {
+		for _, asset := range assets {
+			bounds := spec.Bounds[asset]
+			val := zeroIfNil(acct.Balances[asset])
+
+			passed := true
+			if bounds.Min != nil && val.Cmp(big.NewInt(*bounds.Min)) < 0 {
+				passed = false
+			}
+			if bounds.Max != nil && val.Cmp(big.NewInt(*bounds.Max)) > 0 {
+				passed = false
+			}
+
+			evidence := map[string]any{
+				"asset":       asset,
+				"account":     acct.Address,
+				"balance":     val.String(),
+				"compiledCEL": buildPerAccountExpression(src, acct.Address, asset, bounds),
+			}
+			if bounds.Min != nil {
+				evidence["min"] = *bounds.Min
+			}
+			if bounds.Max != nil {
+				evidence["max"] = *bounds.Max
+			}
+
+			outcomes = append(outcomes, Outcome{
+				Fingerprint:  fingerprintFor("asset", asset, "account", acct.Address),
+				Passed:       passed,
+				Evidence:     evidence,
+				PitPerSource: pitPerSource,
+			})
+		}
+	}
+	return outcomes, nil
+}
+
+// buildPerAccountExpression renders the single-account CEL form for evidence
+// (explainability): the same min/max check as aggregate, but against a
+// single-address ledgerSet.
+func buildPerAccountExpression(src SourceSpec, address, asset string, bounds ThresholdBounds) string {
+	bal := src.celTermForAccount(address, celString(asset))
+	parts := []string{}
+	if bounds.Min != nil {
+		parts = append(parts, fmt.Sprintf("%s >= %d", bal, *bounds.Min))
+	}
+	if bounds.Max != nil {
+		parts = append(parts, fmt.Sprintf("%s <= %d", bal, *bounds.Max))
+	}
+	return strings.Join(parts, " && ")
 }
 
 // buildThresholdExpression renders the per-asset CEL string for aggregate mode.

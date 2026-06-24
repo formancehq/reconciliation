@@ -47,6 +47,13 @@ func New(resolvers Resolvers, limits Limits) (*Engine, error) {
 	}, nil
 }
 
+// MaxAccountsScanned is the per-evaluation cap on accounts a template may fetch
+// via ListAccounts. Templates that fan out per-account (e.g. account_threshold
+// per_account) pass this as the resolver's limit so an unbounded ledger can't
+// blow up a single evaluation. Mirrors the budget the CEL accounts() path
+// enforces internally.
+func (e *Engine) MaxAccountsScanned() int { return e.limits.MaxAccountsScanned }
+
 // Compiled is a validated rule expression. Stored on the Rule row as
 // `compiled_cel` for explainability. Compiled is intentionally a value type
 // holding only the source string — re-parsing per evaluation is cheap and

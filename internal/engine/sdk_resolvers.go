@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
+	"github.com/formancehq/formance-sdk-go/v3/pkg/models/shared"
 )
 
 // SDKClient is the minimum surface the SDK-backed resolvers need from the
@@ -20,6 +21,7 @@ import (
 type SDKClient interface {
 	V2GetLedger(ctx context.Context, req operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error)
 	V2GetBalancesAggregated(ctx context.Context, req operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error)
+	V2ListAccounts(ctx context.Context, req operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error)
 	V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error)
 }
 
@@ -104,10 +106,76 @@ func (r *SDKLedgerResolver) AggregateBalance(ctx context.Context, ledger string,
 	return resp.V2AggregateBalancesResponse.Data, nil
 }
 
-// ListAccounts is unimplemented in V1 GA. The per-account threshold template
-// (V1.1) will land it alongside the accounts() CEL builtin.
-func (r *SDKLedgerResolver) ListAccounts(_ context.Context, _ string, _ json.RawMessage, _ time.Time, _ int) ([]Account, error) {
-	return nil, errors.New("ListAccounts: not implemented in V1 GA — coming with the per-account threshold template")
+// ListAccounts returns the accounts matched by query at the given PIT, each
+// with its per-asset balance. Paginates V2ListAccounts with expand=volumes so
+// each account carries its volumes, from which the balance is derived. Aborts
+// with an error (never silently truncates) once more than `limit` accounts have
+// been collected — that's the evaluation's accounts budget.
+func (r *SDKLedgerResolver) ListAccounts(ctx context.Context, ledger string, query json.RawMessage, pit time.Time, limit int) ([]Account, error) {
+	queryMap, err := unmarshalQuery(query)
+	if err != nil {
+		return nil, fmt.Errorf("listAccounts query: %w", err)
+	}
+	expand := "volumes"
+	out := make([]Account, 0, 256)
+	var cursor *string
+	for {
+		req := operations.V2ListAccountsRequest{Ledger: ledger}
+		if cursor == nil {
+			// First page carries the filter; cursor pages must send only the
+			// cursor token (the ledger API rejects mixing them).
+			req.RequestBody = queryMap
+			req.Pit = &pit
+			req.Expand = &expand
+		} else {
+			req.Cursor = cursor
+		}
+		resp, err := r.client.V2ListAccounts(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("list accounts on %q: %w", ledger, err)
+		}
+		if resp == nil || resp.V2AccountsCursorResponse == nil {
+			return nil, errors.New("list accounts: empty response")
+		}
+		cur := resp.V2AccountsCursorResponse.Cursor
+		for i := range cur.Data {
+			a := cur.Data[i]
+			balances := make(map[string]*big.Int, len(a.Volumes))
+			for asset, vol := range a.Volumes {
+				balances[asset] = volumeBalance(vol)
+			}
+			out = append(out, Account{
+				Address:  a.Address,
+				Ledger:   ledger,
+				Metadata: a.Metadata,
+				Balances: balances,
+			})
+			if len(out) > limit {
+				return nil, fmt.Errorf("listAccounts: matched more than %d accounts on %q (accounts budget)", limit, ledger)
+			}
+		}
+		if !cur.HasMore || cur.Next == nil {
+			break
+		}
+		cursor = cur.Next
+	}
+	return out, nil
+}
+
+// volumeBalance derives an asset balance from a ledger volume: the API-provided
+// Balance when present, else input − output (treating absent sides as 0).
+func volumeBalance(v shared.V2Volume) *big.Int {
+	if v.Balance != nil {
+		return v.Balance
+	}
+	bal := new(big.Int)
+	if v.Input != nil {
+		bal.Add(bal, v.Input)
+	}
+	if v.Output != nil {
+		bal.Sub(bal, v.Output)
+	}
+	return bal
 }
 
 // SDKPaymentsResolver implements PaymentsResolver against the Formance SDK.

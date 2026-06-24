@@ -111,6 +111,7 @@ type SDKFormance interface {
 
 	// V1 engine resolvers
 	V2GetLedger(ctx context.Context, req operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error)
+	V2ListAccounts(ctx context.Context, req operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error)
 	V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error)
 }
 
@@ -132,6 +133,10 @@ func (s *sdkFormanceClient) V2GetBalancesAggregated(ctx context.Context, req ope
 
 func (s *sdkFormanceClient) V2GetLedger(ctx context.Context, req operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error) {
 	return s.client.Ledger.V2.GetLedger(ctx, req)
+}
+
+func (s *sdkFormanceClient) V2ListAccounts(ctx context.Context, req operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error) {
+	return s.client.Ledger.V2.ListAccounts(ctx, req)
 }
 
 func (s *sdkFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {

@@ -79,6 +79,11 @@ func (s *mockSDKFormanceClient) V2GetLedger(ctx context.Context, req operations.
 	}, nil
 }
 
+func (s *mockSDKFormanceClient) V2ListAccounts(_ context.Context, _ operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error) {
+	// Legacy /policies tests don't exercise per-account scope; return empty.
+	return &operations.V2ListAccountsResponse{StatusCode: http.StatusOK}, nil
+}
+
 func (s *mockSDKFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
 	// Both the legacy /policies path and the V1 ledger_vs_pool_drift template
 	// route through this method since the legacy GetPoolBalances PIT endpoint

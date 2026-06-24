@@ -17,6 +17,7 @@ import (
 
 type fakeLedger struct {
 	balances map[string]map[string]*big.Int // (ledger|query) → asset → amount
+	accounts map[string][]engine.Account    // (ledger|query) → accounts (for per_account)
 }
 
 func (f *fakeLedger) Features(_ context.Context, _ string) (engine.LedgerFeatures, error) {
@@ -33,8 +34,15 @@ func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query js
 	}
 	return b, nil
 }
-func (f *fakeLedger) ListAccounts(_ context.Context, _ string, _ json.RawMessage, _ time.Time, _ int) ([]engine.Account, error) {
-	return nil, errors.New("not implemented")
+func (f *fakeLedger) ListAccounts(_ context.Context, ledger string, query json.RawMessage, _ time.Time, limit int) ([]engine.Account, error) {
+	if f.accounts == nil {
+		return nil, nil
+	}
+	accts := f.accounts[ledger+"|"+string(query)]
+	if len(accts) > limit {
+		return nil, errors.New("listAccounts: exceeded accounts budget")
+	}
+	return accts, nil
 }
 
 type fakePayments struct {
@@ -448,19 +456,16 @@ func TestInvariant_Evaluate_ExceedsTolerance_Fails(t *testing.T) {
 
 // --- account_threshold ------------------------------------------------------
 
-func TestThreshold_Validate_PerAccount_RejectedInV1GA(t *testing.T) {
+// per_account is now a shipped mode — Validate must accept it.
+func TestThreshold_Validate_PerAccount_Accepted(t *testing.T) {
 	tmpl := NewAccountThreshold()
 	one := int64(1)
 	spec := mustJSON(t, ThresholdSpec{
 		Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdPerAccount,
 		Bounds: map[string]ThresholdBounds{"USD/2": {Min: &one}},
 	})
-	err := tmpl.Validate(spec)
-	if !errors.Is(err, ErrInvalidSpec) {
-		t.Fatalf("expected ErrInvalidSpec on per_account, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "per_account") {
-		t.Errorf("error should mention per_account: %v", err)
+	if err := tmpl.Validate(spec); err != nil {
+		t.Fatalf("expected per_account to validate, got %v", err)
 	}
 }
 

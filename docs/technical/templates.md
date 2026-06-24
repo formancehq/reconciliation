@@ -2,7 +2,7 @@
 
 Templates are the **entire public V1 GA surface** — raw CEL is internal-only (see [ADR-001](../prd/adr-001-cel-kernel.md)). Each template is a typed spec, a validator, an explainer (for the persisted `compiled_cel`), and an end-to-end evaluator that produces one `Outcome` per fingerprint axis (per-asset for V1 GA).
 
-> Status: all four templates are ✅ shipped in [internal/templates/](../../internal/templates/). The `account_threshold` per-account mode is rejected at validate-time with a clear "V1.1" message.
+> Status: all four templates are ✅ shipped in [internal/templates/](../../internal/templates/), including `account_threshold` per-account mode.
 
 ---
 
@@ -35,6 +35,10 @@ Every template:
 A **kernel/template consistency guard** in each template double-checks the kernel's verdict against direct big.Int math and errors loudly on divergence. Catches future kernel drift.
 
 Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` and `ledger_vs_pool_drift` both compose sources through it, so there is one code path for "read a balance source".
+
+**Scope.** A ledger source can be read in one of two scopes, a native capability of the Source primitive:
+- **aggregate** (default): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
+- **per_account**: the source fans out — each matched account is evaluated individually, producing one Outcome per (account, asset) with the account address as the fingerprint axis. Available only where every source involved is a ledger source (a payments pool has no per-account breakdown, so it stays aggregate-only). The account address is the alignment key when two ledger sources are compared per account. Fan-out is bounded by the engine's `MaxAccountsScanned` budget.
 
 ---
 
@@ -157,9 +161,9 @@ abs(balance(ledgerSet("buildr", "<held query>"), "USD/2")
 
 ---
 
-### 3. `account_threshold` (✅ aggregate mode shipped · ❌ per_account mode is V1.1)
+### 3. `account_threshold` (✅ shipped — aggregate + per_account)
 
-Per-asset min/max bounds on the aggregated balance of a ledger account set.
+Per-asset min/max bounds on a ledger account set, either aggregated or per account.
 
 **Spec**
 
@@ -167,7 +171,7 @@ Per-asset min/max bounds on the aggregated balance of a ledger account set.
 {
   "ledger": "acme",
   "query":  { "$match": { "address": "treasury:operating:" } },
-  "mode":   "aggregate",                          // V1 GA only
+  "mode":   "aggregate",                          // "aggregate" (default) | "per_account"
   "bounds": {
     "USD/2": { "min": 100000, "max": 5000000 },
     "EUR/2": { "min": 50000 }                     // one-sided: only min
@@ -178,8 +182,12 @@ Per-asset min/max bounds on the aggregated balance of a ledger account set.
 **Validation**
 
 - `ledger` and `query` required
-- `mode` must be `"aggregate"` (V1 GA). `"per_account"` returns `ErrInvalidSpec` with: *"mode 'per_account' is not yet implemented in V1 GA — landing with the accounts() CEL builtin in V1.1"*
+- `mode` must be `"aggregate"` (default) or `"per_account"`
 - `bounds` must be non-empty; each entry needs at least one of `min` or `max`; if both set, `min <= max`
+
+**Scope (`mode`)** — see [the scope model](#how-templates-work):
+- `aggregate`: bounds are checked against the summed balance of the matched set (one query matching one account is the degenerate single-account case). One Outcome per asset.
+- `per_account`: bounds are checked against **each** matched account individually — one Outcome per (account, asset). Accounts are read via `ListAccounts` (volumes), bounded by the engine's `MaxAccountsScanned` budget (the resolver errors rather than truncating). No kernel cross-check in this mode (the value comes from `ListAccounts`, not a `balance(ledgerSet)` CEL call); the per-account CEL is still rendered into evidence.
 
 **Asset universe**
 
@@ -192,10 +200,9 @@ balance(ledgerSet("acme", "<query>"), "USD/2") >= 100000
   && balance(ledgerSet("acme", "<query>"), "USD/2") <= 5000000
 ```
 
-If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(...) <= 5000000`.
+If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(...) <= 5000000`. In `per_account` mode the ledgerSet query is narrowed to a single account address.
 
-**Fingerprint** — `asset:<asset>` (aggregate mode)
-**Fingerprint** — `asset:<asset>|account:<address>` (per-account mode, V1.1)
+**Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account)
 
 **Evidence**
 
@@ -223,6 +230,7 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 {
   "left":      { "kind": "ledger",        "ledger": "main", "query": { "$match": { "address": "stripe-clearing" } } },
   "right":     { "kind": "payments_pool", "poolID": "0eb4a31f-…" },
+  "scope":     "aggregate",                  // "aggregate" (default) | "per_account"
   "tolerance": { "USD/2": 0, "EUR/2": 50 }   // optional; defaults to 0 per asset
 }
 ```
@@ -231,7 +239,9 @@ A `SourceSpec` is `{ "kind": "ledger" | "payments_pool", ... }`:
 - `ledger` → requires `ledger` + `query` (read at the eval PIT)
 - `payments_pool` → requires `poolID` (always latest; payments v3 has no faithful PIT read, so cross-system skew is absorbed by `tolerance`)
 
-**Validation** — each side: known `kind` with its required fields; `tolerance` values ≥ 0.
+**Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B. It requires **both** sides to be ledger sources (a pool is aggregate-only); see [the scope model](#how-templates-work).
+
+**Validation** — each side: known `kind` with its required fields; `tolerance` values ≥ 0; `per_account` scope requires both sides to be ledger sources.
 
 **Asset universe** — `union(leftBalances, rightBalances)`; every asset on either side is checked, missing-side defaults to 0.
 
@@ -241,9 +251,9 @@ A `SourceSpec` is `{ "kind": "ledger" | "payments_pool", ... }`:
 abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(pool("0eb4a31f-…"), "USD/2")) <= 0
 ```
 
-**Fingerprint** — `asset:<asset>`
+**Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account)
 
-**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `pool:…`).
+**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `pool:…`; per_account also carries `account`).
 
 **Relation to `ledger_vs_pool_drift`** — `source_parity` is the equality primitive (`abs(left − right) ≤ tol`). `ledger_vs_pool_drift` is a sum-to-zero relation with a configurable `ledgerSign`; it now resolves and renders both sides through the same shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source" — and layers only its sign arithmetic on top. (Collapsing drift's signed sum and `ledger_invariant`'s N-term sum into a single signed-combination template is a possible future consolidation.) An external bank/PSP-account source kind is a natural next addition once it has a resolver + kernel builtin.
 
@@ -257,7 +267,6 @@ The following templates are part of the spec roadmap but require kernel work tha
 
 | Template | Needed kernel work |
 |---|---|
-| `account_threshold` per_account | `accounts(source)` CEL builtin + `Account` as a CEL struct |
 | `account_inactivity`            | `ledgerPostings(...)` source + `lastActivity(source)` builtin + `now()` |
 | `posting_rate`                  | `postings(source).count` builtin |
 | `metadata_invariant`            | `accounts(source).all(a, has(a.metadata.X))` |
