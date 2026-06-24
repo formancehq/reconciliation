@@ -72,5 +72,17 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				// created_at is not a business invariant: two reconciliations
+				// triggered in the same microsecond must not fail on insert.
+				_, err := tx.Exec(`
+					ALTER TABLE reconciliations.reconciliation DROP CONSTRAINT IF EXISTS reconciliation_created_at_key;
+					CREATE INDEX IF NOT EXISTS reconciliation_created_at_idx ON reconciliations.reconciliation (created_at);
+					CREATE INDEX IF NOT EXISTS reconciliation_policy_id_idx ON reconciliations.reconciliation (policy_id);
+				`)
+				return err
+			},
+		},
 	)
 }
