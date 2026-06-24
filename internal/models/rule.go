@@ -59,6 +59,10 @@ const (
 	CadenceContinuous Cadence = "continuous"
 	// CadenceDaily buckets cases by UTC calendar day (period id "2006-01-02").
 	CadenceDaily Cadence = "daily"
+	// CadenceWeekly buckets cases by ISO week (period id "2026-W12"). The ISO
+	// year can differ from the calendar year near year boundaries — ISOWeek()
+	// returns the correct ISO year, so the bucket is unambiguous.
+	CadenceWeekly Cadence = "weekly"
 	// CadenceMonthly buckets cases by UTC calendar month (period id "2006-01").
 	CadenceMonthly Cadence = "monthly"
 )
@@ -77,6 +81,9 @@ func (c Cadence) PeriodID(pit time.Time) string {
 	switch c {
 	case CadenceDaily:
 		return pit.UTC().Format("2006-01-02")
+	case CadenceWeekly:
+		isoYear, isoWeek := pit.UTC().ISOWeek()
+		return fmt.Sprintf("%04d-W%02d", isoYear, isoWeek)
 	case CadenceMonthly:
 		return pit.UTC().Format("2006-01")
 	default:
@@ -87,7 +94,7 @@ func (c Cadence) PeriodID(pit time.Time) string {
 // Valid reports whether c is a recognised cadence.
 func (c Cadence) Valid() bool {
 	switch c {
-	case CadenceContinuous, CadenceDaily, CadenceMonthly:
+	case CadenceContinuous, CadenceDaily, CadenceWeekly, CadenceMonthly:
 		return true
 	default:
 		return false

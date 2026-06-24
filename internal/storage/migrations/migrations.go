@@ -365,5 +365,18 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// V1: add 'weekly' to the rule cadence vocabulary (ISO-week period
+		// buckets). Additive — existing rows are unaffected; only widens the
+		// allowed set in the CHECK constraint.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					ALTER TABLE reconciliations.rule DROP CONSTRAINT IF EXISTS rule_cadence_chk;
+					ALTER TABLE reconciliations.rule ADD CONSTRAINT rule_cadence_chk
+						CHECK (cadence IN ('continuous','daily','weekly','monthly'));
+				`)
+				return err
+			},
+		},
 	)
 }

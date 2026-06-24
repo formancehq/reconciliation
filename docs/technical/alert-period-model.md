@@ -64,6 +64,7 @@ A rule declares a **cadence** ([models.Cadence](../../internal/models/rule.go)):
 |---|---|---|
 | `continuous` *(default)* | `continuous` | Live monitoring — one unbounded scope; reopens in place forever. |
 | `daily` | `2026-03-15` | One case per UTC calendar day. |
+| `weekly` | `2026-W11` | One case per ISO week (ISO year + week number). |
 | `monthly` | `2026-03` | One case per UTC calendar month. |
 
 `Cadence.PeriodID(pit)` is **deterministic**: any instant in the same bucket

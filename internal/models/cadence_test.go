@@ -16,9 +16,10 @@ func TestCadence_PeriodID(t *testing.T) {
 		want    string
 	}{
 		{CadenceMonthly, pit, "2026-03"},
+		{CadenceWeekly, pit, "2026-W11"}, // 2026-03-15 is ISO week 11
 		{CadenceDaily, pit, "2026-03-15"},
 		{CadenceContinuous, pit, ContinuousPeriod},
-		{Cadence("weekly"), pit, ContinuousPeriod}, // unknown → safe fallback
+		{Cadence("yearly"), pit, ContinuousPeriod}, // unknown → safe fallback
 		{Cadence(""), pit, ContinuousPeriod},
 	}
 	for _, tc := range cases {
@@ -48,10 +49,10 @@ func TestCadence_PeriodID_Deterministic(t *testing.T) {
 
 func TestCadence_Valid(t *testing.T) {
 	t.Parallel()
-	for _, c := range []Cadence{CadenceContinuous, CadenceDaily, CadenceMonthly} {
+	for _, c := range []Cadence{CadenceContinuous, CadenceDaily, CadenceWeekly, CadenceMonthly} {
 		require.True(t, c.Valid(), "%q should be valid", c)
 	}
-	for _, c := range []Cadence{"", "weekly", "MONTHLY", "yearly"} {
+	for _, c := range []Cadence{"", "MONTHLY", "yearly", "hourly"} {
 		require.False(t, c.Valid(), "%q should be invalid", c)
 	}
 }
