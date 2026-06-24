@@ -119,8 +119,8 @@ github.com/formancehq/go-libs v1.7.2 h1:zPLkMVigMxcdPQiA8Q0HLPgA/al/hKmLxLw9muDP
 github.com/formancehq/go-libs v1.7.2/go.mod h1:3+crp7AA/Rllpo9M/ZQslaHkYt9EtXtbE4qYasV201Q=
 github.com/formancehq/go-libs/v3 v3.3.0 h1:Qs6oPRNHJbR4xu3Lzl2zGAiQD94XLpabAFYPq3YBqK0=
 github.com/formancehq/go-libs/v3 v3.3.0/go.mod h1:kr5pgap99LPdSVcYWgI+mCN51wr5D+YxEnt9A6JUiFU=
-github.com/formancehq/go-libs/v5 v5.1.1-0.20260522083443-d2a60ed2e0dd h1:bXQ9pFcrDoaBFMzAyRNac5EWRuBn//wtQPzl5sXJcvU=
-github.com/formancehq/go-libs/v5 v5.1.1-0.20260522083443-d2a60ed2e0dd/go.mod h1:0zJ6yzF4/Pu9lmKpswaEdQChpnxuMFsTxmhTCE1raXk=
+github.com/formancehq/go-libs/v5 v5.6.1 h1:l6b/SYKTEOoWEIzB71k53f5ZvIaa3xFN11scuKkmIR4=
+github.com/formancehq/go-libs/v5 v5.6.1/go.mod h1:KlZH1y4NR5HTfWXHt39OMQo+YzYACCHJ+tCRZlcANoE=
 github.com/fortytw2/leaktest v1.3.0 h1:u8491cBMTQ8ft8aeV+adlcytMZylmA5nnwwkRZjI8vw=
 github.com/fortytw2/leaktest v1.3.0/go.mod h1:jDsjWgpAGjm2CA7WthBh/CdZYEPF31XHquHwclZch5g=
 github.com/getkin/kin-openapi v0.134.0 h1:/L5+1+kfe6dXh8Ot/wqiTgUkjOIEJiC0bbYVziHB8rU=

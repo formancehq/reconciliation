@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/formancehq/go-libs/service"
+	"github.com/formancehq/go-libs/v5/pkg/audit"
 	"github.com/formancehq/go-libs/v5/pkg/audit/httpaudit"
 
 	"github.com/formancehq/go-libs/api"
@@ -21,9 +22,10 @@ func newRouter(
 	authenticator auth.Authenticator,
 	healthController *health.HealthController,
 	publisher message.Publisher,
+	auditConfig audit.Config,
 ) *chi.Mux {
 	r := chi.NewRouter()
-	r.Use(httpaudit.Middleware(publisher, "audit-events", "reconciliation", nil))
+	r.Use(httpaudit.Middleware(publisher, "audit-events", "reconciliation", nil, httpaudit.WithConfig(auditConfig)))
 	r.Use(func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
