@@ -7,7 +7,7 @@ require (
 	github.com/formancehq/formance-sdk-go/v3 v3.7.2
 	github.com/formancehq/go-libs v1.7.2
 	github.com/formancehq/go-libs/v3 v3.3.0
-	github.com/formancehq/go-libs/v5 v5.2.0
+	github.com/formancehq/go-libs/v5 v5.6.1
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/cel-go v0.28.1
 	github.com/google/uuid v1.6.0

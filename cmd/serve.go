@@ -18,6 +18,7 @@ import (
 	"github.com/formancehq/go-libs/otlp/otlpmetrics"
 	"github.com/formancehq/go-libs/otlp/otlptraces"
 	"github.com/formancehq/go-libs/service"
+	"github.com/formancehq/go-libs/v5/pkg/audit"
 	"github.com/formancehq/go-libs/v5/pkg/fx/messagingfx"
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/formancehq/reconciliation/internal/api"
@@ -66,6 +67,7 @@ func newServeCommand(version string) *cobra.Command {
 	cmd.Flags().String(stackURLFlag, "", "Stack url")
 	cmd.Flags().String(stackClientIDFlag, "", "Stack client ID")
 	cmd.Flags().String(stackClientSecretFlag, "", "Stack client secret")
+	cmd.Flags().Bool(audit.AuditEnabledFlag, true, "Enable HTTP audit")
 
 	otlpmetrics.AddFlags(cmd.Flags())
 	otlptraces.AddFlags(cmd.Flags())
@@ -97,7 +99,9 @@ func runServer(version string) func(cmd *cobra.Command, args []string) error {
 		)
 
 		listen, _ := cmd.Flags().GetString(listenFlag)
+		auditEnabled, _ := cmd.Flags().GetBool(audit.AuditEnabledFlag)
 		options = append(options,
+			fx.Supply(audit.Config{Enabled: auditEnabled}),
 			stackClientModule(cmd),
 			api.HTTPModule(sharedapi.ServiceInfo{
 				Version: version,

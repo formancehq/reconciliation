@@ -72,6 +72,22 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// Merged from main (#72): drop the created_at UNIQUE on
+		// reconciliations.reconciliation — created_at is not a business
+		// invariant, two reconciliations in the same microsecond must not
+		// collide on insert. Kept at THIS position (migration version 4) so it
+		// matches deployments that already applied it on main before the V1
+		// migrations below; the index-based migrator runs everything after it next.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					ALTER TABLE reconciliations.reconciliation DROP CONSTRAINT IF EXISTS reconciliation_created_at_key;
+					CREATE INDEX IF NOT EXISTS reconciliation_created_at_idx ON reconciliations.reconciliation (created_at);
+					CREATE INDEX IF NOT EXISTS reconciliation_policy_id_idx ON reconciliations.reconciliation (policy_id);
+				`)
+				return err
+			},
+		},
 		// V1: Ledger Clarity tables (Rule, Evaluation, Incident).
 		// Additive only — legacy reconciliations.policy and reconciliations.reconciliation
 		// are preserved verbatim and remain the storage for the legacy /policies API facade.
