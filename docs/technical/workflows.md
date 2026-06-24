@@ -52,7 +52,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Trig as Trigger (cron ⏳ / POST evaluate ✅)
+    participant Trig as Trigger (cron ✅ / POST evaluate ✅)
     participant Svc  as Service.EvaluateRule ✅
     participant Reg  as templates.Registry ✅
     participant Eng  as engine.Engine ✅

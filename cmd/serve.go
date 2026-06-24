@@ -21,6 +21,7 @@ import (
 	"github.com/formancehq/go-libs/v5/pkg/fx/messagingfx"
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/formancehq/reconciliation/internal/api"
+	"github.com/formancehq/reconciliation/internal/scheduler"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
@@ -74,6 +75,7 @@ func newServeCommand(version string) *cobra.Command {
 	service.AddFlags(cmd.Flags())
 	licence.AddFlags(cmd.Flags())
 	publish.AddFlags(ServiceName, cmd.Flags())
+	scheduler.AddFlags(cmd.Flags())
 
 	return cmd
 }
@@ -103,6 +105,7 @@ func runServer(version string) func(cmd *cobra.Command, args []string) error {
 			}, listen),
 			messagingfx.PublishModuleFromFlags(cmd, service.IsDebug(cmd)),
 			licence.FXModuleFromFlags(cmd, ServiceName),
+			scheduler.FXModuleFromFlags(cmd),
 		)
 
 		return service.New(cmd.OutOrStdout(), options...).Run(cmd)

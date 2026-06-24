@@ -491,6 +491,37 @@ func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
 	}
 }
 
+// A cron schedule's expression is validated at create time.
+func TestCreateRuleRequest_Validate_CronSchedule(t *testing.T) {
+	base := func() *CreateRuleRequest {
+		return &CreateRuleRequest{Name: "r", TemplateKind: models.TemplateAccountThreshold, TemplateSpec: json.RawMessage(`{}`)}
+	}
+	cases := map[string]struct {
+		sched   *models.Schedule
+		wantErr bool
+	}{
+		"valid cron":         {&models.Schedule{Kind: models.ScheduleCron, Expr: "*/15 * * * *"}, false},
+		"valid cron with tz": {&models.Schedule{Kind: models.ScheduleCron, Expr: "0 9 * * *", TZ: "America/New_York"}, false},
+		"invalid cron expr":  {&models.Schedule{Kind: models.ScheduleCron, Expr: "not a cron"}, true},
+		"cron without expr":  {&models.Schedule{Kind: models.ScheduleCron}, true},
+		"on_demand skips":    {&models.Schedule{Kind: models.ScheduleOnDemand}, false},
+		"nil schedule":       {nil, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := base()
+			req.Schedule = tc.sched
+			err := req.Validate()
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected validation error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestEvaluate_PassNoAlerts(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-100)}}

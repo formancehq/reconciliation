@@ -220,7 +220,7 @@ erDiagram
 
 ## What's not in this diagram (yet)
 
-- **Scheduler** (cron loop, advisory-lock leasing) — ⏳ task #8 V1 GA.
+- **Scheduler** (in-process cron loop) — ✅ shipped, single-instance MVP ([scheduler.md](./scheduler.md)); advisory-lock / Temporal multi-replica leasing ⏳.
 - **Webhook event publisher** — ⏳ task #8.
 - **Email digest** — ⏳ task #8.
 - **fctl wiring** — ⏳ task #8.

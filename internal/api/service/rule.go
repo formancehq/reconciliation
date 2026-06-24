@@ -12,6 +12,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 )
 
 // CreateRuleRequest is what the API hands to the service. The service validates,
@@ -43,7 +44,21 @@ func (r *CreateRuleRequest) Validate() error {
 		return errors.New("templateSpec is required")
 	}
 	if r.Cadence != "" && !r.Cadence.Valid() {
-		return fmt.Errorf("cadence must be one of continuous, daily, monthly (got %q)", r.Cadence)
+		return fmt.Errorf("cadence must be one of continuous, daily, weekly, monthly (got %q)", r.Cadence)
+	}
+	// Fail fast on a bad cron schedule at create time rather than letting the
+	// scheduler discover it (and skip the rule) at run time.
+	if r.Schedule != nil && r.Schedule.Kind == models.ScheduleCron {
+		if r.Schedule.Expr == "" {
+			return errors.New("schedule.expr is required for a cron schedule")
+		}
+		tz := r.Schedule.TZ
+		if tz == "" {
+			tz = "UTC"
+		}
+		if _, err := cron.ParseStandard(fmt.Sprintf("CRON_TZ=%s %s", tz, r.Schedule.Expr)); err != nil {
+			return fmt.Errorf("schedule.expr is not a valid cron expression: %v", err)
+		}
 	}
 	return nil
 }

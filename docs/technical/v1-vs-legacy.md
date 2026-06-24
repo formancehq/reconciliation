@@ -10,7 +10,7 @@ This document describes the diff between the legacy reconciliation behaviour (wh
 |---|---|---|
 | **Entity model** | `Policy` (config) + `Reconciliation` (one-shot result) | `Rule` + `Evaluation` (every run) + `Alert` (stable per rule+fingerprint) + `AlertEvent` (append-only history) + `Resolution` (auditable closure) |
 | **Surface** | Single hardcoded comparison: ledger query vs payments pool | Four typed templates over an internal CEL kernel; resolvers per `Source` kind |
-| **Schedule** | Manual `POST /policies/{id}/reconciliation` | On-demand at V1 beta; cron + safety-margin at V1 GA |
+| **Schedule** | Manual `POST /policies/{id}/reconciliation` | On-demand (`POST /rules/{id}/evaluate`) + in-process cron scheduler (single-instance MVP) |
 | **Asset handling** | One pass/fail per request; "different number of assets" hard fails | Per-asset outcomes, fingerprint-dedup'd; one alert per asset |
 | **Drift convention** | Implicit (`ledgerBalance + poolBalance == 0`) — only **negative** drift flags `NOT_OK` (legacy bug) | Same arithmetic; templates treat **any** drift outside tolerance as failure |
 | **Tolerance** | Strict zero only | Per-asset tolerance, configurable per template |
@@ -61,7 +61,7 @@ Four typed templates ([internal/templates/](../../internal/templates/)):
 
 - **`ledger_vs_pool_drift`** — port of the legacy semantics; same arithmetic, now with tolerance + per-asset outcomes
 - **`ledger_invariant`** — sum-of-signed-balance terms ≤ tolerance (the Buildr-style trust integrity check)
-- **`account_threshold`** — per-asset min/max bounds (aggregate mode; per-account is V1.1)
+- **`account_threshold`** — per-asset min/max bounds, aggregate or per-account scope
 - **`source_parity`** — two balance sources (ledger or pool, either side) agree within tolerance; the generalised cross-source match, built on the shared `Source` primitive that also backs `ledger_vs_pool_drift`
 
 Each compiles deterministically to CEL strings the internal kernel evaluates. The kernel ([internal/engine/](../../internal/engine/)) is **not** a V1 GA public surface — see [ADR-001](../prd/adr-001-cel-kernel.md).
