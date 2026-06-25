@@ -224,6 +224,22 @@ Status transitions to `RESOLVED` with `resolution.kind = "fixed_by_booking"` (or
 
 Note is **required**. Evidence at acceptance time is frozen onto `resolution.evidenceSnapshot`. If `expiresAt` is set and the rule still fails at expiry, the alert reopens in place (same id) — the prior resolution is preserved as an `alert_event` row, the alert row's current `resolution` is cleared.
 
+#### `POST /alerts/{id}/snooze` — mute notifications until a future instant
+
+```json
+{ "by": "ops@buildr.com", "until": "2026-06-25T18:00:00Z", "note": "migration in flight" }
+```
+
+Mutes the alert's notifications until `until` (which must be in the future). The alert keeps failing, keeps its status, and **keeps counting against period-green** — only its webhooks go quiet, even if the discrepancy moves. The first failing evaluation at or after `until` clears the snooze and notifies once. Re-snoozing overwrites the window; resolving the alert clears it. Rejects a RESOLVED alert and a non-future `until`. The current snooze is exposed on the alert as `snooze`. See [notification-suppression.md](./notification-suppression.md) and [workflows.md §5](./workflows.md).
+
+#### `POST /alerts/{id}/unsnooze` — lift a snooze early
+
+```json
+{ "by": "ops@buildr.com" }
+```
+
+Clears an active snooze before its window elapses. Idempotent — unsnoozing an alert that isn't snoozed returns it unchanged and emits no event.
+
 ---
 
 ## Events (✅ implemented)
@@ -248,20 +264,23 @@ This keeps a scheduled, still-broken rule from re-paging on every tick.
 | `reconciliation.alert.resolved`     | Auto-resolve (`pass`) or `fixed_by_booking` (`resolve`) | `pass` / `resolve` |
 | `reconciliation.alert.accepted`     | Business acceptance | `accept` |
 | `reconciliation.alert.reopened`     | Same fingerprint fails after a closed alert (status → OPEN, same alert id) | `fail`, `prevStatus = RESOLVED` |
+| `reconciliation.alert.snoozed`      | Operator muted the alert until a future instant | `snooze` |
+| `reconciliation.alert.unsnoozed`    | Snooze lifted early | `unsnooze` |
 
 The event name is a pure function of the row (`events.EventTypeFor`) — there is
 no separate event-kind column to keep in sync. An idempotent no-op (e.g. re-ack
-of an already-acknowledged alert) writes no row and therefore emits no event. A
-failing evaluation that repeats materially-identical evidence on an already-OPEN
-alert writes a row with `notify = false` and is **not** published — see
-[notification-suppression.md](./notification-suppression.md).
+of an already-acknowledged alert, or unsnoozing an alert that isn't snoozed)
+writes no row and therefore emits no event. A failing evaluation that repeats
+materially-identical evidence on an already-OPEN alert, or fails while an active
+snooze is in force, writes a row with `notify = false` and is **not** published
+— see [notification-suppression.md](./notification-suppression.md).
 
 **Envelope.** Standard `publish.EventMessage`: `app = "reconciliation"`,
 `version = "v1"`, `type ∈ {alert.opened, alert.updated, alert.acknowledged,
-alert.resolved, alert.accepted, alert.reopened}`, `idempotencyKey =` the
-`alert_event` id. The Webhooks worker lowercases and joins `app` + `type`, so
-subscribers match against the full names
-in the table above. All six events publish to a single logical topic
+alert.resolved, alert.accepted, alert.reopened, alert.snoozed,
+alert.unsnoozed}`, `idempotencyKey =` the `alert_event` id. The Webhooks worker
+lowercases and joins `app` + `type`, so subscribers match against the full names
+in the table above. All events publish to a single logical topic
 (`reconciliation`); the operator's `--publisher-topic-mapping` routes it to the
 bus subject Webhooks subscribes to.
 

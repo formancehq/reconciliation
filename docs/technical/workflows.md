@@ -107,13 +107,15 @@ stateDiagram-v2
     ACKNOWLEDGED --> RESOLVED: POST /alerts/{id}/resolve { fixed_by_booking }
     ACKNOWLEDGED --> RESOLVED: POST /alerts/{id}/accept (accepted_by_business)
     RESOLVED --> OPEN: same fingerprint fails again (reopen — same row)
+    OPEN --> OPEN: POST /snooze · /unsnooze (status-neutral mute)
 ```
 
 **Invariants**
 
 - Exactly **one** alert row per `(rule_id, fingerprint)` — enforced by the UNIQUE constraint on the `alert` table (see [migration #6](../../internal/storage/migrations/migrations.go)).
 - Reopen after `RESOLVED` flips status back to `OPEN` on the **same row**. The lifetime `occurrence_count` keeps incrementing. The prior `resolution` and `ack` are cleared on the alert row but **preserved** as `alert_event` rows.
-- Every transition (fail, pass, ack, resolve, accept) appends one row to `alert_event`. That log is append-only by convention — code paths never UPDATE or DELETE.
+- Every transition (fail, pass, ack, resolve, accept, snooze, unsnooze) appends one row to `alert_event`. That log is append-only by convention — code paths never UPDATE or DELETE.
+- **Snooze is status-neutral**: a snoozed `OPEN` alert stays `OPEN` and still counts against period-green — only its notifications are muted (see §5).
 
 ### Reading the history
 
@@ -160,7 +162,57 @@ Stored on the alert row as `resolution` (JSONB) for the *current* closure, and i
 
 ---
 
-## 5. Engine-error meta-alerts
+## 5. Snooze & notification suppression
+
+Once rules fire on a [schedule](./scheduler.md), a still-broken alert would
+re-notify on every tick. Two mechanisms keep the notification channel
+signal-rich; **both suppress the message, never the record** — the `alert_event`
+log still captures every failing evaluation, and a suppressed alert is still
+`OPEN` and still counts against period-green.
+
+| | Trigger | Lifespan | Suppresses |
+|---|---|---|---|
+| **Repeat suppression** (#1) | automatic | per-evaluation | a fail on an already-`OPEN` alert whose evidence is **materially identical** to the last |
+| **Snooze** | operator (`POST /snooze`) | time-boxed, auto-expires | **all** notifications for the alert until `until` — even if the evidence changes |
+
+The full mechanics (the `notify` flag, canonical evidence equality, the single
+`recordAlertEvent` gate) live in
+[notification-suppression.md](./notification-suppression.md). The snooze
+lifecycle:
+
+```mermaid
+flowchart LR
+    S[POST /alerts/id/snooze<br/>until = T, by, note] --> M(snooze set on alert row<br/>+ snooze event)
+    M -.failing evals before T.-> Mute[recorded, notify=false<br/>no webhook — even on change]
+    M -- failing eval at/after T --> Exp[snooze cleared<br/>one updated published<br/>'still failing']
+    M -- POST /alerts/id/unsnooze --> Lift[snooze cleared<br/>+ unsnooze event<br/>normal #1 behaviour resumes]
+```
+
+**Rules**
+
+- **Snooze** requires an active (`OPEN`/`ACKNOWLEDGED`) alert and a **future**
+  `until`. Re-snoozing overwrites the window. Resolving an alert (auto, fixed,
+  accepted) clears any snooze, so a later reopen is never silently muted.
+- **Auto-expiry**: the first failing evaluation at or after `until` clears the
+  snooze and notifies **once** ("still failing after the mute lapsed") — it does
+  not replay the silenced run.
+- **Unsnooze** lifts a snooze early and is idempotent (a no-op, emitting nothing,
+  if the alert isn't snoozed).
+- `snooze` and `unsnooze` are status-neutral `alert_event` rows
+  (`prev_status == new_status`) and themselves notify
+  (`reconciliation.alert.snoozed` / `.unsnoozed`), so downstream consumers can
+  reflect the mute state.
+
+> **V1 scope.** Snooze is **per-alert**. Rule-level snooze (a maintenance window
+> that mutes a whole rule before it fires) and snooze-vs-digest interaction are
+> tracked as follow-ups, not in this cut.
+
+The current snooze (until/by/at/note) lives on the alert row as `snooze` (JSONB);
+every snooze/unsnooze action is also in `alert_event` for audit.
+
+---
+
+## 6. Engine-error meta-alerts
 
 ```mermaid
 flowchart TB
@@ -177,7 +229,7 @@ The translation happens in [engine/errors.go](../../internal/engine/errors.go) v
 
 ---
 
-## 6. Evaluation idempotence & PIT propagation
+## 7. Evaluation idempotence & PIT propagation
 
 ```mermaid
 flowchart LR
@@ -193,7 +245,7 @@ Every `Evaluation` row stores the **resolved** PIT per `Source`. This means an a
 
 ---
 
-## 7. Audit log evolution — alert_event as the seed
+## 8. Audit log evolution — alert_event as the seed
 
 The `alert_event` table is structured as append-only today: every transition is written via a single helper (`appendAlertEvent`), and no code path issues UPDATE or DELETE against it. That's enough for V1 GA — operators get a faithful timeline for every alert.
 

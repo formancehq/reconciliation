@@ -274,6 +274,58 @@ func TestAcceptAlert_Nominal(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+func TestSnoozeAlert_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	until := time.Now().UTC().Add(time.Hour).Round(time.Millisecond)
+	req := &service.SnoozeAlertRequest{By: "alice", Until: until, Note: "migration"}
+	resp := &models.Alert{
+		ID:               id,
+		RuleID:           uuid.New(),
+		Fingerprint:      "asset:USD/2",
+		Status:           models.AlertOpen,
+		Severity:         models.SeverityHigh,
+		LastEvaluationID: uuid.New(),
+		Snooze:           &models.Snooze{Until: until, By: req.By, At: time.Now().UTC(), Note: req.Note},
+	}
+	mockSvc.EXPECT().SnoozeAlert(gomock.Any(), id, req).Return(resp, nil)
+
+	body, _ := json.Marshal(req)
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/snooze", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestUnsnoozeAlert_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	req := &service.UnsnoozeAlertRequest{By: "bob"}
+	resp := &models.Alert{
+		ID:               id,
+		RuleID:           uuid.New(),
+		Fingerprint:      "asset:USD/2",
+		Status:           models.AlertOpen,
+		Severity:         models.SeverityHigh,
+		LastEvaluationID: uuid.New(),
+	}
+	mockSvc.EXPECT().UnsnoozeAlert(gomock.Any(), id, req).Return(resp, nil)
+
+	body, _ := json.Marshal(req)
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/unsnooze", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
 // TestListAlertEvents_Nominal — new endpoint surface for the event timeline.
 func TestListAlertEvents_Nominal(t *testing.T) {
 	t.Parallel()

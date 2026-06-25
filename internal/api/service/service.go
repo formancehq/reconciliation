@@ -49,6 +49,8 @@ type Store interface {
 	AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Alert, error)
 	ResolveAlertManual(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Alert, error)
 	AcceptAlert(ctx context.Context, id uuid.UUID, resolution *models.Resolution) (*models.Alert, error)
+	SnoozeAlert(ctx context.Context, id uuid.UUID, until time.Time, by, note string) (*models.Alert, error)
+	UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string) (*models.Alert, error)
 	GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error)
 	ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error)
 	ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]models.AlertEvent, error)

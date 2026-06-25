@@ -279,6 +279,10 @@ func registerMigrations(migrator *migrations.Migrator) {
 						evidence            jsonb,
 						ack                 jsonb,
 						resolution          jsonb,
+						-- Current operator snooze (until/by/at/note). A snoozed alert keeps
+						-- failing and keeps counting against period-green; only its
+						-- notifications are muted. See docs/technical/notification-suppression.md.
+						snooze              jsonb,
 						labels              jsonb,
 						created_at          timestamp with time zone NOT NULL DEFAULT now(),
 						updated_at          timestamp with time zone NOT NULL DEFAULT now(),
@@ -308,13 +312,13 @@ func registerMigrations(migrator *migrations.Migrator) {
 						payload         jsonb,
 						-- notify is the per-row notification decision: false marks a
 						-- transition kept for audit but not published (a repeated identical
-						-- fail). Default true preserves "every transition notifies" for all
-						-- but those suppressed cases.
+						-- fail, or a fail muted by an active snooze). Default true preserves
+						-- "every transition notifies" for all but those suppressed cases.
 						notify          boolean NOT NULL DEFAULT true,
 						at              timestamp with time zone NOT NULL,
 						created_at      timestamp with time zone NOT NULL DEFAULT now(),
 						CONSTRAINT alert_event_pk        PRIMARY KEY (id),
-						CONSTRAINT alert_event_type_chk  CHECK (type IN ('fail','pass','ack','resolve','accept')),
+						CONSTRAINT alert_event_type_chk  CHECK (type IN ('fail','pass','ack','resolve','accept','snooze','unsnooze')),
 						CONSTRAINT alert_event_prev_chk  CHECK (prev_status IS NULL OR prev_status IN ('OPEN','ACKNOWLEDGED','RESOLVED')),
 						CONSTRAINT alert_event_new_chk   CHECK (new_status IN ('OPEN','ACKNOWLEDGED','RESOLVED')),
 						CONSTRAINT alert_event_alert_fk  FOREIGN KEY (alert_id)      REFERENCES reconciliations.alert(id)      ON DELETE CASCADE,

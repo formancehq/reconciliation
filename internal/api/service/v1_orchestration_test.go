@@ -299,6 +299,37 @@ func (f *fakeV1Store) applyFakeResolution(id uuid.UUID, res *models.Resolution, 
 	return &copy, nil
 }
 
+func (f *fakeV1Store) SnoozeAlert(_ context.Context, id uuid.UUID, until time.Time, by, note string) (*models.Alert, error) {
+	alert, ok := f.alerts[id]
+	if !ok || alert.Status == models.AlertResolved {
+		return nil, storage.ErrNotFound
+	}
+	snooze := &models.Snooze{Until: until, By: by, At: time.Now().UTC(), Note: note}
+	alert.Snooze = snooze
+	prev := alert.Status
+	payload, _ := json.Marshal(snooze)
+	f.recordEvent(alert.ID, models.AlertEventSnooze, &prev, alert.Status, nil, payload, snooze.At)
+	copy := *alert
+	return &copy, nil
+}
+
+func (f *fakeV1Store) UnsnoozeAlert(_ context.Context, id uuid.UUID, by string) (*models.Alert, error) {
+	alert, ok := f.alerts[id]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	if alert.Snooze == nil {
+		copy := *alert
+		return &copy, nil
+	}
+	alert.Snooze = nil
+	prev := alert.Status
+	payload, _ := json.Marshal(map[string]string{"by": by})
+	f.recordEvent(alert.ID, models.AlertEventUnsnooze, &prev, alert.Status, nil, payload, time.Now().UTC())
+	copy := *alert
+	return &copy, nil
+}
+
 func (f *fakeV1Store) GetAlert(_ context.Context, id uuid.UUID) (*models.Alert, error) {
 	alert, ok := f.alerts[id]
 	if !ok {

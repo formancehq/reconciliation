@@ -350,6 +350,50 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
+  /alerts/{alertID}/snooze:
+    post:
+      summary: Snooze an alert's notifications until a future instant
+      description: |
+        Mutes the alert's webhook notifications until `until`. The alert keeps
+        failing, keeps its status, and keeps counting against period-green —
+        only its notifications are suppressed, even if the discrepancy changes.
+        The first failing evaluation at or after `until` clears the snooze and
+        notifies once. Re-snoozing overwrites the window. Rejects RESOLVED
+        alerts and a non-future `until`.
+      operationId: snoozeAlert
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SnoozeAlertRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Alert' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /alerts/{alertID}/unsnooze:
+    post:
+      summary: Lift a snooze early
+      description: |
+        Clears an active snooze before its window elapses. Idempotent —
+        unsnoozing an alert that is not snoozed returns it unchanged.
+      operationId: unsnoozeAlert
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UnsnoozeAlertRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Alert' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
 components:
   parameters:
     PageSize:
@@ -766,6 +810,18 @@ components:
           type: object
           additionalProperties: true
         expiresAt: { type: string, format: date-time }
+    Snooze:
+      type: object
+      description: |
+        A time-boxed, operator-initiated mute of an alert's notifications. While
+        `until` is in the future the alert keeps failing and keeps counting
+        against period-green — only its notifications are suppressed.
+      required: [until, by, at]
+      properties:
+        until: { type: string, format: date-time }
+        by: { type: string, example: "ops@buildr.com" }
+        at: { type: string, format: date-time }
+        note: { type: string }
 
     Rule:
       type: object
@@ -925,6 +981,7 @@ components:
           additionalProperties: true
         ack: { $ref: '#/components/schemas/Ack' }
         resolution: { $ref: '#/components/schemas/Resolution' }
+        snooze: { $ref: '#/components/schemas/Snooze' }
         labels:
           type: object
           additionalProperties: { type: string }
@@ -956,22 +1013,22 @@ components:
       description: |
         One row of the alert's append-only event log. Captures every
         evaluation that touched the alert plus every manual transition
-        (ack / resolve / accept). `prevStatus` is null only for the
-        inaugural event of an alert. `isReopen` is a derived predicate —
-        true when a FAIL event lands on a previously-RESOLVED alert.
+        (ack / resolve / accept / snooze / unsnooze). `prevStatus` is null
+        only for the inaugural event of an alert. `isReopen` is a derived
+        predicate — true when a FAIL event lands on a previously-RESOLVED alert.
         `notify` is the notification decision recorded for the row: false marks
         a transition kept for audit but deliberately not published (a repeated
-        identical fail).
+        identical fail, or a fail muted by an active snooze).
       required: [id, alertID, type, newStatus, at, isReopen, notify]
       properties:
         id: { type: string, format: uuid }
         alertID: { type: string, format: uuid }
         evaluationID: { type: string, format: uuid, nullable: true }
-        type: { type: string, enum: [fail, pass, ack, resolve, accept] }
+        type: { type: string, enum: [fail, pass, ack, resolve, accept, snooze, unsnooze] }
         prevStatus: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED], nullable: true }
         newStatus: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
         payload:
-          description: Event-type-specific payload (evidence for fail, resolution for resolve/accept, ack object for ack).
+          description: Event-type-specific payload (evidence for fail, resolution for resolve/accept, ack object for ack, snooze object for snooze).
           type: object
           additionalProperties: true
         at: { type: string, format: date-time }
@@ -1011,3 +1068,16 @@ components:
         by: { type: string }
         note: { type: string, minLength: 1 }
         expiresAt: { type: string, format: date-time }
+    SnoozeAlertRequest:
+      type: object
+      required: [by, until]
+      description: Mute an alert's notifications until `until` (which must be in the future).
+      properties:
+        by: { type: string, example: "ops@buildr.com" }
+        until: { type: string, format: date-time }
+        note: { type: string }
+    UnsnoozeAlertRequest:
+      type: object
+      required: [by]
+      properties:
+        by: { type: string, example: "ops@buildr.com" }

@@ -54,6 +54,21 @@ type Ack struct {
 	Note string    `json:"note,omitempty"`
 }
 
+// Snooze is a time-boxed, operator-initiated mute of an alert's notifications.
+// While Until is in the future the alert keeps failing, keeps its status, and
+// keeps counting against period-green — only its webhook notifications are
+// suppressed (see Storage.recordAlertEvent and
+// docs/technical/notification-suppression.md). The CURRENT snooze lives on the
+// Alert row; every snooze/unsnooze action is also logged as an AlertEvent.
+// Unlike Ack, a snooze auto-expires: the first failing evaluation at or after
+// Until clears it and notifies once.
+type Snooze struct {
+	Until time.Time `json:"until"`
+	By    string    `json:"by"`
+	At    time.Time `json:"at"`
+	Note  string    `json:"note,omitempty"`
+}
+
 // Resolution is the audit-trailed closure of an alert. Stored as JSONB on
 // the alert row (the *current* resolution). Historical resolutions across
 // reopen cycles live as AlertEvent rows with type in {resolve, accept}.
@@ -101,6 +116,7 @@ type Alert struct {
 	Evidence         json.RawMessage   `bun:",type:jsonb"                    json:"evidence,omitempty"`
 	Ack              *Ack              `bun:",type:jsonb"                    json:"ack,omitempty"`
 	Resolution       *Resolution       `bun:",type:jsonb"                    json:"resolution,omitempty"`
+	Snooze           *Snooze           `bun:",type:jsonb"                    json:"snooze,omitempty"`
 	Labels           map[string]string `bun:",type:jsonb"                    json:"labels,omitempty"`
 	CreatedAt        time.Time         `bun:"created_at,notnull,nullzero"    json:"createdAt"`
 	UpdatedAt        time.Time         `bun:"updated_at,notnull,nullzero"    json:"updatedAt"`
@@ -122,6 +138,12 @@ const (
 	AlertEventResolve AlertEventType = "resolve"
 	// AlertEventAccept is a manual transition with kind=accepted_by_business.
 	AlertEventAccept AlertEventType = "accept"
+	// AlertEventSnooze records an operator muting the alert's notifications
+	// until a future instant. Status-neutral: prev_status == new_status.
+	AlertEventSnooze AlertEventType = "snooze"
+	// AlertEventUnsnooze records an operator (or the auto-expiry sweep) lifting
+	// a snooze early. Status-neutral: prev_status == new_status.
+	AlertEventUnsnooze AlertEventType = "unsnooze"
 )
 
 // AlertEvent is one row in the alert's append-only history. Together with the

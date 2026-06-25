@@ -65,6 +65,8 @@ func newRouter(
 		r.Post("/alerts/{alertID}/ack", ackAlertHandler(b))
 		r.Post("/alerts/{alertID}/resolve", resolveAlertHandler(b))
 		r.Post("/alerts/{alertID}/accept", acceptAlertHandler(b))
+		r.Post("/alerts/{alertID}/snooze", snoozeAlertHandler(b))
+		r.Post("/alerts/{alertID}/unsnooze", unsnoozeAlertHandler(b))
 	})
 
 	return r

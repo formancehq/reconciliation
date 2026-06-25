@@ -193,6 +193,12 @@ func (s *mockStore) ResolveAlertManual(context.Context, uuid.UUID, *models.Resol
 func (s *mockStore) AcceptAlert(context.Context, uuid.UUID, *models.Resolution) (*models.Alert, error) {
 	return nil, nil
 }
+func (s *mockStore) SnoozeAlert(context.Context, uuid.UUID, time.Time, string, string) (*models.Alert, error) {
+	return nil, nil
+}
+func (s *mockStore) UnsnoozeAlert(context.Context, uuid.UUID, string) (*models.Alert, error) {
+	return nil, nil
+}
 func (s *mockStore) GetAlert(context.Context, uuid.UUID) (*models.Alert, error) {
 	return nil, nil
 }

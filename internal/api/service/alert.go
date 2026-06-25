@@ -36,6 +36,21 @@ type AcceptAlertRequest struct {
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
+// SnoozeAlertRequest is the body of POST /alerts/{id}/snooze. `until` is the
+// instant the mute lifts; it must be in the future. The alert stays OPEN and
+// keeps counting against period-green — only its notifications are silenced.
+type SnoozeAlertRequest struct {
+	By    string    `json:"by"`
+	Until time.Time `json:"until"`
+	Note  string    `json:"note,omitempty"`
+}
+
+// UnsnoozeAlertRequest is the body of POST /alerts/{id}/unsnooze. `by`
+// attributes the action in the append-only log.
+type UnsnoozeAlertRequest struct {
+	By string `json:"by"`
+}
+
 // AckAlert transitions an OPEN alert to ACKNOWLEDGED. Idempotent at the
 // storage layer — a second ack on an already-ACKNOWLEDGED alert preserves the
 // original metadata and does NOT append a new event.
@@ -97,6 +112,30 @@ func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAler
 		ExpiresAt:        req.ExpiresAt,
 	}
 	return s.store.AcceptAlert(ctx, id, resolution)
+}
+
+// SnoozeAlert mutes an alert's notifications until req.Until. The alert keeps
+// failing and stays counted against period-green; only its webhooks go quiet.
+func (s *Service) SnoozeAlert(ctx context.Context, id uuid.UUID, req *SnoozeAlertRequest) (*models.Alert, error) {
+	if req == nil || req.By == "" {
+		return nil, errors.New("snooze: 'by' is required")
+	}
+	if req.Until.IsZero() {
+		return nil, errors.New("snooze: 'until' is required")
+	}
+	if !req.Until.After(time.Now().UTC()) {
+		return nil, errors.New("snooze: 'until' must be in the future")
+	}
+	return s.store.SnoozeAlert(ctx, id, req.Until, req.By, req.Note)
+}
+
+// UnsnoozeAlert lifts a snooze early. Idempotent — unsnoozing an alert that is
+// not snoozed returns it unchanged.
+func (s *Service) UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *UnsnoozeAlertRequest) (*models.Alert, error) {
+	if req == nil || req.By == "" {
+		return nil, errors.New("unsnooze: 'by' is required")
+	}
+	return s.store.UnsnoozeAlert(ctx, id, req.By)
 }
 
 // GetAlert returns the alert or storage.ErrNotFound.

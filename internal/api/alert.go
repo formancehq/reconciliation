@@ -29,6 +29,7 @@ type alertResponse struct {
 	Evidence         json.RawMessage    `json:"evidence,omitempty"`
 	Ack              *models.Ack        `json:"ack,omitempty"`
 	Resolution       *models.Resolution `json:"resolution,omitempty"`
+	Snooze           *models.Snooze     `json:"snooze,omitempty"`
 	Labels           map[string]string  `json:"labels,omitempty"`
 	CreatedAt        time.Time          `json:"createdAt"`
 	UpdatedAt        time.Time          `json:"updatedAt"`
@@ -48,6 +49,7 @@ func renderAlert(a *models.Alert) *alertResponse {
 		Evidence:         a.Evidence,
 		Ack:              a.Ack,
 		Resolution:       a.Resolution,
+		Snooze:           a.Snooze,
 		Labels:           a.Labels,
 		CreatedAt:        a.CreatedAt,
 		UpdatedAt:        a.UpdatedAt,
@@ -212,6 +214,48 @@ func acceptAlertHandler(b backend.Backend) http.HandlerFunc {
 			return
 		}
 		alert, err := b.GetService().AcceptAlert(r.Context(), id, &req)
+		if err != nil {
+			handleServiceErrors(w, r, err)
+			return
+		}
+		api.Ok(w, renderAlert(alert))
+	}
+}
+
+func snoozeAlertHandler(b backend.Backend) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "alertID"))
+		if err != nil {
+			api.BadRequest(w, ErrInvalidID, err)
+			return
+		}
+		var req service.SnoozeAlertRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			api.BadRequest(w, ErrMissingOrInvalidBody, err)
+			return
+		}
+		alert, err := b.GetService().SnoozeAlert(r.Context(), id, &req)
+		if err != nil {
+			handleServiceErrors(w, r, err)
+			return
+		}
+		api.Ok(w, renderAlert(alert))
+	}
+}
+
+func unsnoozeAlertHandler(b backend.Backend) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(chi.URLParam(r, "alertID"))
+		if err != nil {
+			api.BadRequest(w, ErrInvalidID, err)
+			return
+		}
+		var req service.UnsnoozeAlertRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			api.BadRequest(w, ErrMissingOrInvalidBody, err)
+			return
+		}
+		alert, err := b.GetService().UnsnoozeAlert(r.Context(), id, &req)
 		if err != nil {
 			handleServiceErrors(w, r, err)
 			return

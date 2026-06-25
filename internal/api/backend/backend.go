@@ -42,6 +42,8 @@ type Service interface {
 	AckAlert(ctx context.Context, id uuid.UUID, req *service.AckAlertRequest) (*models.Alert, error)
 	ResolveAlert(ctx context.Context, id uuid.UUID, req *service.ResolveAlertRequest) (*models.Alert, error)
 	AcceptAlert(ctx context.Context, id uuid.UUID, req *service.AcceptAlertRequest) (*models.Alert, error)
+	SnoozeAlert(ctx context.Context, id uuid.UUID, req *service.SnoozeAlertRequest) (*models.Alert, error)
+	UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *service.UnsnoozeAlertRequest) (*models.Alert, error)
 }
 
 type Backend interface {

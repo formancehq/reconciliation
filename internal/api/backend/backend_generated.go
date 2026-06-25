@@ -357,6 +357,36 @@ func (mr *MockServiceMockRecorder) ResolveAlert(ctx, id, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveAlert", reflect.TypeOf((*MockService)(nil).ResolveAlert), ctx, id, req)
 }
 
+// SnoozeAlert mocks base method.
+func (m *MockService) SnoozeAlert(ctx context.Context, id uuid.UUID, req *service.SnoozeAlertRequest) (*models.Alert, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SnoozeAlert", ctx, id, req)
+	ret0, _ := ret[0].(*models.Alert)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SnoozeAlert indicates an expected call of SnoozeAlert.
+func (mr *MockServiceMockRecorder) SnoozeAlert(ctx, id, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SnoozeAlert", reflect.TypeOf((*MockService)(nil).SnoozeAlert), ctx, id, req)
+}
+
+// UnsnoozeAlert mocks base method.
+func (m *MockService) UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *service.UnsnoozeAlertRequest) (*models.Alert, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnsnoozeAlert", ctx, id, req)
+	ret0, _ := ret[0].(*models.Alert)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UnsnoozeAlert indicates an expected call of UnsnoozeAlert.
+func (mr *MockServiceMockRecorder) UnsnoozeAlert(ctx, id, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnsnoozeAlert", reflect.TypeOf((*MockService)(nil).UnsnoozeAlert), ctx, id, req)
+}
+
 // MockBackend is a mock of Backend interface.
 type MockBackend struct {
 	ctrl     *gomock.Controller

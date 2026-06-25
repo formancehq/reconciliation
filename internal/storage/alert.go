@@ -137,6 +137,15 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 		// compares it against the incoming evidence.
 		prevEvidence := current.Evidence
 
+		// Snooze state at evaluation time (captured before the UPDATE). An
+		// ACTIVE snooze mutes this fail entirely — the operator asked for
+		// silence even as the discrepancy moves. An EXPIRED snooze is cleared
+		// here and the fail notifies once ("still failing after the mute
+		// lapsed"). A reopen implies a prior resolve, which already cleared any
+		// snooze, so current.Snooze is nil on that path.
+		snoozeActive := current.Snooze != nil && in.OccurredAt.Before(current.Snooze.Until)
+		snoozeExpired := current.Snooze != nil && !snoozeActive
+
 		// Paths 2 & 3 share the same UPDATE shape: occurrence_count++,
 		// status set to OPEN (no-op on already-OPEN, demotes RESOLVED back
 		// to OPEN, demotes ACK back to OPEN — the latter is intentional, a
@@ -154,16 +163,23 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 			// Clear the prior resolution — its audit lives in alert_event.
 			q = q.Set("resolution = NULL").Set("ack = NULL")
 		}
+		if snoozeExpired {
+			// The mute has lapsed — drop it so the alert pages normally again.
+			q = q.Set("snooze = NULL")
+		}
 		if _, uerr := q.Exec(ctx); uerr != nil {
 			return e("update alert", uerr)
 		}
 		// bun's Returning("*") into a struct pointer fills a jsonb column that
-		// this UPDATE SET to NULL with a zero-valued *Resolution / *Ack
-		// instead of nil. Mirror the actual DB state in Go so callers can rely
-		// on alert.Resolution == nil after a reopen.
+		// this UPDATE SET to NULL with a zero-valued *Resolution / *Ack /
+		// *Snooze instead of nil. Mirror the actual DB state in Go so callers
+		// can rely on alert.Resolution / alert.Snooze == nil.
 		if reopened {
 			current.Resolution = nil
 			current.Ack = nil
+		}
+		if snoozeExpired {
+			current.Snooze = nil
 		}
 
 		// Notification decision (flap suppression #1 — suppress repeats). A
@@ -178,6 +194,14 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 		notify := reopened ||
 			prev != models.AlertOpen ||
 			!sameEvidenceJSON(prevEvidence, in.Evidence)
+		// Snooze overrides the steady-state decision: an active mute silences
+		// even a change or resurface; the first fail past expiry pages once.
+		switch {
+		case snoozeActive:
+			notify = false
+		case snoozeExpired:
+			notify = true
+		}
 
 		event, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventFail, &prev, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt, notify)
 		if aerr != nil {
@@ -256,12 +280,16 @@ func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, finger
 			Model(&current).
 			Set("status = ?", string(models.AlertResolved)).
 			Set("resolution = ?", resolution).
+			Set("snooze = NULL").
 			Set("last_evaluation_id = ?", evaluationID).
 			Where("id = ?", current.ID).
 			Returning("*").
 			Exec(ctx); uerr != nil {
 			return e("auto-resolve alert", uerr)
 		}
+		// A closed alert carries no snooze; clear any (see the Returning quirk
+		// note in openOrUpdateAlertOnce).
+		current.Snooze = nil
 		payload, _ := json.Marshal(resolution)
 		ev, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventPass, &prev, models.AlertResolved, &evaluationID, payload, at, true)
 		if aerr != nil {
@@ -370,11 +398,14 @@ func (s *Storage) applyResolution(ctx context.Context, id uuid.UUID, resolution 
 			Model(&alert).
 			Set("status = ?", string(models.AlertResolved)).
 			Set("resolution = ?", resolution).
+			Set("snooze = NULL").
 			Where("id = ?", id).
 			Returning("*").
 			Exec(ctx); err != nil {
 			return e("resolve alert", err)
 		}
+		// A closed alert carries no snooze (see the Returning quirk note).
+		alert.Snooze = nil
 		payload, _ := json.Marshal(resolution)
 		ev, err := appendAlertEvent(ctx, tx, alert.ID, eventType, &prev, models.AlertResolved, nil, payload, resolution.At, true)
 		if err != nil {
@@ -386,6 +417,105 @@ func (s *Storage) applyResolution(ctx context.Context, id uuid.UUID, resolution 
 	if err != nil {
 		return nil, err
 	}
+	s.recordAlertEvent(ctx, &alert, event)
+	return &alert, nil
+}
+
+// SnoozeAlert mutes an active alert's notifications until `until`, recording a
+// `snooze` event. The alert keeps its status and keeps counting against
+// period-green — only its notifications are suppressed (see openOrUpdateAlertOnce
+// and recordAlertEvent). Rejects a non-future `until` and any non-active
+// (RESOLVED) alert. Re-snoozing an already-snoozed alert overwrites the window
+// with the new one — extending or shortening a mute is a legitimate operator
+// action — and appends a fresh event.
+func (s *Storage) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.Time, by, note string) (*models.Alert, error) {
+	now := time.Now().UTC()
+	if !until.After(now) {
+		return nil, fmt.Errorf("SnoozeAlert: until must be in the future")
+	}
+	snooze := &models.Snooze{Until: until.UTC(), By: by, At: now, Note: note}
+	var (
+		alert models.Alert
+		event *models.AlertEvent
+	)
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := tx.NewSelect().
+			Model(&alert).
+			Where("id = ?", id).
+			Where("status IN (?, ?)", string(models.AlertOpen), string(models.AlertAcknowledged)).
+			For("UPDATE").
+			Scan(ctx); err != nil {
+			return e("snooze alert", err)
+		}
+		status := alert.Status
+		if _, err := tx.NewUpdate().
+			Model(&alert).
+			Set("snooze = ?", snooze).
+			Where("id = ?", id).
+			Returning("*").
+			Exec(ctx); err != nil {
+			return e("snooze alert", err)
+		}
+		payload, _ := json.Marshal(snooze)
+		// Status-neutral transition: prev == new. Always notifies — the mute
+		// itself is a one-off operator action worth surfacing.
+		ev, aerr := appendAlertEvent(ctx, tx, alert.ID, models.AlertEventSnooze, &status, status, nil, payload, snooze.At, true)
+		if aerr != nil {
+			return aerr
+		}
+		event = ev
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.recordAlertEvent(ctx, &alert, event)
+	return &alert, nil
+}
+
+// UnsnoozeAlert lifts a snooze early, recording an `unsnooze` event. Idempotent:
+// unsnoozing an alert that is not snoozed returns it unchanged and appends no
+// event (mirrors the re-ack no-op). `by` attributes the action in the log.
+func (s *Storage) UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string) (*models.Alert, error) {
+	var (
+		alert models.Alert
+		event *models.AlertEvent
+	)
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := tx.NewSelect().
+			Model(&alert).
+			Where("id = ?", id).
+			For("UPDATE").
+			Scan(ctx); err != nil {
+			return e("unsnooze alert", err)
+		}
+		if alert.Snooze == nil {
+			return nil // no-op — nothing to lift
+		}
+		status := alert.Status
+		at := time.Now().UTC()
+		if _, err := tx.NewUpdate().
+			Model(&alert).
+			Set("snooze = NULL").
+			Where("id = ?", id).
+			Returning("*").
+			Exec(ctx); err != nil {
+			return e("unsnooze alert", err)
+		}
+		alert.Snooze = nil // mirror the SET ... = NULL (see Returning quirk note)
+		payload, _ := json.Marshal(map[string]string{"by": by})
+		ev, aerr := appendAlertEvent(ctx, tx, alert.ID, models.AlertEventUnsnooze, &status, status, nil, payload, at, true)
+		if aerr != nil {
+			return aerr
+		}
+		event = ev
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// event is nil on the no-op (already un-snoozed) path — recordAlertEvent
+	// skips it, so a redundant unsnooze emits nothing.
 	s.recordAlertEvent(ctx, &alert, event)
 	return &alert, nil
 }

@@ -42,6 +42,8 @@ const (
 	EventTypeAlertResolved     = "alert.resolved"
 	EventTypeAlertAccepted     = "alert.accepted"
 	EventTypeAlertReopened     = "alert.reopened"
+	EventTypeAlertSnoozed      = "alert.snoozed"
+	EventTypeAlertUnsnoozed    = "alert.unsnoozed"
 )
 
 // AlertEventPayload is the wire shape carried by every reconciliation.alert.*
@@ -67,6 +69,8 @@ type AlertEventPayload struct {
 //	pass                   → resolved   (auto-resolve)
 //	resolve                → resolved   (fixed_by_booking)
 //	accept                 → accepted
+//	snooze                 → snoozed
+//	unsnooze               → unsnoozed
 func EventTypeFor(e *models.AlertEvent) string {
 	switch e.Type {
 	case models.AlertEventFail:
@@ -84,6 +88,10 @@ func EventTypeFor(e *models.AlertEvent) string {
 		return EventTypeAlertResolved
 	case models.AlertEventAccept:
 		return EventTypeAlertAccepted
+	case models.AlertEventSnooze:
+		return EventTypeAlertSnoozed
+	case models.AlertEventUnsnooze:
+		return EventTypeAlertUnsnoozed
 	default:
 		return ""
 	}
