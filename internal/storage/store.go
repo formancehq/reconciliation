@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/uptrace/bun"
 )
@@ -116,8 +117,8 @@ func alertEventCollectorFrom(ctx context.Context) *alertEventCollector {
 
 // recordAlertEvent is called by every alert-mutating method AFTER its own
 // transaction has durably written the event row. It is the one hook that turns
-// an appended alert_event into an outbound message, so the 1:1 invariant
-// (one event row ⇒ one webhook message) holds by construction.
+// an appended alert_event into an outbound message, so the invariant — one
+// event row with notify=true ⇒ one webhook message — holds by construction.
 //
 // When the call is nested under an outer Storage.RunInTx (the evaluation path:
 // persist the evaluation and drive every alert transition atomically) the
@@ -128,8 +129,20 @@ func alertEventCollectorFrom(ctx context.Context) *alertEventCollector {
 //
 // event may be nil (an idempotent no-op transition, e.g. re-ack of an
 // already-acknowledged alert wrote no row) — nothing is recorded.
+//
+// event.Notify=false rows (a repeated, materially-identical fail) are the
+// single suppression point: the row is already durably in the append-only log,
+// but it is neither buffered nor published — the bus only ever sees transitions
+// that carry new information. See docs/technical/notification-suppression.md.
 func (s *Storage) recordAlertEvent(ctx context.Context, alert *models.Alert, event *models.AlertEvent) {
 	if event == nil {
+		return
+	}
+	if !event.Notify {
+		logging.FromContext(ctx).WithFields(map[string]any{
+			"alert":      alert.ID,
+			"alertEvent": event.ID,
+		}).Debugf("reconciliation: suppressing notification for repeated identical alert fail")
 		return
 	}
 	if c := alertEventCollectorFrom(ctx); c != nil {

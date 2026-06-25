@@ -959,7 +959,10 @@ components:
         (ack / resolve / accept). `prevStatus` is null only for the
         inaugural event of an alert. `isReopen` is a derived predicate —
         true when a FAIL event lands on a previously-RESOLVED alert.
-      required: [id, alertID, type, newStatus, at, isReopen]
+        `notify` is the notification decision recorded for the row: false marks
+        a transition kept for audit but deliberately not published (a repeated
+        identical fail).
+      required: [id, alertID, type, newStatus, at, isReopen, notify]
       properties:
         id: { type: string, format: uuid }
         alertID: { type: string, format: uuid }
@@ -973,6 +976,7 @@ components:
           additionalProperties: true
         at: { type: string, format: date-time }
         isReopen: { type: boolean }
+        notify: { type: boolean, description: "Whether this transition was published to the message bus. false = recorded for audit but suppressed." }
     AlertEventsResponse:
       type: object
       required: [data]

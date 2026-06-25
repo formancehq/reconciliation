@@ -64,6 +64,7 @@ type alertEventResponse struct {
 	Payload      json.RawMessage `json:"payload,omitempty"`
 	At           time.Time       `json:"at"`
 	IsReopen     bool            `json:"isReopen"`
+	Notify       bool            `json:"notify"`
 }
 
 func renderAlertEvent(e *models.AlertEvent) *alertEventResponse {
@@ -87,6 +88,7 @@ func renderAlertEvent(e *models.AlertEvent) *alertEventResponse {
 		Payload:      e.Payload,
 		At:           e.At,
 		IsReopen:     e.IsReopen(),
+		Notify:       e.Notify,
 	}
 }
 

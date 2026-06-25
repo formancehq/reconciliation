@@ -228,16 +228,22 @@ Note is **required**. Evidence at acceptance time is frozen onto `resolution.evi
 
 ## Events (✅ implemented)
 
-Every alert state transition publishes one message to the Formance message bus
-(go-libs/v5 `messagingfx`), consumed by the **Webhooks** module exactly like
-`ledger.*` / `payments.*` events. One `alert_event` row ⇒ one outbound message:
-emission is hooked at the single write point (`appendAlertEvent`) and dispatched
-**after the transaction commits**, so a rolled-back evaluation emits nothing.
+Every *notifying* alert state transition publishes one message to the Formance
+message bus (go-libs/v5 `messagingfx`), consumed by the **Webhooks** module
+exactly like `ledger.*` / `payments.*` events. One `alert_event` row with
+`notify = true` ⇒ one outbound message: emission is hooked at the single dispatch
+point (`recordAlertEvent`) and sent **after the transaction commits**, so a
+rolled-back evaluation emits nothing.
+
+A repeated failing evaluation of an already-`OPEN` alert that carries
+**materially-identical evidence** is recorded (`notify = false`) but **not
+published** — see [notification-suppression.md](./notification-suppression.md).
+This keeps a scheduled, still-broken rule from re-paging on every tick.
 
 | Event | Fires when | `alert_event` row |
 |---|---|---|
 | `reconciliation.alert.opened`       | First failing eval for a fingerprint | `fail`, `prevStatus = null` |
-| `reconciliation.alert.updated`      | Subsequent failure while OPEN/ACKNOWLEDGED | `fail`, `prevStatus ∈ {OPEN, ACKNOWLEDGED}` |
+| `reconciliation.alert.updated`      | Failure while OPEN/ACKNOWLEDGED **with new evidence** (identical repeats are suppressed) | `fail`, `prevStatus ∈ {OPEN, ACKNOWLEDGED}`, `notify = true` |
 | `reconciliation.alert.acknowledged` | Human ack'd | `ack` |
 | `reconciliation.alert.resolved`     | Auto-resolve (`pass`) or `fixed_by_booking` (`resolve`) | `pass` / `resolve` |
 | `reconciliation.alert.accepted`     | Business acceptance | `accept` |
@@ -245,15 +251,19 @@ emission is hooked at the single write point (`appendAlertEvent`) and dispatched
 
 The event name is a pure function of the row (`events.EventTypeFor`) — there is
 no separate event-kind column to keep in sync. An idempotent no-op (e.g. re-ack
-of an already-acknowledged alert) writes no row and therefore emits no event.
+of an already-acknowledged alert) writes no row and therefore emits no event. A
+failing evaluation that repeats materially-identical evidence on an already-OPEN
+alert writes a row with `notify = false` and is **not** published — see
+[notification-suppression.md](./notification-suppression.md).
 
 **Envelope.** Standard `publish.EventMessage`: `app = "reconciliation"`,
 `version = "v1"`, `type ∈ {alert.opened, alert.updated, alert.acknowledged,
 alert.resolved, alert.accepted, alert.reopened}`, `idempotencyKey =` the
 `alert_event` id. The Webhooks worker lowercases and joins `app` + `type`, so
-subscribers match against the full names in the table above. All six events
-publish to a single logical topic (`reconciliation`); the operator's
-`--publisher-topic-mapping` routes it to the bus subject Webhooks subscribes to.
+subscribers match against the full names
+in the table above. All six events publish to a single logical topic
+(`reconciliation`); the operator's `--publisher-topic-mapping` routes it to the
+bus subject Webhooks subscribes to.
 
 **Payload.** The full current `Alert` row (which carries the latest evaluation's
 `evidence`, plus `resolution` / `ack` / `labels`) paired with the triggering

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -117,7 +118,8 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 			if _, ierr := tx.NewInsert().Model(fresh).Exec(ctx); ierr != nil {
 				return e("insert alert", ierr)
 			}
-			event, aerr := appendAlertEvent(ctx, tx, fresh.ID, models.AlertEventFail, nil, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt)
+			// A first open always notifies.
+			event, aerr := appendAlertEvent(ctx, tx, fresh.ID, models.AlertEventFail, nil, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt, true)
 			if aerr != nil {
 				return aerr
 			}
@@ -130,6 +132,10 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 
 		prev := current.Status
 		reopened := prev == models.AlertResolved
+		// Capture the evidence the alert is currently carrying BEFORE the
+		// UPDATE below overwrites it via Returning("*"). The notify decision
+		// compares it against the incoming evidence.
+		prevEvidence := current.Evidence
 
 		// Paths 2 & 3 share the same UPDATE shape: occurrence_count++,
 		// status set to OPEN (no-op on already-OPEN, demotes RESOLVED back
@@ -151,16 +157,29 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 		if _, uerr := q.Exec(ctx); uerr != nil {
 			return e("update alert", uerr)
 		}
-		// bun's Returning("*") into a struct pointer fills nullable JSONB
-		// columns with zero-valued *Resolution / *Ack instead of nil. Mirror
-		// the actual DB state in Go so callers can rely on
-		// alert.Resolution == nil after a reopen.
+		// bun's Returning("*") into a struct pointer fills a jsonb column that
+		// this UPDATE SET to NULL with a zero-valued *Resolution / *Ack
+		// instead of nil. Mirror the actual DB state in Go so callers can rely
+		// on alert.Resolution == nil after a reopen.
 		if reopened {
 			current.Resolution = nil
 			current.Ack = nil
 		}
 
-		event, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventFail, &prev, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt)
+		// Notification decision (flap suppression #1 — suppress repeats). A
+		// steady-state repeat — an already-OPEN alert failing again with
+		// materially-identical evidence — adds nothing a consumer hasn't
+		// already been told, so it is logged but not published. Everything
+		// that carries new information still notifies:
+		//   - a reopen (prev=RESOLVED) — the case came back;
+		//   - a resurfacing (prev=ACKNOWLEDGED, demoted to OPEN) — the ack no
+		//     longer holds;
+		//   - any change in evidence — the discrepancy moved.
+		notify := reopened ||
+			prev != models.AlertOpen ||
+			!sameEvidenceJSON(prevEvidence, in.Evidence)
+
+		event, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventFail, &prev, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt, notify)
 		if aerr != nil {
 			return aerr
 		}
@@ -244,7 +263,7 @@ func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, finger
 			return e("auto-resolve alert", uerr)
 		}
 		payload, _ := json.Marshal(resolution)
-		ev, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventPass, &prev, models.AlertResolved, &evaluationID, payload, at)
+		ev, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventPass, &prev, models.AlertResolved, &evaluationID, payload, at, true)
 		if aerr != nil {
 			return aerr
 		}
@@ -293,7 +312,7 @@ func (s *Storage) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (
 			return e("ack alert", err)
 		}
 		payload, _ := json.Marshal(ack)
-		ev, err := appendAlertEvent(ctx, tx, alert.ID, models.AlertEventAck, &prev, models.AlertAcknowledged, nil, payload, ack.At)
+		ev, err := appendAlertEvent(ctx, tx, alert.ID, models.AlertEventAck, &prev, models.AlertAcknowledged, nil, payload, ack.At, true)
 		if err != nil {
 			return err
 		}
@@ -357,7 +376,7 @@ func (s *Storage) applyResolution(ctx context.Context, id uuid.UUID, resolution 
 			return e("resolve alert", err)
 		}
 		payload, _ := json.Marshal(resolution)
-		ev, err := appendAlertEvent(ctx, tx, alert.ID, eventType, &prev, models.AlertResolved, nil, payload, resolution.At)
+		ev, err := appendAlertEvent(ctx, tx, alert.ID, eventType, &prev, models.AlertResolved, nil, payload, resolution.At, true)
 		if err != nil {
 			return err
 		}
@@ -381,6 +400,44 @@ func (s *Storage) GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, er
 	return &alert, nil
 }
 
+// sameEvidenceJSON reports whether two evidence payloads are materially
+// identical. It compares the CANONICAL form of each (object keys sorted,
+// insignificant whitespace removed, numbers preserved verbatim) rather than the
+// raw bytes: one side is freshly marshalled by a template, the other has been
+// round-tripped through Postgres jsonb, and semantically-equal payloads
+// routinely differ byte-for-byte across that boundary. Two empty payloads are
+// equal; a payload that fails to parse is treated as DIFFERENT — the safe
+// default is to notify when in doubt.
+func sameEvidenceJSON(a, b json.RawMessage) bool {
+	aEmpty, bEmpty := len(a) == 0, len(b) == 0
+	if aEmpty || bEmpty {
+		return aEmpty && bEmpty
+	}
+	ca, err := canonicalJSON(a)
+	if err != nil {
+		return false
+	}
+	cb, err := canonicalJSON(b)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(ca, cb)
+}
+
+// canonicalJSON re-encodes raw JSON into a deterministic form: encoding/json
+// marshals object keys in sorted order, and json.Number preserves numeric
+// literals verbatim instead of coercing them to float64 (which would lose
+// precision on the big-integer balances reconciliation evidence carries).
+func canonicalJSON(raw json.RawMessage) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return json.Marshal(v)
+}
+
 // appendAlertEvent is the single insertion point for the alert_event log.
 // Centralised so every transition writes exactly the same shape and so a
 // future hash-chain implementation only needs to instrument this one func.
@@ -397,6 +454,7 @@ func appendAlertEvent(
 	evaluationID *uuid.UUID,
 	payload json.RawMessage,
 	at time.Time,
+	notify bool,
 ) (*models.AlertEvent, error) {
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -409,6 +467,7 @@ func appendAlertEvent(
 		PrevStatus:   prevStatus,
 		NewStatus:    newStatus,
 		Payload:      payload,
+		Notify:       notify,
 		At:           at,
 	}
 	if _, err := tx.NewInsert().Model(event).Exec(ctx); err != nil {

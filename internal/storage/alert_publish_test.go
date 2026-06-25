@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -67,7 +68,13 @@ func TestPublishAlertEvents_AllTransitions(t *testing.T) {
 	require.NoError(t, err)
 	id := res.Alert.ID
 
-	_, err = s.OpenOrUpdateAlert(ctx, in) // updated
+	// A repeat that carries NEW evidence still publishes `updated`; an
+	// identical repeat would be suppressed (see TestPublishAlertEvents_
+	// RepeatedIdenticalFailSuppressed). Vary the evidence so this step
+	// exercises the updated transition.
+	moved := in
+	moved.Evidence = json.RawMessage(`{"drift":"75"}`)
+	_, err = s.OpenOrUpdateAlert(ctx, moved) // updated
 	require.NoError(t, err)
 
 	_, err = s.AckAlert(ctx, id, &models.Ack{By: "alice", At: time.Now().UTC()}) // acknowledged
@@ -158,10 +165,12 @@ func TestPublishAlertEvents_DeferredUntilOuterCommit(t *testing.T) {
 	ruleID, evID := seedRuleAndEval(t, s)
 	in := defaultOpenInput(t, ruleID, evID)
 
+	moved := in
+	moved.Evidence = json.RawMessage(`{"drift":"75"}`) // distinct evidence → a real `updated`
 	err := s.RunInTx(ctx, func(ctx context.Context, txStore *Storage) error {
 		_, err := txStore.OpenOrUpdateAlert(ctx, in)
 		require.NoError(t, err)
-		_, err = txStore.OpenOrUpdateAlert(ctx, in)
+		_, err = txStore.OpenOrUpdateAlert(ctx, moved)
 		require.NoError(t, err)
 		require.Zero(t, fake.count(), "nothing may publish before the outer tx commits")
 		return nil
@@ -212,4 +221,137 @@ func TestPublishAlertEvents_RolledBackOuterTxEmitsNothing(t *testing.T) {
 	})
 	require.ErrorIs(t, err, wantErr)
 	require.Zero(t, fake.count(), "a rolled-back transaction must publish nothing")
+}
+
+// TestPublishAlertEvents_RepeatedIdenticalFailSuppressed — the core of flap
+// suppression #1. A still-OPEN alert failing again with identical evidence is
+// recorded in the append-only log (audit untouched, occurrence_count climbs)
+// but emits no `updated` webhook: the bus only sees the inaugural `opened`.
+func TestPublishAlertEvents_RepeatedIdenticalFailSuppressed(t *testing.T) {
+	fake := &fakeAlertEventPublisher{}
+	s := newStore(t).WithPublisher(fake)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	in := defaultOpenInput(t, ruleID, evID)
+
+	res, err := s.OpenOrUpdateAlert(ctx, in) // opened
+	require.NoError(t, err)
+	_, err = s.OpenOrUpdateAlert(ctx, in) // identical repeat — suppressed
+	require.NoError(t, err)
+	final, err := s.OpenOrUpdateAlert(ctx, in) // identical repeat — suppressed
+	require.NoError(t, err)
+
+	require.Equal(t, []string{events.EventTypeAlertOpened}, fake.webhookTypes(),
+		"identical repeats must not re-publish")
+
+	// The record is intact: occurrence_count climbed and every fail is logged,
+	// the two repeats marked notify=false.
+	require.Equal(t, int64(3), final.Alert.OccurrenceCount)
+	evs, err := s.ListAlertEvents(ctx, res.Alert.ID)
+	require.NoError(t, err)
+	require.Len(t, evs, 3, "every evaluation still appends a row — we suppress the message, not the record")
+	notified := 0
+	for _, e := range evs {
+		if e.Notify {
+			notified++
+		}
+	}
+	require.Equal(t, 1, notified, "only the inaugural open is marked notify=true")
+}
+
+// TestPublishAlertEvents_EvidenceChangeRepublishes — suppression is keyed on
+// materially-identical evidence; when the discrepancy moves, the repeat carries
+// new information and publishes `updated`.
+func TestPublishAlertEvents_EvidenceChangeRepublishes(t *testing.T) {
+	fake := &fakeAlertEventPublisher{}
+	s := newStore(t).WithPublisher(fake)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	in := defaultOpenInput(t, ruleID, evID)
+
+	_, err := s.OpenOrUpdateAlert(ctx, in) // opened
+	require.NoError(t, err)
+
+	moved := in
+	moved.Evidence = json.RawMessage(`{"drift":"125"}`)
+	_, err = s.OpenOrUpdateAlert(ctx, moved) // evidence changed → updated
+	require.NoError(t, err)
+
+	require.Equal(t, []string{
+		events.EventTypeAlertOpened,
+		events.EventTypeAlertUpdated,
+	}, fake.webhookTypes())
+}
+
+// TestPublishAlertEvents_KeyOrderDoesNotRepublish — equivalence is canonical,
+// not byte-for-byte: the same evidence with reordered keys / extra whitespace
+// (e.g. as round-tripped through Postgres jsonb) is NOT a change.
+func TestPublishAlertEvents_KeyOrderDoesNotRepublish(t *testing.T) {
+	fake := &fakeAlertEventPublisher{}
+	s := newStore(t).WithPublisher(fake)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	in := defaultOpenInput(t, ruleID, evID)
+	in.Evidence = json.RawMessage(`{"asset":"USD/2","drift":"50"}`)
+
+	_, err := s.OpenOrUpdateAlert(ctx, in) // opened
+	require.NoError(t, err)
+
+	reordered := in
+	reordered.Evidence = json.RawMessage(`{ "drift": "50",  "asset": "USD/2" }`)
+	_, err = s.OpenOrUpdateAlert(ctx, reordered) // same content, different bytes
+	require.NoError(t, err)
+
+	require.Equal(t, []string{events.EventTypeAlertOpened}, fake.webhookTypes(),
+		"reordered/whitespace-only differences are not material changes")
+}
+
+// TestPublishAlertEvents_ReopenNotSuppressed — a reopen (prev=RESOLVED) always
+// publishes, even when the evidence equals the pre-resolve state: the case
+// coming back is itself the news.
+func TestPublishAlertEvents_ReopenNotSuppressed(t *testing.T) {
+	fake := &fakeAlertEventPublisher{}
+	s := newStore(t).WithPublisher(fake)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	in := defaultOpenInput(t, ruleID, evID)
+	fp := in.Fingerprint
+
+	_, err := s.OpenOrUpdateAlert(ctx, in) // opened
+	require.NoError(t, err)
+	_, err = s.AutoResolveAlert(ctx, ruleID, fp, models.ContinuousPeriod, evID, time.Now().UTC()) // resolved
+	require.NoError(t, err)
+	_, err = s.OpenOrUpdateAlert(ctx, in) // reopen with identical evidence — still publishes
+	require.NoError(t, err)
+
+	require.Equal(t, []string{
+		events.EventTypeAlertOpened,
+		events.EventTypeAlertResolved,
+		events.EventTypeAlertReopened,
+	}, fake.webhookTypes())
+}
+
+// TestPublishAlertEvents_ResurfaceAfterAckRepublishes — an identical fail on an
+// ACKNOWLEDGED alert demotes it back to OPEN (the ack no longer holds). That
+// resurfacing is a status change, so it publishes `updated` even though the
+// evidence is unchanged — suppression is only for steady-state OPEN repeats.
+func TestPublishAlertEvents_ResurfaceAfterAckRepublishes(t *testing.T) {
+	fake := &fakeAlertEventPublisher{}
+	s := newStore(t).WithPublisher(fake)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	in := defaultOpenInput(t, ruleID, evID)
+
+	res, err := s.OpenOrUpdateAlert(ctx, in) // opened
+	require.NoError(t, err)
+	_, err = s.AckAlert(ctx, res.Alert.ID, &models.Ack{By: "alice", At: time.Now().UTC()}) // acknowledged
+	require.NoError(t, err)
+	_, err = s.OpenOrUpdateAlert(ctx, in) // identical evidence, but prev=ACK → resurfaces
+	require.NoError(t, err)
+
+	require.Equal(t, []string{
+		events.EventTypeAlertOpened,
+		events.EventTypeAlertAcknowledged,
+		events.EventTypeAlertUpdated,
+	}, fake.webhookTypes())
 }

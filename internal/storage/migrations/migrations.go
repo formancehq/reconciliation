@@ -306,6 +306,11 @@ func registerMigrations(migrator *migrations.Migrator) {
 						prev_status     text,
 						new_status      text NOT NULL,
 						payload         jsonb,
+						-- notify is the per-row notification decision: false marks a
+						-- transition kept for audit but not published (a repeated identical
+						-- fail). Default true preserves "every transition notifies" for all
+						-- but those suppressed cases.
+						notify          boolean NOT NULL DEFAULT true,
 						at              timestamp with time zone NOT NULL,
 						created_at      timestamp with time zone NOT NULL DEFAULT now(),
 						CONSTRAINT alert_event_pk        PRIMARY KEY (id),

@@ -141,8 +141,15 @@ type AlertEvent struct {
 	PrevStatus   *AlertStatus    `bun:"prev_status,nullzero"    json:"prevStatus,omitempty"`
 	NewStatus    AlertStatus     `bun:"new_status,notnull"      json:"newStatus"`
 	Payload      json.RawMessage `bun:",type:jsonb"             json:"payload,omitempty"`
-	At           time.Time       `bun:",notnull,nullzero"       json:"at"`
-	CreatedAt    time.Time       `bun:"created_at,notnull,nullzero" json:"createdAt"`
+	// Notify is the notification decision for this row, computed once at write
+	// time. true (the default) → the transition is published to the message
+	// bus; false → it is recorded in the append-only log for audit but NOT
+	// paged. Only repeated, materially-identical fails are suppressed (see
+	// Storage.recordAlertEvent and docs/technical/notification-suppression.md);
+	// opens, reopens, evidence changes, and every manual transition stay true.
+	Notify    bool      `bun:"notify,notnull"              json:"notify"`
+	At        time.Time `bun:",notnull,nullzero"          json:"at"`
+	CreatedAt time.Time `bun:"created_at,notnull,nullzero" json:"createdAt"`
 }
 
 // IsReopen returns true when this fail event lands on a previously-resolved
