@@ -84,35 +84,15 @@ func (s *Service) Reconciliation(ctx context.Context, policyID string, req *Reco
 		DriftBalances:        make(map[string]*big.Int),
 	}
 
-	var reconciliationError bool
-	if len(paymentsBalances) != len(ledgerBalances) {
-		res.Status = models.ReconciliationNotOK
-		res.Error = "different number of assets"
-		return res, nil
-	}
-
-	if !reconciliationError {
-		for asset, ledgerBalance := range ledgerBalances {
-			err := s.computeDrift(res, asset, ledgerBalance, paymentsBalances[asset])
-			if err != nil {
-				res.Status = models.ReconciliationNotOK
-				if res.Error == "" {
-					res.Error = err.Error()
-				} else {
-					res.Error = res.Error + "; " + err.Error()
-				}
-			}
-		}
-
-		for asset, paymentBalance := range paymentsBalances {
-			if _, ok := res.DriftBalances[asset]; ok {
-				// Already computed
-				continue
-			}
-
-			err := s.computeDrift(res, asset, ledgerBalances[asset], paymentBalance)
-			if err != nil {
-				res.Status = models.ReconciliationNotOK
+	// harmonizeBalances guarantees both maps share the same key set, so a
+	// single pass over ledgerBalances covers every asset.
+	for asset, ledgerBalance := range ledgerBalances {
+		err := s.computeDrift(res, asset, ledgerBalance, paymentsBalances[asset])
+		if err != nil {
+			res.Status = models.ReconciliationNotOK
+			if res.Error == "" {
+				res.Error = err.Error()
+			} else {
 				res.Error = res.Error + "; " + err.Error()
 			}
 		}
