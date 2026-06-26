@@ -205,7 +205,7 @@ func (s *mockStore) GetAlert(context.Context, uuid.UUID) (*models.Alert, error) 
 func (s *mockStore) ListAlerts(context.Context, storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
 	return nil, nil
 }
-func (s *mockStore) ListAlertEvents(context.Context, uuid.UUID) ([]models.AlertEvent, error) {
+func (s *mockStore) ListAlertEvents(context.Context, uuid.UUID, storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
 	return nil, nil
 }
 

@@ -43,6 +43,17 @@ func seedRuleAndEval(t *testing.T, s *Storage) (uuid.UUID, uuid.UUID) {
 	return rule.ID, ev.ID
 }
 
+// allAlertEvents fetches an alert's full timeline for assertions. ListAlertEvents
+// is paginated; tests deal in small fixtures, so a single large page returns
+// everything while still exercising the real (paginated) query path.
+func allAlertEvents(t *testing.T, s *Storage, alertID uuid.UUID) []models.AlertEvent {
+	t.Helper()
+	cur, err := s.ListAlertEvents(context.Background(), alertID,
+		NewGetAlertEventsQuery(NewPaginatedQueryOptions(AlertEventsFilters{}).WithPageSize(1000)))
+	require.NoError(t, err)
+	return cur.Data
+}
+
 func defaultOpenInput(t *testing.T, ruleID, evID uuid.UUID) OpenAlertInput {
 	t.Helper()
 	return OpenAlertInput{
@@ -70,8 +81,7 @@ func TestOpenOrUpdateAlert_FirstFailureOpens(t *testing.T) {
 	require.Equal(t, models.AlertOpen, res.Alert.Status)
 	require.Equal(t, int64(1), res.Alert.OccurrenceCount)
 
-	events, err := s.ListAlertEvents(ctx, res.Alert.ID)
-	require.NoError(t, err)
+	events := allAlertEvents(t, s, res.Alert.ID)
 	require.Len(t, events, 1)
 	require.Equal(t, models.AlertEventFail, events[0].Type)
 	require.Nil(t, events[0].PrevStatus, "inaugural event has no prev_status")
@@ -96,8 +106,7 @@ func TestOpenOrUpdateAlert_RepeatedFailureUpdates(t *testing.T) {
 	require.Equal(t, first.Alert.ID, second.Alert.ID)
 	require.Equal(t, int64(2), second.Alert.OccurrenceCount)
 
-	events, err := s.ListAlertEvents(ctx, first.Alert.ID)
-	require.NoError(t, err)
+	events := allAlertEvents(t, s, first.Alert.ID)
 	require.Len(t, events, 2, "every fail evaluation appends one event")
 	open := models.AlertOpen
 	for _, e := range events {
@@ -141,8 +150,7 @@ func TestOpenOrUpdateAlert_ReopenInPlace(t *testing.T) {
 	require.Nil(t, reopen.Alert.Resolution, "reopen clears the prior resolution")
 
 	// Event log captures: initial fail (open), pass (auto-resolve), fail (reopen).
-	events, err := s.ListAlertEvents(ctx, originalID)
-	require.NoError(t, err)
+	events := allAlertEvents(t, s, originalID)
 	require.Len(t, events, 3)
 
 	// Events are returned most-recent-first.
@@ -201,8 +209,7 @@ func TestOpenOrUpdateAlert_ConcurrentFirstOpen(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(writers), final.OccurrenceCount)
 
-	events, err := s.ListAlertEvents(ctx, final.ID)
-	require.NoError(t, err)
+	events := allAlertEvents(t, s, final.ID)
 	require.Len(t, events, writers, "every concurrent writer appends one fail event")
 }
 
@@ -232,8 +239,7 @@ func TestAckAlert_IdempotentPreservesMetadata(t *testing.T) {
 	require.WithinDuration(t, firstAt, second.Ack.At, time.Second)
 	require.Equal(t, "looking into it", second.Ack.Note)
 
-	events, err := s.ListAlertEvents(ctx, id)
-	require.NoError(t, err)
+	events := allAlertEvents(t, s, id)
 	ackEvents := 0
 	for _, e := range events {
 		if e.Type == models.AlertEventAck {
@@ -266,8 +272,7 @@ func TestResolveAlertManual_FixedByBooking(t *testing.T) {
 	require.Equal(t, models.ResolutionFixedByBooking, closed.Resolution.Kind)
 	require.Equal(t, []string{"tx_abc"}, closed.Resolution.TransactionRefs)
 
-	events, err := s.ListAlertEvents(ctx, res.Alert.ID)
-	require.NoError(t, err)
+	events := allAlertEvents(t, s, res.Alert.ID)
 	require.GreaterOrEqual(t, len(events), 2) // initial fail + resolve
 	require.Equal(t, models.AlertEventResolve, events[0].Type, "resolve event must be the latest")
 
@@ -309,8 +314,7 @@ func TestAcceptAlert_Path(t *testing.T) {
 	require.Equal(t, models.ResolutionAcceptedByBusiness, closed.Resolution.Kind)
 	require.Equal(t, "settlement lag confirmed", closed.Resolution.Note)
 
-	events, err := s.ListAlertEvents(ctx, res.Alert.ID)
-	require.NoError(t, err)
+	events := allAlertEvents(t, s, res.Alert.ID)
 	require.Equal(t, models.AlertEventAccept, events[0].Type)
 }
 

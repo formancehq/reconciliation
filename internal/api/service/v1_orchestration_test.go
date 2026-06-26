@@ -342,14 +342,14 @@ func (f *fakeV1Store) ListAlerts(context.Context, storage.GetAlertsQuery) (*bunp
 	return nil, nil
 }
 
-func (f *fakeV1Store) ListAlertEvents(_ context.Context, alertID uuid.UUID) ([]models.AlertEvent, error) {
+func (f *fakeV1Store) ListAlertEvents(_ context.Context, alertID uuid.UUID, _ storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
 	out := []models.AlertEvent{}
 	for _, e := range f.events {
 		if e.AlertID == alertID {
 			out = append(out, *e)
 		}
 	}
-	return out, nil
+	return &bunpaginate.Cursor[models.AlertEvent]{Data: out}, nil
 }
 
 func (f *fakeV1Store) ListActiveAlertFingerprints(_ context.Context, ruleID uuid.UUID, periodID string) ([]string, error) {

@@ -289,10 +289,15 @@ paths:
       summary: List alert events (append-only timeline)
       operationId: listAlertEvents
       description: |
-        Returns every event recorded for this alert — every evaluation that
-        touched it plus every manual transition. The list is append-only;
-        events are never modified or deleted. Ordered most-recent-first.
+        Returns a page of the events recorded for this alert — every evaluation
+        that touched it plus every manual transition. The list is append-only;
+        events are never modified or deleted. Ordered most-recent-first and
+        cursor-paginated: a long-lived alert's timeline is unbounded (one row per
+        failing evaluation), so callers must page through it.
       tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200': { $ref: '#/components/responses/AlertEvents' }
         default: { $ref: '#/components/responses/ErrorResponse' }
@@ -525,7 +530,7 @@ components:
       description: OK
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/AlertEventsResponse' }
+          schema: { $ref: '#/components/schemas/AlertEventsCursorResponse' }
   requestBodies:
     Policy:
       required: true
@@ -1034,13 +1039,21 @@ components:
         at: { type: string, format: date-time }
         isReopen: { type: boolean }
         notify: { type: boolean, description: "Whether this transition was published to the message bus. false = recorded for audit but suppressed." }
-    AlertEventsResponse:
+    AlertEventsCursorResponse:
       type: object
-      required: [data]
+      required: [cursor]
       properties:
-        data:
-          type: array
-          items: { $ref: '#/components/schemas/AlertEvent' }
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/AlertEvent' }
 
     AckAlertRequest:
       type: object

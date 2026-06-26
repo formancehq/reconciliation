@@ -53,7 +53,7 @@ type Store interface {
 	UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string) (*models.Alert, error)
 	GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error)
 	ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error)
-	ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]models.AlertEvent, error)
+	ListAlertEvents(ctx context.Context, alertID uuid.UUID, q storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error)
 }
 
 // Service is the orchestrator for both the legacy /policies path and the V1

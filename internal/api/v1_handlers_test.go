@@ -334,23 +334,25 @@ func TestListAlertEvents_Nominal(t *testing.T) {
 
 	id := uuid.New()
 	resolved := models.AlertResolved
-	events := []models.AlertEvent{
-		{ID: uuid.New(), AlertID: id, Type: models.AlertEventFail, PrevStatus: &resolved, NewStatus: models.AlertOpen, At: time.Now().UTC()},
-		{ID: uuid.New(), AlertID: id, Type: models.AlertEventFail, NewStatus: models.AlertOpen, At: time.Now().UTC().Add(-time.Hour)},
+	cursor := &bunpaginate.Cursor[models.AlertEvent]{
+		Data: []models.AlertEvent{
+			{ID: uuid.New(), AlertID: id, Type: models.AlertEventFail, PrevStatus: &resolved, NewStatus: models.AlertOpen, At: time.Now().UTC()},
+			{ID: uuid.New(), AlertID: id, Type: models.AlertEventFail, NewStatus: models.AlertOpen, At: time.Now().UTC().Add(-time.Hour)},
+		},
 	}
-	mockSvc.EXPECT().ListAlertEvents(gomock.Any(), id).Return(events, nil)
+	mockSvc.EXPECT().ListAlertEvents(gomock.Any(), id, gomock.Any()).Return(cursor, nil)
 
 	r := httptest.NewRequest(http.MethodGet, "/alerts/"+id.String()+"/events", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	var got sharedapi.BaseResponse[[]alertEventResponse]
+	var got sharedapi.BaseResponse[alertEventResponse]
 	sharedapi.Decode(t, rec.Body, &got)
-	require.Len(t, *got.Data, 2)
+	require.Len(t, got.Cursor.Data, 2)
 	// First event was a reopen — predicate must propagate to the response.
-	require.True(t, (*got.Data)[0].IsReopen)
-	require.False(t, (*got.Data)[1].IsReopen)
+	require.True(t, got.Cursor.Data[0].IsReopen)
+	require.False(t, got.Cursor.Data[1].IsReopen)
 }
 
 // --- Evaluation handler tests -----------------------------------------------

@@ -247,8 +247,7 @@ func TestPublishAlertEvents_RepeatedIdenticalFailSuppressed(t *testing.T) {
 	// The record is intact: occurrence_count climbed and every fail is logged,
 	// the two repeats marked notify=false.
 	require.Equal(t, int64(3), final.Alert.OccurrenceCount)
-	evs, err := s.ListAlertEvents(ctx, res.Alert.ID)
-	require.NoError(t, err)
+	evs := allAlertEvents(t, s, res.Alert.ID)
 	require.Len(t, evs, 3, "every evaluation still appends a row — we suppress the message, not the record")
 	notified := 0
 	for _, e := range evs {

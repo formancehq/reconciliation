@@ -224,18 +224,18 @@ func (mr *MockServiceMockRecorder) GetRule(ctx, id any) *gomock.Call {
 }
 
 // ListAlertEvents mocks base method.
-func (m *MockService) ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]models.AlertEvent, error) {
+func (m *MockService) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListAlertEvents", ctx, alertID)
-	ret0, _ := ret[0].([]models.AlertEvent)
+	ret := m.ctrl.Call(m, "ListAlertEvents", ctx, alertID, q)
+	ret0, _ := ret[0].(*bunpaginate.Cursor[models.AlertEvent])
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListAlertEvents indicates an expected call of ListAlertEvents.
-func (mr *MockServiceMockRecorder) ListAlertEvents(ctx, alertID any) *gomock.Call {
+func (mr *MockServiceMockRecorder) ListAlertEvents(ctx, alertID, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAlertEvents", reflect.TypeOf((*MockService)(nil).ListAlertEvents), ctx, alertID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAlertEvents", reflect.TypeOf((*MockService)(nil).ListAlertEvents), ctx, alertID, q)
 }
 
 // ListAlerts mocks base method.

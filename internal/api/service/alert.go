@@ -148,11 +148,12 @@ func (s *Service) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bu
 	return s.store.ListAlerts(ctx, q)
 }
 
-// ListAlertEvents returns the full append-only history of one alert,
-// most-recent-first. This is the API surface for the "timeline" view in the
-// UI and for any future audit-export tooling.
-func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]models.AlertEvent, error) {
-	return s.store.ListAlertEvents(ctx, alertID)
+// ListAlertEvents returns a page of one alert's append-only history,
+// most-recent-first. Paginated because a long-lived alert's timeline is
+// unbounded (one row per failing evaluation). This is the API surface for the
+// "timeline" view and any future audit-export tooling.
+func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
+	return s.store.ListAlertEvents(ctx, alertID, q)
 }
 
 // engineErrorFingerprint is the synthetic fingerprint used by the evaluation

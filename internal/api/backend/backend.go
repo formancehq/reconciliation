@@ -38,7 +38,7 @@ type Service interface {
 	// V1 — Alert
 	GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error)
 	ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error)
-	ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]models.AlertEvent, error)
+	ListAlertEvents(ctx context.Context, alertID uuid.UUID, q storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error)
 	AckAlert(ctx context.Context, id uuid.UUID, req *service.AckAlertRequest) (*models.Alert, error)
 	ResolveAlert(ctx context.Context, id uuid.UUID, req *service.ResolveAlertRequest) (*models.Alert, error)
 	AcceptAlert(ctx context.Context, id uuid.UUID, req *service.AcceptAlertRequest) (*models.Alert, error)

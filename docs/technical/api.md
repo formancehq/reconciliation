@@ -130,11 +130,13 @@ Returns `200` + the evaluation record:
   "endedAt":      "…",
   "result":       "PASS" | "FAIL" | "ERROR",
   "pitPerSource": { "ledger_set:0": "…", "payments_pool:0": "…" },
-  "evidence":     [ { "fingerprint": "asset:USD/2", "passed": true, "evidence": {…} }, … ],
+  "evidence":     [ { "fingerprint": "asset:USD/2", "passed": false, "evidence": {…} }, … ],
   "costUnits":    0,
   "error":        ""
 }
 ```
+
+`evidence` records **only the failing fingerprints** — the overall `result` (`PASS`/`FAIL`/`ERROR`) carries the verdict, and persisting the full passing roster every tick is pure write amplification for wide rules. An all-`PASS` evaluation therefore has `"evidence": []`. The failing detail you'd query lives here and (per-fingerprint, with lifecycle) on the alerts.
 
 #### `GET /rules/{id}/evaluations` — history
 
@@ -173,22 +175,30 @@ Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?periodID=2026-03`
 
 #### `GET /alerts/{id}/events` — append-only timeline
 
-Returns every event recorded for this alert: every evaluation that touched it plus every manual transition. Most-recent-first.
+Returns a page of the events recorded for this alert: every evaluation that touched it plus every manual transition. Most-recent-first, **cursor-paginated** (`?pageSize=`, `?cursor=`) like the other list endpoints. Pagination is required, not optional: a long-lived alert (a `continuous`-cadence rule, or an `engine.error` meta-alert) accumulates one event row per failing evaluation indefinitely — notification suppression keeps those rows off the bus but **not** out of the table — so the timeline is unbounded.
 
 ```json
-[
-  {
-    "id":         "evt_…",
-    "alertID":    "alr_…",
-    "evaluationID": "ev_…",
-    "type":       "fail",
-    "prevStatus": "RESOLVED",
-    "newStatus":  "OPEN",
-    "payload":    { "asset": "USD/2", "drift": "75", … },
-    "at":         "2026-06-21T08:42:00Z",
-    "isReopen":   true
+{
+  "cursor": {
+    "pageSize": 15,
+    "hasMore": true,
+    "next": "…",
+    "data": [
+      {
+        "id":         "evt_…",
+        "alertID":    "alr_…",
+        "evaluationID": "ev_…",
+        "type":       "fail",
+        "prevStatus": "RESOLVED",
+        "newStatus":  "OPEN",
+        "payload":    { "asset": "USD/2", "drift": "75", … },
+        "at":         "2026-06-21T08:42:00Z",
+        "isReopen":   true,
+        "notify":     true
+      }
+    ]
   }
-]
+}
 ```
 
 `type` is one of `fail` / `pass` / `ack` / `resolve` / `accept`. `prevStatus` is `null` only for the alert's inaugural event. `isReopen` is a derived boolean — true when a `fail` lands on a previously-RESOLVED alert.

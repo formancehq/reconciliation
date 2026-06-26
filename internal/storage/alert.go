@@ -606,21 +606,36 @@ func appendAlertEvent(
 	return event, nil
 }
 
-// ListAlertEvents returns every event for an alert, most recent first.
-// Cursor-paginated for UIs that need to walk long histories. The append-only
-// nature of the table means the result is stable: an event row, once written,
-// is never modified.
-func (s *Storage) ListAlertEvents(ctx context.Context, alertID uuid.UUID) ([]models.AlertEvent, error) {
-	var events []models.AlertEvent
-	err := s.db.NewSelect().
-		Model(&events).
-		Where("alert_id = ?", alertID).
-		Order("at DESC", "id DESC").
-		Scan(ctx)
-	if err != nil {
-		return nil, e("list alert events", err)
+// ListAlertEvents returns a page of an alert's append-only history, most recent
+// first (at DESC, id DESC — a stable total order even when several events share
+// a timestamp). Backed by the alert_event_alert_idx (alert_id, at DESC) index.
+//
+// Pagination is mandatory, not cosmetic: a long-lived alert (a continuous-cadence
+// rule, or an engine.error meta-alert) accumulates one row per failing evaluation
+// indefinitely — notification suppression keeps those rows out of the bus but NOT
+// out of the table — so an unbounded read could pull millions of rows into memory.
+// Offset-paginated to match the other list endpoints; the (alert_id, at) index
+// keeps early pages cheap. (Keyset on (at, id) would scale better for very deep
+// pages — a future refinement, deferred for cross-endpoint consistency.)
+func (s *Storage) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
+	return paginateWithOffset[PaginatedQueryOptions[AlertEventsFilters], models.AlertEvent](s, ctx,
+		(*bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[AlertEventsFilters]])(&q),
+		func(query *bun.SelectQuery) *bun.SelectQuery {
+			return query.Where("alert_id = ?", alertID).Order("at DESC", "id DESC")
+		},
+	)
+}
+
+type AlertEventsFilters struct{}
+
+type GetAlertEventsQuery bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[AlertEventsFilters]]
+
+func NewGetAlertEventsQuery(opts PaginatedQueryOptions[AlertEventsFilters]) GetAlertEventsQuery {
+	return GetAlertEventsQuery{
+		PageSize: opts.PageSize,
+		Order:    bunpaginate.OrderAsc,
+		Options:  opts,
 	}
-	return events, nil
 }
 
 func (s *Storage) buildAlertListQuery(selectQuery *bun.SelectQuery, where string, args []any) *bun.SelectQuery {

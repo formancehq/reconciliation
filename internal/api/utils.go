@@ -100,3 +100,14 @@ func getPaginatedQueryOptionsAlerts(r *http.Request) (*storage.PaginatedQueryOpt
 		WithQueryBuilder(qb).
 		WithPageSize(pageSize)), nil
 }
+
+func getPaginatedQueryOptionsAlertEvents(r *http.Request) (*storage.PaginatedQueryOptions[storage.AlertEventsFilters], error) {
+	pageSize, err := getPageSize(r)
+	if err != nil {
+		return nil, err
+	}
+	// The alert id comes from the path, not a query builder — events have no
+	// user-facing filter surface, so only page size is read here.
+	return pointer.For(storage.NewPaginatedQueryOptions(storage.AlertEventsFilters{}).
+		WithPageSize(pageSize)), nil
+}

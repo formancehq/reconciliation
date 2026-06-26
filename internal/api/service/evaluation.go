@@ -273,10 +273,20 @@ func mergePitPerSource(outcomes []templates.Outcome) (map[string]time.Time, erro
 	return out, nil
 }
 
+// marshalOutcomes encodes the evidence persisted on the evaluation row.
+//
+// Only FAILING outcomes are persisted. A rule's outcome list covers every
+// fingerprint it touched — passing included — but storing the passing roster on
+// every tick is pure write amplification: for a wide rule (thousands of
+// fingerprints) it is a multi-thousand-element JSONB rewritten every evaluation,
+// almost all of it "still fine". The failing subset is the part anyone queries,
+// and it mirrors what the alert layer records. The evaluation's `result`
+// (PASS/FAIL/ERROR) already carries the pass/fail verdict; an all-PASS
+// evaluation therefore persists `[]`.
+//
+// The per-entry `passed` field is retained (always false here) so consumers
+// that parse the array keep a stable shape.
 func marshalOutcomes(outcomes []templates.Outcome) (json.RawMessage, error) {
-	if len(outcomes) == 0 {
-		return json.RawMessage("[]"), nil
-	}
 	type encoded struct {
 		Fingerprint string         `json:"fingerprint"`
 		Passed      bool           `json:"passed"`
@@ -284,11 +294,17 @@ func marshalOutcomes(outcomes []templates.Outcome) (json.RawMessage, error) {
 	}
 	enc := make([]encoded, 0, len(outcomes))
 	for _, o := range outcomes {
+		if o.Passed {
+			continue
+		}
 		enc = append(enc, encoded{
 			Fingerprint: o.Fingerprint,
 			Passed:      o.Passed,
 			Evidence:    o.Evidence,
 		})
+	}
+	if len(enc) == 0 {
+		return json.RawMessage("[]"), nil
 	}
 	b, err := json.Marshal(enc)
 	if err != nil {

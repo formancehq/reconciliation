@@ -135,10 +135,11 @@ func listAlertsHandler(b backend.Backend) http.HandlerFunc {
 	}
 }
 
-// listAlertEventsHandler returns the append-only timeline for a single alert.
-// Not paginated for V1 — alert event volumes are bounded by evaluation cadence
-// and a typical reconciliation alert sees O(hundreds) of events. Revisit if
-// long-running engine.error alerts blow that out.
+// listAlertEventsHandler returns the append-only timeline for a single alert,
+// cursor-paginated (most-recent-first). Pagination is required: a long-lived
+// alert (continuous-cadence rule, engine.error meta-alert) accumulates one row
+// per failing evaluation indefinitely — suppression keeps those off the bus but
+// not out of the table — so an unbounded response could be enormous.
 func listAlertEventsHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "alertID"))
@@ -146,16 +147,28 @@ func listAlertEventsHandler(b backend.Backend) http.HandlerFunc {
 			api.BadRequest(w, ErrInvalidID, err)
 			return
 		}
-		events, err := b.GetService().ListAlertEvents(r.Context(), id)
+		q := storage.GetAlertEventsQuery{}
+		if r.URL.Query().Get(QueryKeyCursor) != "" {
+			if err := bunpaginate.UnmarshalCursor(r.URL.Query().Get(QueryKeyCursor), &q); err != nil {
+				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param", QueryKeyCursor))
+				return
+			}
+		} else {
+			options, err := getPaginatedQueryOptionsAlertEvents(r)
+			if err != nil {
+				api.BadRequest(w, ErrValidation, err)
+				return
+			}
+			q = storage.NewGetAlertEventsQuery(*options)
+		}
+		cursor, err := b.GetService().ListAlertEvents(r.Context(), id, q)
 		if err != nil {
 			handleServiceErrors(w, r, err)
 			return
 		}
-		out := make([]*alertEventResponse, 0, len(events))
-		for i := range events {
-			out = append(out, renderAlertEvent(&events[i]))
-		}
-		api.Ok(w, out)
+		api.RenderCursor(w, *bunpaginate.MapCursor(cursor, func(e models.AlertEvent) *alertEventResponse {
+			return renderAlertEvent(&e)
+		}))
 	}
 }
 

@@ -46,8 +46,7 @@ func TestSnoozeAlert_SuppressesEvenOnChange(t *testing.T) {
 	}, fake.webhookTypes(), "an active snooze mutes even a changing alert")
 
 	// The record is intact: the muted fail is still logged (notify=false).
-	evs, err := s.ListAlertEvents(ctx, res.Alert.ID)
-	require.NoError(t, err)
+	evs := allAlertEvents(t, s, res.Alert.ID)
 	require.Len(t, evs, 3, "opened + snoozed + the muted fail are all recorded")
 }
 

@@ -73,8 +73,7 @@ func TestRule_DeleteCascadesAndNotFound(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound, "evaluation must be cascaded away with the rule")
 	_, err = s.GetAlert(ctx, res.Alert.ID)
 	require.ErrorIs(t, err, ErrNotFound)
-	events, err := s.ListAlertEvents(ctx, res.Alert.ID)
-	require.NoError(t, err)
+	events := allAlertEvents(t, s, res.Alert.ID)
 	require.Empty(t, events, "alert_event rows must be cascaded away with the rule")
 }
 
