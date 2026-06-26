@@ -14,10 +14,12 @@ import (
 
 // ThresholdMode controls how account_threshold checks balances.
 //
-//   - ThresholdAggregate (V1 GA): one outcome per asset; checks the aggregated
-//     balance across all accounts in the ledger set.
-//   - ThresholdPerAccount (V1.1): one outcome per (asset, account) pair;
-//     requires the `accounts(source)` CEL builtin which is not yet shipped.
+//   - ThresholdAggregate: one outcome per asset; checks the aggregated balance
+//     across all accounts in the ledger set.
+//   - ThresholdPerAccount: fans the rule out into one outcome per
+//     (account, asset) pair — the rule's query resolves to a set of accounts
+//     (bounded by Engine.MaxAccountsScanned) and each is checked individually,
+//     so a single rule can raise an alert per matching account.
 type ThresholdMode string
 
 const (
@@ -40,9 +42,9 @@ type ThresholdBounds struct {
 	Max *int64 `json:"max,omitempty"`
 }
 
-// AccountThreshold implements Evaluator. V1 GA ships ThresholdAggregate;
-// ThresholdPerAccount returns a clear "not yet implemented" error from
-// Validate so customers can't create rules the engine can't evaluate.
+// AccountThreshold implements Evaluator for both threshold modes: aggregate
+// (one outcome per asset) and per_account (one outcome per resolved account ×
+// asset). Validate accepts both; Evaluate dispatches on spec.Mode.
 type AccountThreshold struct{}
 
 func NewAccountThreshold() *AccountThreshold { return &AccountThreshold{} }
