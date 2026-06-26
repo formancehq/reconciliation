@@ -44,7 +44,10 @@ func stackClientModule(cmd *cobra.Command) fx.Option {
 			}
 			underlyingHTTPClient := &http.Client{
 				Transport: otlp.NewRoundTripper(http.DefaultTransport, service.IsDebug(cmd)),
-				Timeout:   24 * time.Hour,
+				// Upper bound for ledger/payments calls (aggregated balance
+				// queries can be slow on large ledgers) and for the oauth2
+				// token exchange, which runs outside any request context.
+				Timeout: 5 * time.Minute,
 			}
 			return sdk.New(
 				sdk.WithClient(
