@@ -13,7 +13,7 @@ import (
 )
 
 type Store interface {
-	Ping() error
+	Ping(ctx context.Context) error
 	CreatePolicy(ctx context.Context, policy *models.Policy) error
 	DeletePolicy(ctx context.Context, id uuid.UUID) error
 	GetPolicy(ctx context.Context, id uuid.UUID) (*models.Policy, error)
