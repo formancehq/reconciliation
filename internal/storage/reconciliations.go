@@ -88,7 +88,11 @@ func (s *Storage) reconciliationQueryContext(qb query.Builder, q GetReconciliati
 				return "", nil, errors.Wrap(ErrInvalidQuery, "'policyID' column can only be used with string")
 			}
 		case "createdAt":
-			return fmt.Sprintf("created_at %s ?", query.DefaultComparisonOperatorsMapping[operator]), []any{value}, nil
+			sqlOperator, ok := query.DefaultComparisonOperatorsMapping[operator]
+			if !ok {
+				return "", nil, errors.Wrapf(ErrInvalidQuery, "operator '%s' is not supported for 'createdAt'", operator)
+			}
+			return fmt.Sprintf("created_at %s ?", sqlOperator), []any{value}, nil
 		default:
 			return "", nil, errors.Wrapf(ErrInvalidQuery, "unknown key '%s' when building query", key)
 		}

@@ -92,7 +92,11 @@ func (s *Storage) policyQueryContext(qb query.Builder, q GetPoliciesQuery) (stri
 
 			return fmt.Sprintf("%s = ?", key), []any{value}, nil
 		case "createdAt":
-			return fmt.Sprintf("created_at %s ?", query.DefaultComparisonOperatorsMapping[operator]), []any{value}, nil
+			sqlOperator, ok := query.DefaultComparisonOperatorsMapping[operator]
+			if !ok {
+				return "", nil, errors.Wrapf(ErrInvalidQuery, "operator '%s' is not supported for 'createdAt'", operator)
+			}
+			return fmt.Sprintf("created_at %s ?", sqlOperator), []any{value}, nil
 		case "ledgerQuery":
 			if operator != "$match" {
 				return "", nil, errors.Wrap(ErrInvalidQuery, "'ledgerQuery' column can only be used with $match")
