@@ -18,9 +18,6 @@ type fakeSDKClient struct {
 	calls int
 }
 
-func (f *fakeSDKClient) V2GetLedger(context.Context, operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error) {
-	return nil, nil
-}
 func (f *fakeSDKClient) V2GetBalancesAggregated(context.Context, operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error) {
 	return nil, nil
 }

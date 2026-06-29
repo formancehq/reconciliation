@@ -14,22 +14,10 @@ import (
 // --- in-memory resolver fakes ------------------------------------------------
 
 type fakeLedger struct {
-	features map[string]LedgerFeatures
 	// keyed by ledger + canonical(query) → balances
 	balances map[string]map[string]*big.Int
 	// optional error to inject
 	err error
-}
-
-func (f *fakeLedger) Features(_ context.Context, ledger string) (LedgerFeatures, error) {
-	if f.err != nil {
-		return LedgerFeatures{}, f.err
-	}
-	feat, ok := f.features[ledger]
-	if !ok {
-		return LedgerFeatures{AccountMetadataHistory: "SYNC"}, nil
-	}
-	return feat, nil
 }
 
 func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query json.RawMessage, _ time.Time) (map[string]*big.Int, error) {

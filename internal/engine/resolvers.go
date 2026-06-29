@@ -10,16 +10,11 @@ import (
 // LedgerResolver is the kernel's contract for ledger-backed sources.
 // Implementations call the Formance Ledger SDK; tests inject in-memory fakes.
 type LedgerResolver interface {
-	// Features returns the ledger's feature flags. Used at rule-create and
-	// eval time to detect ACCOUNT_METADATA_HISTORY=DISABLED, which silently
-	// breaks PIT+metadata filtering on /aggregate/balances (see ledger#1416
-	// and project memory ledger-aggregate-pit-metadata).
-	Features(ctx context.Context, ledger string) (LedgerFeatures, error)
-
 	// AggregateBalance returns per-asset aggregate balance(s) for accounts
-	// matched by query at the given PIT. Caller is responsible for choosing
-	// a PIT-safe query shape; if Features indicates metadata is unsafe,
-	// the engine rejects the rule before calling this.
+	// matched by query at the given PIT. PIT + metadata filtering is safe on
+	// supported ledgers (>= v2.4.11, where ledger#1416 is fixed); earlier
+	// versions silently returned empty under ACCOUNT_METADATA_HISTORY=DISABLED
+	// (see project memory ledger-aggregate-pit-metadata).
 	AggregateBalance(ctx context.Context, ledger string, query json.RawMessage, pit time.Time) (map[string]*big.Int, error)
 
 	// ListAccounts returns the accounts matched by the query at the given PIT.
@@ -38,13 +33,6 @@ type LedgerResolver interface {
 // PIT endpoint that doesn't exist.
 type PaymentsResolver interface {
 	PoolBalanceLatest(ctx context.Context, poolID string) (map[string]*big.Int, error)
-}
-
-// LedgerFeatures captures the subset of ledger feature flags the engine cares
-// about. Mirrors the response of GET /api/ledger/v2/{ledger}.
-type LedgerFeatures struct {
-	AccountMetadataHistory     string // "DISABLED" | "SYNC"
-	TransactionMetadataHistory string
 }
 
 // Resolvers groups the resolver impls injected into Engine at construction.

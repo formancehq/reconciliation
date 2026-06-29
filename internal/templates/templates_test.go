@@ -20,9 +20,6 @@ type fakeLedger struct {
 	accounts map[string][]engine.Account    // (ledger|query) → accounts (for per_account)
 }
 
-func (f *fakeLedger) Features(_ context.Context, _ string) (engine.LedgerFeatures, error) {
-	return engine.LedgerFeatures{AccountMetadataHistory: "SYNC"}, nil
-}
 func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query json.RawMessage, _ time.Time) (map[string]*big.Int, error) {
 	if f.balances == nil {
 		return map[string]*big.Int{}, nil

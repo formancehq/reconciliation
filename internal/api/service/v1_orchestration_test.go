@@ -410,9 +410,6 @@ type orchestrationLedger struct {
 	failErr error
 }
 
-func (f *orchestrationLedger) Features(context.Context, string) (engine.LedgerFeatures, error) {
-	return engine.LedgerFeatures{AccountMetadataHistory: "SYNC"}, nil
-}
 func (f *orchestrationLedger) AggregateBalance(_ context.Context, _ string, _ json.RawMessage, _ time.Time) (map[string]*big.Int, error) {
 	if f.failErr != nil {
 		return nil, f.failErr

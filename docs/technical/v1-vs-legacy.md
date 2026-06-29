@@ -128,13 +128,13 @@ Empirically reproduced during the baseline check; see the inline note at [intern
 
 ---
 
-## 6. Ledger-side feature-flag gotcha
+## 6. Ledger-side feature-flag gotcha — fixed in ledger v2.4.11
 
-A second baseline finding: `Ledger v2.4.10` `/aggregate/balances` with `pit=…` + a **metadata** filter silently returns `{}` when the ledger has `ACCOUNT_METADATA_HISTORY: DISABLED`. Same call without `pit` works; same `pit + address` filter works.
+A baseline finding on `Ledger ≤ v2.4.10`: `/aggregate/balances` with `pit=…` + a **metadata** filter silently returned `{}` when the ledger had `ACCOUNT_METADATA_HISTORY: DISABLED`. Same call without `pit` worked; same `pit + address` filter worked.
 
-Filed: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416).
+Filed [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416) — **fixed in ledger v2.4.11** ([ledger#1422](https://github.com/formancehq/ledger/pull/1422), commit `dd1d8c9`): the aggregated-balances PIT path now falls back to the current `accounts.metadata` column under `DISABLED`, so PIT + metadata returns correct results regardless of the history flag. Confirmed empirically against `reco-ledger` (DISABLED) on v2.4.11.
 
-V1 mitigation: `SDKLedgerResolver.Features()` caches the ledger's feature flags ([internal/engine/sdk_resolvers.go](../../internal/engine/sdk_resolvers.go)). The service layer (✅ shipped — [internal/api/service/rule.go](../../internal/api/service/rule.go) and its callers) is the natural place to consult this at rule-create time and refuse metadata-filtered templates on history-off ledgers; the wiring lands alongside the HTTP layer in task #6.
+V1 stance: Reconciliation **requires ledger ≥ v2.4.11**, so there is **no create-time refusal** for metadata-filtered templates — the earlier "consult feature flags and reject on history-off" mitigation (and the `LedgerResolver.Features()` plumbing it would have used) was **dropped** as a workaround for an upstream bug that no longer exists. Address-based filters were always PIT-safe regardless of the flag.
 
 ---
 
