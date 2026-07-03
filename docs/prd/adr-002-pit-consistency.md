@@ -1,141 +1,119 @@
-# ADR-002 — Consistency model: PIT-per-source, not global snapshot
+# ADR-002 — Consistency model: aligned checkpoint for same-cluster ledgers, per-source PIT for heterogeneous sources
 
-**Status:** Accepted (implemented in [`internal/engine/engine.go`](../../internal/engine/engine.go) and [`internal/templates/`](../../internal/templates/))
-**Linked from:** [PRD §9](./README.md), [v1-vs-legacy.md §6](../technical/v1-vs-legacy.md)
-**Last updated:** 2026-06-17
+**Status:** Accepted — **revised for the ledger-native migration** (see [RFC: Ledger-native storage](../drafts/rfc-ledger-native-storage.md) §4.5). Supersedes the V1 per-source-only model for same-cluster Ledger↔Ledger reconciliation; the per-source model is retained for heterogeneous sources.
+**Linked from:** [PRD §9](./README.md), [RFC §4.5](../drafts/rfc-ledger-native-storage.md)
+**Last updated:** 2026-07-03
 
 ---
 
 ## 1. Decision in one sentence
 
-The engine guarantees **per-source point-in-time consistency**, *not* atomic cross-source snapshots. Each `Source` resolves to a PIT-stable snapshot of its own backend; cross-source consistency is the customer's tolerance to encode in the template.
+Two tiers. When both sides are ledgers in the **same Formance cluster**, an evaluation is anchored on a single **query `checkpoint_id`** — a globally consistent cross-ledger snapshot. For **heterogeneous / non-ledger sources** (external GL, cross-vendor, legacy Payments pool during transition), the engine keeps the original **per-source PIT + tolerance** model.
 
 ---
 
-## 2. Why this matters
+## 2. What changed since the V1 baseline
 
-Today's reconciliation API takes **two** timestamps in every request:
+V1 reconciled **Ledger v2** against a **Payments v3 pool** — two heterogeneous systems with no shared clock or log. A global snapshot was impossible, so V1 shipped **per-source PIT + tolerance**. That was the honest model, and it remains correct for heterogeneous sources (§5).
 
-```go
-type ReconciliationRequest struct {
-    ReconciledAtLedger   time.Time `json:"reconciledAtLedger"`
-    ReconciledAtPayments time.Time `json:"reconciledAtPayments"`
-}
-```
-
-— and validates them both as past timestamps ([`internal/api/service/reconciliation.go:24-38`](../../internal/api/service/reconciliation.go)). The caller picks both PITs, and the reconciliation compares ledger-at-T1 against payments-at-T2. That's not laziness — it's the only honest model when the underlying systems don't share a clock.
-
-V1 keeps this contract but makes it **explicit**, **uniform**, and **auditable**.
+The ledger-native migration changes the premise: counterparty data now lives **inside ledgers** (via ledger-connect), so a reconciliation is increasingly **Ledger(A) ↔ Ledger(B)**, and both ledgers live in **one Raft group / one global log**. That unlocks precisely the "aligned PIT within a single stack" revisit condition the original ADR called out — so we take it.
 
 ---
 
-## 3. What the underlying systems guarantee
+## 3. What Ledger v3 actually guarantees
 
-### Ledger v2
+- **No arbitrary PIT.** The v2 `moves`-diff PIT was dropped (unbounded storage growth). Historical reads use **query checkpoints** instead.
+- **A query checkpoint is a coordinated snapshot** of the main store *and* the read index at a committed log sequence, created through Raft (`CreateQueryCheckpoint`), addressed by a sequential `checkpoint_id`.
+- **Single global log ⇒ a checkpoint is a cross-ledger consistent cut.** All ledgers share one store, so checkpoint *N* freezes A, B and `_recon` at the **same log sequence**, atomically.
+- Every read RPC honours `checkpoint_id` (`GetAccount`, `ListAccounts`, `AggregateVolumes`, `GetLog`, …); `0` = live.
 
-`/aggregate/balances` accepts a `pit` parameter. The result is **PIT-consistent on the ledger side**: a posting that commits at PIT+1ms is invisible to a read at PIT by construction. Append-only log + immutable history.
-
-### Payments v3
-
-The legacy SDK call to `/api/payments/pools/{id}/balances?at=…` silently returns `[]` under payments v3 — the PIT-aware route was not implemented. The endpoint that works is `/v3/pools/{id}/balances/latest`, which is the **current** snapshot — not historically queryable.
-
-This means the payments side is effectively **"as of now, eventually consistent with the upstream provider"**. We can't ask "what was the pool balance an hour ago"; only "what is it right now."
-
-### External GL (V2+)
-
-Each adapter brings its own consistency semantics — NetSuite at a given period close, Sage at a posting boundary. The engine model has to accommodate this without flattening to a global PIT.
+This is a *stronger* guarantee than V1 had: in V1 the two sides were different systems with no common instant; now Tier-1 sides share one.
 
 ---
 
-## 4. The consistency model V1 ships
+## 4. The two-tier consistency model
 
-| Property | Guarantee |
-|---|---|
-| **Per-source PIT consistency** | Each `Source` resolves to a snapshot stable against subsequent writes on that source |
-| **Cross-source atomicity** | Not provided. Two sources resolved in the same evaluation may reflect different real-world instants |
-| **Auditability** | Every evaluation persists the resolved PIT per source, so an auditor can replay each side at the original PIT |
-| **Safety margin** | Engine subtracts a configurable safety margin from the requested PIT before passing it to resolvers, avoiding races with in-flight commits |
-| **Tolerance** | The template's tolerance parameter is the mechanism for absorbing legitimate cross-source skew (settlement lag, FX revaluation timing, etc.) |
+| Case | Anchor | Guarantee |
+|---|---|---|
+| **Tier 1 — same-cluster ledger sources** (A↔B, A↔`_recon`) | one shared `checkpoint_id` | **True cross-source atomic snapshot.** No skew; `tolerance` optional (0 by default). |
+| **Tier 2 — heterogeneous / non-ledger** (external GL, cross-vendor, legacy Payments pool during transition) | per-source PIT (or "latest") | Per-source consistency only; **`tolerance`** absorbs legitimate cross-system skew (the V1 model). |
+
+The engine chooses the tier **per `Source`**: ledger sources in the target cluster align on the evaluation's checkpoint; any other source keeps its own PIT and contributes tolerance.
 
 ---
 
-## 5. How it flows through the engine
+## 5. Why Tier 2 stays (we still don't pretend heterogeneous systems share a clock)
+
+The three V1 reasons still hold — now scoped to the heterogeneous case:
+
+1. **It's impossible across heterogeneous systems.** Ledger and an external GL don't share a clock or a log; pretending otherwise is a leaky abstraction.
+2. **Real financial workflows model settlement lag.** T+1 / T+2 cycles → `tolerance` is the right vocabulary.
+3. **The customer story stays honest.** *PIT-consistent + tolerance-bounded* across heterogeneous sources; *atomic + reproducible* across same-cluster ledgers.
+
+The change is only that Tier 1 (same-cluster ledgers) is **no longer heterogeneous**, so aligning it is correct rather than a foot-gun.
+
+---
+
+## 6. How it flows through the engine
 
 ```mermaid
 flowchart LR
-    Caller["Caller: PIT = T, safetyMargin = 30s"] --> Engine[Engine.Evaluate]
-    Engine --> Adjust["Effective PIT = T - 30s"]
-    Adjust --> Bind["Bind ledgerSet.PIT,\npool.PIT in evalCtx"]
+    Svc["Service: pin checkpoint_id = C\n(scheduled or rolling)"] --> Engine[Engine.Evaluate]
+    Engine --> Bind["Bind sources:\nledger → checkpoint C\nheterogeneous → own PIT"]
     Bind --> Eval[Run CEL]
-    Eval --> Ledger["ledgerSet resolver:\nV2.GetBalancesAggregated(pit=T-30s)"]
-    Eval --> Pool["pool resolver:\nV3.GetPoolBalancesLatest()\n(latest, not PIT)"]
-    Ledger --> Record[Record pit_per_source: { ledger_set:0 → T-30s }]
-    Pool --> Record2[Record pit_per_source: { payments_pool:0 → T-30s }]
-    Record --> Persist[INSERT evaluation]
-    Record2 --> Persist
+    Eval --> A["ledger A resolver:\nAggregateVolumes(checkpoint=C)"]
+    Eval --> B["ledger B resolver:\nAggregateVolumes(checkpoint=C)"]
+    Eval --> Ext["external source:\nread @ own PIT (+ tolerance)"]
+    A --> Rec["record: checkpoint_id=C + log_sequence"]
+    B --> Rec
+    Ext --> Rec2["record: pit_per_source (Tier 2)"]
+    Rec --> Store[persist evaluation evidence]
+    Rec2 --> Store
 ```
 
-**Key implementation details**
+**Implementation notes**
 
-- Engine reads `EvalInput.PIT` and `EvalInput.SafetyMargin` from the caller (the service layer; templates also subtract margin before any scout calls so the math matches).
-- The `Source` Go struct carries a `PIT` field set by the source-constructor builtin at eval time.
-- Each resolver's signature takes `pit time.Time` even when the underlying API doesn't honour it — the value is **recorded for audit** even if the resolver internally falls back to "latest" (payments case). The recorded PIT then appears in `evaluation.pit_per_source`.
-
----
-
-## 6. Why we don't try to build a global snapshot
-
-Three reasons:
-
-1. **It's impossible across heterogeneous systems.** Ledger and Payments don't share a clock or a transaction log. Pretending they do produces a leaky abstraction that surprises customers the first time settlement lag exceeds expectations.
-2. **Real financial workflows already model settlement lag.** Treasury teams know about T+1 / T+2 cycles. Tolerance is the right vocabulary; "atomic snapshot" is not.
-3. **The customer-facing story is honest.** The product promises *PIT-consistent invariants over heterogeneous sources*, not *atomic invariants over a global snapshot*. The distinction matters when an auditor asks "is this reproducible?"
+- The service pins **one `checkpoint_id`** at evaluation start; Tier-1 resolvers read A and B at that checkpoint → cross-consistent evidence.
+- **Interface change:** `LedgerResolver.AggregateBalance(ctx, ledger, query, pit time.Time)` → `(…, checkpointID uint64)` (`0` = live); same for `ListAccounts`. Tier-2 resolvers keep their PIT/"latest" semantics.
+- The evaluation records **`checkpoint_id` + log sequence** (Tier 1) and/or **`pit_per_source`** (Tier 2) — the audit substrate that replaces the V1 PIT-only record.
 
 ---
 
-## 7. Implications for templates
+## 7. Obtaining the checkpoint (by cadence)
 
-Templates that compare two sides accept a `tolerance` parameter (per asset):
+- **Periodic rules** (daily/weekly/monthly) → **scheduled checkpoints** (`query-checkpoint set-schedule`), one per period boundary, shared by all rules of that cadence → `checkpoint_id` ↔ `period_id`.
+- **Continuous rules** → a **rolling `recon-current` checkpoint** refreshed every *T* seconds (create new, delete previous), read by all continuous evaluations in the window.
+- **Skew-tolerant / heterogeneous** → live read + `tolerance` (Tier 2).
 
-- `ledger_vs_pool_drift` — `tolerance` defaults to 0 per asset; raise it to absorb known settlement lag.
-- `ledger_invariant` — `tolerance` is **required** (set 0 for strict equality); same intent.
-- `account_threshold` — single-source, no cross-source tolerance needed.
-
-Documentation guidance (will land alongside the public template docs):
-
-> *Tolerance is how you encode legitimate settlement lag between sources. If your ledger updates at T and your payments provider settles at T+30 min, set a tolerance equal to the largest in-flight transfer you expect at any moment. The reconciliation will fire only when drift exceeds that bound.*
+**Lifecycle & cost.** Checkpoints are cheap to create (Pebble hard-links SSTs) but a long-lived one **pins old SSTs from compaction** (disk grows), and they are **not auto-cleaned**. Reconciliation owns their lifecycle: create → use → delete, or a bounded ring. Retention bounds how far back an exact snapshot can be re-opened.
 
 ---
 
-## 8. The two upstream issues this model surfaces
+## 8. Reproducibility & audit
 
-Two real implementation gotchas captured during the V1 baseline check:
-
-### A. Payments v3 PIT regression
-
-The SDK's `GetPoolBalances` (legacy path) returns `[]` under payments v3 even with valid PIT. V1's `SDKPaymentsResolver` uses `V3.GetPoolBalancesLatest` instead — accepting that the payments side reads "current" and pushing PIT semantics out to the persisted `pit_per_source` audit record. Documented inline in [`internal/engine/sdk_resolvers.go`](../../internal/engine/sdk_resolvers.go).
-
-### B. Ledger v2 `/aggregate/balances` + PIT + metadata silent failure
-
-When `ACCOUNT_METADATA_HISTORY: DISABLED` on a ledger, `/aggregate/balances?pit=…` with a metadata filter returns `{}` silently — the same call without `pit` works, the same call with an address filter works, and `/accounts` with `pit + metadata` returns matches. Endpoint-specific inconsistency.
-
-Filed: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416). V1 mitigation: `SDKLedgerResolver.Features()` caches the flag; the service layer (task #5) will refuse metadata-based templates against history-off ledgers with a clear error.
+`checkpoint_id` + log sequence in the evaluation makes Tier-1 evidence **re-derivable** — re-run the same read at the same checkpoint — while the checkpoint lives. The alert's stored `evidence` (the numbers at break time) is durable **regardless** of checkpoint retention, so "why did this open?" always survives; the checkpoint only enables re-drilling the full snapshot.
 
 ---
 
-## 9. What this commits us to
+## 9. Upstream caveat
 
-1. **Every Evaluation stores per-source PITs.** Already shipped on the schema ([migration #4](../../internal/storage/migrations/migrations.go)) and the model ([Evaluation.PitPerSource](../../internal/models/evaluation.go)).
-2. **The Engine never offers a "global PIT" abstraction.** If a future template needs cross-source PIT alignment, the alignment happens at the template layer (it owns the resolvers), not in the kernel.
-3. **Templates that compare cross-source must accept a tolerance.** Strictly-zero comparisons across heterogeneous sources are a footgun and are documented as such.
-4. **Customer-facing language is precise.** Marketing and docs say *PIT-consistent invariants over heterogeneous sources*, never *atomic cross-source consistency*.
+[formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416) — `/aggregate/balances` with PIT + metadata returns empty under `ACCOUNT_METADATA_HISTORY: DISABLED`. Confirm the v3 gRPC checkpoint path behaves before relying on metadata-filtered aggregates at a checkpoint.
 
 ---
 
-## 10. Conditions under which we'd revisit
+## 10. What this commits us to
 
-- **Payments grows PIT support** that's compatible with the legacy SDK shape → switch the resolver to use it; the model doesn't change.
-- **Ledger v3 introduces cross-ledger snapshot semantics** → the kernel might offer an optional "aligned PIT" mode within a single Formance stack. Cross-vendor sources remain per-source.
-- **A customer surfaces a use case where tolerance can't encode the drift they care about** → revisit, but expect this to be a new template (e.g. "balance change over time window") rather than a model change.
+1. **Evaluations record the anchor**: `checkpoint_id` (+ sequence) for Tier 1, `pit_per_source` for Tier 2.
+2. **The engine offers an aligned-checkpoint mode** for same-cluster ledger sources and retains per-source PIT + tolerance for heterogeneous ones — chosen per `Source`.
+3. **Reconciliation owns checkpoint lifecycle/retention** (create/use/delete, cadence-aligned).
+4. **Customer language is precise**: *atomic, reproducible invariants across ledgers in a stack*; *PIT-consistent, tolerance-bounded invariants across heterogeneous sources*.
 
-We would **not** revisit to pretend two heterogeneous systems share a clock. That's the foot-gun this ADR exists to prevent.
+---
+
+## 11. Conditions under which we'd revisit
+
+- **Cross-cluster ledger reconciliation** (two separate Formance stacks, no shared log) → those sides fall back to Tier 2.
+- **An external adapter gains a compatible snapshot primitive** → promote it toward Tier 1.
+- **A use case where tolerance can't encode the drift** → expect a new template (e.g. "balance change over a window"), not a model change.
+
+We would **not** revisit to pretend two heterogeneous systems share a clock — that remains the foot-gun this ADR exists to prevent. What changed is that same-cluster ledgers genuinely *do* share one.

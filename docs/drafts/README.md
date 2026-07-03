@@ -47,6 +47,14 @@ Open questions:
 
 ---
 
+## RFCs
+
+| RFC | Status | Summary |
+|---|---|---|
+| [Ledger-native storage (drop Postgres)](./rfc-ledger-native-storage.md) | Draft | Make reconciliation stateless by persisting its control-plane state as account metadata in a dedicated control-ledger, instead of Postgres. Aligns with Payments-in-Ledger + Ledger↔Ledger reconciliation. |
+
+---
+
 ## RFC-shaped placeholders
 
 When one of the above grows enough teeth to merit its own RFC, add it here as a sibling markdown file. Suggested template:
