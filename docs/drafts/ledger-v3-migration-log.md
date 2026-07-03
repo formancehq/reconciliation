@@ -17,8 +17,8 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | **1** | **0** | **Ledger v3 gRPC transport** (proto + BucketService client) | ✅ done · reviewed | `5583a69` |
 | 1 | 1 | Chart-of-accounts / schema definition (`internal/ledgerschema`) | ✅ done | `c51be9a` |
 | 1 | 2 | Bootstrap provisioner (CreateLedger + account-types AUDIT + typed metadata + prepared queries) | ✅ done | `bd95a35` |
-| 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | 🚧 in progress | `<pending>` |
-| 1 | 3a | ↳ store skeleton + rule serialization + CreateRule/GetRule | ✅ done | `<pending>` |
+| 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | 🚧 in progress | `8e75db4` |
+| 1 | 3a | ↳ store skeleton + rule serialization + CreateRule/GetRule | ✅ done | `8e75db4` |
 | 1 | 3b | ↳ ListRules/PatchRule/DeleteRule | ⬜ next | — |
 | 1 | 3c | ↳ alert lifecycle (Numscript: mint/guarded moves, OCC, status mirror, idempotency) | ⬜ todo | — |
 | 1 | 4 | Filter translator (`query.Builder` → `filterexpr`/prepared query) | ⬜ todo | — |
