@@ -36,11 +36,17 @@ const (
 	MetaEnabled      = "enabled"
 	MetaSchedule     = "schedule" // JSON
 	MetaCadence      = "cadence"
-	MetaSpec         = "spec" // JSON
-	MetaCompiledCEL  = "compiled_cel"
-	MetaCreatedAt    = "created_at"
-	MetaUpdatedAt    = "updated_at"
+	MetaSpec          = "spec" // JSON
+	MetaCompiledCEL   = "compiled_cel"
+	MetaNotifications = "notifications" // JSON array
+	MetaCreatedAt     = "created_at"
+	MetaUpdatedAt     = "updated_at"
 )
+
+// LabelPrefix namespaces a rule/alert label as a flat, indexable metadata key
+// (e.g. label `env=prod` → metadata key `label.env`). Dynamic — not declared in
+// MetadataSchema; stored as string as-is.
+const LabelPrefix = "label."
 
 // AccountTypes returns the chart of accounts declared on the control-ledger.
 // Applied at bootstrap; combined with STRICT enforcement, any write to an
@@ -118,7 +124,8 @@ func MetadataSchema() []*commonpb.SetMetadataFieldTypeCommand {
 		{MetaReopenedAt, dt}, {MetaParentResolution, str},
 		// rule
 		{MetaName, str}, {MetaTemplateKind, str}, {MetaEnabled, b}, {MetaSchedule, str},
-		{MetaCadence, str}, {MetaSpec, str}, {MetaCompiledCEL, str}, {MetaCreatedAt, dt}, {MetaUpdatedAt, dt},
+		{MetaCadence, str}, {MetaSpec, str}, {MetaCompiledCEL, str}, {MetaNotifications, str},
+		{MetaCreatedAt, dt}, {MetaUpdatedAt, dt},
 	}
 
 	cmds := make([]*commonpb.SetMetadataFieldTypeCommand, 0, len(fields))

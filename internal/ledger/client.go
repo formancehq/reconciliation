@@ -156,6 +156,12 @@ func (c *Client) SaveNumscript(ctx context.Context, ledger, name, content, versi
 
 // SaveAccountMetadata saves string metadata on an account (no transaction).
 func (c *Client) SaveAccountMetadata(ctx context.Context, ledgerName, address string, metadata map[string]string) error {
+	return c.SaveAccountMetadataValues(ctx, ledgerName, address, commonpb.MetadataFromMap(metadata))
+}
+
+// SaveAccountMetadataValues saves typed metadata on an account (no transaction).
+// Setting metadata on a fresh address creates the account.
+func (c *Client) SaveAccountMetadataValues(ctx context.Context, ledgerName, address string, metadata map[string]*commonpb.MetadataValue) error {
 	_, err := c.Apply(ctx, &servicepb.Request{
 		Type: &servicepb.Request_Apply{
 			Apply: &servicepb.LedgerApplyRequest{
@@ -168,7 +174,7 @@ func (c *Client) SaveAccountMetadata(ctx context.Context, ledgerName, address st
 									Account: &commonpb.TargetAccount{Addr: address},
 								},
 							},
-							Metadata: commonpb.MetadataFromMap(metadata),
+							Metadata: metadata,
 						},
 					},
 				},
