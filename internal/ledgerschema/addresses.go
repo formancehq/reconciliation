@@ -8,6 +8,10 @@ package ledgerschema
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"strings"
+
+	"github.com/google/uuid"
 )
 
 // DefaultControlLedger is the default name of the control-ledger that holds
@@ -45,6 +49,17 @@ func FingerprintHash(fingerprint string) string {
 // RuleAccount holds a rule's definition metadata.
 func RuleAccount(ruleID string) string {
 	return "rule:" + ruleID
+}
+
+// ParseRuleAccount extracts the rule UUID from a `rule:{id}` address — the
+// inverse of RuleAccount, kept here so the format lives in one place.
+func ParseRuleAccount(address string) (uuid.UUID, error) {
+	raw, ok := strings.CutPrefix(address, "rule:")
+	if !ok {
+		return uuid.Nil, fmt.Errorf("not a rule account: %q", address)
+	}
+
+	return uuid.Parse(raw)
 }
 
 // AlertItemAccount is the canonical alert account: descriptive metadata + the

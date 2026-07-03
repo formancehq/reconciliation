@@ -19,9 +19,9 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 2 | Bootstrap provisioner (CreateLedger + account-types AUDIT + typed metadata + prepared queries) | ✅ done | `bd95a35` |
 | 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | 🚧 in progress | `8e75db4` |
 | 1 | 3a | ↳ store skeleton + rule serialization + CreateRule/GetRule | ✅ done | `8e75db4` |
-| 1 | 3b | ↳ ListRules/PatchRule/DeleteRule | ⬜ next | — |
-| 1 | 3c | ↳ alert lifecycle (Numscript: mint/guarded moves, OCC, status mirror, idempotency) | ⬜ todo | — |
-| 1 | 4 | Filter translator (`query.Builder` → `filterexpr`/prepared query) | ⬜ todo | — |
+| 1 | 3b | ↳ PatchRule/DeleteRule (+ `ParseRuleAccount`, `DeleteAccountMetadata`) | ✅ done | `<pending>` |
+| 1 | 3c | ↳ alert lifecycle (Numscript: mint/guarded moves, OCC, status mirror, idempotency) | ⬜ next | — |
+| 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
 | 1 | 6 | fx wiring + config + dual-run feature flag | ⬜ todo | — |
 | 2 | — | Flip reads to the ledger; Postgres as shadow | ⬜ todo | — |
@@ -96,10 +96,10 @@ CRITICAL/HIGH.
 
 | # | Sev | Finding | Status |
 |---|---|---|---|
-| F13 | MED | `CreateRule` is an LWW **upsert** (metadata write, no duplicate guard), whereas Postgres `CreateRule` fails on duplicate PK. Behavioral divergence for the drop-in `Store` contract — document it, or guard (read-before-write / conditional). IDs are generated UUIDs so collisions are unlikely, but the semantic gap is real. | ⬜ open |
-| F14 | MED | Address **parse** logic (`uuid.Parse(strings.TrimPrefix(addr, "rule:"))` in `metadata.go`) duplicates the `rule:{id}` format that `schema.RuleAccount` owns → DRY violation, two places to change. Add `schema.ParseRuleAccount(addr)` next to the builder and use it. (Needed by step 3b `ListRules` anyway.) | ⬜ open → fix in 3b |
-| F15 | LOW | `ruleToMetadata` silently drops `schedule`/`notifications` on a `json.Marshal` error (`if err == nil`). Marshal of these types cannot fail in practice; either propagate the error or comment why it's safe. | ⬜ open |
-| F16 | LOW | `ledgerstore` imports `internal/storage` (the Postgres package) only for `ErrNotFound` → heavy dep for one sentinel. Consider a leaf errors package shared by both stores. | ⬜ open |
+| F13 | MED | `CreateRule` is an LWW **upsert** vs Postgres create-fails-on-duplicate. | ✅ resolved (documented) — doc comment states the upsert semantics; guarding would cost a read per create and IDs are generated UUIDs. |
+| F14 | MED | Address **parse** logic duplicated the `rule:{id}` format. | ✅ resolved — `schema.ParseRuleAccount` (inverse of `RuleAccount`), used by `ruleFromAccount`. |
+| F15 | LOW | `ruleToMetadata` swallowed `json.Marshal` errors. | ✅ resolved — now returns `(map, error)`; callers propagate. |
+| F16 | LOW | `ledgerstore` imports `internal/storage` only for `ErrNotFound` → heavy dep for one sentinel. Consider a leaf errors package shared by both stores. | ⬜ open |
 
 ---
 

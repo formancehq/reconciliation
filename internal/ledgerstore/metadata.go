@@ -2,13 +2,13 @@ package ledgerstore
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/google/uuid"
 )
 
 // --- typed MetadataValue constructors ---
@@ -47,7 +47,7 @@ func getTime(md map[string]*commonpb.MetadataValue, key string) time.Time {
 // --- Rule <-> metadata ---
 
 // ruleToMetadata serialises a Rule to the typed control-ledger metadata map.
-func ruleToMetadata(r *models.Rule) map[string]*commonpb.MetadataValue {
+func ruleToMetadata(r *models.Rule) (map[string]*commonpb.MetadataValue, error) {
 	md := map[string]*commonpb.MetadataValue{
 		schema.MetaName:         strVal(r.Name),
 		schema.MetaTemplateKind: strVal(string(r.TemplateKind)),
@@ -64,28 +64,34 @@ func ruleToMetadata(r *models.Rule) map[string]*commonpb.MetadataValue {
 	}
 
 	if r.Schedule != nil {
-		if b, err := json.Marshal(r.Schedule); err == nil {
-			md[schema.MetaSchedule] = strVal(string(b))
+		b, err := json.Marshal(r.Schedule)
+		if err != nil {
+			return nil, fmt.Errorf("marshal schedule: %w", err)
 		}
+
+		md[schema.MetaSchedule] = strVal(string(b))
 	}
 
 	if len(r.Notifications) > 0 {
-		if b, err := json.Marshal(r.Notifications); err == nil {
-			md[schema.MetaNotifications] = strVal(string(b))
+		b, err := json.Marshal(r.Notifications)
+		if err != nil {
+			return nil, fmt.Errorf("marshal notifications: %w", err)
 		}
+
+		md[schema.MetaNotifications] = strVal(string(b))
 	}
 
 	for k, v := range r.Labels {
 		md[schema.LabelPrefix+k] = strVal(v)
 	}
 
-	return md
+	return md, nil
 }
 
 // ruleFromAccount rebuilds a Rule from its control-ledger account (metadata +
 // address, which carries the UUID).
 func ruleFromAccount(acct *commonpb.Account) (*models.Rule, error) {
-	id, err := uuid.Parse(strings.TrimPrefix(acct.GetAddress(), "rule:"))
+	id, err := schema.ParseRuleAccount(acct.GetAddress())
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package ledgerstore
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 )
 
 const controlLedger = "reconciliation"
+
+func ptr[T any](v T) *T { return &v }
 
 func newRule(id uuid.UUID) *models.Rule {
 	now := time.Now().Truncate(time.Microsecond).UTC()
@@ -35,12 +38,21 @@ func newRule(id uuid.UUID) *models.Rule {
 	}
 }
 
+// account builds the control-ledger account a stored rule would read back as.
+func account(t *testing.T, r *models.Rule) *commonpb.Account {
+	t.Helper()
+
+	md, err := ruleToMetadata(r)
+	require.NoError(t, err)
+
+	return &commonpb.Account{Address: schema.RuleAccount(r.ID.String()), Metadata: md}
+}
+
 func TestLedgerStore_CreateRule(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
 	m := NewMockledgerClient(ctrl)
-
 	id := uuid.New()
 
 	m.EXPECT().
@@ -60,13 +72,12 @@ func TestLedgerStore_GetRule(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	m := NewMockledgerClient(ctrl)
-
 	id := uuid.New()
 	want := newRule(id)
 
 	m.EXPECT().
 		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
-		Return(&commonpb.Account{Address: schema.RuleAccount(id.String()), Metadata: ruleToMetadata(want)}, nil)
+		Return(account(t, want), nil)
 
 	got, err := New(m, controlLedger).GetRule(context.Background(), id)
 	require.NoError(t, err)
@@ -80,8 +91,8 @@ func TestLedgerStore_GetRule_NotFoundOnEmptyMetadata(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	m := NewMockledgerClient(ctrl)
-
 	id := uuid.New()
+
 	m.EXPECT().
 		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
 		Return(&commonpb.Account{Address: schema.RuleAccount(id.String())}, nil)
@@ -95,12 +106,96 @@ func TestLedgerStore_GetRule_NotFoundOnGRPCStatus(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	m := NewMockledgerClient(ctrl)
-
 	id := uuid.New()
+
 	m.EXPECT().
 		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
 		Return(nil, status.Error(codes.NotFound, "account not found"))
 
 	_, err := New(m, controlLedger).GetRule(context.Background(), id)
 	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
+func TestLedgerStore_PatchRule(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	m := NewMockledgerClient(ctrl)
+	id := uuid.New()
+
+	m.EXPECT().
+		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
+		Return(account(t, newRule(id)), nil)
+	m.EXPECT().
+		SaveAccountMetadataValues(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ string, md map[string]*commonpb.MetadataValue) error {
+			require.Equal(t, "renamed", md[schema.MetaName].GetStringValue())
+			require.False(t, md[schema.MetaEnabled].GetBoolValue()) // patched to false
+			return nil
+		})
+
+	err := New(m, controlLedger).PatchRule(context.Background(), id, storage.RulePatch{
+		Name:    ptr("renamed"),
+		Enabled: ptr(false),
+	})
+	require.NoError(t, err)
+}
+
+func TestLedgerStore_PatchRule_PrunesRemovedLabels(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	m := NewMockledgerClient(ctrl)
+	id := uuid.New()
+
+	base := newRule(id)
+	base.Labels = map[string]string{"env": "prod", "team": "treasury"}
+
+	m.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).Return(account(t, base), nil)
+	m.EXPECT().SaveAccountMetadataValues(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).Return(nil)
+	// "team" was removed -> its label key must be deleted.
+	m.EXPECT().
+		DeleteAccountMetadata(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ string, keys ...string) error {
+			require.Equal(t, []string{schema.LabelPrefix + "team"}, keys)
+			return nil
+		})
+
+	err := New(m, controlLedger).PatchRule(context.Background(), id, storage.RulePatch{
+		Labels: ptr(map[string]string{"env": "prod"}),
+	})
+	require.NoError(t, err)
+}
+
+func TestLedgerStore_DeleteRule(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	m := NewMockledgerClient(ctrl)
+	id := uuid.New()
+
+	m.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).Return(account(t, newRule(id)), nil)
+	m.EXPECT().
+		DeleteAccountMetadata(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, _ string, keys ...string) error {
+			require.NotEmpty(t, keys)
+			require.True(t, slices.Contains(keys, schema.MetaName))
+			return nil
+		})
+
+	require.NoError(t, New(m, controlLedger).DeleteRule(context.Background(), id))
+}
+
+func TestLedgerStore_DeleteRule_NotFound(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	m := NewMockledgerClient(ctrl)
+	id := uuid.New()
+
+	m.EXPECT().
+		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
+		Return(&commonpb.Account{Address: schema.RuleAccount(id.String())}, nil)
+
+	require.ErrorIs(t, New(m, controlLedger).DeleteRule(context.Background(), id), storage.ErrNotFound)
 }

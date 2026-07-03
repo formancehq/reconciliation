@@ -185,6 +185,41 @@ func (c *Client) SaveAccountMetadataValues(ctx context.Context, ledgerName, addr
 	return err
 }
 
+// DeleteAccountMetadata deletes the given metadata keys from an account in a
+// single atomic batch (no-op if keys is empty).
+func (c *Client) DeleteAccountMetadata(ctx context.Context, ledgerName, address string, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	reqs := make([]*servicepb.Request, 0, len(keys))
+	for _, k := range keys {
+		reqs = append(reqs, &servicepb.Request{
+			Type: &servicepb.Request_Apply{
+				Apply: &servicepb.LedgerApplyRequest{
+					Ledger: ledgerName,
+					Action: &servicepb.LedgerAction{
+						Data: &servicepb.LedgerAction_DeleteMetadata{
+							DeleteMetadata: &commonpb.DeleteMetadataCommand{
+								Target: &commonpb.Target{
+									Target: &commonpb.Target_Account{
+										Account: &commonpb.TargetAccount{Addr: address},
+									},
+								},
+								Key: k,
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	_, err := c.Apply(ctx, reqs...)
+
+	return err
+}
+
 // GetAccount retrieves an account (volumes + metadata) by address. A non-zero
 // checkpointID reads from a query checkpoint instead of live state.
 func (c *Client) GetAccount(ctx context.Context, ledgerName, address string, checkpointID uint64) (*commonpb.Account, error) {

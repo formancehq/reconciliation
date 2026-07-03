@@ -31,11 +31,11 @@ const (
 
 // Metadata keys on the rule (`rule:*`) account.
 const (
-	MetaName         = "name"
-	MetaTemplateKind = "template_kind"
-	MetaEnabled      = "enabled"
-	MetaSchedule     = "schedule" // JSON
-	MetaCadence      = "cadence"
+	MetaName          = "name"
+	MetaTemplateKind  = "template_kind"
+	MetaEnabled       = "enabled"
+	MetaSchedule      = "schedule" // JSON
+	MetaCadence       = "cadence"
 	MetaSpec          = "spec" // JSON
 	MetaCompiledCEL   = "compiled_cel"
 	MetaNotifications = "notifications" // JSON array

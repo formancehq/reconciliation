@@ -35,10 +35,10 @@ func TestRuleMetadataRoundTrip(t *testing.T) {
 		UpdatedAt:     now,
 	}
 
-	acct := &commonpb.Account{
-		Address:  schema.RuleAccount(id.String()),
-		Metadata: ruleToMetadata(orig),
-	}
+	md, err := ruleToMetadata(orig)
+	require.NoError(t, err)
+
+	acct := &commonpb.Account{Address: schema.RuleAccount(id.String()), Metadata: md}
 
 	got, err := ruleFromAccount(acct)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestRuleMetadataRoundTrip(t *testing.T) {
 	require.True(t, orig.UpdatedAt.Equal(got.UpdatedAt))
 
 	// enabled must be a typed BOOL value, not a stringified "true".
-	require.True(t, acct.Metadata[schema.MetaEnabled].GetBoolValue())
+	require.True(t, md[schema.MetaEnabled].GetBoolValue())
 }
 
 func TestRuleMetadataMinimal(t *testing.T) {
@@ -78,7 +78,8 @@ func TestRuleMetadataMinimal(t *testing.T) {
 		UpdatedAt:    time.Now().Truncate(time.Microsecond).UTC(),
 	}
 
-	md := ruleToMetadata(orig)
+	md, err := ruleToMetadata(orig)
+	require.NoError(t, err)
 	require.NotContains(t, md, schema.MetaSchedule)
 	require.NotContains(t, md, schema.MetaNotifications)
 	require.NotContains(t, md, schema.MetaCompiledCEL)

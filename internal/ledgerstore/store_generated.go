@@ -41,6 +41,25 @@ func (m *MockledgerClient) EXPECT() *MockledgerClientMockRecorder {
 	return m.recorder
 }
 
+// DeleteAccountMetadata mocks base method.
+func (m *MockledgerClient) DeleteAccountMetadata(ctx context.Context, ledgerName, address string, keys ...string) error {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, ledgerName, address}
+	for _, a := range keys {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "DeleteAccountMetadata", varargs...)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteAccountMetadata indicates an expected call of DeleteAccountMetadata.
+func (mr *MockledgerClientMockRecorder) DeleteAccountMetadata(ctx, ledgerName, address any, keys ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, ledgerName, address}, keys...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteAccountMetadata", reflect.TypeOf((*MockledgerClient)(nil).DeleteAccountMetadata), varargs...)
+}
+
 // GetAccount mocks base method.
 func (m *MockledgerClient) GetAccount(ctx context.Context, ledgerName, address string, checkpointID uint64) (*commonpb.Account, error) {
 	m.ctrl.T.Helper()
