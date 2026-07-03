@@ -20,14 +20,14 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | 🚧 in progress | `8e75db4` |
 | 1 | 3a | ↳ store skeleton + rule serialization + CreateRule/GetRule | ✅ done | `8e75db4` |
 | 1 | 3b | ↳ PatchRule/DeleteRule (+ `ParseRuleAccount`, `DeleteAccountMetadata`) | ✅ done | `d023826` |
-| 1 | 3c | ↳ alert lifecycle | 🚧 in progress | — |
+| 1 | 3c | ↳ alert lifecycle | ✅ done | — |
 | 1 | 3c-1 | ↳ address reorder (per→fp), `MetaID`, `Alert↔metadata` serialization (OCC from balance, status mirror) | ✅ done | `f959ea1` |
 | 1 | 3c-2 | ↳ `OpenOrUpdateAlert` (mint from pool → st:open, OCC, mirror, idempotency) | ✅ done · reviewed | `66b64e2` |
 | 1 | 3c-2b | ↳ chart merge (`alert:issued`+`alert:occ` → `alert:pool`, 5→4 types) + Numscript **library** (SaveNumscript + ScriptReference) | ✅ done | `739efe7` |
-| 1 | 3c-3 | ↳ alert lifecycle: reads + guarded transitions + snooze | 🚧 in progress | — |
+| 1 | 3c-3 | ↳ alert lifecycle: reads + guarded transitions + snooze | ✅ done | — |
 | 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | `59e4d7b` |
 | 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ✅ done | — |
-| 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ⬜ todo | — |
+| 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ✅ done | — |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
 | 1 | 6 | fx wiring + config + dual-run feature flag | ⬜ todo | — |
@@ -252,6 +252,24 @@ wrong-kind + already-resolved; accept note-required; auto-resolve open→resolve
 already-resolved; active-fingerprint filter) + it-test (`TestIntegration_AlertTransitions`) driving
 the ack→resolve marker moves, the re-resolve guard, auto-resolve, and the sweep against the live
 ledger. Coverage `ledgerstore` 83.7%. build/vet/lint(0)/gofmt/-race clean.
+
+### Phase 1 step 3c-3c — snooze / unsnooze (2026-07-03)
+
+`internal/ledgerstore/alert_snooze.go` — status-neutral notification mute, metadata-only (no
+marker move). **Snooze** rejects a non-future `until` and a RESOLVED alert; sets the `snooze`
+metadata key on the item (a targeted LWW write, naturally retransmit-safe); re-snooze overwrites.
+**Unsnooze** is idempotent: no snooze → unchanged no-op; else deletes the `snooze` key, swallowing
+NotFound (already-gone = done, and gRPC-retransmit-safe). `by` is accepted but not persisted —
+DELETED_METADATA has no actor field; actor attribution waits for the semantic event-log (RFC §4.4).
+
+Tests: gomock (snooze set / past-until reject / resolved not-found; unsnooze delete / no-op) +
+the it-test now drives snooze→unsnooze on the live ledger (metadata appears/clears, status stays
+OPEN, second unsnooze is a no-op). Coverage `ledgerstore` 83.6%. build/vet/lint(0)/gofmt/-race clean.
+
+**Step 3c-3 (alert lifecycle) complete.** The `LedgerStore` now covers the full alert surface
+except the paginated lists (`ListAlerts`/`ListAlertEvents`) and evaluations, which are step 4 /
+the deliberate no-durable-evaluations decision (RFC §4.4.2). No `var _ Store = (*LedgerStore)(nil)`
+assertion yet — the interface is intentionally not fully implemented until step 4.
 
 ## Proto re-sync procedure (F5)
 

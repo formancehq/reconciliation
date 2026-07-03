@@ -278,6 +278,29 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	require.Contains(t, fps, "fp-active")
 	require.NotContains(t, fps, "fp-lifecycle", "resolved is not active")
 	require.NotContains(t, fps, "fp-auto", "auto-resolved is not active")
+
+	// Snooze / unsnooze — metadata-only, status-neutral (no marker move).
+	sn := open("fp-snooze")
+	snItem := schema.AlertItemAccount(ruleID.String(), period, schema.FingerprintHash("fp-snooze"))
+
+	_, err = store.SnoozeAlert(ctx, sn.ID, time.Now().Add(time.Hour), "ops", "muting")
+	require.NoError(t, err, "snooze")
+
+	snAcct, err := client.GetAccount(ctx, control, snItem, 0)
+	require.NoError(t, err)
+	require.Contains(t, snAcct.GetMetadata(), schema.MetaSnooze, "snooze metadata set")
+	require.Equal(t, "OPEN", snAcct.GetMetadata()[schema.MetaStatus].GetStringValue(), "snooze is status-neutral")
+
+	_, err = store.UnsnoozeAlert(ctx, sn.ID, "ops")
+	require.NoError(t, err, "unsnooze")
+
+	snAcct, err = client.GetAccount(ctx, control, snItem, 0)
+	require.NoError(t, err)
+	require.NotContains(t, snAcct.GetMetadata(), schema.MetaSnooze, "snooze metadata cleared")
+
+	// Unsnooze again → idempotent no-op.
+	_, err = store.UnsnoozeAlert(ctx, sn.ID, "ops")
+	require.NoError(t, err, "unsnooze is idempotent")
 }
 
 // balance reads one asset's balance on an account (empty string if absent).
