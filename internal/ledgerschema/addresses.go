@@ -85,3 +85,6 @@ func OpenByRulePrefix(ruleID string) string {
 func IssuedByRulePrefix(ruleID string) string {
 	return "alert:issued:rule:" + ruleID + ":"
 }
+
+// RulePrefix matches all rule-definition accounts.
+func RulePrefix() string { return "rule:" }

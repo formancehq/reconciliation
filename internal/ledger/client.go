@@ -83,15 +83,18 @@ func (c *Client) Apply(ctx context.Context, requests ...*servicepb.Request) (*se
 	})
 }
 
-// CreateLedger creates a ledger with an initial metadata schema and account
-// types. Ignores AlreadyExists so bootstrap is idempotent.
-func (c *Client) CreateLedger(ctx context.Context, name string, schema []*commonpb.SetMetadataFieldTypeCommand, accountTypes map[string]*commonpb.AccountType) error {
+// CreateLedger creates a ledger with an initial metadata schema, account types,
+// and default chart-enforcement mode. Ignores AlreadyExists so bootstrap is
+// idempotent. Note: the zero value of ChartEnforcementMode is STRICT — pass
+// AUDIT explicitly for a gradual rollout.
+func (c *Client) CreateLedger(ctx context.Context, name string, schema []*commonpb.SetMetadataFieldTypeCommand, accountTypes map[string]*commonpb.AccountType, enforcement commonpb.ChartEnforcementMode) error {
 	_, err := c.Apply(ctx, &servicepb.Request{
 		Type: &servicepb.Request_CreateLedger{
 			CreateLedger: &servicepb.CreateLedgerRequest{
-				Name:          name,
-				InitialSchema: schema,
-				AccountTypes:  accountTypes,
+				Name:                   name,
+				InitialSchema:          schema,
+				AccountTypes:           accountTypes,
+				DefaultEnforcementMode: enforcement,
 			},
 		},
 	})
@@ -179,9 +182,14 @@ func (c *Client) SaveAccountMetadata(ctx context.Context, ledgerName, address st
 // GetAccount retrieves an account (volumes + metadata) by address. A non-zero
 // checkpointID reads from a query checkpoint instead of live state.
 func (c *Client) GetAccount(ctx context.Context, ledgerName, address string, checkpointID uint64) (*commonpb.Account, error) {
-	return c.service.GetAccount(ctx, &servicepb.GetAccountRequest{
+	acct, err := c.service.GetAccount(ctx, &servicepb.GetAccountRequest{
 		Ledger:       ledgerName,
 		Address:      address,
 		CheckpointId: checkpointID,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("get account %s@%s: %w", address, ledgerName, err)
+	}
+
+	return acct, nil
 }

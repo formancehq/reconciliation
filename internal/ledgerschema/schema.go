@@ -133,25 +133,28 @@ func MetadataSchema() []*commonpb.SetMetadataFieldTypeCommand {
 	return cmds
 }
 
-// PreparedQuerySpec is a declarative prepared-query definition. The textual
-// filter (filterexpr grammar) is compiled to a commonpb.QueryFilter proto by the
-// provisioner (step 2). Only fixed-shape hot queries are prepared; per-rule /
+// Prepared query names. Only fixed-shape hot queries are prepared; per-rule /
 // per-status / label-filtered lists are built ad-hoc by the filter translator (step 4).
-type PreparedQuerySpec struct {
-	Name   string
-	Filter string // filterexpr text
-}
-
-// Prepared query names.
 const (
 	PQOpenCount    = "alerts-open-count" // AGGREGATE_VOLUMES(ALERT) over all open markers
 	PQRulesEnabled = "rules-enabled"     // LIST enabled rules (scheduler)
 )
 
-// PreparedQueries returns the fixed-shape prepared queries to register at bootstrap.
-func PreparedQueries() []PreparedQuerySpec {
-	return []PreparedQuerySpec{
-		{Name: PQOpenCount, Filter: `address == "alert:st:open:*"`},
-		{Name: PQRulesEnabled, Filter: `address == "rule:*" and metadata[enabled] == true`},
+// PreparedQueries returns the fixed-shape prepared queries to register at
+// bootstrap, as ready-to-apply commonpb.PreparedQuery protos.
+func PreparedQueries() []*commonpb.PreparedQuery {
+	return []*commonpb.PreparedQuery{
+		{
+			// filterexpr: address == "alert:st:open:*"
+			Name:   PQOpenCount,
+			Target: commonpb.QueryTarget_QUERY_TARGET_ACCOUNTS,
+			Filter: FilterAddressPrefix(OpenPrefix()),
+		},
+		{
+			// filterexpr: address == "rule:*" and metadata[enabled] == true
+			Name:   PQRulesEnabled,
+			Target: commonpb.QueryTarget_QUERY_TARGET_ACCOUNTS,
+			Filter: FilterAll(FilterAddressPrefix(RulePrefix()), FilterMetadataBool(MetaEnabled, true)),
+		},
 	}
 }

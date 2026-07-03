@@ -16,8 +16,8 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 0 | — | Reads first: point "pool" at a ledger, PIT → checkpoints | ⬜ todo | — |
 | **1** | **0** | **Ledger v3 gRPC transport** (proto + BucketService client) | ✅ done · reviewed | `5583a69` |
 | 1 | 1 | Chart-of-accounts / schema definition (`internal/ledgerschema`) | ✅ done | `c51be9a` |
-| 1 | 2 | Bootstrap provisioner (CreateLedger + account-types AUDIT + typed metadata + prepared queries) | ⬜ next | — |
-| 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | ⬜ todo | — |
+| 1 | 2 | Bootstrap provisioner (CreateLedger + account-types AUDIT + typed metadata + prepared queries) | ✅ done | `<pending>` |
+| 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | ⬜ next | — |
 | 1 | 4 | Filter translator (`query.Builder` → `filterexpr`/prepared query) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
 | 1 | 6 | fx wiring + config + dual-run feature flag | ⬜ todo | — |
@@ -55,6 +55,23 @@ issues ✅ · conventional commit ✅ · not on `main` ✅ · additive only (no 
 toolchain, F2 secure transport) must be closed before this leaves POC / before a shared
 environment; both are deferred to later steps (CI setup / step 6 config), not blockers for
 steps 1–5.
+
+---
+
+### Phase 1 step 2 — provisioner (notes)
+
+`internal/ledger/provisioner.go` — idempotent bootstrap: `CreateLedger` (metadata schema +
+account types + **AUDIT** enforcement) then registers the fixed prepared queries. QueryFilter
+protos built by hand (`ledgerschema.Filter*`, option (a)) since the ledger's filterexpr text
+parser is server-side. Unit-tested with gomock (`provisionAPI` interface + generated mock) and
+the filter builders/prepared-queries proto shapes. build/vet/lint/gofmt clean.
+
+Tracked follow-ups:
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F8 | MED | Schema **evolution** on an already-created ledger is not handled: `CreateLedger` applies the full schema only on first boot; adding a metadata field / account type later needs idempotent `SetMetadataFieldType` / `AddAccountType` passes in `Provision`. | ⬜ open (POC creates once) |
+| F9 | LOW | Provisioner has no integration test against a real ledger (only gomock unit tests). Add an `_it_test.go` when the local ledger stack is wired. | ⬜ open |
 
 ---
 
