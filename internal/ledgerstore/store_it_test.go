@@ -196,6 +196,90 @@ func TestIntegration_OpenAlert(t *testing.T) {
 	require.Equal(t, "1", balance(ctx, t, client, control, probe, schema.AssetOcc), "identical batch applied once")
 }
 
+// TestIntegration_AlertTransitions exercises the guarded lifecycle transitions
+// (ack / resolve / auto-resolve) + ListActiveAlertFingerprints against a real
+// Ledger v3: the ALERT marker moves between state accounts (guarded by the bare
+// Numscript source), the status mirror follows, and the guard rejects an illegal
+// transition (re-resolve).
+//
+//	go test -tags it -run TestIntegration_AlertTransitions ./internal/ledgerstore/...
+func TestIntegration_AlertTransitions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, err := ledger.NewClient(itLedgerAddr(), nil)
+	require.NoError(t, err)
+
+	defer func() { _ = client.Close() }()
+
+	const control = "recon-it2"
+
+	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
+	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
+
+	store := New(client, control)
+
+	ruleID := uuid.New()
+	const period = "2026-04"
+
+	open := func(fp string) *models.Alert {
+		res, oerr := store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
+			RuleID: ruleID, Fingerprint: fp, PeriodID: period, Severity: models.SeverityHigh,
+			EvaluationID: uuid.New(), Evidence: json.RawMessage(`{"drift":"1"}`), OccurredAt: time.Now().UTC(),
+		})
+		require.NoError(t, oerr, "open %s", fp)
+
+		return res.Alert
+	}
+
+	// Ack → Resolve lifecycle, verifying the marker moves between state accounts.
+	a := open("fp-lifecycle")
+	fpHash := schema.FingerprintHash("fp-lifecycle")
+	stAck := schema.AlertStateAccount(schema.StateAck, ruleID.String(), period, fpHash)
+	stResolved := schema.AlertStateAccount(schema.StateResolved, ruleID.String(), period, fpHash)
+
+	acked, err := store.AckAlert(ctx, a.ID, &models.Ack{By: "ops", At: time.Now().UTC(), Note: "looking"})
+	require.NoError(t, err, "ack")
+	require.Equal(t, models.AlertAcknowledged, acked.Status)
+	require.Equal(t, "1", balance(ctx, t, client, control, stAck, schema.AssetAlert), "marker moved to st:ack")
+
+	resolved, err := store.ResolveAlertManual(ctx, a.ID,
+		&models.Resolution{Kind: models.ResolutionFixedByBooking, By: "ops", At: time.Now().UTC()})
+	require.NoError(t, err, "resolve")
+	require.Equal(t, models.AlertResolved, resolved.Status)
+	require.Equal(t, "1", balance(ctx, t, client, control, stResolved, schema.AssetAlert), "marker moved to st:resolved")
+
+	byID, err := store.GetAlert(ctx, a.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.AlertResolved, byID.Status, "resolution persisted")
+	require.NotNil(t, byID.Resolution)
+
+	// Guard: an alert can't be resolved twice.
+	_, err = store.ResolveAlertManual(ctx, a.ID,
+		&models.Resolution{Kind: models.ResolutionFixedByBooking, By: "ops", At: time.Now().UTC()})
+	require.ErrorIs(t, err, storage.ErrNotFound, "re-resolve rejected")
+
+	// Auto-resolve by (rule, fingerprint, period).
+	open("fp-auto")
+	ar, err := store.AutoResolveAlert(ctx, ruleID, "fp-auto", period, uuid.New(), time.Now().UTC())
+	require.NoError(t, err, "auto-resolve")
+	require.Equal(t, models.AlertResolved, ar.Status)
+	require.Equal(t, models.ResolutionAuto, ar.Resolution.Kind)
+
+	// Auto-resolve with no active alert → no-op.
+	none, err := store.AutoResolveAlert(ctx, ruleID, "fp-never", period, uuid.New(), time.Now().UTC())
+	require.NoError(t, err)
+	require.Nil(t, none, "no active alert → no-op")
+
+	// ListActiveAlertFingerprints returns only the still-active fingerprints.
+	open("fp-active")
+	fps, err := store.ListActiveAlertFingerprints(ctx, ruleID, period)
+	require.NoError(t, err)
+	require.Contains(t, fps, "fp-active")
+	require.NotContains(t, fps, "fp-lifecycle", "resolved is not active")
+	require.NotContains(t, fps, "fp-auto", "auto-resolved is not active")
+}
+
 // balance reads one asset's balance on an account (empty string if absent).
 func balance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, addr, asset string) string {
 	t.Helper()

@@ -26,7 +26,7 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 3c-2b | ↳ chart merge (`alert:issued`+`alert:occ` → `alert:pool`, 5→4 types) + Numscript **library** (SaveNumscript + ScriptReference) | ✅ done | `739efe7` |
 | 1 | 3c-3 | ↳ alert lifecycle: reads + guarded transitions + snooze | 🚧 in progress | — |
 | 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | `59e4d7b` |
-| 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ⬜ next | — |
+| 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ✅ done | — |
 | 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ⬜ todo | — |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
@@ -224,6 +224,34 @@ bounded sets; step 4 adds the cursor-paginated public lists), schema `FilterAny`
 |---|---|---|---|
 | F20 | MED | `SetMetadataFieldType` declares a field's TYPE but does **not** make it queryable — a `metadata[k]==v` filter needs an explicit `CreateIndex` (else `FailedPrecondition: index not found`). The RFC §4.3.1 wording ("SetMetadataFieldType … builds its forward index") is misleading. Fixed: the provisioner now creates the `id` account-metadata index (`schema.MetadataIndexes()`); it builds async and a query gets `codes.Unavailable` (INDEX_BUILDING) until ready — absorbed by the client retry policy. **Step 4 must add indexes for every field its lists filter on** (status, severity, rule_id, period, enabled) before executing those queries. | 🟡 id done; step-4 fields pending |
 | F21 | LOW | `QueryAccounts` collects the whole stream in memory — fine for id lookup (≤1) and the per-(rule,period) sweep, but the public `ListAlerts`/`ListRules` (step 4) MUST stream with the opaque `x-next-cursor` trailer instead. | ⬜ open (step 4) |
+
+### Phase 1 step 3c-3b — guarded transitions + active-fingerprint sweep (2026-07-03)
+
+`internal/ledgerstore/alert_transition.go` — the guarded {ack, resolve, accept, auto-resolve}
+transitions, all built on a new `alert_move` library script (a pure guarded marker move
+`st:{from}→st:{to}`, no OCC — the bare source is the CAS). Each runs as one atomic, idempotent
+`CreateTransaction`: the marker move + the `status` mirror / resolution / ack metadata set (and a
+live snooze deleted on close) land together.
+
+Semantics ported from the Postgres store: **Ack** OPEN→ACK (idempotent no-op on already-ACK,
+`ErrNotFound` on RESOLVED); **Resolve/Accept** {OPEN,ACK}→RESOLVED (`ErrNotFound` if already
+resolved; Accept requires a note); **AutoResolve** structural by (rule,fp,period), no-op `(nil,
+nil)` when nothing active. `ListActiveAlertFingerprints` scans the (rule,period) item accounts by
+address prefix (builtin index) and filters status client-side — the raw fingerprint lives on the
+item, not the hash-only marker address, so no status index is needed.
+
+Idempotency keys now carry an **action discriminator** (`alertActionKey("ack"|"resolve"|
+"accept"|"autoresolve"|"openorupdate", …)`) so distinct operations on the same entity never share
+a key (which, under the content-sensitive idempotency of F17, would conflict). Operator actions
+key on the action timestamp (ack.At / resolution.At) — a gRPC retransmit dedups; a genuinely new
+action (e.g. after reopen) gets a fresh key. The guard is the retransmit backstop: without the
+key, a re-sent committed move would fail its CAS and surface a spurious error.
+
+Tests: gomock for every branch (ack open→ack / no-op / not-found; resolve incl. snooze-clear +
+wrong-kind + already-resolved; accept note-required; auto-resolve open→resolved / no-account /
+already-resolved; active-fingerprint filter) + it-test (`TestIntegration_AlertTransitions`) driving
+the ack→resolve marker moves, the re-resolve guard, auto-resolve, and the sweep against the live
+ledger. Coverage `ledgerstore` 83.7%. build/vet/lint(0)/gofmt/-race clean.
 
 ## Proto re-sync procedure (F5)
 

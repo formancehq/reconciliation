@@ -87,7 +87,7 @@ func TestProvisioner_Provision(t *testing.T) {
 		}
 	}
 
-	for _, want := range []string{schema.NumscriptAlertOpen, schema.NumscriptAlertBump, schema.NumscriptAlertReopen} {
+	for _, want := range []string{schema.NumscriptAlertOpen, schema.NumscriptAlertBump, schema.NumscriptAlertReopen, schema.NumscriptAlertMove} {
 		if !slices.Contains(scripts, want) {
 			t.Errorf("numscript %q not registered (got %v)", want, scripts)
 		}

@@ -18,6 +18,7 @@ const (
 	NumscriptAlertOpen   = "alert_open"   // mint marker → st:open + mint OCC → item (new alert)
 	NumscriptAlertBump   = "alert_bump"   // mint OCC → item (repeat, marker stays put)
 	NumscriptAlertReopen = "alert_reopen" // guarded move st:{from}→st:open + mint OCC (reopen/resurface)
+	NumscriptAlertMove   = "alert_move"   // guarded move st:{from}→st:{to}, no OCC (ack/resolve/accept/auto-resolve)
 )
 
 // Numscript var names — the account addresses passed per call.
@@ -26,6 +27,7 @@ const (
 	VarItem   = "item"    // the canonical alert item account
 	VarStOpen = "st_open" // the st:open marker account
 	VarStFrom = "st_from" // the marker's current state account (guarded move source)
+	VarStTo   = "st_to"   // the marker's target state account (guarded move destination)
 )
 
 // NumscriptDef is one library program to register at provisioning.
@@ -43,6 +45,7 @@ func Numscripts() []NumscriptDef {
 		{NumscriptAlertOpen, alertOpenContent(), NumscriptVersion},
 		{NumscriptAlertBump, alertBumpContent(), NumscriptVersion},
 		{NumscriptAlertReopen, alertReopenContent(), NumscriptVersion},
+		{NumscriptAlertMove, alertMoveContent(), NumscriptVersion},
 	}
 }
 
@@ -76,6 +79,20 @@ send [%[3]s 1] (
 	source = $%[1]s allowing unbounded overdraft
 	destination = $%[2]s
 )`, VarPool, VarItem, AssetOcc)
+}
+
+// alertMoveContent moves the ALERT marker between two state accounts, no OCC
+// bump — the guarded lifecycle transition for ack (open→ack), resolve/accept
+// ({open,ack}→resolved) and auto-resolve. The bare source is the compare-and-swap.
+func alertMoveContent() string {
+	return fmt.Sprintf(`vars {
+	account $%[1]s
+	account $%[2]s
+}
+send [%[3]s 1] (
+	source = $%[1]s
+	destination = $%[2]s
+)`, VarStFrom, VarStTo, AssetAlert)
 }
 
 // alertReopenContent moves the ALERT marker st:{from}→st:open and bumps OCC. The

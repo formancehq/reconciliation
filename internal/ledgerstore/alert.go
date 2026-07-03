@@ -212,11 +212,18 @@ func presentClosureKeys(a *models.Alert) []string {
 }
 
 // alertBatchKey derives the idempotency key for an OpenOrUpdateAlert batch,
-// deterministic on (ruleID, fingerprint, periodID, evaluationID). Components are
-// length-prefixed before hashing so a fingerprint containing the separator
-// cannot collide with a different (fingerprint, period) split.
+// deterministic on (ruleID, fingerprint, periodID, evaluationID).
 func alertBatchKey(in storage.OpenAlertInput) string {
-	parts := []string{in.RuleID.String(), in.Fingerprint, in.PeriodID, in.EvaluationID.String()}
+	return alertActionKey("openorupdate", in.RuleID.String(), in.Fingerprint, in.PeriodID, in.EvaluationID.String())
+}
+
+// alertActionKey builds a batch idempotency key from length-prefixed parts (so a
+// component containing the separator can't collide with a different split). The
+// leading action discriminator keeps distinct operations on the same entity
+// (open-or-update vs auto-resolve vs ack/resolve) from sharing a key — which,
+// given the ledger's content-sensitive idempotency (F17), would otherwise
+// conflict.
+func alertActionKey(parts ...string) string {
 	for i, p := range parts {
 		parts[i] = fmt.Sprintf("%d:%s", len(p), p)
 	}

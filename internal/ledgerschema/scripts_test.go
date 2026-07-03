@@ -17,10 +17,24 @@ func TestNumscripts(t *testing.T) {
 		byName[ns.Name] = ns
 	}
 
-	require.Len(t, byName, 3)
+	require.Len(t, byName, 4)
 	require.Contains(t, byName, NumscriptAlertOpen)
 	require.Contains(t, byName, NumscriptAlertBump)
 	require.Contains(t, byName, NumscriptAlertReopen)
+	require.Contains(t, byName, NumscriptAlertMove)
+}
+
+func TestNumscriptAlertMove(t *testing.T) {
+	t.Parallel()
+
+	c := content(t, NumscriptAlertMove)
+
+	// Pure guarded move st_from → st_to: bare source (CAS), no OCC, no pool.
+	require.Contains(t, c, "source = $"+VarStFrom+"\n")
+	require.Contains(t, c, "destination = $"+VarStTo)
+	require.NotContains(t, c, "allowing unbounded overdraft")
+	require.NotContains(t, c, "["+AssetOcc+" 1]")
+	requireDeclaresVars(t, c, VarStFrom, VarStTo)
 }
 
 func TestNumscriptAlertOpen(t *testing.T) {
