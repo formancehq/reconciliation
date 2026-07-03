@@ -29,8 +29,10 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ✅ done | `9cc6025` |
 | 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ✅ done | `32603fa` |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ✅ done · reviewed | `916fee3` |
-| 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
-| 1 | 6 | fx wiring + config + dual-run feature flag | ⬜ todo | — |
+| 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | 🚧 mechanism done | — |
+| 1 | 5a | ↳ checkpoint mechanism: client (`CreateQueryCheckpoint`/`Delete` + `AggregateVolumes`) + `Checkpoint` lifecycle + `CheckpointReader` (data-ledger reads at a checkpoint) | ✅ done | — |
+| 1 | 5b | ↳ engine interface flip (`LedgerResolver` pit→checkpointID) + `Evaluation` anchor + service acquisition | ⬜ folded into step 6 (behind the flag) | — |
+| 1 | 6 | fx wiring + config + dual-run feature flag (+ 5b engine flip) | ⬜ todo | — |
 | 2 | — | Flip reads to the ledger; Postgres as shadow | ⬜ todo | — |
 | 3 | — | Drop Postgres + own message bus (ledger event sink) | ⬜ todo | — |
 | 4 | — | Semantic events / replay (generic event-log) | ⬜ todo | — |
@@ -338,6 +340,37 @@ pool, nothing to aggregate). Chart stays 4 types. RFC §4.1.2 updated.
 | # | Sev | Finding | Status |
 |---|---|---|---|
 | F25 | MED | The ledger's read-side **metadata index is eventually consistent** with writes: a metadata-filtered read (GetAlert-by-id, ListRules/ListAlerts) right after the write may briefly not see it. The **machine path is unaffected** — `AutoResolveAlert` + the sweep read by structural address (`GetAccount`), which is consistent; only the **operator path** (id-resolution) uses the index, and it is human-paced (ms lag ≪ operator reaction). Surfaced as an it-test flake (immediate GetAlert after open); fixed with `require.EventuallyWithT`. A strict production fix would thread `ReadOptions.min_log_sequence` from the write into the read, or bounded-retry `findAlertItem` on miss. | ⬜ open (deferred; POC-safe) |
+
+### Phase 1 step 5a — checkpoint mechanism (SDLC review, 2026-07-03)
+
+The ADR-002 core (read A and B at one globally-consistent cut) built as a standalone, tested
+component — **without** touching the engine or Postgres (scope: "mechanism first"). The engine
+`LedgerResolver` interface flip + `Evaluation` anchor + service acquisition move to step 6, done
+behind the dual-run flag (step 5b).
+
+- **Client**: `AggregateVolumes(ledger, filter, checkpointID)` (per-asset input−output),
+  `CreateQueryCheckpoint` (returns id + pinned max_sequence, read from the `CreatedQueryCheckpointLog`
+  in the Apply response), `DeleteQueryCheckpoint` (NotFound-tolerant).
+- **`Checkpoint` lifecycle** (`checkpoint.go`): `AcquireCheckpoint` → `Release` (create → use →
+  delete; checkpoints aren't auto-cleaned and pin SSTs, so the caller owns the lifecycle).
+- **`CheckpointReader`** (`resolver.go`): `AggregateBalance(ctx, ledger, query, checkpointID)` —
+  signature mirrors the future `engine.LedgerResolver` with checkpointID replacing pit, so it drops
+  into the engine at step 5b. Translates the data-ledger source query (`{$match:{address|metadata[k]}}`)
+  via the shared `schema.TranslateQuery`.
+- **Query translator factored to `ledgerschema`** (`query.go`: `TranslateQuery` + the and/or/not
+  walker), shared by the recon Store (`alertLeaf`/`ruleLeaf`) and the data-ledger reader
+  (`dataLedgerLeaf`) — DRY; `FilterAddressExact` added for exact-account matches.
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0)/gofmt/-race clean; coverage `ledgerschema`
+82.1%, `ledgerstore` 82.2% (>80%); `ledger` 32.7% is the it-tested gRPC wrapper (F3). it-test
+`TestIntegration_CheckpointConsistentReads` proves the consistent cut end-to-end: two ledgers read
+equal at one checkpoint; a later write to A leaves the checkpoint read frozen (100) while the live
+read diverges (150). No CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F26 | MED | Checkpoint **lifecycle ownership** is the caller's: an evaluation must `Release` its checkpoint or it leaks (pins SSTs → disk growth). Step 5b/6 must `defer Release` with a cancellation-surviving context, and add a bounded reaper/ring for crash-orphaned checkpoints (ADR-002 §7). | ⬜ open (step 5b/6) |
+| F27 | LOW | `AggregateVolumes` reads are eventually consistent live (same class as F25); the it-test waits via `require.EventuallyWithT` before pinning the checkpoint so the snapshot includes the writes. Checkpoint reads themselves are deterministic (frozen snapshot). | ⬜ noted |
 
 ## Proto re-sync procedure (F5)
 

@@ -17,11 +17,6 @@ import (
 // (the Builder marshals to the same {$and|$or|$not|$match|…} shape query.ParseJSON
 // consumes), preserving the boolean structure.
 
-// leafMapper maps one leaf predicate (operator, key, value) to a ledger filter.
-// It is resource-specific: the same key resolves to different fields for rules
-// vs alerts (e.g. a rule's id is its address, an alert's id is metadata).
-type leafMapper func(op, key string, value any) (*commonpb.QueryFilter, error)
-
 const (
 	opMatch = "$match"
 	opGt    = "$gt"
@@ -31,8 +26,9 @@ const (
 )
 
 // buildListFilter scopes a list to prefix and ANDs in the translated query
-// (nil qb → prefix only).
-func buildListFilter(prefix string, qb query.Builder, leaf leafMapper) (*commonpb.QueryFilter, error) {
+// (nil qb → prefix only). The boolean-tree walk lives in schema.TranslateQuery;
+// alertLeaf/ruleLeaf map the recon-specific leaf predicates.
+func buildListFilter(prefix string, qb query.Builder, leaf schema.LeafMapper) (*commonpb.QueryFilter, error) {
 	prefixFilter := schema.FilterAddressPrefix(prefix)
 	if qb == nil {
 		return prefixFilter, nil
@@ -43,80 +39,16 @@ func buildListFilter(prefix string, qb query.Builder, leaf leafMapper) (*commonp
 		return nil, fmt.Errorf("marshal query: %w", err)
 	}
 
-	var node map[string]any
-	if err := json.Unmarshal(raw, &node); err != nil {
-		return nil, fmt.Errorf("decode query: %w", err)
+	translated, err := schema.TranslateQuery(raw, leaf)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", storage.ErrInvalidQuery, err)
 	}
 
-	translated, err := translateNode(node, leaf)
-	if err != nil {
-		return nil, err
+	if translated == nil {
+		return prefixFilter, nil
 	}
 
 	return schema.FilterAll(prefixFilter, translated), nil
-}
-
-// translateNode recursively maps a query.Builder JSON node to a QueryFilter.
-func translateNode(node map[string]any, leaf leafMapper) (*commonpb.QueryFilter, error) {
-	op, val, err := singleMapKey(node)
-	if err != nil {
-		return nil, err
-	}
-
-	switch op {
-	case "$and", "$or":
-		items, ok := val.([]any)
-		if !ok {
-			return nil, fmt.Errorf("%w: %s expects an array", storage.ErrInvalidQuery, op)
-		}
-
-		subs := make([]*commonpb.QueryFilter, 0, len(items))
-		for _, it := range items {
-			m, ok := it.(map[string]any)
-			if !ok {
-				return nil, fmt.Errorf("%w: %s item must be an object", storage.ErrInvalidQuery, op)
-			}
-
-			sub, serr := translateNode(m, leaf)
-			if serr != nil {
-				return nil, serr
-			}
-
-			subs = append(subs, sub)
-		}
-
-		if op == "$and" {
-			return schema.FilterAll(subs...), nil
-		}
-
-		return schema.FilterAny(subs...), nil
-
-	case "$not":
-		m, ok := val.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("%w: $not expects an object", storage.ErrInvalidQuery)
-		}
-
-		sub, serr := translateNode(m, leaf)
-		if serr != nil {
-			return nil, serr
-		}
-
-		return schema.FilterNot(sub), nil
-
-	default:
-		m, ok := val.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("%w: %s expects an object", storage.ErrInvalidQuery, op)
-		}
-
-		key, value, kerr := singleMapKey(m)
-		if kerr != nil {
-			return nil, kerr
-		}
-
-		return leaf(op, key, value)
-	}
 }
 
 // alertLeaf maps an alert list predicate to a ledger filter over alert:item:*.
@@ -239,18 +171,4 @@ func datetimeMicros(value any) (int64, error) {
 
 func opErr(op, key string) error {
 	return fmt.Errorf("%w: %q does not support operator %s", storage.ErrInvalidQuery, key, op)
-}
-
-// singleMapKey returns the sole (key, value) of a one-entry map — the shape of
-// every query.Builder JSON node.
-func singleMapKey(m map[string]any) (string, any, error) {
-	if len(m) != 1 {
-		return "", nil, fmt.Errorf("%w: expected exactly one key, got %d", storage.ErrInvalidQuery, len(m))
-	}
-
-	for k, v := range m {
-		return k, v, nil
-	}
-
-	return "", nil, nil // unreachable (len checked above)
 }

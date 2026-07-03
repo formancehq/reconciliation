@@ -107,7 +107,7 @@ func TestBuildListFilter_Rejects(t *testing.T) {
 	cases := []struct {
 		name string
 		qb   query.Builder
-		leaf leafMapper
+		leaf schema.LeafMapper
 	}{
 		{"unknown alert key", query.Match("bogus", "x"), alertLeaf},
 		{"unknown rule key", query.Match("bogus", "x"), ruleLeaf},

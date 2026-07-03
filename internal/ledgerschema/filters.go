@@ -20,6 +20,19 @@ func FilterAddressPrefix(prefix string) *commonpb.QueryFilter {
 	}
 }
 
+// FilterAddressExact matches exactly one account address (filterexpr:
+// `address == "<addr>"`, no prefix semantics).
+func FilterAddressExact(address string) *commonpb.QueryFilter {
+	return &commonpb.QueryFilter{
+		Filter: &commonpb.QueryFilter_Address{
+			Address: &commonpb.AddressMatch{
+				Match: &commonpb.AddressMatch_HardcodedExact{HardcodedExact: address},
+				Role:  commonpb.AddressRole_ADDRESS_ROLE_ANY,
+			},
+		},
+	}
+}
+
 // FilterMetadataString matches `metadata[key] == v`.
 func FilterMetadataString(key, v string) *commonpb.QueryFilter {
 	return &commonpb.QueryFilter{

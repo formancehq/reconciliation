@@ -38,6 +38,19 @@ func TestFilterAll(t *testing.T) {
 	}
 }
 
+func TestFilterAddressExact(t *testing.T) {
+	t.Parallel()
+
+	f := schema.FilterAddressExact("acct:x")
+	if got := f.GetAddress().GetHardcodedExact(); got != "acct:x" {
+		t.Errorf("exact address: got %q", got)
+	}
+
+	if f.GetAddress().GetHardcodedPrefix() != "" {
+		t.Error("exact match must not set a prefix")
+	}
+}
+
 func TestFilterMetadataString(t *testing.T) {
 	t.Parallel()
 

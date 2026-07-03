@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math/big"
 	"slices"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
@@ -369,6 +370,70 @@ func nextCursorFromTrailer(trailer metadata.MD) string {
 	}
 
 	return ""
+}
+
+// AggregateVolumes returns the per-asset aggregate balance (input − output) of
+// the accounts matching filter. A non-zero checkpointID reads from a query
+// checkpoint instead of live state — the checkpoint-consistent read that lets an
+// evaluation aggregate ledgers A and B at the same instant (ADR-002).
+func (c *Client) AggregateVolumes(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64) (map[string]*big.Int, error) {
+	resp, err := c.service.AggregateVolumes(ctx, &servicepb.AggregateVolumesRequest{
+		Ledger:       ledgerName,
+		Filter:       filter,
+		CheckpointId: checkpointID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("aggregate volumes on %s: %w", ledgerName, err)
+	}
+
+	out := make(map[string]*big.Int, len(resp.GetVolumes()))
+	for _, v := range resp.GetVolumes() {
+		out[v.GetAsset()] = new(big.Int).Sub(v.GetInput().ToBigInt(), v.GetOutput().ToBigInt())
+	}
+
+	return out, nil
+}
+
+// CreateQueryCheckpoint creates a query checkpoint via Raft and returns its
+// assigned id and the max log sequence it pins. Because all ledgers share one
+// log, the checkpoint is a globally consistent cross-ledger cut — the anchor for
+// reading A and B at the same instant (ADR-002). Checkpoints are NOT auto-cleaned:
+// the caller owns the lifecycle (see Checkpoint).
+func (c *Client) CreateQueryCheckpoint(ctx context.Context) (checkpointID, maxSequence uint64, err error) {
+	resp, err := c.Apply(ctx, &servicepb.Request{
+		Type: &servicepb.Request_CreateQueryCheckpoint{CreateQueryCheckpoint: &servicepb.CreateQueryCheckpointRequest{}},
+	})
+	if err != nil {
+		return 0, 0, fmt.Errorf("create query checkpoint: %w", err)
+	}
+
+	for _, log := range resp.GetLogs() {
+		if cp := log.GetPayload().GetCreatedQueryCheckpoint(); cp != nil {
+			return cp.GetCheckpointId(), cp.GetMaxSequence(), nil
+		}
+	}
+
+	return 0, 0, fmt.Errorf("create query checkpoint: response carried no CreatedQueryCheckpointLog")
+}
+
+// DeleteQueryCheckpoint removes a query checkpoint via Raft, releasing the SSTs
+// it pinned. Idempotent-friendly: a NotFound is swallowed so a double-release is
+// safe.
+func (c *Client) DeleteQueryCheckpoint(ctx context.Context, checkpointID uint64) error {
+	_, err := c.Apply(ctx, &servicepb.Request{
+		Type: &servicepb.Request_DeleteQueryCheckpoint{
+			DeleteQueryCheckpoint: &servicepb.DeleteQueryCheckpointRequest{CheckpointId: checkpointID},
+		},
+	})
+	if status.Code(err) == codes.NotFound {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("delete query checkpoint %d: %w", checkpointID, err)
+	}
+
+	return nil
 }
 
 // GetAccount retrieves an account (volumes + metadata) by address. A non-zero
