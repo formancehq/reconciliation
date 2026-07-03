@@ -19,7 +19,7 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 2 | Bootstrap provisioner (CreateLedger + account-types AUDIT + typed metadata + prepared queries) | ✅ done | `bd95a35` |
 | 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | 🚧 in progress | `8e75db4` |
 | 1 | 3a | ↳ store skeleton + rule serialization + CreateRule/GetRule | ✅ done | `8e75db4` |
-| 1 | 3b | ↳ PatchRule/DeleteRule (+ `ParseRuleAccount`, `DeleteAccountMetadata`) | ✅ done | `<pending>` |
+| 1 | 3b | ↳ PatchRule/DeleteRule (+ `ParseRuleAccount`, `DeleteAccountMetadata`) | ✅ done | `d023826` |
 | 1 | 3c | ↳ alert lifecycle (Numscript: mint/guarded moves, OCC, status mirror, idempotency) | ⬜ next | — |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
