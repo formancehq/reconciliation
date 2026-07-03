@@ -73,6 +73,16 @@ Tracked follow-ups:
 | F8 | MED | Schema **evolution** on an already-created ledger is not handled: `CreateLedger` applies the full schema only on first boot; adding a metadata field / account type later needs idempotent `SetMetadataFieldType` / `AddAccountType` passes in `Provision`. | ⬜ open (POC creates once) |
 | F9 | LOW | Provisioner has no integration test against a real ledger (only gomock unit tests). Add an `_it_test.go` when the local ledger stack is wired. | ⬜ open |
 
+Step 2 SDLC review (2026-07-03) — coverage: `ledgerschema` 93.5%, provisioner 83–100% (the
+`ledger` package's 39.3% is the untested gRPC wrapper, = F3); lint/vet/gofmt clean; conventional
+commit; not on main; no OpenAPI change; `CreateLedger` sig change has no external callers.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F10 | MED | No compile-time proof that `*Client` satisfies `provisionAPI` — add `var _ provisionAPI = (*Client)(nil)` so interface drift fails at compile time in-package (not only at step-6 wiring). | ⬜ open |
+| F11 | MED | Provisioner happy-path test matches schema args with `gomock.Any()` → it would pass even if `Provision` sent an empty/wrong chart. Tighten via `DoAndReturn` to assert account-types include `alert-state`=EPHEMERAL and both PQ names are registered. | ⬜ open |
+| F12 | LOW | Two exported helpers are unused until step 4 (`FilterMetadataString`, `IssuedByRulePrefix`) — speculative surface; keep only if step 4 consumes them, else drop (YAGNI). | ⬜ open |
+
 ---
 
 ## Proto re-sync procedure (F5)
