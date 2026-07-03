@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package snapshot.v1;
+
+option go_package = "github.com/formancehq/reconciliation/internal/ledgerpb/snapshotpb";
+
+// Service exposed by the leader (or any node hosting the snapshot).
+// Uses a session-based protocol for parallel file transfers:
+//   1. PrepareSnapshot creates a Pebble checkpoint and returns a manifest + session ID.
+//   2. FetchFile streams a single file from the session (called N times in parallel).
+//   3. CloseSession releases the checkpoint and session resources.
+service SnapshotService {
+  rpc PrepareSnapshot(PrepareSnapshotRequest) returns (PrepareSnapshotResponse);
+  rpc FetchFile(FetchFileRequest) returns (stream FetchFileResponse);
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}
+
+message PrepareSnapshotRequest {
+  // Calling node identity (for logging/quotas).
+  string node_id = 1;
+  // Minimum applied index the checkpoint must include. The leader waits
+  // until its FSM has applied at least this index before creating the
+  // Pebble checkpoint. Prevents the follower from receiving a checkpoint
+  // older than the Raft snapshot it needs to catch up to.
+  fixed64 minAppliedIndex = 2;
+}
+
+message PrepareSnapshotResponse {
+  // Opaque session identifier. Must be passed to FetchFile and CloseSession.
+  string session_id = 1;
+  // Manifest listing all files in the checkpoint.
+  SnapshotManifest manifest = 2;
+}
+
+message FetchFileRequest {
+  // Session returned by PrepareSnapshot.
+  string session_id = 1;
+  // Relative path of the file to fetch (from the manifest).
+  string path = 2;
+}
+
+message FetchFileResponse {
+  // Raw file data.
+  bytes data = 1;
+  // True on the last chunk for this file.
+  bool eof = 2;
+}
+
+message CloseSessionRequest {
+  // Session to close.
+  string session_id = 1;
+}
+
+message CloseSessionResponse {}
+
+message SnapshotManifest {
+  repeated FileEntry files = 1;
+}
+
+message FileEntry {
+  string path = 1;
+  fixed64 size = 2;
+  string sha256 = 3;
+}

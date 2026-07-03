@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package events;
+
+option go_package = "github.com/formancehq/reconciliation/internal/ledgerpb/eventspb";
+
+import "common.proto";
+
+// ============================================================================
+// Event
+// ============================================================================
+
+// Event represents a domain event derived from a committed global log entry.
+message Event {
+  common.EventType type = 1;
+  string ledger = 2;
+  common.Timestamp date = 3;
+  fixed64 log_sequence = 4;
+  common.Log log = 5;
+}

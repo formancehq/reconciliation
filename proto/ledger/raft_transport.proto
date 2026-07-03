@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package raft_transport;
+
+option go_package = "github.com/formancehq/reconciliation/internal/ledgerpb/rafttransportpb";
+
+// RaftTransportService handles Raft message transport between nodes
+service RaftTransportService {
+  // StreamMessages establishes a client streaming connection for sending Raft messages
+  // This avoids frequent reconnections by maintaining a persistent connection
+  rpc StreamMessages(stream SendMessageRequest) returns (stream SendMessageResponse);
+}
+
+message RaftRequestMessage {
+  fixed64 id = 1;
+  bytes message = 2;
+}
+
+// RaftRequestBatch contains multiple Raft messages to send in a single request
+message RaftRequestBatch {
+  repeated RaftRequestMessage messages = 1;
+}
+
+message RaftResponseMessage {
+  fixed64 request_id = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+// RaftResponseBatch contains multiple Raft responses
+message RaftResponseBatch {
+  repeated RaftResponseMessage messages = 1;
+}
+
+message PingMessage {
+  fixed64 seq_id = 1;
+}
+
+message PongResponse {
+  fixed64 seq_id = 1;
+}
+
+// SendMessageRequest contains Raft messages to send
+message SendMessageRequest {
+  oneof message {
+    RaftRequestBatch raft = 1;
+    PingMessage ping = 2;
+  }
+}
+
+// SendMessageResponse is the response to SendMessage
+message SendMessageResponse {
+  oneof message {
+    RaftResponseBatch raft = 1;
+    PongResponse pong = 2;
+  }
+}
+
+

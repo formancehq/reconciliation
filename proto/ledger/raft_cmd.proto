@@ -1,0 +1,851 @@
+syntax = "proto3";
+
+package raft;
+
+option go_package = "github.com/formancehq/reconciliation/internal/ledgerpb/raftcmdpb";
+
+import "common.proto";
+import "signature.proto";
+
+// Order represents a request to be processed by the FSM.
+// The FSM is responsible for interpreting the request and applying the changes.
+//
+// Every Order is either ledger-scoped (acts on a single ledger; the ledger
+// name lives once on the LedgerScopedOrder wrapper) or system-scoped (cluster
+// or global state). This split is the structural invariant that the audit
+// log relies on to attribute entries to a ledger — extracting the targeted
+// ledger is a single accessor on the wrapper instead of a per-payload switch.
+message Order {
+  // Field 1 previously held a per-order `common.Idempotency idempotency`.
+  // Idempotency is now keyed per atomic proposal (Proposal.idempotency), the
+  // unit that is atomic + signed. Reserved so it cannot be reintroduced.
+  reserved 1;
+  reserved "idempotency";
+  oneof type {
+    LedgerScopedOrder ledger_scoped = 2;
+    SystemScopedOrder system_scoped = 3;
+  }
+  // Field 4 previously held a per-order `signature.SignedRequest signature`.
+  // The signature now covers the whole atomic batch (Proposal.signature), so
+  // composition and ordering are authenticated. Reserved.
+  reserved 4;
+  reserved "signature";
+  // coverage_bits is a packed bitset over ExecutionPlan.attributes restricting
+  // which entries this single order may read. Bit i (byteIdx = i/8,
+  // bit-within-byte = i%8, LSB-first) is set iff attributes[i] covers a key
+  // this order may read. The FSM constructs the per-order scope from this
+  // bitset so a key declared by another order in the same batch is not
+  // transparently readable (closes the batch-level vs order-level coverage gap).
+  //
+  // Length = ceil(len(attributes)/8). Empty bytes admit NO plan — every read
+  // surfaces as *ErrCoverageMiss. Proposal-wide scopes (used by the FSM's
+  // ValidateTransientVolumes) go through state.ScopeFactory.NewProposalScope
+  // instead, not through an "empty bits means admit all" convention.
+  bytes coverage_bits = 5;
+}
+
+// LedgerScopedOrder is the wrapper for every Order variant that targets a
+// single ledger. The `ledger` field is the single source of truth for audit
+// attribution and admission scope checks; payload sub-messages must not carry
+// their own ledger field.
+message LedgerScopedOrder {
+  string ledger = 1;
+  oneof payload {
+    LedgerApplyOrder apply = 2;
+    CreateLedgerOrder create_ledger = 3;
+    DeleteLedgerOrder delete_ledger = 4;
+    MirrorIngestOrder mirror_ingest = 5;
+    PromoteLedgerOrder promote_ledger = 6;
+    SaveLedgerMetadataOrder save_ledger_metadata = 7;
+    DeleteLedgerMetadataOrder delete_ledger_metadata = 8;
+    SaveNumscriptOrder save_numscript = 9;
+    DeleteNumscriptOrder delete_numscript = 10;
+    CreatePreparedQueryOrder create_prepared_query = 11;
+    UpdatePreparedQueryOrder update_prepared_query = 12;
+    DeletePreparedQueryOrder delete_prepared_query = 13;
+  }
+}
+
+// SystemScopedOrder is the wrapper for cluster- or global-scoped commands.
+// These commands do not target a specific ledger and never contribute a
+// ledger name to the audit entry.
+message SystemScopedOrder {
+  oneof payload {
+    RegisterSigningKeyOrder register_signing_key = 1;
+    RevokeSigningKeyOrder revoke_signing_key = 2;
+    SetSigningConfigOrder set_signing_config = 3;
+    AddEventsSinkOrder add_events_sink = 4;
+    RemoveEventsSinkOrder remove_events_sink = 5;
+    CloseChapterOrder close_chapter = 6;
+    SealChapterOrder seal_chapter = 7;
+    ArchiveChapterOrder archive_chapter = 8;
+    ConfirmArchiveChapterOrder confirm_archive_chapter = 9;
+    SetMaintenanceModeOrder set_maintenance_mode = 10;
+    SetChapterScheduleOrder set_chapter_schedule = 11;
+    DeleteChapterScheduleOrder delete_chapter_schedule = 12;
+    CreateQueryCheckpointOrder create_query_checkpoint = 13;
+    DeleteQueryCheckpointOrder delete_query_checkpoint = 14;
+    SetQueryCheckpointScheduleOrder set_query_checkpoint_schedule = 15;
+    DeleteQueryCheckpointScheduleOrder delete_query_checkpoint_schedule = 16;
+  }
+}
+
+message CreatePreparedQueryOrder {
+  common.PreparedQuery query = 1;
+}
+
+message UpdatePreparedQueryOrder {
+  string name = 1;
+  common.QueryFilter filter = 2;
+}
+
+message DeletePreparedQueryOrder {
+  string name = 1;
+}
+
+message AddEventsSinkOrder {
+  common.SinkConfig config = 1;
+}
+
+message RemoveEventsSinkOrder {
+  string name = 1;
+}
+
+// Signing key management orders
+message RegisterSigningKeyOrder {
+  string key_id = 1;
+  bytes public_key = 2;
+  string parent_key_id = 3;
+}
+
+message RevokeSigningKeyOrder {
+  string key_id = 1;
+  bool cascade = 2;
+}
+
+message SetSigningConfigOrder {
+  bool require_signatures = 1;
+}
+
+message CloseChapterOrder {}
+
+message SealChapterOrder {
+  fixed64 chapter_id = 1;
+  bytes sealing_hash = 2;
+  bytes state_hash = 3;
+}
+
+message ArchiveChapterOrder {
+  fixed64 chapter_id = 1;
+}
+
+message ConfirmArchiveChapterOrder {
+  fixed64 chapter_id = 1;
+}
+
+message SetMaintenanceModeOrder {
+  bool enabled = 1;
+}
+
+message SetChapterScheduleOrder {
+  string cron = 1;
+}
+
+message DeleteChapterScheduleOrder {}
+
+message SaveNumscriptOrder {
+  string name = 1;
+  string content = 2;
+  string version = 3;
+}
+
+message DeleteNumscriptOrder {
+  string name = 1;
+}
+
+// CreateQueryCheckpointOrder triggers a physical Pebble checkpoint via Raft.
+// The FSM commits the current batch and the Applier creates snapshots of both
+// the main store and read index, enabling point-in-time queries.
+// The checkpoint ID is assigned sequentially by the FSM, not the caller.
+message CreateQueryCheckpointOrder {}
+
+// DeleteQueryCheckpointOrder removes a previously created query checkpoint.
+// Physical checkpoint files are cleaned up after the batch is committed.
+message DeleteQueryCheckpointOrder {
+  fixed64 checkpoint_id = 1;
+}
+
+// QueryCheckpointState stores metadata for a query checkpoint in Pebble.
+// The actual data lives in physical Pebble checkpoint directories.
+message QueryCheckpointState {
+  fixed64 checkpoint_id = 1;
+  fixed64 max_sequence = 2;            // next_sequence - 1 at creation
+  common.Timestamp created_at = 3;    // Creation timestamp (from proposal date)
+}
+
+message SetQueryCheckpointScheduleOrder {
+  string cron = 1;
+}
+
+message DeleteQueryCheckpointScheduleOrder {}
+
+message CreateLedgerOrder {
+  repeated common.SetMetadataFieldTypeCommand initial_schema = 1;
+  common.LedgerMode mode = 2;
+  common.MirrorSourceConfig mirror_source = 3;
+  map<string, common.AccountType> account_types = 4;  // Initial account types
+  common.ChartEnforcementMode default_enforcement_mode = 5;  // Default enforcement for unmatched accounts
+}
+
+message MirrorIngestOrder {
+  MirrorLogEntry entry = 1;
+}
+
+message MirrorLogEntry {
+  fixed64 v2_log_id = 1;
+  oneof data {
+    MirrorCreatedTransaction created_transaction = 2;
+    MirrorSavedMetadata saved_metadata = 3;
+    MirrorRevertedTransaction reverted_transaction = 4;
+    MirrorDeletedMetadata deleted_metadata = 5;
+    MirrorFillGap fill_gap = 6;
+  }
+}
+
+message MirrorFillGap {
+  repeated fixed64 skipped_transaction_ids = 1;
+}
+
+message MirrorCreatedTransaction {
+  fixed64 transaction_id = 1;
+  repeated common.Posting postings = 2;
+  map<string, common.MetadataValue> metadata = 3;
+  common.Timestamp timestamp = 4;
+  string reference = 5;
+  map<string, common.MetadataMap> account_metadata = 6;
+}
+
+message MirrorSavedMetadata {
+  common.Target target = 1;
+  map<string, common.MetadataValue> metadata = 2;
+}
+
+message MirrorRevertedTransaction {
+  fixed64 reverted_transaction_id = 1;
+  fixed64 new_transaction_id = 2;
+  repeated common.Posting reverse_postings = 3;
+  map<string, common.MetadataValue> metadata = 4;
+  common.Timestamp timestamp = 5;
+}
+
+message MirrorDeletedMetadata {
+  common.Target target = 1;
+  string key = 2;
+}
+
+message PromoteLedgerOrder {}
+
+message DeleteLedgerOrder {}
+
+message LedgerApplyOrder {
+  oneof data {
+    CreateTransactionOrder create_transaction = 1;
+    SaveMetadataOrder add_metadata = 2;
+    RevertTransactionOrder revert_transaction = 3;
+    DeleteMetadataOrder delete_metadata = 4;
+    SetMetadataFieldTypeOrder set_metadata_field_type = 5;
+    RemoveMetadataFieldTypeOrder remove_metadata_field_type = 6;
+    CreateIndexOrder create_index = 7;
+    DropIndexOrder drop_index = 8;
+    AddAccountTypeOrder add_account_type = 9;
+    RemoveAccountTypeOrder remove_account_type = 10;
+    UpdateDefaultEnforcementModeOrder update_default_enforcement_mode = 11;
+  }
+}
+
+// CreateIndexOrder requests the creation of a new index.
+message CreateIndexOrder {
+  reserved 1, 2, 3;
+  reserved "log_builtin", "transaction", "account";
+  common.IndexID id = 4;
+}
+
+// DropIndexOrder requests the removal of an index.
+message DropIndexOrder {
+  reserved 1, 2, 3;
+  reserved "log_builtin", "transaction", "account";
+  common.IndexID id = 4;
+}
+
+// AddAccountTypeOrder adds a new account type to the ledger.
+message AddAccountTypeOrder {
+  common.AccountType account_type = 1;
+}
+
+// RemoveAccountTypeOrder removes an account type from the ledger.
+message RemoveAccountTypeOrder {
+  string name = 1;
+}
+
+// UpdateDefaultEnforcementModeOrder updates the ledger's default enforcement mode for unmatched accounts.
+message UpdateDefaultEnforcementModeOrder {
+  common.ChartEnforcementMode enforcement_mode = 1;
+}
+
+// MetadataConversionBatch, ConvertMetadataEntry, and
+// MetadataConversionCompletion were the FSM-applied vehicles for the
+// removed background value converter. Stored metadata values are now
+// immutable; the FSM never rewrites them. Reserved here to prevent
+// accidental reuse of the message names by future schema work.
+
+message SetMetadataFieldTypeOrder {
+  common.TargetType target_type = 1;
+  string key = 2;
+  common.MetadataType type = 3;
+}
+
+message RemoveMetadataFieldTypeOrder {
+  common.TargetType target_type = 1;
+  string key = 2;
+}
+
+message CreateTransactionOrder {
+  repeated common.Posting postings = 1;
+  common.Script script = 2;
+  common.Timestamp timestamp = 3;
+  string reference = 4;
+  map<string, common.MetadataValue> metadata = 5;
+  map<string, common.MetadataMap> account_metadata = 6;
+  bool force = 7;  // Skip balance checks when true
+  bool expand_volumes = 8;  // Include post-commit volumes in response
+  NumscriptReference numscript_reference = 9;
+}
+
+// NumscriptReference identifies a numscript from the library to use for a transaction.
+// The version is resolved by admission (fuzzy → exact) before entering the Raft log.
+message NumscriptReference {
+  string name = 1;
+  string version = 2;
+  map<string, string> vars = 3;
+}
+
+message SaveMetadataOrder {
+  common.Target target = 1;
+  map<string, common.MetadataValue> metadata = 2;
+}
+
+message RevertTransactionOrder {
+  fixed64 transaction_id = 1;
+  bool force = 2;
+  bool at_effective_date = 3;
+  map<string, common.MetadataValue> metadata = 4;
+  repeated common.Posting original_postings = 5;
+  bool expand_volumes = 6;  // Include post-commit volumes in response
+}
+
+message DeleteMetadataOrder {
+  common.Target target = 1;
+  string key = 2;
+}
+
+// SaveLedgerMetadataOrder sets metadata key-value pairs on a ledger.
+message SaveLedgerMetadataOrder {
+  map<string, common.MetadataValue> metadata = 1;
+}
+
+// DeleteLedgerMetadataOrder removes a single metadata key from a ledger.
+message DeleteLedgerMetadataOrder {
+  string key = 1;
+}
+
+// ============================================================================
+// Raft Command Wrapper
+// ============================================================================
+
+// Proposal represents a batch of orders to be executed in the FSM (protobuf serialization format)
+// A proposal can contain multiple orders that will be executed atomically
+message Proposal {
+  fixed64 id = 1;                    // Random proposal ID
+  repeated Order orders = 2;        // List of orders to execute atomically
+  common.Timestamp date = 3;        // Creation date in UTC
+  ExecutionPlan execution_plan = 4;
+  // predicted_index is the Raft log index predicted by the IndexTracker at
+  // admission time. The FSM compares it with the actual entry.Index: a mismatch
+  // means the tracker was stale (e.g. after a leadership transition) and the
+  // executionPlan is invalid. The entry is rejected without audit and the caller
+  // receives Unavailable so it can retry with fresh preloads.
+  // A value of 0 means no prediction (e.g. barrier, mirror sync).
+  fixed64 predicted_index = 7;
+  // Field 13 previously held `common.CallerIdentity caller` (subject + scopes + god + source).
+  // The type was split into `CallerIdentity` (identification only) and
+  // `CallerSnapshot` (admission-time identity + scopes + god). Reusing the
+  // same field number with a different shape would silently mis-decode
+  // every persisted Proposal that carried the old caller — wire types are
+  // identical (length-delimited) but the inner field layout differs.
+  // Keep 13 reserved forever and write the new snapshot at 14.
+  reserved 13;
+  reserved "caller";
+  common.CallerSnapshot caller_snapshot = 14;  // Admission-time auth snapshot (nil for system proposals); persisted into AuditEntry by the FSM.
+  // idempotency is the batch's single idempotency identity (from
+  // ApplyBatch.idempotency_key). The whole proposal dedups/freezes under it —
+  // matching the atomic unit. Empty for system/technical proposals.
+  common.Idempotency idempotency = 16;
+  // signature is the client's signature over the whole ApplyBatch (composition
+  // + ordering). The FSM propagates it onto every Log this proposal commits, so
+  // each log records the batch-level authenticity/non-repudiation proof.
+  signature.SignedApplyBatch signature = 17;
+  // technical_updates carries every FSM-level update that bypasses the
+  // Order/Log channel. Each entry wraps a single payload (sink update,
+  // mirror sync, metadata conversion, backup lifecycle, …) with its own
+  // coverage_bits so the FSM applies per-update isolation, exactly like
+  // Order.coverage_bits.
+  repeated TechnicalUpdate technical_updates = 15;
+  // Fields 5, 6, 8, 9, 10, 11, 12 previously held the seven dedicated
+  // technical-update channels (events_sink_updates, mirror_sync_updates,
+  // idempotency_eviction, cluster_config, metadata_conversion_batches,
+  // metadata_conversions_complete, index_ready_updates). They were folded
+  // into the TechnicalUpdate wrapper at field 15. Keep reserved so old
+  // wire payloads don't silently mis-decode.
+  reserved 5, 6, 8, 9, 10, 11, 12;
+  reserved "events_sink_updates", "mirror_sync_updates", "idempotency_eviction",
+           "cluster_config", "metadata_conversion_batches",
+           "metadata_conversions_complete", "index_ready_updates";
+}
+
+// TechnicalUpdate is the per-update envelope that carries the coverage
+// gate alongside one of the supported tech-update payloads. Mirrors the
+// Order shape: a bytes coverage_bits bitset over ExecutionPlan.attributes
+// + the actual payload. Empty bits mean "no read coverage admitted" —
+// payloads that don't read cache state (EventsSinkUpdate,
+// IdempotencyEviction, ClusterConfig, BackupOrder, IncrementalBackupOrder)
+// ship with empty bits.
+message TechnicalUpdate {
+  reserved 8;                  // was: IndexReadyUpdate index_ready
+  reserved "index_ready";
+  bytes coverage_bits = 1;
+  oneof kind {
+    MirrorSyncUpdate mirror_sync = 2;
+    EventsSinkUpdate events_sink = 3;
+    IdempotencyEviction idempotency_eviction = 4;
+    common.ClusterConfig cluster_config = 5;
+    BackupOrder backup_order = 9;                          // Full-backup lifecycle
+    IncrementalBackupOrder incremental_backup_order = 10;  // Incremental-backup lifecycle
+  }
+}
+
+// ============================================================================
+// Backup orchestration
+// ============================================================================
+//
+// Backups used to be a side-channel RPC: the gRPC handler took an in-memory
+// mutex, drove `backup.RunBackup` against the local Pebble, and wrote the
+// manifest to S3 — bypassing Raft entirely. Mutual exclusion across nodes
+// was bolted on via a separate leased-lock primitive whose expiry trusted
+// proposer wall-clock (#298) and could break mutual exclusion under skew.
+//
+// We move the backup state into the FSM so the same determinism guarantees
+// that protect every other proposal protect backup acquisition / progress
+// / completion too. The actual upload still happens on the elected
+// executor node (the leader), but it is driven by FSM events and the FSM
+// owns the "is this destination being backed up right now?" answer.
+//
+// Mutual exclusion is per-destination — the same semantic the discarded
+// per-destination leased lock (#299) was building toward. Two backups to
+// different destinations run in parallel; two to the same destination are
+// rejected at apply time.
+
+// BackupKind distinguishes the two flavours of backup we support. They
+// share the lifecycle (Start → Progress* → Complete|Fail) but the
+// underlying upload work differs: a full backup ships every checkpoint
+// file once and re-uses unchanged ones across runs; an incremental
+// backup ships log/audit export segments since the last checkpoint.
+enum BackupKind {
+  BACKUP_KIND_UNSPECIFIED = 0;
+  BACKUP_KIND_FULL = 1;
+  BACKUP_KIND_INCREMENTAL = 2;
+}
+
+// BackupJobStatus tracks where a job is in its lifecycle. Only Running is
+// surfaced via the active-jobs map; Complete/Failed move to the history
+// store as terminal records.
+enum BackupJobStatus {
+  BACKUP_JOB_STATUS_UNSPECIFIED = 0;
+  BACKUP_JOB_STATUS_RUNNING = 1;
+  BACKUP_JOB_STATUS_COMPLETE = 2;
+  BACKUP_JOB_STATUS_FAILED = 3;
+}
+
+// BackupDestination is the deterministic identification of where a backup
+// is shipped. Two requests with byte-equal destinations contend on the
+// same mutual-exclusion slot; two with different destinations are
+// orthogonal. We canonicalise it in the proposer so the resulting bytes
+// are stable across nodes.
+message BackupDestination {
+  string base_path = 1;
+  string bucket_id = 2;
+  // target is the backend-specific identification. The oneof case is the
+  // single source of truth for the driver — no parallel string to keep in
+  // sync, and adding a new backend is one more oneof case. Mirrors the
+  // BackupStorage proto shape on the public RPC.
+  //
+  // Credentials are intentionally absent: two callers with the same
+  // bucket/account but different keys must contend on the same FSM slot
+  // regardless of the credential they hold.
+  oneof target {
+    S3BackupTarget s3 = 3;
+    AzureBackupTarget azure = 4;
+  }
+}
+
+message S3BackupTarget {
+  string bucket = 1;
+  string region = 2;
+  string endpoint = 3;
+}
+
+message AzureBackupTarget {
+  string account_name = 1;
+  string container = 2;
+  string endpoint = 3;
+}
+
+// BackupJob is the FSM-tracked view of one in-flight (or terminal)
+// backup. Persisted at:
+//
+//   [ZoneClusterTransient][SubTransientBackupJob][destination_key]            (RUNNING)
+//   [ZoneClusterTransient][SubTransientBackupJobHistory][completed_at_index]  (terminal)
+//
+// destination_key is a canonical hash of BackupDestination; computing it
+// at apply time keeps the proposal payload small while guaranteeing the
+// same destination always lands on the same map slot.
+//
+// Backup state lives under ZoneClusterTransient, NOT ZoneGlobal: the
+// "is a backup running" answer is meaningful only inside the cluster
+// process lifetime. A snapshot restored from a backup must NOT carry a
+// stale RUNNING entry; FinalizeRestore wipes ZoneClusterTransient so
+// the new cluster starts with no in-flight jobs and no fake history.
+message BackupJob {
+  fixed64 job_id = 1;
+  BackupKind kind = 2;
+  BackupJobStatus status = 3;
+  BackupDestination destination = 4;
+  bytes destination_key = 5;
+  // executor_node_id is the node that proposed Start. After leadership
+  // change the old leader's executor goroutine is gone; the new leader's
+  // cleanup loop detects this via in-memory liveJobs absence and proposes
+  // Fail.
+  uint64 executor_node_id = 6;
+  // FSM-owned monotonic tick; never the proposer wall clock (#298).
+  // Liveness is NOT inferred from progress staleness — see the design
+  // note in internal/application/backup/cleanup.go.
+  uint64 started_at_applied_index = 7;
+  // Final upload counters. Populated by BackupOrderComplete (the
+  // executor knows totals only at the end). Not tracked incrementally
+  // through Raft — that would couple FSM bandwidth to upload progress
+  // for no functional benefit, since the FSM does not make decisions
+  // based on the partial count. The 0xFF generation rotation and the
+  // observability dashboards live outside Raft.
+  uint64 files_uploaded = 8;
+  uint64 segments_uploaded = 9;
+  // Completion fields (only set after Complete/Fail).
+  uint64 completed_at_applied_index = 10;
+  string failure_message = 11;
+  uint64 last_log_sequence = 12;
+  uint64 last_audit_sequence = 13;
+  uint64 last_applied_index = 14;
+
+  // Field 8 previously held last_progress_applied_index. Backup progress
+  // is no longer tracked through Raft proposals (see cleanup.go); the
+  // staleness signal is in-memory leader-local. The slot is renumbered
+  // because nothing on the wire carried it during the unmerged PR.
+}
+
+// BackupOrder is the carrier for one apply-time mutation of a full
+// backup. Exactly one of the oneof branches is set per proposal.
+message BackupOrder {
+  // Field 2 previously held BackupOrderProgress. Progress proposals were
+  // removed: the cleanup loop tracks liveness from the leader-local
+  // executor registry, not from FSM-side progress staleness. The slot
+  // is reserved.
+  reserved 2;
+  reserved "progress";
+
+  oneof op {
+    BackupOrderStart start = 1;
+    BackupOrderComplete complete = 3;
+    BackupOrderFail fail = 4;
+  }
+}
+
+// IncrementalBackupOrder mirrors BackupOrder for the incremental
+// pipeline. Sharing the carrier shape but keeping the orders distinct
+// makes the two-pipeline split explicit in the proto and lets the apply
+// path branch on the order type instead of on a field inside it.
+message IncrementalBackupOrder {
+  reserved 2;
+  reserved "progress";
+
+  oneof op {
+    BackupOrderStart start = 1;
+    BackupOrderComplete complete = 3;
+    BackupOrderFail fail = 4;
+  }
+}
+
+// BackupOrderStart proposes a new backup. The apply path rejects the
+// order when a Running job already targets the same destination — that
+// is the cross-node mutual-exclusion guarantee that used to need the
+// leased lock.
+message BackupOrderStart {
+  fixed64 job_id = 1;
+  BackupDestination destination = 2;
+  uint64 executor_node_id = 3;
+}
+
+// BackupOrderComplete moves the active entry to the history store and
+// frees the destination slot. The executor populates the final upload
+// counters (files_uploaded, segments_uploaded) at completion time —
+// the FSM stores them on the history record for operator inspection
+// but never reads them.
+message BackupOrderComplete {
+  fixed64 job_id = 1;
+  uint64 last_log_sequence = 2;
+  uint64 last_audit_sequence = 3;
+  uint64 last_applied_index = 4;
+  uint64 files_uploaded = 5;
+  uint64 segments_uploaded = 6;
+}
+
+// BackupOrderFail moves the active entry to the history store with a
+// failure payload and frees the destination slot.
+message BackupOrderFail {
+  fixed64 job_id = 1;
+  string message = 2;
+}
+
+// IdempotencyEviction is a deterministic cleanup command proposed by the leader.
+// All nodes apply it identically: entries with created_at <= cutoff_micros are removed.
+// The leader pre-scans the Pebble time index and includes the key hashes so
+// that the FSM apply path is write-only (no Pebble reads).
+message IdempotencyEviction {
+  fixed64 cutoff_micros = 1;
+  repeated bytes pebble_key_hashes = 2;  // 16-byte key hashes pre-scanned by leader
+
+  // last_scanned_time_index_key is the full 26-byte time-index Pebble key of
+  // the last entry the leader scanned: [zone(1)][sub(1)][created_at(8)][hash(16)].
+  // The FSM uses it as the DeleteRange upper bound bumped by 0x00 (lex-next),
+  // so the range delete includes exactly the scanned entries — never an
+  // unscanned sibling that happens to share the same created_at timestamp.
+  // Empty when no entries were scanned; in that case no DeleteRange is issued.
+  bytes last_scanned_time_index_key = 3;
+}
+
+message MirrorSyncUpdate {
+  string ledger_name = 1;
+  fixed64 cursor = 2;
+  common.MirrorSyncError error = 3;
+  bool clear_error = 4;
+  fixed64 source_log_count = 5;  // Latest known log ID in v2 source
+}
+
+// EventsSinkUpdate carries a per-sink cursor advance or error status change.
+message EventsSinkUpdate {
+  string sink_name = 1;
+  fixed64 cursor = 2;              // New log cursor position (0 = no change)
+  common.SinkError error = 3;     // Set error (nil = no change unless clear_error)
+  bool clear_error = 4;           // If true, clear any existing error
+}
+
+message CreatedLogOrReference {
+  oneof type {
+    common.Log created_log = 1;
+    fixed64 reference_sequence = 2;
+  }
+}
+
+message LedgerBoundaries {
+  fixed64 next_transaction_id = 1;
+  fixed64 next_log_id = 2;
+  fixed64 volume_count = 3;
+  fixed64 metadata_count = 4;
+  fixed64 reference_count = 5;
+  fixed64 posting_count = 6;
+  fixed64 ephemeral_evicted_count = 7;
+  fixed64 transient_used_count = 8;
+  fixed64 revert_count = 9;
+  fixed64 numscript_execution_count = 10;
+}
+
+message VolumePair {
+  common.Uint256 input = 1;
+  common.Uint256 output = 2;
+}
+
+// ExecutionPlan is the apply-time recipe admission attaches to a proposal:
+// the keys the FSM is allowed to read, the values to seed in the cache, the
+// idempotency entries to restore, and the intra-batch producer→consumer
+// dependencies. It is the single source of truth the FSM consults during
+// apply — every cache read is checked against it, and any mutation that
+// would expand the readable surface beyond what was declared is a
+// proposer bug.
+message ExecutionPlan {
+  fixed64 lastPersistedIndex = 1;
+  // Cache epoch at admission time; FSM rejects on mismatch (cache was reset)
+  fixed64 cache_epoch = 4;
+  // Per-attribute plans produced by admission. Each entry is either a
+  // value preload, a Gen1→Gen0 promotion, or a pure coverage declaration —
+  // every plan also feeds the FSM-side state.Plan coverage set, so the
+  // admission layer is the single source of truth for what the FSM may
+  // read during apply.
+  repeated AttributePlan attributes = 6;
+
+  // Idempotency keys preloaded for this proposal. They live outside the
+  // AttributePlan list because they are NOT a cache attribute: the FSM
+  // applies them to the dedicated IdempotencyStore and the state.Plan
+  // does not track their coverage. Kept as a top-level field instead of
+  // an AttributePlan variant to make that distinction visible at the
+  // wire level.
+  repeated ReloadIdempotencyKey idempotency_keys = 7;
+
+  reserved 2, 3, 5, 8;
+  reserved "preloads", "touches", "declared", "productions";
+}
+
+// AttributePlan describes what the FSM must do with a single attribute key
+// on apply. attr_code (dal.SubAttrXxx) lives on the plan itself, not on
+// the intent, so the kind/code can be read uniformly without inspecting
+// the oneof — keeps coverage indexing, dispatch, and unmarshal routing
+// all on the same field. Exactly one of declare/touch/value is set; that
+// choice tells the cache-mutation path (Touch promotes, AttributeValue
+// writes, Declare is a no-op) what to do.
+message AttributePlan {
+  AttributeID id = 1;
+  uint32 attr_code = 2;
+  oneof intent {
+    // Declare: the key was already CacheGuaranteed (Gen0) at admission time.
+    // No FSM-side cache mutation; pure coverage declaration so state.Plan
+    // admits reads on hot keys without a false-positive miss.
+    Declare declare = 3;
+    // Touch: the key is in Gen1 and would not survive the next rotation.
+    // The FSM mirrors the promotion via MirrorTouch.
+    Touch touch = 4;
+    // AttributeValue: load the value into Gen0 cache. Carries the typed value.
+    AttributeValue value = 5;
+  }
+}
+
+// Declare is the sentinel intent for AttributePlan. Empty by design — the
+// presence of the field is the entire signal.
+message Declare {}
+
+// Touch is the sentinel intent for AttributePlan. Empty by design — the
+// presence of the field plus AttributePlan.attr_code drive the Gen1→Gen0
+// promotion on the FSM side.
+message Touch {}
+
+// AttributeValue carries the typed value to write into the FSM-side cache
+// for one AttributePlan. The value is type-erased on the wire (a vtproto-
+// marshaled blob) and the FSM dispatches the typed unmarshal via the
+// parent AttributePlan.attr_code (dal.SubAttrXxx) — kept off this message
+// to avoid carrying the kind in two places.
+message AttributeValue {
+  bytes raw_value = 1;
+}
+
+// ReloadIdempotencyKey rides on ExecutionPlan.idempotency_keys, not on the
+// AttributePlan list. Idempotency keys are not cache attributes: the FSM
+// restores them into the dedicated IdempotencyStore on apply, hence
+// "Reload" rather than the cache-attribute pre-loading the AttributePlan
+// variants feed.
+message ReloadIdempotencyKey {
+  string key = 1;
+  common.IdempotencyKeyValue value = 2;
+}
+
+// ============================================================================
+// Snapshot
+// ============================================================================
+
+// NodeSnapshot carries cluster-level metadata (peer addresses) for WAL snapshots.
+message NodeSnapshot {
+  repeated PeerAddress peer_addresses = 1;
+}
+
+// CacheGenerationMeta stores per-generation metadata in Pebble.
+message CacheGenerationMeta {
+  fixed64 base_index = 1;
+}
+
+// CacheSnapshotMeta stores cache-level metadata in Pebble.
+message CacheSnapshotMeta {
+  fixed64 current_generation = 1;
+}
+
+// PeerAddress stores a peer's raft and service addresses in snapshots.
+message PeerAddress {
+  uint64 node_id = 1;
+  string raft_address = 2;
+  string service_address = 3;
+}
+
+message GenerationSnapshot {
+  fixed64 base_index = 1;
+  repeated VolumeAttributeSnapshotEntry volumes = 2;
+  repeated MetadataAttributeEntry metadata = 3;  // Account metadata
+  repeated MetadataAttributeEntry ledger_metadata = 4;  // Ledger metadata
+  repeated LedgerAttributeEntry ledgers = 5;
+  repeated BoundaryAttributeEntry boundaries = 6;
+  repeated TransactionReferenceAttributeEntry references = 7;
+  repeated TransactionStateAttributeEntry transactions = 8;
+  reserved 9; // was: idempotency_keys (moved to dedicated prefix 0x03)
+}
+
+// VolumeAttributeSnapshotEntry stores a merged Input+Output volume pair in cache snapshots.
+message VolumeAttributeSnapshotEntry {
+  AttributeID id = 1;
+  common.Uint256 input = 2;
+  common.Uint256 output = 3;
+}
+
+// MetadataKeyStoreEntry stores a single entry from KeyStore[*MetadataValue]
+message MetadataAttributeEntry {
+  AttributeID id = 1;
+  common.MetadataValue value = 2;
+}
+
+// LedgerAttributeEntry stores a single entry from KeyStore[*LedgerInfo]
+message LedgerAttributeEntry {
+  AttributeID id = 1;
+  common.LedgerInfo info = 2;
+}
+
+// BoundaryAttributeEntry stores a single entry from KeyStore[*LedgerBoundaries]
+message BoundaryAttributeEntry {
+  AttributeID id = 1;
+  LedgerBoundaries boundaries = 2;
+}
+
+// TransactionReferenceAttributeEntry stores a single entry from KeyStore[*TransactionReferenceValue]
+message TransactionReferenceAttributeEntry {
+  AttributeID id = 1;
+  common.TransactionReferenceValue value = 2;
+}
+
+// TransactionStateAttributeEntry stores a single entry from KeyStore[*TransactionState]
+message TransactionStateAttributeEntry {
+  AttributeID id = 1;
+  common.TransactionState state = 2;
+}
+
+// Deprecated: IdempotencyKeyAttributeEntry is no longer used in snapshots.
+// Kept for wire compatibility with older nodes that may still send this message.
+message IdempotencyKeyAttributeEntry {
+  AttributeID id = 1;
+  common.IdempotencyKeyValue value = 2;
+}
+
+message AttributeID {
+  bytes id = 1;           // 16-byte U128 identifier
+  fixed64 tag = 2;
+}
+

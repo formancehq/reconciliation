@@ -1,0 +1,1371 @@
+syntax = "proto3";
+
+package common;
+
+option go_package = "github.com/formancehq/reconciliation/internal/ledgerpb/commonpb";
+
+import "signature.proto";
+
+// ============================================================================
+// Core Data Types
+// ============================================================================
+
+message Timestamp {
+  fixed64 data = 1;
+}
+
+// NullValue represents a metadata value that could not be converted to the
+// declared type. It preserves the original raw value for debugging, but
+// signals to consumers that the value is unusable in its expected type.
+message NullValue {
+  string original = 1;
+}
+
+message MetadataValue {
+  oneof type {
+    string string_value = 1;  // wire-compatible with existing field 1
+    int64 int_value = 2;
+    bool bool_value = 3;
+    NullValue null_value = 4;
+    uint64 uint_value = 5;
+    int64 datetime_value = 6;  // microseconds since the Unix epoch (signed; pre-1970 allowed)
+  }
+}
+
+// MetadataMap wraps a metadata map for use as a proto map value
+// (proto3 does not support nested maps like map<string, map<string, MetadataValue>>).
+message MetadataMap {
+  map<string, MetadataValue> values = 1;
+}
+
+// ParameterValue represents a typed parameter value for prepared query execution.
+message ParameterValue {
+  oneof value {
+    string string_value = 1;
+    int64 int64_value = 2;
+    uint64 uint64_value = 3;
+    bool bool_value = 4;
+  }
+}
+
+message Uint256 {
+  fixed64 v0 = 1;  // least significant limb
+  fixed64 v1 = 2;
+  fixed64 v2 = 3;
+  fixed64 v3 = 4;  // most significant limb
+}
+
+// Posting represents a single posting in a transaction
+message Posting {
+  string source = 1;
+  string destination = 2;
+  Uint256 amount = 3;
+  string asset = 4;
+}
+
+// Transaction represents a transaction
+message Transaction {
+  repeated Posting postings = 1;
+  map<string, MetadataValue> metadata = 2;
+  Timestamp timestamp = 3;
+  string reference = 4;
+  fixed64 id = 5;
+  bool reverted = 6;
+  Timestamp inserted_at = 7;
+  Timestamp updated_at = 8;
+  Timestamp reverted_at = 9;
+}
+
+message Script {
+  string plain = 1;
+  map<string, string> vars = 2;
+  bytes content_hash = 3;  // BLAKE3 hash of the script content (32 bytes)
+}
+
+// ============================================================================
+// Volumes
+// ============================================================================
+
+// Volumes represents input and output volumes
+message Volumes {
+  string input = 1;   // big.Int as string
+  string output = 2;  // big.Int as string
+}
+
+// VolumesWithBalance represents volumes with balance
+message VolumesWithBalance {
+  string input = 1;    // big.Int as string
+  string output = 2;   // big.Int as string
+  string balance = 3;  // big.Int as string
+}
+
+// VolumesByAssets represents volumes grouped by asset
+message VolumesByAssets {
+  map<string, Volumes> volumes = 1;
+}
+
+// PostCommitVolumes represents volumes after commit, grouped by account and asset
+message PostCommitVolumes {
+  map<string, VolumesByAssets> volumes_by_account = 1;
+}
+
+// ============================================================================
+// Account
+// ============================================================================
+
+// Account represents an account in the ledger
+message Account {
+  string address = 1;
+  map<string, MetadataValue> metadata = 2;
+  Timestamp first_usage = 3;
+  Timestamp insertion_date = 4;
+  Timestamp updated_at = 5;
+  map<string, VolumesWithBalance> volumes = 6;  // Volumes per asset
+}
+
+// ============================================================================
+// Target (for metadata operations)
+// ============================================================================
+
+enum TargetType {
+  TARGET_TYPE_ACCOUNT = 0;
+  TARGET_TYPE_TRANSACTION = 1;
+  TARGET_TYPE_LEDGER = 2;
+}
+
+message TargetAccount {
+  string addr = 1;
+}
+
+message Target {
+  oneof target {
+    TargetAccount account = 1;
+    fixed64 transaction_id = 2;
+  }
+}
+
+// ============================================================================
+// Metadata Schema
+// ============================================================================
+
+enum MetadataType {
+  METADATA_TYPE_STRING = 0;
+  METADATA_TYPE_INT64 = 1;
+  METADATA_TYPE_BOOL = 2;
+  METADATA_TYPE_UINT64 = 3;
+  METADATA_TYPE_INT8 = 4;
+  METADATA_TYPE_INT16 = 5;
+  METADATA_TYPE_INT32 = 6;
+  METADATA_TYPE_UINT8 = 7;
+  METADATA_TYPE_UINT16 = 8;
+  METADATA_TYPE_UINT32 = 9;
+  METADATA_TYPE_DATETIME = 10;
+}
+
+// MetadataConversionStatus and the `status` field on MetadataFieldSchema
+// were removed when the FSM-side value converter was deleted. Stored
+// values are now immutable and API reads return them verbatim:
+// declared_type is an index hint only — it governs how the indexer
+// encodes forward entries, never the bytes returned to clients. There
+// is no transition state observable at the field level.
+
+enum IndexBuildStatus {
+  INDEX_BUILD_STATUS_UNSPECIFIED = 0;
+  INDEX_BUILD_STATUS_BUILDING = 1;
+  INDEX_BUILD_STATUS_READY = 2;
+}
+
+message MetadataFieldSchema {
+  reserved 3, 4, 5, 6;
+  reserved "total_keys", "converted_keys", "indexed", "index_build_status";
+  MetadataType type = 1;
+}
+
+message MetadataSchema {
+  map<string, MetadataFieldSchema> account_fields = 1;
+  map<string, MetadataFieldSchema> transaction_fields = 2;
+  map<string, MetadataFieldSchema> ledger_fields = 3;
+}
+
+message SetMetadataFieldTypeCommand {
+  TargetType target_type = 1;
+  string key = 2;
+  MetadataType type = 3;
+}
+
+// TransactionBuiltinIndex identifies a built-in transaction field that can be indexed.
+enum TransactionBuiltinIndex {
+  TX_BUILTIN_INDEX_REFERENCE = 0;        // requires Pebble "txref" index
+  TX_BUILTIN_INDEX_TIMESTAMP = 1;        // requires Pebble "tstmp" index
+  TX_BUILTIN_INDEX_ID = 2;               // range scan on existence bucket (no index)
+  TX_BUILTIN_INDEX_ADDRESS = 3;          // account→transaction mapping (any role)
+  TX_BUILTIN_INDEX_SOURCE_ADDRESS = 4;   // source account→transaction mapping
+  TX_BUILTIN_INDEX_DEST_ADDRESS = 5;     // destination account→transaction mapping
+  TX_BUILTIN_INDEX_INSERTED_AT = 6;     // requires Pebble "txiat" index (inserted_at date)
+}
+
+// AccountBuiltinIndex identifies a built-in account field that can be indexed.
+enum AccountBuiltinIndex {
+  ACCT_BUILTIN_INDEX_UNSPECIFIED = 0;
+  ACCT_BUILTIN_INDEX_ASSET = 1;
+}
+
+// LogBuiltinIndex identifies a built-in log field that can be indexed.
+// The per-ledger log index (Pebble "llog") is always built by the indexbuilder
+// and is not exposed here — only opt-in fields appear below.
+enum LogBuiltinIndex {
+  reserved "LOG_BUILTIN_INDEX_LEDGER";
+  LOG_BUILTIN_INDEX_UNSPECIFIED = 0;
+  LOG_BUILTIN_INDEX_DATE = 1;       // per-ledger log date index (Pebble "lldt")
+}
+
+// MetadataIndexID identifies a metadata-key index by its target entity and key.
+message MetadataIndexID {
+  TargetType target = 1;
+  string key = 2;
+}
+
+// IndexID uniquely identifies an index within a ledger across all kinds
+// (transaction builtins, log builtins, account builtins, metadata keys, ...).
+// Future kinds (e.g. account_type) extend the oneof without touching other code.
+message IndexID {
+  oneof kind {
+    TransactionBuiltinIndex tx_builtin = 1;
+    LogBuiltinIndex log_builtin = 2;
+    AccountBuiltinIndex account_builtin = 3;
+    MetadataIndexID metadata = 4;
+  }
+}
+
+// Index is the first-class representation of an index in the bucket-scoped
+// index registry. Holds its identifier, scope, build state and audit metadata.
+//
+// Scope:
+//   - ledger == ""   → bucket-scoped (e.g. audit indexes), single entry across the bucket.
+//   - ledger == "X"  → ledger-scoped, one entry per (ledger, IndexID) tuple.
+//
+// Entries live in the SubAttrIndex attribute zone, not in LedgerInfo.
+message Index {
+  IndexID id = 1;
+  // Informational: tracks whether the FSM has triggered a rebuild
+  // (e.g. CreateIndex or SetMetadataFieldType). NOT consulted by the
+  // query path — see forward_encoding_version below.
+  IndexBuildStatus build_status = 2;
+  Timestamp created_at = 3;
+  Timestamp last_built_at = 4;
+  string last_error = 5;
+  string ledger = 6;  // empty for bucket-scoped indexes
+  // Cluster-wide forward-encoding version. Bumped at every event that
+  // requires the indexer to rewrite its forward index (CreateIndex,
+  // SetMetadataFieldType). The per-replica local view of this value
+  // lives in `readstore.IndexVersionState.CurrentVersion` (internal)
+  // and is exposed on the wire as `IndexEntry.current_version` on
+  // `GetIndexStatusResponse`. Queries read from the replica's local
+  // current_version, not from this cluster-wide field. Synchronization
+  // is client-driven via min_log_sequence on the read API — but note
+  // that min_log_sequence pins log application on this replica, NOT
+  // local rewrite completion; see api-comparison.md for the contract.
+  uint32 forward_encoding_version = 7;
+}
+
+// ============================================================================
+// Idempotency
+// ============================================================================
+
+message Idempotency {
+  string key = 1;
+}
+
+// IdempotencyEntry represents an idempotency key entry stored in Pebble
+message IdempotencyEntry {
+  bytes hash = 1;                          // Idempotency hash
+  fixed64 log_id = 2;                        // Log ID
+}
+
+// ============================================================================
+// Log
+// ============================================================================
+
+message Log {
+  fixed64 sequence = 1;
+  LogPayload payload = 2;
+  // Batch identity (idempotency key + signature) lives on AppliedProposal
+  // (proposal.proto), not on the log.
+  reserved 4; // was: bytes hash (moved to AuditEntry)
+  string receipt = 6;
+  signature.SignedLog response_signature = 7;
+  reserved 8; // was: uint32 hash_version (moved to AuditEntry)
+}
+
+message LogPayload {
+  oneof type {
+    CreatedLedgerLog create_ledger = 1;
+    DeletedLedgerLog delete_ledger = 2;
+    ApplyLedgerLog apply = 3;
+    RegisteredSigningKeyLog register_signing_key = 4;
+    RevokedSigningKeyLog revoke_signing_key = 5;
+    SetSigningConfigLog set_signing_config = 6;
+    AddedEventsSinkLog added_events_sink = 7;
+    RemovedEventsSinkLog removed_events_sink = 8;
+    ClosedChapterLog close_chapter = 9;
+    SealedChapterLog seal_chapter = 10;
+    ArchivedChapterLog archive_chapter = 11;
+    ConfirmedArchiveChapterLog confirm_archive_chapter = 12;
+    SetMaintenanceModeLog set_maintenance_mode = 13;
+    SetChapterScheduleLog set_chapter_schedule = 14;
+    DeletedChapterScheduleLog delete_chapter_schedule = 15;
+    PromotedLedgerLog promote_ledger = 17;
+    CreatedPreparedQueryLog created_prepared_query = 18;
+    UpdatedPreparedQueryLog updated_prepared_query = 19;
+    DeletedPreparedQueryLog deleted_prepared_query = 20;
+    SavedNumscriptLog saved_numscript = 21;
+    DeletedNumscriptLog deleted_numscript = 22;
+    CreatedQueryCheckpointLog created_query_checkpoint = 23;
+    DeletedQueryCheckpointLog deleted_query_checkpoint = 24;
+    SetQueryCheckpointScheduleLog set_query_checkpoint_schedule = 25;
+    DeletedQueryCheckpointScheduleLog delete_query_checkpoint_schedule = 26;
+    SavedLedgerMetadataLog saved_ledger_metadata = 27;
+    DeletedLedgerMetadataLog deleted_ledger_metadata = 28;
+  }
+}
+
+message PromotedLedgerLog {
+  string name = 1;
+}
+
+// ============================================================================
+// Signing Key Log Messages
+// ============================================================================
+
+// RegisteredSigningKeyLog records a signing key registration.
+message RegisteredSigningKeyLog {
+  string key_id = 1;
+  bytes public_key = 2;
+  string parent_key_id = 3;
+}
+
+// RevokedSigningKeyLog records a signing key revocation.
+message RevokedSigningKeyLog {
+  string key_id = 1;
+  repeated string cascaded_key_ids = 2;
+}
+
+// SigningKey represents a registered signing key with its parent relationship.
+message SigningKey {
+  string key_id = 1;
+  bytes public_key = 2;
+  string parent_key_id = 3;
+}
+
+// SetSigningConfigLog records a signing configuration change.
+message SetSigningConfigLog {
+  bool require_signatures = 1;
+}
+
+// AddedEventsSinkLog records the addition (or update) of a named sink config.
+message AddedEventsSinkLog {
+  SinkConfig config = 1;
+}
+
+// RemovedEventsSinkLog records the removal of a named sink config.
+message RemovedEventsSinkLog {
+  string name = 1;
+}
+
+// SetMaintenanceModeLog records a maintenance mode change.
+message SetMaintenanceModeLog {
+  bool enabled = 1;
+}
+
+// BloomTypeConfig holds the configuration for a single bloom filter type.
+message BloomTypeConfig {
+  uint64 expected_keys = 1;
+  double fp_rate = 2;
+}
+
+// HashAlgorithm selects the hash function used for log chain integrity.
+enum HashAlgorithm {
+  HASH_ALGORITHM_BLAKE3 = 0;  // Cryptographic (tamper-resistant), 32-byte output. Default.
+  HASH_ALGORITHM_XXH3 = 1;    // Non-cryptographic (corruption detection only), 16-byte output. ~5-10x faster.
+}
+
+// ClusterConfig holds mutable cluster-wide configuration parameters.
+// These are updated via Raft to ensure deterministic application across all nodes.
+message ClusterConfig {
+  uint64 rotation_threshold = 1;
+  BloomTypeConfig bloom_volumes = 2;
+  BloomTypeConfig bloom_metadata = 3;
+  BloomTypeConfig bloom_references = 4;
+  BloomTypeConfig bloom_ledgers = 5;
+  BloomTypeConfig bloom_boundaries = 6;
+  BloomTypeConfig bloom_transactions = 7;
+  BloomTypeConfig bloom_sink_configs = 8;
+  BloomTypeConfig bloom_numscript_versions = 9;
+  BloomTypeConfig bloom_numscript_contents = 10;
+  HashAlgorithm hash_algorithm = 11;
+  BloomTypeConfig bloom_ledger_metadata = 12;
+  BloomTypeConfig bloom_prepared_queries = 13;
+  BloomTypeConfig bloom_indexes = 14;
+}
+
+// PersistedClusterState wraps ClusterConfig with internal FSM state that must
+// be persisted for deterministic restore but is not part of the config proposal.
+message PersistedClusterState {
+  ClusterConfig config = 1;
+  fixed64 cache_epoch = 2;  // Incremented on each config-driven cache reset
+}
+
+
+// SetChapterScheduleLog records a chapter schedule change.
+message SetChapterScheduleLog {
+  string cron = 1;
+}
+
+// DeletedChapterScheduleLog records the removal of the chapter schedule.
+message DeletedChapterScheduleLog {}
+
+// CreatedPreparedQueryLog records the creation of a prepared query.
+message CreatedPreparedQueryLog {
+  string ledger = 1;
+  PreparedQuery query = 2;
+}
+
+// UpdatedPreparedQueryLog records the update of a prepared query filter.
+message UpdatedPreparedQueryLog {
+  string ledger = 1;
+  string name = 2;
+  QueryFilter previous_filter = 3;
+  QueryFilter new_filter = 4;
+}
+
+// DeletedPreparedQueryLog records the deletion of a prepared query.
+message DeletedPreparedQueryLog {
+  string ledger = 1;
+  string name = 2;
+}
+
+// ============================================================================
+// Ledger Metadata Log Messages
+// ============================================================================
+
+// SavedLedgerMetadataLog records metadata being set on a ledger.
+message SavedLedgerMetadataLog {
+  string ledger = 1;
+  map<string, MetadataValue> metadata = 2;
+}
+
+// DeletedLedgerMetadataLog records a metadata key being removed from a ledger.
+message DeletedLedgerMetadataLog {
+  string ledger = 1;
+  string key = 2;
+}
+
+// ============================================================================
+// Event Types
+// ============================================================================
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  COMMITTED_TRANSACTION = 1;
+  REVERTED_TRANSACTION = 2;
+  SAVED_METADATA = 3;
+  DELETED_METADATA = 4;
+  CREATED_LEDGER = 5;
+  DELETED_LEDGER = 6;
+}
+
+// ============================================================================
+// Numscript Library Messages
+// ============================================================================
+
+// NumscriptInfo represents a stored numscript with versioning.
+message NumscriptInfo {
+  string name = 1;
+  string content = 2;
+  string version = 3;
+  Timestamp created_at = 4;
+  string ledger = 5;
+}
+
+// SavedNumscriptLog records a numscript being saved to the library.
+message SavedNumscriptLog {
+  NumscriptInfo info = 1;
+}
+
+// DeletedNumscriptLog records a numscript being deleted from the library.
+message DeletedNumscriptLog {
+  string name = 1;
+  string ledger = 2;
+}
+
+// SetQueryCheckpointScheduleLog records a query checkpoint schedule change.
+message SetQueryCheckpointScheduleLog {
+  string cron = 1;
+}
+
+// DeletedQueryCheckpointScheduleLog records the removal of the query checkpoint schedule.
+message DeletedQueryCheckpointScheduleLog {}
+
+// CreatedQueryCheckpointLog records a query checkpoint being created.
+message CreatedQueryCheckpointLog {
+  fixed64 checkpoint_id = 1;
+  fixed64 max_sequence = 2;
+}
+
+// DeletedQueryCheckpointLog records a query checkpoint being deleted.
+message DeletedQueryCheckpointLog {
+  fixed64 checkpoint_id = 1;
+}
+
+// SinkConfig wraps a single sink configuration with per-sink settings.
+message SinkConfig {
+  string name = 1;  // Stable identifier for per-sink cursor and status keys
+  oneof type {
+    NatsSinkConfig nats = 2;
+    ClickHouseSinkConfig clickhouse = 6;
+    KafkaSinkConfig kafka = 7;
+    HttpSinkConfig http = 8;
+    DatabricksSinkConfig databricks = 10;
+  }
+  string format = 3;          // "json" or "protobuf" (default: "json")
+  int32 batch_size = 4;       // Max events per batch (default: 64)
+  int64 batch_delay_ms = 5;   // Max delay before flush in ms (default: 10)
+  repeated EventType event_types = 9;  // Empty = all events (default)
+}
+
+// SinkStatus tracks per-sink operational state (replicated via Raft).
+message SinkStatus {
+  string sink_name = 1;
+  fixed64 cursor = 2;         // Last published sequence
+  SinkError error = 3;       // Most recent error (nil = healthy)
+}
+
+// SinkError records a sink failure.
+message SinkError {
+  string message = 1;
+  Timestamp occurred_at = 2;
+}
+
+// NatsSinkConfig holds NATS JetStream sink configuration.
+message NatsSinkConfig {
+  string url = 1;
+  string topic = 2;
+}
+
+// ClickHouseSinkConfig holds ClickHouse sink configuration.
+message ClickHouseSinkConfig {
+  string dsn = 1;    // e.g. "clickhouse://user:pass@host:9000/db"
+  string table = 2;  // Table name (default: "ledger_events")
+}
+
+// KafkaSinkConfig holds Apache Kafka sink configuration.
+message KafkaSinkConfig {
+  repeated string brokers = 1;  // e.g. ["localhost:9092"]
+  string topic = 2;             // Kafka topic name
+  bool tls = 3;                 // Enable TLS
+  string sasl_mechanism = 4;    // SASL mechanism: "", "PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"
+  string sasl_username = 5;
+  string sasl_password = 6;
+}
+
+// HttpSinkConfig holds HTTP webhook sink configuration.
+message HttpSinkConfig {
+  string endpoint = 1;          // Target URL (e.g. "https://example.com/webhooks/ledger")
+  string secret = 2;            // Optional HMAC-SHA256 secret for X-Webhook-Signature header
+}
+
+// DatabricksSinkConfig holds Databricks SQL Warehouse sink configuration.
+// Exactly one of the auth oneof fields must be set.
+message DatabricksSinkConfig {
+  string server_hostname = 1;  // e.g. "adb-123456.azuredatabricks.net"
+  string http_path = 2;        // SQL Warehouse HTTP path (e.g. "/sql/1.0/warehouses/abc123")
+  string catalog = 4;          // Unity Catalog name (e.g. "main")
+  string schema = 5;           // Schema name (e.g. "default")
+  string table = 6;            // Table name (default: "ledger_events")
+  int32 port = 7;              // Port number (default: 443)
+  oneof auth {
+    string token = 3;                  // Personal Access Token (PAT) — field number 3 preserved for wire compatibility
+    DatabricksOAuthM2M oauth_m2m = 8;  // OAuth M2M / service principal
+  }
+}
+
+// DatabricksOAuthM2M holds OAuth M2M (client credentials) for a Databricks service principal.
+message DatabricksOAuthM2M {
+  string client_id = 1;
+  string client_secret = 2;
+}
+
+// CreatedLedgerLog captures the creation-time parameters of a ledger.
+// Uses dedicated fields instead of embedding LedgerInfo to avoid sharing
+// a mutable pointer between the FSM store and the immutable log payload.
+message CreatedLedgerLog {
+  string name = 1;
+  Timestamp created_at = 2;
+  MetadataSchema metadata_schema = 3;
+  LedgerMode mode = 4;
+  MirrorSourceConfig mirror_source = 5;
+  map<string, AccountType> account_types = 6;
+  ChartEnforcementMode default_enforcement_mode = 7;
+  uint32 id = 8;                              // Numeric ledger ID assigned by FSM
+}
+
+message DeletedLedgerLog {
+  string name = 1;
+  Timestamp deleted_at = 2;
+}
+
+message ApplyLedgerLog {
+  string ledger_name = 1;
+  LedgerLog log = 2;
+}
+
+message LedgerLog {
+  LedgerLogPayload data = 1;
+  Timestamp date = 2;
+  fixed64 id = 3;
+  // Volumes (account+asset) whose ephemeral state was purged (zero balance)
+  // by THIS log specifically. Subset of the proposal's purged universe —
+  // only volumes touched by the order that produced this log. Empty when
+  // the order did not contribute to any ephemeral purge. The index builder
+  // uses this to skip account->transaction mappings for the corresponding
+  // (account, asset) tuples without reading the audit zone. Carrying the
+  // asset dimension matters: a multi-asset account may have one asset
+  // purged while another stays kept; tagging the account as a whole would
+  // over-skip mappings for transactions that touched the kept asset.
+  repeated TouchedVolume purged_volumes = 4;
+}
+
+// TouchedVolume identifies a (ledger-local) volume cell — an account paired
+// with an asset. Used in transient/purged volume exclusion sets where the
+// indexer must distinguish per-asset state inside a multi-asset account.
+message TouchedVolume {
+  string account = 1;
+  string asset = 2;
+}
+
+message LedgerLogPayload {
+  oneof payload {
+    CreatedTransaction created_transaction = 1;
+    RevertedTransaction reverted_transaction = 2;
+    SavedMetadata saved_metadata = 3;
+    DeletedMetadata deleted_metadata = 4;
+    SetMetadataFieldTypeLog set_metadata_field_type = 5;
+    RemovedMetadataFieldTypeLog removed_metadata_field_type = 6;
+    FilledGapLog fill_gap = 9;
+    CreatedIndexLog create_index = 10;
+    DroppedIndexLog drop_index = 11;
+    AddedAccountTypeLog added_account_type = 13;
+    RemovedAccountTypeLog removed_account_type = 14;
+    UpdatedDefaultEnforcementModeLog updated_default_enforcement_mode = 15;
+  }
+}
+
+// CreatedIndexLog records the creation of an index.
+message CreatedIndexLog {
+  reserved 1, 2, 3;
+  reserved "log_builtin", "transaction", "account";
+  IndexID id = 4;
+}
+
+// DroppedIndexLog records the removal of an index.
+message DroppedIndexLog {
+  reserved 1, 2, 3;
+  reserved "log_builtin", "transaction", "account";
+  IndexID id = 4;
+}
+
+message FilledGapLog {
+  fixed64 original_id = 1;  // v2 log ID that this gap fills
+}
+
+
+message CreatedTransaction {
+  Transaction transaction = 1;
+  map<string, MetadataMap> account_metadata = 2;
+  fixed64 chapter_id = 3;  // Chapter that was OPEN when this transaction was created
+  PostCommitVolumes post_commit_volumes = 4;  // Opt-in: volumes after commit (only when expand_volumes is true)
+}
+
+message RevertedTransaction {
+  fixed64 reverted_transaction_id = 1;
+  Transaction revert_transaction = 2;
+  PostCommitVolumes post_commit_volumes = 3;  // Opt-in: volumes after commit (only when expand_volumes is true)
+}
+
+message SavedMetadata {
+  Target target = 1;
+  map<string, MetadataValue> metadata = 2;
+}
+
+message DeletedMetadata {
+  Target target = 1;
+  string key = 2;                           // Metadata key to delete
+}
+
+// SetMetadataFieldTypeLog records a metadata field type declaration.
+message SetMetadataFieldTypeLog {
+  TargetType target_type = 1;
+  string key = 2;
+  MetadataType type = 3;
+}
+
+// RemovedMetadataFieldTypeLog records the removal of a metadata field type declaration.
+// When the removed field had an index, dropped_index identifies it so the
+// indexbuilder can purge the read-store entries in the same handler pass.
+message RemovedMetadataFieldTypeLog {
+  TargetType target_type = 1;
+  string key = 2;
+  IndexID dropped_index = 3;  // nil when no index was attached to the field
+}
+
+// ============================================================================
+// Chapter
+// ============================================================================
+
+enum ChapterStatus {
+  CHAPTER_OPEN = 0;
+  CHAPTER_CLOSING = 1;
+  CHAPTER_CLOSED = 2;
+  CHAPTER_ARCHIVED = 3;
+  CHAPTER_ARCHIVING = 4;
+}
+
+message Chapter {
+  fixed64 id = 1;
+  Timestamp start = 2;
+  Timestamp end = 3;
+  ChapterStatus status = 4;
+  fixed64 close_sequence = 5;
+  bytes sealing_hash = 6;
+  bytes last_audit_hash = 7;  // Audit chain hash at the time the chapter was closed (for integrity recovery)
+  fixed64 start_sequence = 8;  // First log sequence in this chapter (previous close_sequence + 1, or 1 for the first chapter)
+  bytes state_hash = 9;       // BLAKE3 hash of computed attributes (V+M+T) at seal time
+  fixed64 start_audit_sequence = 10; // First audit sequence in this chapter
+  fixed64 close_audit_sequence = 11; // Last audit sequence when chapter was closed
+}
+
+message ClosedChapterLog {
+  Chapter closed_chapter = 1;
+  Chapter new_chapter = 2;
+}
+
+message SealedChapterLog {
+  Chapter chapter = 1;
+}
+
+message ArchivedChapterLog {
+  Chapter chapter = 1;  // The chapter being archived (still CLOSED at this point)
+}
+
+message ConfirmedArchiveChapterLog {
+  Chapter chapter = 1;  // Chapter now in ARCHIVED status
+}
+
+// ============================================================================
+// Ledger Mode
+// ============================================================================
+
+enum LedgerMode {
+  LEDGER_MODE_NORMAL = 0;
+  LEDGER_MODE_MIRROR = 1;
+}
+
+message MirrorSourceConfig {
+  string ledger_name = 1;  // Source ledger name (common to all source types)
+  oneof type {
+    HttpMirrorSourceConfig http = 2;
+    PostgresMirrorSourceConfig postgres = 3;
+  }
+  uint32 batch_size = 4;  // Max logs per batch (0 = default 100). Client's responsibility to avoid saturating the instance.
+}
+
+message HttpMirrorSourceConfig {
+  string base_url = 1;
+  OAuth2ClientCredentials oauth2_client_credentials = 2;
+}
+
+message OAuth2ClientCredentials {
+  string client_id = 1;
+  string client_secret = 2;
+  string token_endpoint = 3;
+  repeated string scopes = 4;
+}
+
+message PostgresMirrorSourceConfig {
+  string dsn = 1;  // e.g. "postgres://user:pass@host:5432/ledger?sslmode=disable"
+  // When set, the DSN password is overridden by a freshly minted AWS RDS IAM
+  // authentication token on every new pool connection. Ambient AWS credentials
+  // (IRSA, instance profile, env vars, profile) are loaded via the default
+  // AWS SDK chain; this message only carries the region needed to sign the
+  // token, which must match the RDS instance's region.
+  PostgresAwsIamAuth aws_iam_auth = 2;
+}
+
+message PostgresAwsIamAuth {
+  string region = 1;  // AWS region of the RDS instance (e.g. "eu-west-1"); required for SigV4 signing
+  // Optional STS role ARN to assume before minting the RDS IAM token. When
+  // set, the mirror calls sts:AssumeRole on this ARN and signs the RDS token
+  // with the assumed credentials, decoupling the per-mirror IAM identity from
+  // the pod's ambient credentials. Enables multi-account / multi-tenant
+  // mirrors from a single LedgerService whose base role only needs
+  // sts:AssumeRole on these targets (no direct rds-db:connect grant).
+  string assume_role_arn = 2;
+}
+
+message MirrorSyncError {
+  string message = 1;
+  Timestamp occurred_at = 2;
+}
+
+enum MirrorSyncState {
+  MIRROR_SYNC_STATE_SYNCING = 0;
+  MIRROR_SYNC_STATE_FOLLOWING = 1;
+}
+
+message MirrorSyncProgress {
+  MirrorSyncState state = 1;
+  fixed64 cursor = 2;
+  fixed64 source_log_count = 3;
+  fixed64 remaining_logs = 4;
+  MirrorSyncError error = 5;
+}
+
+// ============================================================================
+// Ledger Info
+// ============================================================================
+
+// LedgerInfo represents information about a ledger.
+//
+// Indexes do not live here: they are projected through the bucket-scoped
+// SubAttrIndex registry and surfaced via BucketService.ListIndexes.
+message LedgerInfo {
+  string name = 1;                          // Ledger name
+  Timestamp created_at = 2;                 // Creation timestamp
+  Timestamp deleted_at = 3;                 // Soft delete timestamp (nil if not deleted)
+  MetadataSchema metadata_schema = 4;       // Per-key metadata type declarations
+  LedgerMode mode = 5;                      // Normal or mirror mode
+  MirrorSourceConfig mirror_source = 6;     // Mirror source config (set when mode=MIRROR)
+  MirrorSyncProgress mirror_sync_progress = 7;  // Populated at read time for MIRROR ledgers
+  map<string, AccountType> account_types = 10; // Per-type account address validation
+  ChartEnforcementMode default_enforcement_mode = 11; // Default enforcement for unmatched accounts
+  map<string, MetadataValue> metadata = 12; // Populated at read time from separate attribute store
+  uint32 id = 13;                           // Unique numeric ledger ID (assigned by FSM, used as Pebble key prefix)
+}
+
+// ============================================================================
+// Metadata Commands (shared between bulk operations and raft)
+// ============================================================================
+
+// SaveMetadataCommand is used for adding metadata
+message SaveMetadataCommand {
+  Target target = 1;
+  map<string, MetadataValue> metadata = 2;
+}
+
+// DeleteMetadataCommand is used for deleting metadata
+message DeleteMetadataCommand {
+  Target target = 1;
+  string key = 2;
+}
+
+// TransactionState stores the current state of a transaction as a single value.
+message TransactionState {
+  fixed64 created_by_log = 1;
+  fixed64 reverted_by_transaction = 2;  // 0 = not reverted
+  map<string, MetadataValue> metadata = 3;
+  // Effective timestamp of the transaction (user-provided or command date at
+  // creation). Required for at_effective_date reverts to be deterministic
+  // without re-reading the original log from Pebble.
+  Timestamp timestamp = 4;
+}
+
+// IdempotencyKeyValue stores the outcome associated with a proposal's
+// idempotency key: the committed logs on success, or a replayed failure when
+// the first apply was a definitive business rejection (exactly-once: every
+// duplicate observes the same outcome). A proposal commits N contiguous logs,
+// so success is encoded as (first_log_sequence, log_count).
+message IdempotencyKeyValue {
+  fixed64 first_log_sequence = 1;  // sequence of the proposal's first committed log
+  bytes hash = 2;
+  uint32 hash_version = 3;  // Hash algorithm version (0 = legacy = v1)
+  fixed64 created_at = 4;    // HLC microseconds (from Raft entry timestamp)
+  IdempotencyFailure failure = 5;  // set instead of the log refs when the first apply was a definitive business failure
+  uint32 log_count = 6;  // number of contiguous logs the proposal committed; 0 with failure set
+}
+
+// ErrorReason is the typed, wire-bound form of a domain error's Reason()
+// identifier. Each value mirrors a domain.ErrReason* constant: the enum name is
+// "ERROR_REASON_" + that constant's string, so the two map mechanically
+// (domain.ReasonCode / domain.ReasonString) with no hand-maintained table.
+// AuditFailure and IdempotencyFailure store this instead of a free string so
+// the error kind is re-derivable from the reason (domain.KindForReason) at
+// replay and check time, and a typo cannot silently decode into a known reason.
+// Do NOT renumber or remove values; append new ones. Completeness against the
+// domain errors is enforced by TestEveryDomainErrorImplementsDescribable.
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  ERROR_REASON_LEDGER_ALREADY_EXISTS = 1;
+  ERROR_REASON_LEDGER_NOT_FOUND = 2;
+  ERROR_REASON_LEDGER_DELETED = 3;
+  ERROR_REASON_IDEMPOTENCY_KEY_CONFLICT = 4;
+  ERROR_REASON_TRANSACTION_REFERENCE_CONFLICT = 5;
+  ERROR_REASON_TRANSACTION_REFERENCE_NOT_FOUND = 6;
+  ERROR_REASON_TRANSACTION_NOT_FOUND = 7;
+  ERROR_REASON_TRANSACTION_ALREADY_REVERTED = 8;
+  ERROR_REASON_INSUFFICIENT_FUNDS = 9;
+  ERROR_REASON_VOLUME_OVERFLOW = 10;
+  ERROR_REASON_BALANCE_NOT_PRELOADED = 11;
+  ERROR_REASON_NUMSCRIPT_PARSE_ERROR = 12;
+  ERROR_REASON_VALIDATION = 13;
+  ERROR_REASON_AUDIT_DISABLED = 14;
+  ERROR_REASON_SINK_ALREADY_EXISTS = 15;
+  ERROR_REASON_SINK_NOT_FOUND = 16;
+  ERROR_REASON_SINK_BATCH_SIZE_TOO_LARGE = 17;
+  ERROR_REASON_NO_CHAPTER_OPEN = 18;
+  ERROR_REASON_CHAPTER_NOT_FOUND = 19;
+  ERROR_REASON_CHAPTER_NOT_CLOSING = 20;
+  ERROR_REASON_CHAPTER_NOT_CLOSED = 21;
+  ERROR_REASON_CHAPTER_NOT_ARCHIVING = 22;
+  ERROR_REASON_METADATA_NOT_FOUND = 23;
+  ERROR_REASON_INVALID_RECEIPT = 24;
+  ERROR_REASON_MAINTENANCE_MODE = 25;
+  ERROR_REASON_STALE_PROPOSAL = 26;
+  ERROR_REASON_INVALID_CRON_EXPRESSION = 27;
+  ERROR_REASON_LEDGER_IN_MIRROR_MODE = 28;
+  ERROR_REASON_LEDGER_NOT_IN_MIRROR_MODE = 29;
+  ERROR_REASON_PREPARED_QUERY_ALREADY_EXISTS = 30;
+  ERROR_REASON_PREPARED_QUERY_NOT_FOUND = 31;
+  ERROR_REASON_INDEX_NOT_FOUND = 32;
+  ERROR_REASON_INDEX_BUILDING = 33;
+  ERROR_REASON_INDEX_INCONSISTENT = 34;
+  ERROR_REASON_METADATA_FIELD_NOT_IN_SCHEMA = 35;
+  ERROR_REASON_NUMSCRIPT_NOT_FOUND = 36;
+  ERROR_REASON_NUMSCRIPT_VERSION_ALREADY_EXISTS = 37;
+  ERROR_REASON_NUMSCRIPT_INVALID_VERSION = 38;
+  ERROR_REASON_ACCOUNT_NOT_MATCHING_TYPE = 39;
+  ERROR_REASON_ACCOUNT_TYPE_NOT_FOUND = 40;
+  ERROR_REASON_ACCOUNT_TYPE_ALREADY_EXISTS = 41;
+  ERROR_REASON_INVALID_PATTERN = 42;
+  ERROR_REASON_ACCOUNT_TYPE_HAS_ACCOUNTS = 43;
+  ERROR_REASON_ACCOUNT_TYPE_CONFLICT = 44;
+  ERROR_REASON_COLD_STORAGE_DISABLED = 45;
+  ERROR_REASON_TRANSIENT_ACCOUNT_NON_ZERO = 46;
+  ERROR_REASON_FILTER_COMPILATION_ERROR = 47;
+  ERROR_REASON_INVALID_ORDER_TYPE = 48;
+  ERROR_REASON_INVALID_APPLY_TYPE = 49;
+  ERROR_REASON_INVALID_EXECUTION_PLAN = 50;
+  ERROR_REASON_EXECUTION_PLAN_TOO_LARGE = 51;
+  ERROR_REASON_COVERAGE_MISS = 52;
+  ERROR_REASON_IDEMPOTENCY_CHECK_FAILED = 53;
+  ERROR_REASON_STORAGE_OPERATION_FAILED = 54;
+  ERROR_REASON_TRANSACTION_STATE_INCONSISTENT = 55;
+  ERROR_REASON_CHECKPOINT_ID_REQUIRED = 56;
+  ERROR_REASON_NUMSCRIPT_RUNTIME = 57;
+  ERROR_REASON_VOLUME_NOT_MATERIALIZED = 58;
+  ERROR_REASON_NON_DETERMINISTIC_SCRIPT = 59;
+  ERROR_REASON_CLUSTER_UNHEALTHY = 60;
+  ERROR_REASON_WRITES_BLOCKED_DISK_FULL = 61;
+  ERROR_REASON_WRITES_BLOCKED_CLOCK_SKEW = 62;
+}
+
+// IdempotencyFailure captures a definitive business rejection so a retried key
+// replays the original error instead of re-executing. The error kind is NOT
+// stored: it is re-derived from reason at replay time (domain.KindForReason),
+// so a reclassified error replays under its current kind and the checker can
+// verify this projection against the hash-chained AuditFailure.
+message IdempotencyFailure {
+  ErrorReason reason = 1;             // typed reason; kind derived via domain.KindForReason
+  string message = 2;                 // client-facing error message
+  map<string, string> metadata = 3;   // ErrorInfo metadata
+}
+
+// TransactionReferenceValue stores the transaction ID associated with a unique reference within a ledger.
+message TransactionReferenceValue {
+  fixed64 transaction_id = 1;
+}
+
+// NumscriptVersionValue stores the latest version pointer for a named numscript.
+message NumscriptVersionValue {
+  string version = 1;
+}
+
+// ChartEnforcementMode controls how chart violations are handled.
+enum ChartEnforcementMode {
+  CHART_ENFORCEMENT_STRICT = 0;  // Reject transactions with invalid addresses (default)
+  CHART_ENFORCEMENT_AUDIT = 1;   // Log warning but allow the transaction
+}
+
+// ============================================================================
+// Account Types
+// ============================================================================
+
+// AccountTypePersistence controls how account volumes are stored and managed.
+enum AccountTypePersistence {
+  ACCOUNT_TYPE_NORMAL = 0;     // Default: fully persisted
+  ACCOUNT_TYPE_EPHEMERAL = 1;  // Persisted, purged when zero balance after commit
+  ACCOUNT_TYPE_TRANSIENT = 2;  // Never persisted, must be zero at end of batch
+}
+
+// SegmentType defines the constraint for a variable segment in an account type pattern.
+// When no constraint is set, the segment accepts any non-empty string.
+message SegmentType {
+  oneof constraint {
+    string regex = 1;         // Custom regex pattern (e.g. "[a-z]+")
+    UUIDConstraint uuid = 2;  // RFC 4122 UUID format
+    Uint64Constraint uint64 = 3;  // Decimal uint64
+    BytesConstraint bytes = 4;    // Hex-encoded bytes (even length)
+  }
+}
+
+message UUIDConstraint {}
+message Uint64Constraint {}
+message BytesConstraint {}
+
+// AccountType defines a single account address pattern for a ledger.
+message AccountType {
+  string name = 1;                           // Unique identifier: "user-checking"
+  string pattern = 2;                        // Address pattern: "users:{id}:checking"
+  AccountTypePersistence persistence = 3;    // How volumes are stored (replaces bool ephemeral)
+  map<string, SegmentType> segment_types = 4;  // variable_name -> type constraint
+}
+
+// AddedAccountTypeLog records the addition of an account type.
+message AddedAccountTypeLog {
+  AccountType account_type = 1;
+}
+
+// RemovedAccountTypeLog records the removal of an account type.
+message RemovedAccountTypeLog {
+  string name = 1;
+}
+
+// UpdatedDefaultEnforcementModeLog records a change to the ledger's default enforcement mode.
+message UpdatedDefaultEnforcementModeLog {
+  ChartEnforcementMode enforcement_mode = 1;
+}
+
+// ============================================================================
+// Prepared Queries — Filter Model
+// ============================================================================
+
+message QueryFilter {
+  oneof filter {
+    FieldCondition field = 1;
+    AddressMatch address = 2;
+    AndFilter and = 3;
+    OrFilter or = 4;
+    NotFilter not = 5;
+    ReferenceCondition reference = 6;
+    BuiltinUintCondition builtin_uint = 7;
+    LedgerCondition ledger = 8;
+    LogIdCondition log_id = 9;
+    LogBuiltinUintCondition log_builtin_uint = 10;
+    AccountHasAssetCondition account_has_asset = 11;
+  }
+}
+
+// ReferenceCondition filters transactions by reference (exact match).
+message ReferenceCondition {
+  StringCondition cond = 1;
+}
+
+// LedgerCondition filters logs by ledger name (exact match).
+message LedgerCondition {
+  StringCondition cond = 1;
+}
+
+// LogIdCondition filters logs by ledger-local log ID (uint64 range).
+message LogIdCondition {
+  UintCondition cond = 1;
+}
+
+// BuiltinUintCondition filters transactions by a built-in uint64 field (id, timestamp, or inserted_at).
+message BuiltinUintCondition {
+  TransactionBuiltinIndex field = 1;
+  UintCondition cond = 2;
+}
+
+// LogBuiltinUintCondition filters logs by a built-in uint64 field (date).
+message LogBuiltinUintCondition {
+  LogBuiltinIndex field = 1;
+  UintCondition cond = 2;
+}
+
+// AccountHasAssetCondition matches accounts that have ever held a volume cell
+// for the given asset (base + precision). Volume-cell presence semantics, not
+// balance. Resolved exclusively via the ACCT_BUILTIN_INDEX_ASSET readstore
+// index; there is no on-scan fallback.
+message AccountHasAssetCondition {
+  string asset_base = 1;
+  uint32 precision = 2;
+}
+
+message AndFilter {
+  repeated QueryFilter filters = 1;
+}
+
+message OrFilter {
+  repeated QueryFilter filters = 1;
+}
+
+message NotFilter {
+  QueryFilter filter = 1;
+}
+
+// FieldRef identifies the metadata key for a condition.
+// The execution context (QueryTarget) determines whether this refers to
+// account or transaction metadata.
+message FieldRef {
+  string metadata = 1;
+}
+
+// FieldCondition = FieldRef × Condition.
+message FieldCondition {
+  FieldRef field = 1;
+  oneof condition {
+    StringCondition string_cond = 2;
+    IntCondition int_cond = 3;
+    UintCondition uint_cond = 4;
+    BoolCondition bool_cond = 5;
+    ExistsCondition exists_cond = 6;
+  }
+}
+
+message StringCondition {
+  oneof value {
+    string hardcoded = 1;
+    string param = 2;
+  }
+}
+
+message IntCondition {
+  optional int64 min = 1;
+  optional int64 max = 2;
+  bool min_exclusive = 3;
+  bool max_exclusive = 4;
+  string param_min = 5;
+  string param_max = 6;
+}
+
+message UintCondition {
+  optional fixed64 min = 1;
+  optional fixed64 max = 2;
+  bool min_exclusive = 3;
+  bool max_exclusive = 4;
+  string param_min = 5;
+  string param_max = 6;
+}
+
+message BoolCondition {
+  oneof value {
+    bool hardcoded = 1;
+    string param = 2;
+  }
+}
+
+message ExistsCondition {
+  bool include_null = 1;
+}
+
+enum AddressRole {
+  ADDRESS_ROLE_ANY = 0;
+  ADDRESS_ROLE_SOURCE = 1;
+  ADDRESS_ROLE_DESTINATION = 2;
+}
+
+message AddressMatch {
+  oneof match {
+    string hardcoded_prefix = 1;
+    string hardcoded_exact = 2;
+    string param_prefix = 3;
+    string param_exact = 4;
+  }
+  AddressRole role = 5;
+}
+
+enum QueryTarget {
+  QUERY_TARGET_ACCOUNTS = 0;
+  QUERY_TARGET_TRANSACTIONS = 1;
+  QUERY_TARGET_LOGS = 2;
+}
+
+enum QueryMode {
+  QUERY_MODE_LIST = 0;
+  QUERY_MODE_AGGREGATE_VOLUMES = 1;
+}
+
+// PreparedQuery is a named, parameterized query template stored in the primary
+// store. The ledger the query belongs to lives on the storage key prefix and
+// (where the query is being created or invoked) on the surrounding request /
+// LedgerScopedOrder; it is intentionally NOT a field on the value itself.
+message PreparedQuery {
+  string name = 1;
+  QueryFilter filter = 2;
+  QueryTarget target = 3;
+}
+
+// AggregatedVolume represents per-asset aggregated input/output volumes.
+message AggregatedVolume {
+  string asset = 1;
+  Uint256 input = 2;
+  Uint256 output = 3;
+}
+
+message AggregateResult {
+  repeated AggregatedVolume volumes = 1;
+  // When group_by_prefixes is set, contains per-prefix aggregated volumes.
+  repeated GroupedAggregateResult groups = 2;
+}
+
+// GroupedAggregateResult holds aggregated volumes for a single account prefix.
+message GroupedAggregateResult {
+  string prefix = 1;
+  repeated AggregatedVolume volumes = 2;
+}
+
+// PreparedQueryCursor follows the cursor-based pagination pattern.
+message PreparedQueryCursor {
+  uint32 page_size = 1;
+  bool has_more = 2;
+  string previous = 3;
+  string next = 4;
+  repeated Account account_data = 5;
+  repeated Transaction transaction_data = 6;
+}
+
+// LedgerStats contains aggregate statistics for a ledger.
+message LedgerStats {
+  fixed64 transaction_count = 1;
+  fixed64 volume_count = 2;
+  fixed64 metadata_count = 3;
+  fixed64 reference_count = 4;
+  fixed64 posting_count = 5;
+  fixed64 ephemeral_evicted_count = 6;
+  fixed64 transient_used_count = 7;
+  fixed64 revert_count = 8;
+  fixed64 numscript_execution_count = 9;
+  fixed64 log_count = 10;
+}
+
+// PersistedConfig stores critical configuration parameters that must not change
+// between restarts with existing data. Stored at Pebble key {0x06, 0x0C}
+// (Global zone, SubGlobPersistedConfig).
+message PersistedConfig {
+  uint64 node_id = 1;
+  string cluster_id = 2;
+  uint64 idempotency_ttl_seconds = 3;
+  uint32 storage_schema_version = 4;
+}
+
+// CallerIdentity uniquely identifies an authenticated caller. It is
+// strictly an *identification* — subject plus the mechanism that
+// authenticated it — and carries no authorization decision.
+//
+// It is safe to propagate across nodes (e.g. when a follower forwards
+// a request to the leader) because no downstream code makes an
+// authorization decision based on it: the admission point that issued
+// it already vetted the call.
+message CallerIdentity {
+  string subject = 1;
+  // Fields 2 and 3 historically held `repeated string scopes` and
+  // `bool god`. They moved to CallerSnapshot when CallerIdentity was
+  // split into identification + audit snapshot. Keep them reserved so
+  // a future field can't accidentally re-use the numbers and silently
+  // collide with old persisted data.
+  reserved 2, 3;
+  reserved "scopes", "god";
+  oneof source {
+    string issuer = 4;   // OIDC token issuer URL
+    string key_id = 5;   // Ed25519 signing key ID
+  }
+}
+
+// CallerSnapshot is the *admission-time* record of who initiated an
+// action and what authorization was granted to them at that moment.
+// It exists for audit trail purposes only: scopes and god MUST NOT be
+// re-evaluated downstream (FSM, leader after a follower forward,
+// etc.).
+//
+// Carried on Proposals through Raft, then copied to AuditEntry by the
+// FSM. Nil when authentication is disabled or for system-initiated
+// proposals.
+message CallerSnapshot {
+  CallerIdentity identity = 1;
+  repeated string scopes = 2;
+  bool god = 3;
+}
+
+// ============================================================================
+// Backup Storage
+// ============================================================================
+
+// S3StorageConfig configures an S3 / S3-compatible backup backend.
+message S3StorageConfig {
+  string bucket            = 1; // Bucket name (required)
+  string region            = 2; // AWS region
+  string endpoint          = 3; // Custom endpoint (for MinIO)
+  string access_key_id     = 4; // Optional static access key ID (default: credential chain)
+  string secret_access_key = 5; // Optional static secret access key (default: credential chain)
+}
+
+// AzureStorageConfig configures an Azure Blob Storage backup backend.
+message AzureStorageConfig {
+  string account_name = 1; // Storage account name (required)
+  string account_key  = 2; // Storage account key (omit to use DefaultAzureCredential)
+  string container    = 3; // Blob container name (required)
+  string endpoint     = 4; // Custom endpoint (for Azurite)
+}
+
+// BackupStorage selects and configures the backup storage backend. The provider
+// oneof is the single source of truth for the driver — adding a new backend is
+// a new oneof case, no parallel "driver" string to keep in sync.
+message BackupStorage {
+  oneof provider {
+    S3StorageConfig s3       = 1;
+    AzureStorageConfig azure = 2;
+  }
+}
+
+// ReadOptions carries the canonical consistency parameters every read RPC
+// understands. Embed it as a field on the Request so the contract stays DRY:
+// every endpoint that reads from the read store accepts the same knobs.
+message ReadOptions {
+  // checkpoint_id, when non-zero, reads from a query checkpoint instead of
+  // the live store. Endpoints that do not support checkpoint reads MUST
+  // reject any non-zero value with InvalidArgument.
+  fixed64 checkpoint_id = 1;
+  // min_log_sequence requires the store to have applied at least this log
+  // sequence before reading; FailedPrecondition otherwise. Ignored for
+  // checkpoint reads (a checkpoint is a fixed snapshot).
+  fixed64 min_log_sequence = 2;
+}
+
+// ListOptions carries the canonical pagination + consistency + filter
+// parameters every streaming read endpoint understands. Embed it as a field
+// on the Request so the contract stays DRY across resources.
+//
+// cursor is OPAQUE from the client's POV: the server encodes the next-page
+// resume token internally (entity address, sequence number, …) and the client
+// round-trips whatever value it received as the "x-next-cursor" trailer of
+// the previous response. This lets the server evolve its on-wire cursor
+// format without breaking deployed clients.
+//
+// Not every endpoint honors every option: a reverse-uncapable or filter-less
+// endpoint MUST reject a non-default value with InvalidArgument rather than
+// silently ignoring it.
+message ListOptions {
+  ReadOptions read = 1;
+  // page_size is the maximum number of items per page. 0 lets the server
+  // pick a sane default (currently 100); the server clamps to MaxPageSize.
+  uint32 page_size = 2;
+  // cursor is the opaque resume token from the previous page's
+  // x-next-cursor trailer. Empty starts at the iteration head.
+  string cursor = 3;
+  // reverse inverts the default iteration order for endpoints that support it.
+  bool reverse = 4;
+  // filter is a rich boolean filter (metadata conditions, address matching,
+  // AND/OR/NOT, log_id ranges, …) applied alongside the cursor. The set of
+  // valid conditions depends on the endpoint's QueryTarget; the server
+  // rejects unsupported variants with InvalidArgument.
+  QueryFilter filter = 5;
+}
