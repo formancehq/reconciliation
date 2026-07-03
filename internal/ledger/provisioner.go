@@ -17,6 +17,10 @@ type provisionAPI interface {
 	CreatePreparedQuery(ctx context.Context, ledger string, query *commonpb.PreparedQuery) error
 }
 
+// Compile-time proof the concrete client satisfies the provisioner's dependency,
+// so any signature drift fails here rather than at wiring time (F10).
+var _ provisionAPI = (*Client)(nil)
+
 // Provisioner ensures the control-ledger exists with reconciliation's chart of
 // accounts, typed metadata schema and prepared queries. Idempotent — safe to run
 // on every boot.

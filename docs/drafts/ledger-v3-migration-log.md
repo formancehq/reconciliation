@@ -79,8 +79,8 @@ commit; not on main; no OpenAPI change; `CreateLedger` sig change has no externa
 
 | # | Sev | Finding | Status |
 |---|---|---|---|
-| F10 | MED | No compile-time proof that `*Client` satisfies `provisionAPI` — add `var _ provisionAPI = (*Client)(nil)` so interface drift fails at compile time in-package (not only at step-6 wiring). | ⬜ open |
-| F11 | MED | Provisioner happy-path test matches schema args with `gomock.Any()` → it would pass even if `Provision` sent an empty/wrong chart. Tighten via `DoAndReturn` to assert account-types include `alert-state`=EPHEMERAL and both PQ names are registered. | ⬜ open |
+| F10 | MED | No compile-time proof that `*Client` satisfies `provisionAPI`. | ✅ resolved — `var _ provisionAPI = (*Client)(nil)` |
+| F11 | MED | Provisioner happy-path test matched schema args with `gomock.Any()` → would pass on an empty/wrong chart. | ✅ resolved — `DoAndReturn` asserts `alert-state`=EPHEMERAL + non-empty schema + both PQ names |
 | F12 | LOW | Two exported helpers are unused until step 4 (`FilterMetadataString`, `IssuedByRulePrefix`) — speculative surface; keep only if step 4 consumes them, else drop (YAGNI). | ⬜ open |
 
 ---
