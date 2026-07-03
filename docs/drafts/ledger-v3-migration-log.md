@@ -9,6 +9,36 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 
 ---
 
+## 👋 Handoff — resume here
+
+**Done:** Phase 1 steps 0–4 + **5a** (checkpoint mechanism, `6a7e110`). The `LedgerStore`
+implements the full rules + alert-lifecycle surface; the `CheckpointReader` reads data ledgers at
+a query checkpoint (ADR-002 cut, it-proven). Chart is **finalized** — 4 account types, per-rule
+pool, numscripts in the ledger library (don't re-litigate; see §4.1.1/§4.1.2 + the phase table).
+
+**Next: step 6 — fx wiring + config + dual-run flag, absorbing step 5b (engine flip).**
+1. Wire `ledger.Client` (config: address/**TLS + Ed25519 signing → closes F2**, refuse insecure
+   outside dev), `LedgerStore`, and `CheckpointReader` behind a dual-run feature flag (Postgres
+   primary + ledger shadow / or a bascule flag).
+2. **5b flip:** change `engine.LedgerResolver` (`AggregateBalance`/`ListAccounts`) `pit`→
+   `checkpointID` — `CheckpointReader` is already that signature, branch it for Tier-1 ledger
+   sources; `SDKLedgerResolver` stays Tier-2 (latest/pit). Service pins ONE checkpoint per
+   evaluation (`AcquireCheckpoint` → `Evaluate` → `Release` with a cancellation-surviving ctx —
+   **F26**), records the `checkpointID` anchor on `Evaluation` (**Postgres migration**: new column)
+   alongside `PitPerSource` (Tier-2). Add a reaper/ring for orphaned checkpoints (**F26**).
+   Consider re-scoping 5b with the owner before the invasive engine+migration work.
+
+**Watch:** open findings F1/F2/F8/F17/F22/F23/F25/F26/F27 (details below). **Don't touch:**
+`feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
+uncommitted `Justfile` change (orphaned `generate-ledger-proto`, leave unstaged); `ledger-local/`.
+**Build/test:** `export PATH=$PATH:$(go env GOPATH)/bin` then `GOROOT= go build ./...`,
+`GOROOT= go test -race ./internal/ledger{,store,schema}/...`, it-tests `GOROOT= go test -tags it
+-run TestIntegration ./internal/ledgerstore/... ./internal/ledger/...` (F8: bump the it
+control-ledger name on any chart change). Conventions: `feat(ledger-v3):` commits, update this log
++ SDLC review per sub-step, stamp commit refs.
+
+---
+
 ## Phase status
 
 | Phase | Step | Scope | Status | Commit |
