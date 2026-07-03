@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	ledger "github.com/formancehq/reconciliation/internal/ledger"
 	commonpb "github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -39,6 +40,20 @@ func NewMockledgerClient(ctrl *gomock.Controller) *MockledgerClient {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockledgerClient) EXPECT() *MockledgerClientMockRecorder {
 	return m.recorder
+}
+
+// CreateTransaction mocks base method.
+func (m *MockledgerClient) CreateTransaction(ctx context.Context, in ledger.CreateTransactionInput) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateTransaction", ctx, in)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateTransaction indicates an expected call of CreateTransaction.
+func (mr *MockledgerClientMockRecorder) CreateTransaction(ctx, in any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTransaction", reflect.TypeOf((*MockledgerClient)(nil).CreateTransaction), ctx, in)
 }
 
 // DeleteAccountMetadata mocks base method.

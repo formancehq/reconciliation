@@ -11,6 +11,7 @@ import (
 
 	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
+	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/google/uuid"
@@ -95,4 +96,102 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 
 	// Delete again → not found.
 	require.ErrorIs(t, store.DeleteRule(ctx, id), storage.ErrNotFound)
+}
+
+// TestIntegration_OpenAlert exercises OpenOrUpdateAlert against a real Ledger v3.
+// It proves the alert-lifecycle write end-to-end: the ALERT marker lands in
+// st:open, the OCC counter and status mirror land on the item account, a
+// same-evaluation replay is deduplicated by the batch idempotency key, and a
+// fresh evaluation bumps the counter (a real repeat).
+//
+//	go test -tags it -run TestIntegration_OpenAlert ./internal/ledgerstore/...
+func TestIntegration_OpenAlert(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, err := ledger.NewClient(itLedgerAddr(), nil)
+	require.NoError(t, err)
+
+	defer func() { _ = client.Close() }()
+
+	const control = "recon-it"
+
+	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
+	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
+
+	store := New(client, control)
+
+	ruleID := uuid.New() // fresh rule → addresses unique to this run
+	const period = "2026-03"
+	fp := "asset:USD/2|account:merchant:m1:held"
+	fpHash := schema.FingerprintHash(fp)
+
+	itemAddr := schema.AlertItemAccount(ruleID.String(), period, fpHash)
+	stOpenAddr := schema.AlertStateAccount(schema.StateOpen, ruleID.String(), period, fpHash)
+	issuedAddr := schema.IssuedPoolAccount(ruleID.String(), period)
+
+	in := storage.OpenAlertInput{
+		RuleID:       ruleID,
+		Fingerprint:  fp,
+		PeriodID:     period,
+		Severity:     models.SeverityHigh,
+		EvaluationID: uuid.New(),
+		Evidence:     json.RawMessage(`{"drift":"42"}`),
+		Labels:       map[string]string{"env": "it"},
+		OccurredAt:   time.Now().Truncate(time.Microsecond).UTC(),
+	}
+
+	// First fail → open.
+	res, err := store.OpenOrUpdateAlert(ctx, in)
+	require.NoError(t, err, "open alert")
+	require.True(t, res.Created)
+	require.False(t, res.Reopened)
+	require.Equal(t, models.AlertOpen, res.Alert.Status)
+
+	// Marker sits in st:open; OCC counter is 1; status mirror is OPEN.
+	require.Equal(t, "1", balance(ctx, t, client, control, stOpenAddr, schema.AssetAlert), "ALERT marker in st:open")
+	require.Equal(t, "1", balance(ctx, t, client, control, itemAddr, schema.AssetOcc), "OCC counter")
+	require.Equal(t, "-1", balance(ctx, t, client, control, issuedAddr, schema.AssetAlert), "issuance pool = -1 live alert")
+
+	item, err := client.GetAccount(ctx, control, itemAddr, 0)
+	require.NoError(t, err)
+	require.Equal(t, "OPEN", item.GetMetadata()[schema.MetaStatus].GetStringValue(), "status mirror")
+	require.Equal(t, res.Alert.ID.String(), item.GetMetadata()[schema.MetaID].GetStringValue(), "id mirror")
+
+	// Fresh evaluation, same fingerprint/period → a real repeat: OCC → 2, and
+	// still exactly one marker in st:open (no double-open).
+	in.EvaluationID = uuid.New()
+	res, err = store.OpenOrUpdateAlert(ctx, in)
+	require.NoError(t, err, "repeat")
+	require.False(t, res.Created)
+	require.False(t, res.Reopened)
+	require.Equal(t, int64(2), res.Alert.OccurrenceCount)
+	require.Equal(t, "2", balance(ctx, t, client, control, itemAddr, schema.AssetOcc), "repeat bumps OCC")
+	require.Equal(t, "1", balance(ctx, t, client, control, stOpenAddr, schema.AssetAlert), "still one marker in st:open")
+
+	// Idempotency plumbing: an identical batch resubmitted under the same key is
+	// deduplicated by the ledger (the at-least-once safety net for gRPC
+	// retransmits on leader failover). Asserted at the client level on a
+	// throwaway probe account, since a resubmit through the store would re-read
+	// the advanced state and build a *different* batch — which the ledger rejects
+	// as a key/content conflict rather than replaying (see migration log F17).
+	probe := schema.AlertItemAccount(ruleID.String(), period, schema.FingerprintHash("idem-probe"))
+	occMint := ledger.CreateTransactionInput{
+		Ledger:         control,
+		Script:         schema.NumscriptMintOcc(schema.OccPoolAccount(ruleID.String(), period), probe),
+		IdempotencyKey: "it-idem-" + ruleID.String(),
+	}
+	require.NoError(t, client.CreateTransaction(ctx, occMint))
+	require.NoError(t, client.CreateTransaction(ctx, occMint), "identical batch under the same key")
+	require.Equal(t, "1", balance(ctx, t, client, control, probe, schema.AssetOcc), "identical batch applied once")
+}
+
+// balance reads one asset's balance on an account (empty string if absent).
+func balance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, addr, asset string) string {
+	t.Helper()
+
+	acct, err := c.GetAccount(ctx, ledgerName, addr, 0)
+	require.NoError(t, err, "get account %s", addr)
+
+	return acct.GetVolumes()[asset].GetBalance()
 }

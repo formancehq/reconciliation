@@ -9,6 +9,8 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
@@ -76,9 +78,17 @@ func (c *Client) Service() servicepb.BucketServiceClient {
 
 // Apply sends a batch of requests to the ledger in a single atomic batch.
 func (c *Client) Apply(ctx context.Context, requests ...*servicepb.Request) (*servicepb.ApplyResponse, error) {
+	return c.applyIdempotent(ctx, "", requests...)
+}
+
+// applyIdempotent sends an atomic batch under an idempotency key. A repeated
+// batch with the same key is deduplicated by the ledger (it returns the cached
+// outcome instead of applying twice) — the at-least-once safety net for
+// crash-replays. An empty key disables dedup.
+func (c *Client) applyIdempotent(ctx context.Context, key string, requests ...*servicepb.Request) (*servicepb.ApplyResponse, error) {
 	return c.service.Apply(ctx, &servicepb.ApplyRequest{
 		Variant: &servicepb.ApplyRequest_Unsigned{
-			Unsigned: &servicepb.ApplyBatch{Requests: requests},
+			Unsigned: &servicepb.ApplyBatch{Requests: requests, IdempotencyKey: key},
 		},
 	})
 }
@@ -154,6 +164,64 @@ func (c *Client) SaveNumscript(ctx context.Context, ledger, name, content, versi
 	return err
 }
 
+// CreateTransactionInput is the payload for CreateTransaction: a Numscript
+// transaction plus atomic account-metadata reconciliation (set some keys,
+// delete others), all committed as one idempotent batch. Reconciliation uses it
+// for the alert-lifecycle transitions, where a marker move (the guarded
+// source-of-truth) and the descriptive/status metadata mirror must land
+// together or not at all.
+type CreateTransactionInput struct {
+	Ledger string
+	Script string            // Numscript source (Plain)
+	Vars   map[string]string // Numscript vars (nil when the script is fully literal)
+	// TxMetadata is transaction-level metadata (COMMITTED_TRANSACTION payload).
+	TxMetadata map[string]*commonpb.MetadataValue
+	// AccountMetadata sets typed metadata per account, atomically with the tx
+	// (address → typed key/value map).
+	AccountMetadata map[string]*commonpb.MetadataMap
+	// DeleteMetadata removes metadata keys per account, atomically with the tx
+	// (address → keys). The ledger rejects deleting an absent key, so callers
+	// must only list keys they know are present.
+	DeleteMetadata map[string][]string
+	IdempotencyKey string
+}
+
+// CreateTransaction runs a Numscript transaction, reconciling account metadata
+// in the same atomic, idempotent batch. Balance guards in the script (a bare
+// source that must hold the funds) act as compare-and-swap on the marker
+// accounts: an illegal transition fails the whole batch.
+func (c *Client) CreateTransaction(ctx context.Context, in CreateTransactionInput) error {
+	reqs := make([]*servicepb.Request, 0, 1+len(in.DeleteMetadata))
+	reqs = append(reqs, &servicepb.Request{
+		Type: &servicepb.Request_Apply{
+			Apply: &servicepb.LedgerApplyRequest{
+				Ledger: in.Ledger,
+				Action: &servicepb.LedgerAction{
+					Data: &servicepb.LedgerAction_CreateTransaction{
+						CreateTransaction: &servicepb.CreateTransactionPayload{
+							Script:          &commonpb.Script{Plain: in.Script, Vars: in.Vars},
+							Metadata:        in.TxMetadata,
+							AccountMetadata: in.AccountMetadata,
+						},
+					},
+				},
+			},
+		},
+	})
+
+	// Sort addresses so the batch composition is deterministic (dedup keys off
+	// the explicit idempotency key, but a stable batch keeps replays byte-equal).
+	for _, addr := range slices.Sorted(maps.Keys(in.DeleteMetadata)) {
+		for _, k := range in.DeleteMetadata[addr] {
+			reqs = append(reqs, deleteMetadataRequest(in.Ledger, addr, k))
+		}
+	}
+
+	_, err := c.applyIdempotent(ctx, in.IdempotencyKey, reqs...)
+
+	return err
+}
+
 // SaveAccountMetadata saves string metadata on an account (no transaction).
 func (c *Client) SaveAccountMetadata(ctx context.Context, ledgerName, address string, metadata map[string]string) error {
 	return c.SaveAccountMetadataValues(ctx, ledgerName, address, commonpb.MetadataFromMap(metadata))
@@ -194,30 +262,37 @@ func (c *Client) DeleteAccountMetadata(ctx context.Context, ledgerName, address 
 
 	reqs := make([]*servicepb.Request, 0, len(keys))
 	for _, k := range keys {
-		reqs = append(reqs, &servicepb.Request{
-			Type: &servicepb.Request_Apply{
-				Apply: &servicepb.LedgerApplyRequest{
-					Ledger: ledgerName,
-					Action: &servicepb.LedgerAction{
-						Data: &servicepb.LedgerAction_DeleteMetadata{
-							DeleteMetadata: &commonpb.DeleteMetadataCommand{
-								Target: &commonpb.Target{
-									Target: &commonpb.Target_Account{
-										Account: &commonpb.TargetAccount{Addr: address},
-									},
-								},
-								Key: k,
-							},
-						},
-					},
-				},
-			},
-		})
+		reqs = append(reqs, deleteMetadataRequest(ledgerName, address, k))
 	}
 
 	_, err := c.Apply(ctx, reqs...)
 
 	return err
+}
+
+// deleteMetadataRequest builds a single DeleteMetadata action for one account
+// key. Shared by DeleteAccountMetadata and CreateTransaction so the delete
+// shape lives in one place.
+func deleteMetadataRequest(ledgerName, address, key string) *servicepb.Request {
+	return &servicepb.Request{
+		Type: &servicepb.Request_Apply{
+			Apply: &servicepb.LedgerApplyRequest{
+				Ledger: ledgerName,
+				Action: &servicepb.LedgerAction{
+					Data: &servicepb.LedgerAction_DeleteMetadata{
+						DeleteMetadata: &commonpb.DeleteMetadataCommand{
+							Target: &commonpb.Target{
+								Target: &commonpb.Target_Account{
+									Account: &commonpb.TargetAccount{Addr: address},
+								},
+							},
+							Key: key,
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 // GetAccount retrieves an account (volumes + metadata) by address. A non-zero

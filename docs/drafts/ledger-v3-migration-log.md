@@ -22,7 +22,7 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 3b | ↳ PatchRule/DeleteRule (+ `ParseRuleAccount`, `DeleteAccountMetadata`) | ✅ done | `d023826` |
 | 1 | 3c | ↳ alert lifecycle | 🚧 in progress | — |
 | 1 | 3c-1 | ↳ address reorder (per→fp), `MetaID`, `Alert↔metadata` serialization (OCC from balance, status mirror) | ✅ done | `f959ea1` |
-| 1 | 3c-2 | ↳ `OpenOrUpdateAlert` (mint from pool → st:open, OCC, mirror, idempotency) | ⬜ next | — |
+| 1 | 3c-2 | ↳ `OpenOrUpdateAlert` (mint from pool → st:open, OCC, mirror, idempotency) | ✅ done | — |
 | 1 | 3c-3 | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + Snooze + GetAlert + ListActiveAlertFingerprints | ⬜ todo | — |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
@@ -111,6 +111,42 @@ CRITICAL/HIGH.
 | F16 | LOW | `ledgerstore` imports `internal/storage` only for `ErrNotFound` → heavy dep for one sentinel. Consider a leaf errors package shared by both stores. | ⬜ open |
 
 ---
+
+### Phase 1 step 3c-2 — OpenOrUpdateAlert (SDLC review, 2026-07-03)
+
+**Checks:** `go build ./...` ✅ · `go vet` ✅ · `golangci-lint run --build-tags it` 0 issues ✅ ·
+`gofmt` clean ✅ · `go test -race` (unit) ✅ · it-test green against live ledger ✅ · `go mod
+tidy` clean ✅ · conventional commit `feat(ledger-v3)` ✅ · not on `main` ✅ · no OpenAPI change
+(internal storage) ✅ · `OpenAlertResult`/`OpenAlertInput` signatures unchanged → no regression
+to the Postgres path or the `Store` interface ✅ · mock regenerated (`go generate`) ✅. Coverage
+`ledgerstore` 84.7%, `ledgerschema` 84.6% (both >80%). No CRITICAL/HIGH.
+
+`internal/ledgerstore/alert.go` — the dedup-aware failing-outcome write, ported from the
+Postgres three-path model. Client gains `CreateTransaction` (Numscript + atomic
+`account_metadata` set/delete under an idempotency key); the guarded/overdraft Numscript
+fragments live in `internal/ledgerschema/scripts.go` (shared with 3c-3's ack/resolve).
+
+Flow: read the item account → branch. **new-open** mints the ALERT marker from the issuance
+pool (overdraft) into `st:open` + the first OCC unit, sets the descriptive metadata + `status`
+mirror (`Created`). **repeat** (marker already at `st:open`) mints one OCC unit + refreshes
+`last_seen`/evidence. **reopen** (`st:resolved`) / **resurface** (`st:ack`) do a *guarded*
+marker move `st:{from}→st:open` (bare source = CAS, fails the batch if the marker moved),
++OCC, mirror back to OPEN; a reopen also deletes the prior `resolution`/`ack` keys (only those
+present — the ledger rejects deleting an absent key). Marker (guarded source-of-truth) +
+`status` mirror land in one atomic batch, so they never diverge. Idempotency key =
+`sha256(len-prefixed rule|fingerprint|period|evaluationID)`.
+
+Tests: gomock unit tests for all four branches (new/repeat/reopen/resurface) + key
+determinism; `scripts_test.go` golden-tests the Numscript; it-test opens an alert against the
+live ledger and asserts marker `st:open`=1, OCC counter, `status`/`id` mirror, issuance pool
+gauge=−1, a real repeat (OCC→2, still one marker), and client-level idempotent replay.
+Coverage: `ledgerstore` 84.7%, `ledgerschema` 84.6%. build/vet/lint(0)/gofmt/-race clean.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F17 | MED | Ledger idempotency is **content-sensitive**: same key + *different* batch content → `AlreadyExists` ("key used with different request content"), not a replay. Safe in the current flow — `LedgerStore` has no `RunInTx`, so `Service.inTx` runs one attempt and each `OpenOrUpdateAlert(rule,fp,period,eval)` is submitted once; only gRPC retransmits (identical batch) replay, and those dedup cleanly. **But** if a full-evaluation retry is ever introduced, a re-call that re-reads advanced state builds a *different* batch under the same key → spurious error. Then `OpenOrUpdateAlert` must catch `codes.AlreadyExists` and return the committed state as an idempotent success. | ⬜ open (deferred; no retry today) |
+| F18 | LOW | On an idempotent-replay of the *same* evaluation (only reachable via the retry in F17), the returned `Alert.ID` (new UUID) / `OccurrenceCount` (read+1) would not match the deduped ledger state. Callers (`driveAlerts`) discard the result; `openEngineErrorAlert` uses only `Alert`. Resolve together with F17 (re-read on conflict). | ⬜ open (deferred) |
+| F19 | LOW | Marker↔mirror consistency is a **recon-level invariant** (both written atomically here), not ledger-checker-verified — the ledger checker does not validate recon's projections. A future recon self-check could compare `status` mirror vs marker position. | ⬜ open (POC accepts) |
 
 ## Proto re-sync procedure (F5)
 

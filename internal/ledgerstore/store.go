@@ -20,6 +20,7 @@ type ledgerClient interface {
 	SaveAccountMetadataValues(ctx context.Context, ledgerName, address string, md map[string]*commonpb.MetadataValue) error
 	DeleteAccountMetadata(ctx context.Context, ledgerName, address string, keys ...string) error
 	GetAccount(ctx context.Context, ledgerName, address string, checkpointID uint64) (*commonpb.Account, error)
+	CreateTransaction(ctx context.Context, in ledger.CreateTransactionInput) error
 }
 
 var _ ledgerClient = (*ledger.Client)(nil)
