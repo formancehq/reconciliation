@@ -2,42 +2,99 @@ package ledgerschema
 
 import "fmt"
 
-// Numscript builders for the alert lifecycle. Each returns one `send` block
-// (multiple blocks per script are supported — the caller concatenates them into
-// a single atomic transaction). Accounts are inlined as literals (`@addr`); the
-// account-type patterns + STRICT enforcement are the backstop that rejects any
-// address outside the declared chart. See RFC §4.1.2.
+// Numscript library for the alert lifecycle. The transition programs are stored
+// in the ledger's numscript library (SaveNumscript, validated at save time) and
+// referenced by name+version at transaction time (ScriptReference), instead of
+// inlining the source in every request. Accounts are passed as vars — addresses
+// are dynamic (rule/period/fp) — and STRICT enforcement is the backstop that
+// rejects any address outside the declared chart. See RFC §4.1.2 and
+// docs/technical/architecture/subsystems/scripting/numscript-library.md.
 
-// NumscriptMintMarker mints the single ALERT marker from an overdraft issuance
-// pool into a state account — the "open" primitive. The pool goes further
-// negative; its -balance is the free live-alert gauge for the rule/period. The
-// mint is deliberately unguarded (overdraft always succeeds); double-open is
-// prevented by the batch idempotency key + serialized per-rule evaluation.
-func NumscriptMintMarker(issuedPool, stateAccount string) string {
-	return fmt.Sprintf(`send [%s 1] (
-	source = @%s allowing unbounded overdraft
-	destination = @%s
-)`, AssetAlert, issuedPool, stateAccount)
+// Numscript names and the pinned version. Library semver is immutable: bump the
+// version when a program's content changes, and update the reference in lockstep.
+const (
+	NumscriptVersion = "1.0.0"
+
+	NumscriptAlertOpen   = "alert_open"   // mint marker → st:open + mint OCC → item (new alert)
+	NumscriptAlertBump   = "alert_bump"   // mint OCC → item (repeat, marker stays put)
+	NumscriptAlertReopen = "alert_reopen" // guarded move st:{from}→st:open + mint OCC (reopen/resurface)
+)
+
+// Numscript var names — the account addresses passed per call.
+const (
+	VarPool   = "pool"    // the (rule, period) overdraft source pool
+	VarItem   = "item"    // the canonical alert item account
+	VarStOpen = "st_open" // the st:open marker account
+	VarStFrom = "st_from" // the marker's current state account (guarded move source)
+)
+
+// NumscriptDef is one library program to register at provisioning.
+type NumscriptDef struct {
+	Name    string
+	Content string
+	Version string
 }
 
-// NumscriptMoveMarker moves the ALERT marker between two state accounts. The
-// bare (non-overdraft) source makes this a compare-and-swap: the batch fails
-// atomically if the marker is not currently at `from` — a free illegal-
-// transition guard. The drained `from` account purges (EPHEMERAL). Shared by
-// reopen/resurface (OpenOrUpdateAlert) and ack/resolve/accept (step 3c-3).
-func NumscriptMoveMarker(from, to string) string {
-	return fmt.Sprintf(`send [%s 1] (
-	source = @%s
-	destination = @%s
-)`, AssetAlert, from, to)
+// Numscripts returns the alert-lifecycle programs to register on the
+// control-ledger (idempotent — the client swallows AlreadyExists on re-save of
+// the same immutable version).
+func Numscripts() []NumscriptDef {
+	return []NumscriptDef{
+		{NumscriptAlertOpen, alertOpenContent(), NumscriptVersion},
+		{NumscriptAlertBump, alertBumpContent(), NumscriptVersion},
+		{NumscriptAlertReopen, alertReopenContent(), NumscriptVersion},
+	}
 }
 
-// NumscriptMintOcc increments an alert item's occurrence counter by minting one
-// OCC unit from the occurrence overdraft pool into the item account. The item's
-// OCC balance is the occurrence count.
-func NumscriptMintOcc(occPool, item string) string {
-	return fmt.Sprintf(`send [%s 1] (
-	source = @%s allowing unbounded overdraft
-	destination = @%s
-)`, AssetOcc, occPool, item)
+// alertOpenContent mints the single ALERT marker into st:open (overdraft, the
+// mint is unguarded — double-open is prevented by the batch idempotency key) and
+// the first OCC unit, both from the (rule, period) pool.
+func alertOpenContent() string {
+	return fmt.Sprintf(`vars {
+	account $%[1]s
+	account $%[2]s
+	account $%[3]s
+}
+send [%[4]s 1] (
+	source = $%[1]s allowing unbounded overdraft
+	destination = $%[2]s
+)
+send [%[5]s 1] (
+	source = $%[1]s allowing unbounded overdraft
+	destination = $%[3]s
+)`, VarPool, VarStOpen, VarItem, AssetAlert, AssetOcc)
+}
+
+// alertBumpContent increments the item's OCC counter by one (a repeat failure —
+// the marker already sits at st:open, so no move).
+func alertBumpContent() string {
+	return fmt.Sprintf(`vars {
+	account $%[1]s
+	account $%[2]s
+}
+send [%[3]s 1] (
+	source = $%[1]s allowing unbounded overdraft
+	destination = $%[2]s
+)`, VarPool, VarItem, AssetOcc)
+}
+
+// alertReopenContent moves the ALERT marker st:{from}→st:open and bumps OCC. The
+// bare (non-overdraft) source makes the move a compare-and-swap: the batch fails
+// atomically if the marker is not at $st_from. The drained account purges
+// (EPHEMERAL). Used for reopen (from st:resolved) and resurface (from st:ack).
+func alertReopenContent() string {
+	return fmt.Sprintf(`vars {
+	account $%[1]s
+	account $%[2]s
+	account $%[3]s
+	account $%[4]s
+}
+send [%[5]s 1] (
+	source = $%[2]s
+	destination = $%[3]s
+)
+send [%[6]s 1] (
+	source = $%[1]s allowing unbounded overdraft
+	destination = $%[4]s
+)`, VarPool, VarStFrom, VarStOpen, VarItem, AssetAlert, AssetOcc)
 }

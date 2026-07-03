@@ -52,6 +52,23 @@ func TestProvisioner_Provision(t *testing.T) {
 		}).
 		Times(2)
 
+	// Capture the numscripts actually registered (assert non-empty content +
+	// pinned version).
+	var scripts []string
+
+	m.EXPECT().
+		SaveNumscript(gomock.Any(), testLedger, gomock.Any(), gomock.Any(), schema.NumscriptVersion).
+		DoAndReturn(func(_ context.Context, _, name, content, _ string) error {
+			if content == "" {
+				t.Errorf("numscript %q has empty content", name)
+			}
+
+			scripts = append(scripts, name)
+
+			return nil
+		}).
+		Times(len(schema.Numscripts()))
+
 	p := NewProvisioner(m, testLedger, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	if err := p.Provision(context.Background()); err != nil {
 		t.Fatalf("Provision: %v", err)
@@ -60,6 +77,12 @@ func TestProvisioner_Provision(t *testing.T) {
 	for _, want := range []string{schema.PQOpenCount, schema.PQRulesEnabled} {
 		if !slices.Contains(registered, want) {
 			t.Errorf("prepared query %q not registered (got %v)", want, registered)
+		}
+	}
+
+	for _, want := range []string{schema.NumscriptAlertOpen, schema.NumscriptAlertBump, schema.NumscriptAlertReopen} {
+		if !slices.Contains(scripts, want) {
+			t.Errorf("numscript %q not registered (got %v)", want, scripts)
 		}
 	}
 }

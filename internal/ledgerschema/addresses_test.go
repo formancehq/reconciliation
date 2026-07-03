@@ -43,8 +43,7 @@ func TestAddressBuilders(t *testing.T) {
 		{"rule", schema.RuleAccount(ruleID), "rule:" + ruleID},
 		{"item", schema.AlertItemAccount(ruleID, period, fp), "alert:item:rule:" + ruleID + ":per:" + period + ":fp:" + fp},
 		{"state", schema.AlertStateAccount(schema.StateOpen, ruleID, period, fp), "alert:st:open:rule:" + ruleID + ":per:" + period + ":fp:" + fp},
-		{"issued", schema.IssuedPoolAccount(ruleID, period), "alert:issued:rule:" + ruleID + ":per:" + period},
-		{"occ", schema.OccPoolAccount(ruleID, period), "alert:occ:rule:" + ruleID + ":per:" + period},
+		{"pool", schema.PoolAccount(ruleID, period), "alert:pool:rule:" + ruleID + ":per:" + period},
 	}
 	for _, tc := range tests {
 		if tc.got != tc.want {
@@ -87,7 +86,7 @@ func TestAccountTypesChart(t *testing.T) {
 	types := schema.AccountTypes()
 	for _, name := range []string{
 		schema.AccountTypeRule, schema.AccountTypeAlertItem, schema.AccountTypeAlertState,
-		schema.AccountTypeAlertIssued, schema.AccountTypeAlertOcc,
+		schema.AccountTypeAlertPool,
 	} {
 		at, ok := types[name]
 		if !ok {

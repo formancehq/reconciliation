@@ -63,7 +63,7 @@ func TestOpenOrUpdateAlert_NewOpen(t *testing.T) {
 	fpHash := schema.FingerprintHash(in.Fingerprint)
 	itemAddr := schema.AlertItemAccount(in.RuleID.String(), in.PeriodID, fpHash)
 	stOpen := schema.AlertStateAccount(schema.StateOpen, in.RuleID.String(), in.PeriodID, fpHash)
-	issued := schema.IssuedPoolAccount(in.RuleID.String(), in.PeriodID)
+	pool := schema.PoolAccount(in.RuleID.String(), in.PeriodID)
 
 	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr, gomock.Any()).Return(nil, notFound())
 
@@ -71,12 +71,12 @@ func TestOpenOrUpdateAlert_NewOpen(t *testing.T) {
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {
 			require.Equal(t, testControl, tx.Ledger)
 			require.Equal(t, alertBatchKey(in), tx.IdempotencyKey)
-			// Mints the marker into st:open (from the issuance pool, overdraft)
-			// and the first OCC unit.
-			require.Contains(t, tx.Script, "[ALERT 1]")
-			require.Contains(t, tx.Script, "@"+issued+" allowing unbounded overdraft")
-			require.Contains(t, tx.Script, "@"+stOpen)
-			require.Contains(t, tx.Script, "[OCC 1]")
+			// Opens via the alert_open library script: pool → st:open marker + item OCC.
+			require.Equal(t, schema.NumscriptAlertOpen, tx.ScriptName)
+			require.Equal(t, schema.NumscriptVersion, tx.ScriptVersion)
+			require.Equal(t, pool, tx.Vars[schema.VarPool])
+			require.Equal(t, stOpen, tx.Vars[schema.VarStOpen])
+			require.Equal(t, itemAddr, tx.Vars[schema.VarItem])
 			require.Empty(t, tx.DeleteMetadata)
 			// Status mirror + descriptive metadata land on the item account.
 			item := tx.AccountMetadata[itemAddr]
@@ -120,9 +120,11 @@ func TestOpenOrUpdateAlert_Repeat(t *testing.T) {
 	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {
 			require.Equal(t, alertBatchKey(in), tx.IdempotencyKey)
-			// A repeat only bumps OCC — the marker already sits at st:open.
-			require.Contains(t, tx.Script, "[OCC 1]")
-			require.NotContains(t, tx.Script, "[ALERT 1]")
+			// A repeat uses alert_bump (OCC only) — the marker already sits at st:open.
+			require.Equal(t, schema.NumscriptAlertBump, tx.ScriptName)
+			require.Equal(t, schema.PoolAccount(in.RuleID.String(), in.PeriodID), tx.Vars[schema.VarPool])
+			require.Equal(t, itemAddr, tx.Vars[schema.VarItem])
+			require.NotContains(t, tx.Vars, schema.VarStFrom)
 			require.Empty(t, tx.DeleteMetadata)
 			require.Equal(t, "OPEN", tx.AccountMetadata[itemAddr].Values[schema.MetaStatus].GetStringValue())
 
@@ -163,12 +165,11 @@ func TestOpenOrUpdateAlert_Reopen(t *testing.T) {
 
 	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {
-			// Guarded move st:resolved → st:open (bare source = CAS) + OCC bump.
-			require.Contains(t, tx.Script, "[ALERT 1]")
-			require.Contains(t, tx.Script, "@"+stResolved)
-			require.Contains(t, tx.Script, "@"+stOpen)
-			require.NotContains(t, tx.Script, "@"+stResolved+" allowing unbounded overdraft")
-			require.Contains(t, tx.Script, "[OCC 1]")
+			// alert_reopen: guarded move st:resolved → st:open + OCC bump.
+			require.Equal(t, schema.NumscriptAlertReopen, tx.ScriptName)
+			require.Equal(t, stResolved, tx.Vars[schema.VarStFrom])
+			require.Equal(t, stOpen, tx.Vars[schema.VarStOpen])
+			require.Equal(t, itemAddr, tx.Vars[schema.VarItem])
 			// The prior resolution is dropped (present → deleted).
 			require.Equal(t, []string{schema.MetaResolution}, tx.DeleteMetadata[itemAddr])
 			item := tx.AccountMetadata[itemAddr]
@@ -215,8 +216,9 @@ func TestOpenOrUpdateAlert_ResurfaceFromAck(t *testing.T) {
 
 	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {
-			require.Contains(t, tx.Script, "@"+stAck)
-			require.Contains(t, tx.Script, "[OCC 1]")
+			// alert_reopen guarded move from st:ack (resurface).
+			require.Equal(t, schema.NumscriptAlertReopen, tx.ScriptName)
+			require.Equal(t, stAck, tx.Vars[schema.VarStFrom])
 			// Ack is NOT cleared on a resurface.
 			require.Empty(t, tx.DeleteMetadata)
 			require.Contains(t, tx.AccountMetadata[itemAddr].Values, schema.MetaAck)

@@ -68,3 +68,17 @@ func (mr *MockprovisionAPIMockRecorder) CreatePreparedQuery(ctx, ledger, query a
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePreparedQuery", reflect.TypeOf((*MockprovisionAPI)(nil).CreatePreparedQuery), ctx, ledger, query)
 }
+
+// SaveNumscript mocks base method.
+func (m *MockprovisionAPI) SaveNumscript(ctx context.Context, ledger, name, content, version string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SaveNumscript", ctx, ledger, name, content, version)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SaveNumscript indicates an expected call of SaveNumscript.
+func (mr *MockprovisionAPIMockRecorder) SaveNumscript(ctx, ledger, name, content, version any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveNumscript", reflect.TypeOf((*MockprovisionAPI)(nil).SaveNumscript), ctx, ledger, name, content, version)
+}

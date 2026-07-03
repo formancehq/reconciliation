@@ -164,16 +164,19 @@ func (c *Client) SaveNumscript(ctx context.Context, ledger, name, content, versi
 	return err
 }
 
-// CreateTransactionInput is the payload for CreateTransaction: a Numscript
-// transaction plus atomic account-metadata reconciliation (set some keys,
-// delete others), all committed as one idempotent batch. Reconciliation uses it
-// for the alert-lifecycle transitions, where a marker move (the guarded
+// CreateTransactionInput is the payload for CreateTransaction: a library
+// Numscript transaction plus atomic account-metadata reconciliation (set some
+// keys, delete others), all committed as one idempotent batch. Reconciliation
+// uses it for the alert-lifecycle transitions, where a marker move (the guarded
 // source-of-truth) and the descriptive/status metadata mirror must land
 // together or not at all.
 type CreateTransactionInput struct {
 	Ledger string
-	Script string            // Numscript source (Plain)
-	Vars   map[string]string // Numscript vars (nil when the script is fully literal)
+	// The transaction runs a library numscript referenced by name+version (see
+	// SaveNumscript). ScriptVersion "" resolves the latest pointer.
+	ScriptName    string
+	ScriptVersion string
+	Vars          map[string]string // account addresses passed to the script
 	// TxMetadata is transaction-level metadata (COMMITTED_TRANSACTION payload).
 	TxMetadata map[string]*commonpb.MetadataValue
 	// AccountMetadata sets typed metadata per account, atomically with the tx
@@ -186,9 +189,9 @@ type CreateTransactionInput struct {
 	IdempotencyKey string
 }
 
-// CreateTransaction runs a Numscript transaction, reconciling account metadata
-// in the same atomic, idempotent batch. Balance guards in the script (a bare
-// source that must hold the funds) act as compare-and-swap on the marker
+// CreateTransaction runs a library Numscript transaction, reconciling account
+// metadata in the same atomic, idempotent batch. Balance guards in the script (a
+// bare source that must hold the funds) act as compare-and-swap on the marker
 // accounts: an illegal transition fails the whole batch.
 func (c *Client) CreateTransaction(ctx context.Context, in CreateTransactionInput) error {
 	reqs := make([]*servicepb.Request, 0, 1+len(in.DeleteMetadata))
@@ -199,7 +202,11 @@ func (c *Client) CreateTransaction(ctx context.Context, in CreateTransactionInpu
 				Action: &servicepb.LedgerAction{
 					Data: &servicepb.LedgerAction_CreateTransaction{
 						CreateTransaction: &servicepb.CreateTransactionPayload{
-							Script:          &commonpb.Script{Plain: in.Script, Vars: in.Vars},
+							ScriptReference: &servicepb.ScriptReference{
+								Name:    in.ScriptName,
+								Version: in.ScriptVersion,
+								Vars:    in.Vars,
+							},
 							Metadata:        in.TxMetadata,
 							AccountMetadata: in.AccountMetadata,
 						},

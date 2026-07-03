@@ -76,16 +76,13 @@ func AlertStateAccount(state, ruleID, period, fpHash string) string {
 	return "alert:st:" + state + ":rule:" + ruleID + ":per:" + period + ":fp:" + fpHash
 }
 
-// IssuedPoolAccount is the overdraft source for ALERT markers of a rule/period.
-// -balance(this, ALERT) = number of live alerts for that rule/period.
-func IssuedPoolAccount(ruleID, period string) string {
-	return "alert:issued:rule:" + ruleID + ":per:" + period
-}
-
-// OccPoolAccount is the overdraft source for OCC counter units of a rule/period,
-// so every posting source is a declared account under STRICT enforcement.
-func OccPoolAccount(ruleID, period string) string {
-	return "alert:occ:rule:" + ruleID + ":per:" + period
+// PoolAccount is the single overdraft source for a rule/period: it mints both
+// the ALERT markers and the OCC counter units (distinct assets, independent
+// balances). Keeping every posting source a declared account satisfies STRICT
+// enforcement. Two free gauges live on it: -balance(this, ALERT) = number of
+// live alerts for the (rule, period); -balance(this, OCC) = total occurrences.
+func PoolAccount(ruleID, period string) string {
+	return "alert:pool:rule:" + ruleID + ":per:" + period
 }
 
 // --- Aggregation prefixes (for AGGREGATE_VOLUMES) ---
@@ -105,9 +102,9 @@ func OpenByRulePeriodPrefix(ruleID, period string) string {
 	return "alert:st:" + StateOpen + ":rule:" + ruleID + ":per:" + period + ":"
 }
 
-// IssuedByRulePrefix aggregates the issuance pools of one rule (all periods).
-func IssuedByRulePrefix(ruleID string) string {
-	return "alert:issued:rule:" + ruleID + ":"
+// PoolByRulePrefix aggregates the source pools of one rule (all periods).
+func PoolByRulePrefix(ruleID string) string {
+	return "alert:pool:rule:" + ruleID + ":"
 }
 
 // RulePrefix matches all rule-definition accounts.

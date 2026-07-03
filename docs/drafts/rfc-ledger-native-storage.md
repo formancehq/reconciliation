@@ -129,36 +129,49 @@ types assign a persistence class per address pattern (`ledgerctl account-types a
 
 Assets in `_recon`: `ALERT` (marker, precision 0) · `OCC` (occurrence counter).
 
+Segment order (implemented): `rule → per → fp`, so `(rule, period)` is a queryable address
+prefix (step 3c-1).
+
 | Family | Pattern | Persistence | Holds | Role |
 |---|---|---|---|---|
 | Rule | `rule:{ruleId}` | NORMAL | metadata | config |
-| Alert item (canonical) | `alert:item:rule:{ruleId}:fp:{fpHash}:per:{period}` | NORMAL | metadata + `OCC` balance + `status` mirror | O(1) point-read, description, occurrence count |
-| State marker | `alert:st:{state}:rule:{ruleId}:fp:{fpHash}:per:{period}` | **EPHEMERAL** | 1 × `ALERT` | lifecycle source-of-truth, transition guard, per-status prefix aggregation |
-| Issuance pool | `alert:issued:rule:{ruleId}:per:{period}` | NORMAL (overdraft at mint) | negative `ALERT` | free live-alert-count gauge |
+| Alert item (canonical) | `alert:item:rule:{ruleId}:per:{period}:fp:{fpHash}` | NORMAL | metadata + `OCC` balance + `status` mirror | O(1) point-read, description, occurrence count |
+| State marker | `alert:st:{state}:rule:{ruleId}:per:{period}:fp:{fpHash}` | **EPHEMERAL** | 1 × `ALERT` | lifecycle source-of-truth, transition guard, per-status prefix aggregation |
+| Source pool | `alert:pool:rule:{ruleId}:per:{period}` | NORMAL (overdraft at mint) | negative `ALERT` + negative `OCC` | mints markers **and** OCC units; two free gauges (see below) |
 
-Naming rules honoured: a fixed descriptor precedes every variable segment (`rule:`, `fp:`,
-`per:`, `st:`), and **status is leftmost** in the marker family so everything after it
+**Single source pool (decided).** One pool per `(rule, period)` sources *both* the ALERT
+markers and the OCC counter units. Assets are independent within an account, so nothing mixes:
+`−balance(ALERT)` = live-alert count, `−balance(OCC)` = total occurrences. This is neither an
+EPHEMERAL concern (the pool is NORMAL — only the `st:` markers are EPHEMERAL) nor a multi-asset
+limitation; a separate `alert:occ` pool would only add a redundant account (the occurrence total
+is also derivable by aggregating item OCC balances). Merged: 4 account types.
+
+Naming rules honoured: a fixed descriptor precedes every variable segment (`rule:`, `per:`,
+`fp:`, `st:`), and **status is leftmost** in the marker family so everything after it
 aggregates under `alert:st:{state}:`. `{fpHash}` = a hash of the raw fingerprint (raw string
 kept as metadata) because fingerprints contain `:`/`|` that would break address segmentation.
 
 **Queries:**
-- Status / full alert (one) → `GetAccount(alert:item:rule:R:fp:H:per:P)` (`status` metadata + OCC). O(1).
+- Status / full alert (one) → `GetAccount(alert:item:rule:R:per:P:fp:H)` (`status` metadata + OCC). O(1).
 - OPEN count global → `AGGREGATE_VOLUMES` of `ALERT`, `AddressPrefix("alert:st:open:")`.
 - OPEN count per rule → prefix `alert:st:open:rule:R:`.
-- Live alerts per rule/period → `-balance(alert:issued:rule:R:per:P, ALERT)` (free).
+- Live alerts per rule/period → `-balance(alert:pool:rule:R:per:P, ALERT)` (free).
 
-**Transitions (Numscript):**
-- *Open* — mint from the overdraft pool → `send [ALERT 1] (source = @alert:issued:rule:R:per:P allowing unbounded overdraft, destination = @alert:st:open:rule:R:fp:H:per:P)`; `+OCC` on item; set `status`/description metadata on item.
-- *Ack / Resolve / Accept / Reopen* — guarded move between `alert:st:{from}:…` → `alert:st:{to}:…` (fails atomically if the marker isn't at `{from}`); the drained `{from}` account purges (EPHEMERAL); mirror `status` + resolution metadata on item.
-- *Repeat failure* — `+OCC` + `last_seen_at` only (SAVED_METADATA, quiet).
-- *Close* — burn the marker back to `alert:issued:…` → pool balance rises toward 0 (live count drops); full lifecycle preserved in the tx log (archivable).
+**Transitions run as library Numscripts** (stored via `SaveNumscript` at provisioning, pinned
+`v1.0.0`, referenced by name + account vars — not inlined per call; see the numscript-library
+doc). Accounts are passed as `vars`:
+- *Open* (`alert_open`) — mint from the pool → `send [ALERT 1] (source = $pool allowing unbounded overdraft, destination = $st_open)` + `send [OCC 1] (source = $pool …, destination = $item)`; set `status`/description metadata on item.
+- *Repeat* (`alert_bump`) — `+OCC` from the pool → item; refresh `last_seen`/evidence (marker stays at `st:open`).
+- *Reopen / resurface* (`alert_reopen`) — guarded move `$st_from → $st_open` (bare source = CAS, fails if the marker isn't at `{from}`; drained `{from}` purges) + `+OCC`; mirror `status` back to OPEN; a reopen also deletes the prior `resolution`/`ack`.
+- *Ack / Resolve / Accept* (step 3c-3) — guarded move `alert:st:{from}:… → alert:st:{to}:…` (no OCC).
+- *Close* (future) — burn the marker back to `alert:pool:…` → ALERT balance rises toward 0 (live count drops); full lifecycle preserved in the tx log (archivable).
 
 **Consequences:**
 1. Metadata lives on the NORMAL `item` account only; markers stay metadata-free (EPHEMERAL
    purges volumes, not metadata). `status` is denormalised onto `item` for O(1) reads, but the
    marker is the guarded source-of-truth; both are updated in one atomic batch.
 2. Never aggregate at the bare `alert:` prefix (markers `+`, pool `−`, OCC would mix) — always
-   at the family prefix.
+   at the family prefix (and per asset).
 3. The mint is unguarded (pool overdraft always succeeds); concurrent double-open of the same
    fingerprint is handled by the batch idempotency key + serialized per-rule evaluation. All
    other transitions are guarded.
@@ -190,10 +203,11 @@ Benefits:
 - **Self-describing ledger.** The declared patterns *are* the schema; operators and advanced
   users read the chart to understand the model.
 
-Consequence for sources: to keep STRICT clean, **mint from declared overdraft pools**
-(`alert:issued:*`, and a `COST`/`OCC` pool) rather than `@world`, so every address in every
-posting matches a declared type. (Confirm `@world`'s treatment under STRICT; if it is not
-implicitly exempt, declare it or avoid it entirely via pools.)
+Consequence for sources: to keep STRICT clean, **mint from the declared overdraft pool**
+(`alert:pool:*`, one per rule/period, sourcing both `ALERT` and `OCC`; a future `COST` asset can
+ride the same pool) rather than `@world`, so every address in every posting matches a declared
+type. (Confirm `@world`'s treatment under STRICT; if it is not implicitly exempt, declare it or
+avoid it entirely via the pool.)
 
 Rollout: start in **AUDIT** during the POC to surface any pattern the code emits that we
 didn't declare, then flip to **STRICT** once the chart is stable.

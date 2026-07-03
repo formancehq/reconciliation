@@ -15,6 +15,7 @@ import (
 type provisionAPI interface {
 	CreateLedger(ctx context.Context, name string, schema []*commonpb.SetMetadataFieldTypeCommand, accountTypes map[string]*commonpb.AccountType, enforcement commonpb.ChartEnforcementMode) error
 	CreatePreparedQuery(ctx context.Context, ledger string, query *commonpb.PreparedQuery) error
+	SaveNumscript(ctx context.Context, ledger, name, content, version string) error
 }
 
 // Compile-time proof the concrete client satisfies the provisioner's dependency,
@@ -51,6 +52,12 @@ func (p *Provisioner) Provision(ctx context.Context) error {
 	for _, q := range schema.PreparedQueries() {
 		if err := p.client.CreatePreparedQuery(ctx, p.ledger, q); err != nil {
 			return fmt.Errorf("register prepared query %q: %w", q.GetName(), err)
+		}
+	}
+
+	for _, ns := range schema.Numscripts() {
+		if err := p.client.SaveNumscript(ctx, p.ledger, ns.Name, ns.Content, ns.Version); err != nil {
+			return fmt.Errorf("register numscript %q: %w", ns.Name, err)
 		}
 	}
 

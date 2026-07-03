@@ -42,7 +42,7 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it"
+	const control = "recon-it2"
 
 	// Idempotent bootstrap in AUDIT so the chart is validated but not enforced.
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
@@ -114,7 +114,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it"
+	const control = "recon-it2"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -128,7 +128,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 
 	itemAddr := schema.AlertItemAccount(ruleID.String(), period, fpHash)
 	stOpenAddr := schema.AlertStateAccount(schema.StateOpen, ruleID.String(), period, fpHash)
-	issuedAddr := schema.IssuedPoolAccount(ruleID.String(), period)
+	poolAddr := schema.PoolAccount(ruleID.String(), period)
 
 	in := storage.OpenAlertInput{
 		RuleID:       ruleID,
@@ -151,7 +151,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 	// Marker sits in st:open; OCC counter is 1; status mirror is OPEN.
 	require.Equal(t, "1", balance(ctx, t, client, control, stOpenAddr, schema.AssetAlert), "ALERT marker in st:open")
 	require.Equal(t, "1", balance(ctx, t, client, control, itemAddr, schema.AssetOcc), "OCC counter")
-	require.Equal(t, "-1", balance(ctx, t, client, control, issuedAddr, schema.AssetAlert), "issuance pool = -1 live alert")
+	require.Equal(t, "-1", balance(ctx, t, client, control, poolAddr, schema.AssetAlert), "pool ALERT = -1 live alert")
 
 	item, err := client.GetAccount(ctx, control, itemAddr, 0)
 	require.NoError(t, err)
@@ -178,7 +178,9 @@ func TestIntegration_OpenAlert(t *testing.T) {
 	probe := schema.AlertItemAccount(ruleID.String(), period, schema.FingerprintHash("idem-probe"))
 	occMint := ledger.CreateTransactionInput{
 		Ledger:         control,
-		Script:         schema.NumscriptMintOcc(schema.OccPoolAccount(ruleID.String(), period), probe),
+		ScriptName:     schema.NumscriptAlertBump,
+		ScriptVersion:  schema.NumscriptVersion,
+		Vars:           map[string]string{schema.VarPool: poolAddr, schema.VarItem: probe},
 		IdempotencyKey: "it-idem-" + ruleID.String(),
 	}
 	require.NoError(t, client.CreateTransaction(ctx, occMint))

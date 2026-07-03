@@ -23,6 +23,7 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 3c | ↳ alert lifecycle | 🚧 in progress | — |
 | 1 | 3c-1 | ↳ address reorder (per→fp), `MetaID`, `Alert↔metadata` serialization (OCC from balance, status mirror) | ✅ done | `f959ea1` |
 | 1 | 3c-2 | ↳ `OpenOrUpdateAlert` (mint from pool → st:open, OCC, mirror, idempotency) | ✅ done · reviewed | `66b64e2` |
+| 1 | 3c-2b | ↳ chart merge (`alert:issued`+`alert:occ` → `alert:pool`, 5→4 types) + Numscript **library** (SaveNumscript + ScriptReference) | ✅ done | — |
 | 1 | 3c-3 | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + Snooze + GetAlert + ListActiveAlertFingerprints | ⬜ todo | — |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
@@ -147,6 +148,40 @@ Coverage: `ledgerstore` 84.7%, `ledgerschema` 84.6%. build/vet/lint(0)/gofmt/-ra
 | F17 | MED | Ledger idempotency is **content-sensitive**: same key + *different* batch content → `AlreadyExists` ("key used with different request content"), not a replay. Safe in the current flow — `LedgerStore` has no `RunInTx`, so `Service.inTx` runs one attempt and each `OpenOrUpdateAlert(rule,fp,period,eval)` is submitted once; only gRPC retransmits (identical batch) replay, and those dedup cleanly. **But** if a full-evaluation retry is ever introduced, a re-call that re-reads advanced state builds a *different* batch under the same key → spurious error. Then `OpenOrUpdateAlert` must catch `codes.AlreadyExists` and return the committed state as an idempotent success. | ⬜ open (deferred; no retry today) |
 | F18 | LOW | On an idempotent-replay of the *same* evaluation (only reachable via the retry in F17), the returned `Alert.ID` (new UUID) / `OccurrenceCount` (read+1) would not match the deduped ledger state. Callers (`driveAlerts`) discard the result; `openEngineErrorAlert` uses only `Alert`. Resolve together with F17 (re-read on conflict). | ⬜ open (deferred) |
 | F19 | LOW | Marker↔mirror consistency is a **recon-level invariant** (both written atomically here), not ledger-checker-verified — the ledger checker does not validate recon's projections. A future recon self-check could compare `status` mirror vs marker position. | ⬜ open (POC accepts) |
+
+### Phase 1 step 3c-2b — chart merge + Numscript library (2026-07-03)
+
+Two refinements requested before 3c-3, done together (both touch the scripts + chart).
+
+**Chart merge (5 → 4 account types).** `alert:issued` (ALERT source) and `alert:occ` (OCC
+source) collapse into a single `alert:pool:rule:{id}:per:{period}` (NORMAL) that mints **both**
+assets. Rationale: the isolation was neither EPHEMERAL-driven (both pools were NORMAL — only the
+`alert:st:*` markers are EPHEMERAL) nor required by multi-asset limits (an account holds ALERT
+and OCC with independent balances). Both free gauges survive: `−balance(pool, ALERT)` = live
+alerts, `−balance(pool, OCC)` = total occurrences (the latter also derivable by aggregating item
+OCC). Chose merge over dropping the pool entirely (mint from `@world`) to keep the per-
+(rule,period) scoped gauges and avoid depending on `@world`'s STRICT treatment.
+
+**Numscript library.** The three transition programs are now registered in the ledger's
+numscript library at provisioning (`SaveNumscript`, validated at save time, pinned `v1.0.0`,
+immutable) and referenced by name + account `vars` (`ScriptReference`) instead of inlining the
+source per `CreateTransaction`. Programs: `alert_open` (mint marker + OCC), `alert_bump` (OCC
+only), `alert_reopen` (guarded move + OCC). One `script_reference` resolves ONE program, so the
+fragment-composition (`joinScripts`) is gone; each operation is a complete parameterised script.
+Bump the semver + the reference in lockstep when a program changes.
+
+Touched: `ledgerschema` (addresses `PoolAccount`/`PoolByRulePrefix`; schema `AccountTypeAlertPool`;
+`scripts.go` → `Numscripts()` library defs + var-name consts), `ledger` (`CreateTransactionInput`
+→ ScriptReference; provisioner registers numscripts, `SaveNumscript` added to `provisionAPI` +
+mock), `ledgerstore` (alert.go uses ScriptName+Vars). Tests updated (unit + golden numscript +
+provisioner SaveNumscript ×3); it-test on a fresh `recon-it2` ledger validates the 4-type chart,
+the 3 registered numscripts, and the full lifecycle. build/vet/lint(0, `--build-tags it`)/gofmt/
+-race clean. Verified via `ledgerctl account-types list` (4 types incl. `alert-pool`) and
+`numscripts list`/`get` (3 programs @ v1.0.0). RFC §4.1.2/§4.1.3 updated.
+
+Finding F12 (unused exported helpers) update: `IssuedByRulePrefix` → `PoolByRulePrefix` (still
+unused until step 4's filter/list work; `FilterMetadataString` idem). Keep pending step 4; drop
+if unconsumed.
 
 ## Proto re-sync procedure (F5)
 

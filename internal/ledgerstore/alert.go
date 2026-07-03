@@ -110,17 +110,15 @@ func (s *LedgerStore) openNewAlert(ctx context.Context, in storage.OpenAlertInpu
 		return nil, fmt.Errorf("open alert %s: %w", in.Fingerprint, err)
 	}
 
-	script := joinScripts(
-		schema.NumscriptMintMarker(
-			schema.IssuedPoolAccount(rule, in.PeriodID),
-			schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash),
-		),
-		schema.NumscriptMintOcc(schema.OccPoolAccount(rule, in.PeriodID), itemAddr),
-	)
-
 	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{
-		Ledger:          s.controlLedger,
-		Script:          script,
+		Ledger:        s.controlLedger,
+		ScriptName:    schema.NumscriptAlertOpen,
+		ScriptVersion: schema.NumscriptVersion,
+		Vars: map[string]string{
+			schema.VarPool:   schema.PoolAccount(rule, in.PeriodID),
+			schema.VarStOpen: schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash),
+			schema.VarItem:   itemAddr,
+		},
 		AccountMetadata: map[string]*commonpb.MetadataMap{itemAddr: {Values: md}},
 		IdempotencyKey:  alertBatchKey(in),
 	}); err != nil {
@@ -164,30 +162,34 @@ func (s *LedgerStore) updateAlert(ctx context.Context, in storage.OpenAlertInput
 		return nil, fmt.Errorf("update alert %s: %w", in.Fingerprint, err)
 	}
 
-	occ := schema.NumscriptMintOcc(schema.OccPoolAccount(rule, in.PeriodID), itemAddr)
-
-	var script string
-	if fromStatus == models.AlertOpen {
-		// Marker already at st:open — a plain repeat, no move.
-		script = occ
-	} else {
-		// Resurface (ack→open) or reopen (resolved→open): guarded marker move.
-		script = joinScripts(
-			schema.NumscriptMoveMarker(
-				schema.AlertStateAccount(statusToState(fromStatus), rule, in.PeriodID, fpHash),
-				schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash),
-			),
-			occ,
-		)
-	}
-
-	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{
+	pool := schema.PoolAccount(rule, in.PeriodID)
+	tx := ledger.CreateTransactionInput{
 		Ledger:          s.controlLedger,
-		Script:          script,
+		ScriptVersion:   schema.NumscriptVersion,
 		AccountMetadata: map[string]*commonpb.MetadataMap{itemAddr: {Values: md}},
 		DeleteMetadata:  deletes,
 		IdempotencyKey:  alertBatchKey(in),
-	}); err != nil {
+	}
+
+	if fromStatus == models.AlertOpen {
+		// Marker already at st:open — a plain repeat, no move.
+		tx.ScriptName = schema.NumscriptAlertBump
+		tx.Vars = map[string]string{
+			schema.VarPool: pool,
+			schema.VarItem: itemAddr,
+		}
+	} else {
+		// Resurface (ack→open) or reopen (resolved→open): guarded marker move.
+		tx.ScriptName = schema.NumscriptAlertReopen
+		tx.Vars = map[string]string{
+			schema.VarPool:   pool,
+			schema.VarStFrom: schema.AlertStateAccount(statusToState(fromStatus), rule, in.PeriodID, fpHash),
+			schema.VarStOpen: schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash),
+			schema.VarItem:   itemAddr,
+		}
+	}
+
+	if err := s.client.CreateTransaction(ctx, tx); err != nil {
 		return nil, fmt.Errorf("update alert %s: %w", in.Fingerprint, err)
 	}
 
@@ -222,10 +224,4 @@ func alertBatchKey(in storage.OpenAlertInput) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
 
 	return hex.EncodeToString(sum[:])
-}
-
-// joinScripts concatenates Numscript send-block fragments into one program (a
-// single atomic transaction).
-func joinScripts(fragments ...string) string {
-	return strings.Join(fragments, "\n\n")
 }

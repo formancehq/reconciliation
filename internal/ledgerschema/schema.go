@@ -4,11 +4,10 @@ import "github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 
 // Account-type names (used as the AccountType.Name / the "family" identifier).
 const (
-	AccountTypeRule        = "rule"
-	AccountTypeAlertItem   = "alert-item"
-	AccountTypeAlertState  = "alert-state"
-	AccountTypeAlertIssued = "alert-issued"
-	AccountTypeAlertOcc    = "alert-occ"
+	AccountTypeRule       = "rule"
+	AccountTypeAlertItem  = "alert-item"
+	AccountTypeAlertState = "alert-state"
+	AccountTypeAlertPool  = "alert-pool"
 )
 
 // Metadata keys on the canonical alert (`alert:item:*`) account.
@@ -86,15 +85,11 @@ func AccountTypes() map[string]*commonpb.AccountType {
 				"ruleId": uuid(), "period": period(), "fpHash": fpHash(),
 			},
 		},
-		AccountTypeAlertIssued: {
-			Name:         AccountTypeAlertIssued,
-			Pattern:      "alert:issued:rule:{ruleId}:per:{period}",
-			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
-			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid(), "period": period()},
-		},
-		AccountTypeAlertOcc: {
-			Name:         AccountTypeAlertOcc,
-			Pattern:      "alert:occ:rule:{ruleId}:per:{period}",
+		AccountTypeAlertPool: {
+			// Single overdraft source per (rule, period): mints ALERT markers and
+			// OCC counter units (independent per-asset balances).
+			Name:         AccountTypeAlertPool,
+			Pattern:      "alert:pool:rule:{ruleId}:per:{period}",
 			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
 			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid(), "period": period()},
 		},
