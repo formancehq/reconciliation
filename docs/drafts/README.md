@@ -52,6 +52,7 @@ Open questions:
 | RFC | Status | Summary |
 |---|---|---|
 | [Ledger-native storage (drop Postgres)](./rfc-ledger-native-storage.md) | Draft | Make reconciliation stateless by persisting its control-plane state as account metadata in a dedicated control-ledger, instead of Postgres. Aligns with Payments-in-Ledger + Ledger↔Ledger reconciliation. |
+| [Ledger-native migration — dev log](./ledger-v3-migration-log.md) | Living | Phase/step tracker + SDLC review records + tracked follow-ups for the migration. Update as steps land. |
 
 ---
 
