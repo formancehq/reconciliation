@@ -90,6 +90,21 @@ func (mr *MockledgerClientMockRecorder) GetAccount(ctx, ledgerName, address, che
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccount", reflect.TypeOf((*MockledgerClient)(nil).GetAccount), ctx, ledgerName, address, checkpointID)
 }
 
+// QueryAccounts mocks base method.
+func (m *MockledgerClient) QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64) ([]*commonpb.Account, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "QueryAccounts", ctx, ledgerName, filter, checkpointID)
+	ret0, _ := ret[0].([]*commonpb.Account)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// QueryAccounts indicates an expected call of QueryAccounts.
+func (mr *MockledgerClientMockRecorder) QueryAccounts(ctx, ledgerName, filter, checkpointID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "QueryAccounts", reflect.TypeOf((*MockledgerClient)(nil).QueryAccounts), ctx, ledgerName, filter, checkpointID)
+}
+
 // SaveAccountMetadataValues mocks base method.
 func (m *MockledgerClient) SaveAccountMetadataValues(ctx context.Context, ledgerName, address string, md map[string]*commonpb.MetadataValue) error {
 	m.ctrl.T.Helper()

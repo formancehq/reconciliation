@@ -58,3 +58,10 @@ func FilterAll(filters ...*commonpb.QueryFilter) *commonpb.QueryFilter {
 		Filter: &commonpb.QueryFilter_And{And: &commonpb.AndFilter{Filters: filters}},
 	}
 }
+
+// FilterAny ORs the given filters (filterexpr: `a or b or ...`).
+func FilterAny(filters ...*commonpb.QueryFilter) *commonpb.QueryFilter {
+	return &commonpb.QueryFilter{
+		Filter: &commonpb.QueryFilter_Or{Or: &commonpb.OrFilter{Filters: filters}},
+	}
+}

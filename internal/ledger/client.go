@@ -8,7 +8,9 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 
@@ -300,6 +302,44 @@ func deleteMetadataRequest(ledgerName, address, key string) *servicepb.Request {
 			},
 		},
 	}
+}
+
+// QueryAccounts streams the accounts matching filter and collects them into a
+// slice. A non-zero checkpointID reads from a query checkpoint. Intended for
+// BOUNDED result sets (resolving an alert by its indexed id, sweeping the active
+// alerts of one rule/period); the paginated public list APIs (step 4) will
+// stream with a cursor instead of collecting everything in memory.
+//
+// A metadata-filtered query returns codes.Unavailable while the field's index is
+// still building — the client's retry policy absorbs that transparently.
+func (c *Client) QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64) ([]*commonpb.Account, error) {
+	stream, err := c.service.ListAccounts(ctx, &servicepb.ListAccountsRequest{
+		Ledger: ledgerName,
+		Options: &commonpb.ListOptions{
+			Read:   &commonpb.ReadOptions{CheckpointId: checkpointID},
+			Filter: filter,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list accounts on %s: %w", ledgerName, err)
+	}
+
+	var accounts []*commonpb.Account
+
+	for {
+		acct, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("recv account on %s: %w", ledgerName, err)
+		}
+
+		accounts = append(accounts, acct)
+	}
+
+	return accounts, nil
 }
 
 // GetAccount retrieves an account (volumes + metadata) by address. A non-zero

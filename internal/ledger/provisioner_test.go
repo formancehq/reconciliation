@@ -40,6 +40,13 @@ func TestProvisioner_Provision(t *testing.T) {
 			return nil
 		})
 
+	// The queryable metadata indexes are created (id at minimum, for id→address
+	// resolution).
+	m.EXPECT().
+		CreateIndex(gomock.Any(), testLedger, gomock.Any()).
+		Return(nil).
+		Times(len(schema.MetadataIndexes()))
+
 	// Capture the prepared queries actually registered.
 	var registered []string
 

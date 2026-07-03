@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
+	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 )
 
@@ -14,6 +15,7 @@ import (
 // is trivially mockable for unit tests. *Client satisfies it.
 type provisionAPI interface {
 	CreateLedger(ctx context.Context, name string, schema []*commonpb.SetMetadataFieldTypeCommand, accountTypes map[string]*commonpb.AccountType, enforcement commonpb.ChartEnforcementMode) error
+	CreateIndex(ctx context.Context, ledger string, index *servicepb.CreateIndexRequest) error
 	CreatePreparedQuery(ctx context.Context, ledger string, query *commonpb.PreparedQuery) error
 	SaveNumscript(ctx context.Context, ledger, name, content, version string) error
 }
@@ -47,6 +49,12 @@ func NewProvisioner(client provisionAPI, ledgerName string, enforcement commonpb
 func (p *Provisioner) Provision(ctx context.Context) error {
 	if err := p.client.CreateLedger(ctx, p.ledger, schema.MetadataSchema(), schema.AccountTypes(), p.enforcement); err != nil {
 		return fmt.Errorf("create control-ledger %q: %w", p.ledger, err)
+	}
+
+	for _, idx := range schema.MetadataIndexes() {
+		if err := p.client.CreateIndex(ctx, p.ledger, &servicepb.CreateIndexRequest{Id: idx}); err != nil {
+			return fmt.Errorf("create index %v: %w", idx, err)
+		}
 	}
 
 	for _, q := range schema.PreparedQueries() {

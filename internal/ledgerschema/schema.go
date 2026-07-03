@@ -136,6 +136,20 @@ func MetadataSchema() []*commonpb.SetMetadataFieldTypeCommand {
 	return cmds
 }
 
+// MetadataIndexes returns the account-metadata secondary indexes to create at
+// provisioning. SetMetadataFieldType declares a field's TYPE but does NOT make
+// it queryable — an equality filter (`metadata[k] == v`) needs an explicit
+// index, created via CreateIndex. `id` is required: the Store addresses alerts
+// by UUID (GetAlert/AckAlert/…), and the only id→address path is a lookup on the
+// indexed `id`. Step 4 (filtered lists) extends this with status/severity/
+// rule_id/period/enabled; ListActiveAlertFingerprints stays index-free (address
+// prefix + client-side status filter), so `id` is the only index 3c-3 needs.
+func MetadataIndexes() []*commonpb.IndexID {
+	return []*commonpb.IndexID{
+		commonpb.AccountMetadataIndexID(MetaID),
+	}
+}
+
 // Prepared query names. Only fixed-shape hot queries are prepared; per-rule /
 // per-status / label-filtered lists are built ad-hoc by the filter translator (step 4).
 const (

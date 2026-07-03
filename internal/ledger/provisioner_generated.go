@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	commonpb "github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
+	servicepb "github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -39,6 +40,20 @@ func NewMockprovisionAPI(ctrl *gomock.Controller) *MockprovisionAPI {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockprovisionAPI) EXPECT() *MockprovisionAPIMockRecorder {
 	return m.recorder
+}
+
+// CreateIndex mocks base method.
+func (m *MockprovisionAPI) CreateIndex(ctx context.Context, ledger string, index *servicepb.CreateIndexRequest) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateIndex", ctx, ledger, index)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateIndex indicates an expected call of CreateIndex.
+func (mr *MockprovisionAPIMockRecorder) CreateIndex(ctx, ledger, index any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateIndex", reflect.TypeOf((*MockprovisionAPI)(nil).CreateIndex), ctx, ledger, index)
 }
 
 // CreateLedger mocks base method.

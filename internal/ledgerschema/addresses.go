@@ -109,3 +109,13 @@ func PoolByRulePrefix(ruleID string) string {
 
 // RulePrefix matches all rule-definition accounts.
 func RulePrefix() string { return "rule:" }
+
+// ItemPrefix matches all alert item accounts (used to scope metadata queries,
+// e.g. resolving an alert by its indexed `id`).
+func ItemPrefix() string { return "alert:item:" }
+
+// ItemByRulePeriodPrefix matches all alert items of a (rule, period) — the scope
+// for the auto-resolve sweep's active-fingerprint scan.
+func ItemByRulePeriodPrefix(ruleID, period string) string {
+	return "alert:item:rule:" + ruleID + ":per:" + period + ":"
+}

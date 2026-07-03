@@ -24,7 +24,10 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 3c-1 | ↳ address reorder (per→fp), `MetaID`, `Alert↔metadata` serialization (OCC from balance, status mirror) | ✅ done | `f959ea1` |
 | 1 | 3c-2 | ↳ `OpenOrUpdateAlert` (mint from pool → st:open, OCC, mirror, idempotency) | ✅ done · reviewed | `66b64e2` |
 | 1 | 3c-2b | ↳ chart merge (`alert:issued`+`alert:occ` → `alert:pool`, 5→4 types) + Numscript **library** (SaveNumscript + ScriptReference) | ✅ done | `739efe7` |
-| 1 | 3c-3 | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + Snooze + GetAlert + ListActiveAlertFingerprints | ⬜ todo | — |
+| 1 | 3c-3 | ↳ alert lifecycle: reads + guarded transitions + snooze | 🚧 in progress | — |
+| 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | — |
+| 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ⬜ next | — |
+| 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ⬜ todo | — |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
 | 1 | 6 | fx wiring + config + dual-run feature flag | ⬜ todo | — |
@@ -207,6 +210,20 @@ rejected (loses the atomic guard, §4.1.1).
 (NORMAL, metadata + OCC + status mirror) · `alert:st:{state}:rule:{id}:per:{p}:fp:{h}` (EPHEMERAL,
 ALERT marker) · `alert:pool:rule:{id}:per:{p}` (NORMAL, sources ALERT + OCC). Assets: `ALERT`,
 `OCC` (both precision 0). This is the baseline for 3c-3.
+
+### Phase 1 step 3c-3a — id resolution + GetAlert (2026-07-03)
+
+The Store addresses alerts by UUID (`GetAlert`/`AckAlert`/… take an `id`), but the ledger keys
+items by `rule/period/fp`. The only id→address path is a metadata lookup on the indexed `id`
+field. Added: client `QueryAccounts` (streams `ListAccounts` with a `QueryFilter`, collects — for
+bounded sets; step 4 adds the cursor-paginated public lists), schema `FilterAny`/`ItemPrefix`/
+`ItemByRulePeriodPrefix`, store `findAlertItem`+`GetAlert`. `ledgerClient` gains `QueryAccounts`
+(mock regenerated). Tested: gomock (found / not-found) + it-test resolves the opened alert by id.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F20 | MED | `SetMetadataFieldType` declares a field's TYPE but does **not** make it queryable — a `metadata[k]==v` filter needs an explicit `CreateIndex` (else `FailedPrecondition: index not found`). The RFC §4.3.1 wording ("SetMetadataFieldType … builds its forward index") is misleading. Fixed: the provisioner now creates the `id` account-metadata index (`schema.MetadataIndexes()`); it builds async and a query gets `codes.Unavailable` (INDEX_BUILDING) until ready — absorbed by the client retry policy. **Step 4 must add indexes for every field its lists filter on** (status, severity, rule_id, period, enabled) before executing those queries. | 🟡 id done; step-4 fields pending |
+| F21 | LOW | `QueryAccounts` collects the whole stream in memory — fine for id lookup (≤1) and the per-(rule,period) sweep, but the public `ListAlerts`/`ListRules` (step 4) MUST stream with the opaque `x-next-cursor` trailer instead. | ⬜ open (step 4) |
 
 ## Proto re-sync procedure (F5)
 

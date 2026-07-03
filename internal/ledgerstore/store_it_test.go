@@ -158,6 +158,14 @@ func TestIntegration_OpenAlert(t *testing.T) {
 	require.Equal(t, "OPEN", item.GetMetadata()[schema.MetaStatus].GetStringValue(), "status mirror")
 	require.Equal(t, res.Alert.ID.String(), item.GetMetadata()[schema.MetaID].GetStringValue(), "id mirror")
 
+	// Resolve the alert by its id via the indexed `id` metadata field (retries
+	// through codes.Unavailable while the index is still building).
+	byID, err := store.GetAlert(ctx, res.Alert.ID)
+	require.NoError(t, err, "get alert by id")
+	require.Equal(t, res.Alert.ID, byID.ID)
+	require.Equal(t, models.AlertOpen, byID.Status)
+	require.Equal(t, fp, byID.Fingerprint)
+
 	// Fresh evaluation, same fingerprint/period → a real repeat: OCC → 2, and
 	// still exactly one marker in st:open (no double-open).
 	in.EvaluationID = uuid.New()
