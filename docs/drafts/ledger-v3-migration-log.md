@@ -25,7 +25,7 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 3c-2 | ↳ `OpenOrUpdateAlert` (mint from pool → st:open, OCC, mirror, idempotency) | ✅ done · reviewed | `66b64e2` |
 | 1 | 3c-2b | ↳ chart merge (`alert:issued`+`alert:occ` → `alert:pool`, 5→4 types) + Numscript **library** (SaveNumscript + ScriptReference) | ✅ done | `739efe7` |
 | 1 | 3c-3 | ↳ alert lifecycle: reads + guarded transitions + snooze | 🚧 in progress | — |
-| 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | — |
+| 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | `59e4d7b` |
 | 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ⬜ next | — |
 | 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ⬜ todo | — |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
