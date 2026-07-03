@@ -115,7 +115,7 @@ func (s *LedgerStore) openNewAlert(ctx context.Context, in storage.OpenAlertInpu
 		ScriptName:    schema.NumscriptAlertOpen,
 		ScriptVersion: schema.NumscriptVersion,
 		Vars: map[string]string{
-			schema.VarPool:   schema.PoolAccount(rule, in.PeriodID),
+			schema.VarPool:   schema.PoolAccount(rule),
 			schema.VarStOpen: schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash),
 			schema.VarItem:   itemAddr,
 		},
@@ -162,7 +162,7 @@ func (s *LedgerStore) updateAlert(ctx context.Context, in storage.OpenAlertInput
 		return nil, fmt.Errorf("update alert %s: %w", in.Fingerprint, err)
 	}
 
-	pool := schema.PoolAccount(rule, in.PeriodID)
+	pool := schema.PoolAccount(rule)
 	tx := ledger.CreateTransactionInput{
 		Ledger:          s.controlLedger,
 		ScriptVersion:   schema.NumscriptVersion,

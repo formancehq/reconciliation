@@ -43,7 +43,7 @@ func TestAddressBuilders(t *testing.T) {
 		{"rule", schema.RuleAccount(ruleID), "rule:" + ruleID},
 		{"item", schema.AlertItemAccount(ruleID, period, fp), "alert:item:rule:" + ruleID + ":per:" + period + ":fp:" + fp},
 		{"state", schema.AlertStateAccount(schema.StateOpen, ruleID, period, fp), "alert:st:open:rule:" + ruleID + ":per:" + period + ":fp:" + fp},
-		{"pool", schema.PoolAccount(ruleID, period), "alert:pool:rule:" + ruleID + ":per:" + period},
+		{"pool", schema.PoolAccount(ruleID), "alert:pool:rule:" + ruleID},
 	}
 	for _, tc := range tests {
 		if tc.got != tc.want {

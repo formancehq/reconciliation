@@ -324,6 +324,21 @@ CRITICAL/HIGH.
 | F23 | MED | `ListRules`/`ListAlerts` fetch the **whole matching set** to sort + offset-slice client-side (the ledger streams address-ordered, no server-side time sort or offset). Cheap for filtered lists, O(matches) for an unfiltered one. A cursor-based Store interface + server-side ordering (or an ordered read index) removes it. Supersedes F21. | ⬜ open (deferred) |
 | F24 | LOW | Datetime filters accept only RFC3339 **string** values (numeric epoch values are rejected). Matches how clients send timestamps; revisit if a caller sends epoch numbers. | ⬜ open (POC) |
 
+### Post-step-4 — per-rule source pool + read-after-write finding (2026-07-03)
+
+**Chart refinement — pool keyed by rule, not rule+period** (`alert:pool:rule:{ruleId}`). The pool
+is only a mint source (+ an optional, currently-unread gauge); the period scoping added
+O(#rules×#periods) NORMAL accounts (never purged) for a gauge already derivable by aggregating the
+EPHEMERAL `st:` markers (live count — how `PQOpenCount` works) or item OCC (occurrences). Source
+footprint drops to **O(#rules)**. Considered `@world` (STRICT-exempt, verified — drops the pool
+type entirely) but kept a declared per-rule pool for a self-describing chart. Scripts unchanged
+(only the `$pool` address the store passes changes); `PoolByRulePrefix` dropped (a rule now has one
+pool, nothing to aggregate). Chart stays 4 types. RFC §4.1.2 updated.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F25 | MED | The ledger's read-side **metadata index is eventually consistent** with writes: a metadata-filtered read (GetAlert-by-id, ListRules/ListAlerts) right after the write may briefly not see it. The **machine path is unaffected** — `AutoResolveAlert` + the sweep read by structural address (`GetAccount`), which is consistent; only the **operator path** (id-resolution) uses the index, and it is human-paced (ms lag ≪ operator reaction). Surfaced as an it-test flake (immediate GetAlert after open); fixed with `require.EventuallyWithT`. A strict production fix would thread `ReadOptions.min_log_sequence` from the write into the read, or bounded-retry `findAlertItem` on miss. | ⬜ open (deferred; POC-safe) |
+
 ## Proto re-sync procedure (F5)
 
 The ledger protos are **copied**, not submoduled (mirrors ledger-connect). To update:

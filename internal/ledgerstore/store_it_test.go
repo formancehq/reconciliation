@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/query"
 	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
@@ -16,8 +17,19 @@ import (
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// eventuallyConsistent retries fn until it passes: the ledger's read-side
+// metadata index is eventually consistent with writes, so a metadata-filtered
+// read (GetAlert-by-id, ListRules/ListAlerts) right after a write may briefly not
+// see it (migration log F25). Structural GetAccount reads are unaffected.
+func eventuallyConsistent(t *testing.T, fn func(c *assert.CollectT)) {
+	t.Helper()
+
+	require.EventuallyWithT(t, fn, 5*time.Second, 25*time.Millisecond)
+}
 
 // itLedgerAddr is the running ledger v3 gRPC address (override with RECON_LEDGER_ADDR).
 func itLedgerAddr() string {
@@ -43,7 +55,7 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it2"
+	const control = "recon-it3"
 
 	// Idempotent bootstrap in AUDIT so the chart is validated but not enforced.
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
@@ -115,7 +127,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it2"
+	const control = "recon-it3"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -129,7 +141,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 
 	itemAddr := schema.AlertItemAccount(ruleID.String(), period, fpHash)
 	stOpenAddr := schema.AlertStateAccount(schema.StateOpen, ruleID.String(), period, fpHash)
-	poolAddr := schema.PoolAccount(ruleID.String(), period)
+	poolAddr := schema.PoolAccount(ruleID.String())
 
 	in := storage.OpenAlertInput{
 		RuleID:       ruleID,
@@ -159,13 +171,18 @@ func TestIntegration_OpenAlert(t *testing.T) {
 	require.Equal(t, "OPEN", item.GetMetadata()[schema.MetaStatus].GetStringValue(), "status mirror")
 	require.Equal(t, res.Alert.ID.String(), item.GetMetadata()[schema.MetaID].GetStringValue(), "id mirror")
 
-	// Resolve the alert by its id via the indexed `id` metadata field (retries
-	// through codes.Unavailable while the index is still building).
-	byID, err := store.GetAlert(ctx, res.Alert.ID)
-	require.NoError(t, err, "get alert by id")
-	require.Equal(t, res.Alert.ID, byID.ID)
-	require.Equal(t, models.AlertOpen, byID.Status)
-	require.Equal(t, fp, byID.Fingerprint)
+	// Resolve the alert by its id via the indexed `id` metadata field. The index
+	// is eventually consistent with the open, so retry until it reflects it.
+	eventuallyConsistent(t, func(c *assert.CollectT) {
+		byID, gerr := store.GetAlert(ctx, res.Alert.ID)
+		if !assert.NoError(c, gerr, "get alert by id") {
+			return
+		}
+
+		assert.Equal(c, res.Alert.ID, byID.ID)
+		assert.Equal(c, models.AlertOpen, byID.Status)
+		assert.Equal(c, fp, byID.Fingerprint)
+	})
 
 	// Fresh evaluation, same fingerprint/period → a real repeat: OCC → 2, and
 	// still exactly one marker in st:open (no double-open).
@@ -213,7 +230,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it2"
+	const control = "recon-it3"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -238,6 +255,13 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	fpHash := schema.FingerprintHash("fp-lifecycle")
 	stAck := schema.AlertStateAccount(schema.StateAck, ruleID.String(), period, fpHash)
 	stResolved := schema.AlertStateAccount(schema.StateResolved, ruleID.String(), period, fpHash)
+
+	// The id-addressed transitions resolve via the metadata index — wait until it
+	// reflects the open before driving them.
+	eventuallyConsistent(t, func(c *assert.CollectT) {
+		_, gerr := store.GetAlert(ctx, a.ID)
+		assert.NoError(c, gerr)
+	})
 
 	acked, err := store.AckAlert(ctx, a.ID, &models.Ack{By: "ops", At: time.Now().UTC(), Note: "looking"})
 	require.NoError(t, err, "ack")
@@ -272,13 +296,19 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, none, "no active alert → no-op")
 
-	// ListActiveAlertFingerprints returns only the still-active fingerprints.
+	// ListActiveAlertFingerprints returns only the still-active fingerprints
+	// (index eventually consistent → retry until fp-active shows up).
 	open("fp-active")
-	fps, err := store.ListActiveAlertFingerprints(ctx, ruleID, period)
-	require.NoError(t, err)
-	require.Contains(t, fps, "fp-active")
-	require.NotContains(t, fps, "fp-lifecycle", "resolved is not active")
-	require.NotContains(t, fps, "fp-auto", "auto-resolved is not active")
+	eventuallyConsistent(t, func(c *assert.CollectT) {
+		fps, lerr := store.ListActiveAlertFingerprints(ctx, ruleID, period)
+		if !assert.NoError(c, lerr) {
+			return
+		}
+
+		assert.Contains(c, fps, "fp-active")
+		assert.NotContains(c, fps, "fp-lifecycle", "resolved is not active")
+		assert.NotContains(c, fps, "fp-auto", "auto-resolved is not active")
+	})
 
 	// Snooze / unsnooze — metadata-only, status-neutral (no marker move).
 	sn := open("fp-snooze")
@@ -317,7 +347,7 @@ func TestIntegration_Lists(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it2"
+	const control = "recon-it3"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -334,10 +364,16 @@ func TestIntegration_Lists(t *testing.T) {
 	}))
 
 	ruleOpts := storage.PaginatedQueryOptions[storage.RulesFilters]{PageSize: 10}.WithQueryBuilder(query.Match("name", name))
-	rules, err := store.ListRules(ctx, storage.NewGetRulesQuery(ruleOpts))
-	require.NoError(t, err, "list rules by name")
-	require.Len(t, rules.Data, 1)
-	require.Equal(t, name, rules.Data[0].Name)
+	eventuallyConsistent(t, func(c *assert.CollectT) {
+		rules, lerr := store.ListRules(ctx, storage.NewGetRulesQuery(ruleOpts))
+		if !assert.NoError(c, lerr, "list rules by name") {
+			return
+		}
+
+		if assert.Len(c, rules.Data, 1) {
+			assert.Equal(c, name, rules.Data[0].Name)
+		}
+	})
 
 	// --- ListAlerts, isolated by a fresh ruleID (indexed metadata filter). ---
 	ruleID := uuid.New()
@@ -355,29 +391,38 @@ func TestIntegration_Lists(t *testing.T) {
 	open("fp-b", now)
 
 	byRule := query.Match("ruleID", ruleID.String())
+	listByRule := func(qb query.Builder) *bunpaginate.Cursor[models.Alert] {
+		page, lerr := store.ListAlerts(ctx, storage.NewGetAlertsQuery(
+			storage.PaginatedQueryOptions[storage.AlertsFilters]{PageSize: 10}.WithQueryBuilder(qb)))
+		require.NoError(t, lerr, "list alerts")
 
-	all, err := store.ListAlerts(ctx, storage.NewGetAlertsQuery(
-		storage.PaginatedQueryOptions[storage.AlertsFilters]{PageSize: 10}.WithQueryBuilder(byRule)))
-	require.NoError(t, err, "list alerts by rule")
-	require.Len(t, all.Data, 2)
-	require.Equal(t, "fp-b", all.Data[0].Fingerprint, "most-recent first")
+		return page
+	}
+
+	// Both alerts, most-recently-seen first (index eventually consistent → retry).
+	eventuallyConsistent(t, func(c *assert.CollectT) {
+		all := listByRule(byRule)
+		if assert.Len(c, all.Data, 2) {
+			assert.Equal(c, "fp-b", all.Data[0].Fingerprint, "most-recent first")
+		}
+	})
 
 	// Combined filter: ruleID AND status==OPEN → both open.
 	openOnly := query.And(byRule, query.Match("status", string(models.AlertOpen)))
-	opened, err := store.ListAlerts(ctx, storage.NewGetAlertsQuery(
-		storage.PaginatedQueryOptions[storage.AlertsFilters]{PageSize: 10}.WithQueryBuilder(openOnly)))
-	require.NoError(t, err)
-	require.Len(t, opened.Data, 2)
+	eventuallyConsistent(t, func(c *assert.CollectT) {
+		assert.Len(c, listByRule(openOnly).Data, 2)
+	})
 
 	// Resolve one; the OPEN-filtered list drops it.
 	_, err = store.AutoResolveAlert(ctx, ruleID, "fp-a", period, uuid.New(), time.Now().UTC())
 	require.NoError(t, err)
 
-	opened, err = store.ListAlerts(ctx, storage.NewGetAlertsQuery(
-		storage.PaginatedQueryOptions[storage.AlertsFilters]{PageSize: 10}.WithQueryBuilder(openOnly)))
-	require.NoError(t, err)
-	require.Len(t, opened.Data, 1)
-	require.Equal(t, "fp-b", opened.Data[0].Fingerprint)
+	eventuallyConsistent(t, func(c *assert.CollectT) {
+		opened := listByRule(openOnly)
+		if assert.Len(c, opened.Data, 1) {
+			assert.Equal(c, "fp-b", opened.Data[0].Fingerprint)
+		}
+	})
 }
 
 // balance reads one asset's balance on an account (empty string if absent).

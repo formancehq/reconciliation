@@ -63,7 +63,7 @@ func TestOpenOrUpdateAlert_NewOpen(t *testing.T) {
 	fpHash := schema.FingerprintHash(in.Fingerprint)
 	itemAddr := schema.AlertItemAccount(in.RuleID.String(), in.PeriodID, fpHash)
 	stOpen := schema.AlertStateAccount(schema.StateOpen, in.RuleID.String(), in.PeriodID, fpHash)
-	pool := schema.PoolAccount(in.RuleID.String(), in.PeriodID)
+	pool := schema.PoolAccount(in.RuleID.String())
 
 	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr, gomock.Any()).Return(nil, notFound())
 
@@ -122,7 +122,7 @@ func TestOpenOrUpdateAlert_Repeat(t *testing.T) {
 			require.Equal(t, alertBatchKey(in), tx.IdempotencyKey)
 			// A repeat uses alert_bump (OCC only) — the marker already sits at st:open.
 			require.Equal(t, schema.NumscriptAlertBump, tx.ScriptName)
-			require.Equal(t, schema.PoolAccount(in.RuleID.String(), in.PeriodID), tx.Vars[schema.VarPool])
+			require.Equal(t, schema.PoolAccount(in.RuleID.String()), tx.Vars[schema.VarPool])
 			require.Equal(t, itemAddr, tx.Vars[schema.VarItem])
 			require.NotContains(t, tx.Vars, schema.VarStFrom)
 			require.Empty(t, tx.DeleteMetadata)

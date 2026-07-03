@@ -145,14 +145,22 @@ prefix (step 3c-1).
 | Rule | `rule:{ruleId}` | NORMAL | metadata | config |
 | Alert item (canonical) | `alert:item:rule:{ruleId}:per:{period}:fp:{fpHash}` | NORMAL | metadata + `OCC` balance + `status` mirror | O(1) point-read, description, occurrence count |
 | State marker | `alert:st:{state}:rule:{ruleId}:per:{period}:fp:{fpHash}` | **EPHEMERAL** | 1 × `ALERT` | lifecycle source-of-truth, transition guard, per-status prefix aggregation |
-| Source pool | `alert:pool:rule:{ruleId}:per:{period}` | NORMAL (overdraft at mint) | negative `ALERT` + negative `OCC` | mints markers **and** OCC units; two free gauges (see below) |
+| Source pool | `alert:pool:rule:{ruleId}` | NORMAL (overdraft at mint) | negative `ALERT` + negative `OCC` | mints markers **and** OCC units; two free per-rule gauges (see below) |
 
-**Single source pool (decided).** One pool per `(rule, period)` sources *both* the ALERT
-markers and the OCC counter units. Assets are independent within an account, so nothing mixes:
-`−balance(ALERT)` = live-alert count, `−balance(OCC)` = total occurrences. This is neither an
-EPHEMERAL concern (the pool is NORMAL — only the `st:` markers are EPHEMERAL) nor a multi-asset
-limitation; a separate `alert:occ` pool would only add a redundant account (the occurrence total
-is also derivable by aggregating item OCC balances). Merged: 4 account types.
+**Per-rule source pool (decided).** One pool per **rule** (not per rule+period) sources *both* the
+ALERT markers and the OCC counter units for all of the rule's periods. Assets are independent
+within an account, so nothing mixes: `−balance(ALERT)` = live-alert count, `−balance(OCC)` = total
+occurrences (both per rule, all periods). Two deliberate cardinality cuts, each verified to lose
+nothing the design relies on:
+- **OCC merged into the pool** (not a separate `alert:occ`): a separate pool would only add a
+  redundant account — the occurrence total is also derivable by aggregating item OCC balances.
+- **Keyed by rule, not rule+period**: the pool is *only* a mint source (STRICT needs every posting
+  source declared) plus an optional gauge; the period scoping added O(#periods) NORMAL accounts
+  (never purged) for a gauge that is (a) currently unread and (b) already derivable by aggregating
+  the EPHEMERAL `st:` markers (live count, bounded by the live set — how `PQOpenCount` already
+  works) or the item OCC balances (occurrences). `@world` is STRICT-exempt and was an option, but a
+  declared per-rule pool keeps the chart self-describing and bounds the source footprint to
+  O(#rules). Chart stays 4 account types.
 
 Naming rules honoured: a fixed descriptor precedes every variable segment (`rule:`, `per:`,
 `fp:`, `st:`), and **status is leftmost** in the marker family so everything after it
@@ -163,7 +171,7 @@ kept as metadata) because fingerprints contain `:`/`|` that would break address 
 - Status / full alert (one) → `GetAccount(alert:item:rule:R:per:P:fp:H)` (`status` metadata + OCC). O(1).
 - OPEN count global → `AGGREGATE_VOLUMES` of `ALERT`, `AddressPrefix("alert:st:open:")`.
 - OPEN count per rule → prefix `alert:st:open:rule:R:`.
-- Live alerts per rule/period → `-balance(alert:pool:rule:R:per:P, ALERT)` (free).
+- Live alerts per rule → `-balance(alert:pool:rule:R, ALERT)` (free); per rule+period → `AGGREGATE_VOLUMES(ALERT)` over `alert:st:open:rule:R:per:P:` (+ ack).
 
 **Transitions run as library Numscripts** (stored via `SaveNumscript` at provisioning, pinned
 `v1.0.0`, referenced by name + account vars — not inlined per call; see the numscript-library
@@ -212,7 +220,7 @@ Benefits:
   users read the chart to understand the model.
 
 Consequence for sources: to keep STRICT clean, **mint from the declared overdraft pool**
-(`alert:pool:*`, one per rule/period, sourcing both `ALERT` and `OCC`; a future `COST` asset can
+(`alert:pool:*`, one per rule, sourcing both `ALERT` and `OCC`; a future `COST` asset can
 ride the same pool) rather than `@world`, so every address in every posting matches a declared
 type. (Confirm `@world`'s treatment under STRICT; if it is not implicitly exempt, declare it or
 avoid it entirely via the pool.)

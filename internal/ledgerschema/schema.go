@@ -86,12 +86,13 @@ func AccountTypes() map[string]*commonpb.AccountType {
 			},
 		},
 		AccountTypeAlertPool: {
-			// Single overdraft source per (rule, period): mints ALERT markers and
-			// OCC counter units (independent per-asset balances).
+			// Per-rule overdraft source: mints ALERT markers and OCC counter units
+			// (independent per-asset balances) for all of the rule's periods. Keyed
+			// by rule only → O(#rules) source accounts.
 			Name:         AccountTypeAlertPool,
-			Pattern:      "alert:pool:rule:{ruleId}:per:{period}",
+			Pattern:      "alert:pool:rule:{ruleId}",
 			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
-			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid(), "period": period()},
+			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid()},
 		},
 	}
 }
