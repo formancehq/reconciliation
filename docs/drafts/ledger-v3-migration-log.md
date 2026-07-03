@@ -26,8 +26,8 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 3c-2b | ↳ chart merge (`alert:issued`+`alert:occ` → `alert:pool`, 5→4 types) + Numscript **library** (SaveNumscript + ScriptReference) | ✅ done | `739efe7` |
 | 1 | 3c-3 | ↳ alert lifecycle: reads + guarded transitions + snooze | ✅ done | — |
 | 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | `59e4d7b` |
-| 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ✅ done | — |
-| 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ✅ done | — |
+| 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ✅ done | `9cc6025` |
+| 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ✅ done | `32603fa` |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
 | 1 | 6 | fx wiring + config + dual-run feature flag | ⬜ todo | — |
@@ -270,6 +270,29 @@ OPEN, second unsnooze is a no-op). Coverage `ledgerstore` 83.6%. build/vet/lint(
 except the paginated lists (`ListAlerts`/`ListAlertEvents`) and evaluations, which are step 4 /
 the deliberate no-durable-evaluations decision (RFC §4.4.2). No `var _ Store = (*LedgerStore)(nil)`
 assertion yet — the interface is intentionally not fully implemented until step 4.
+
+### Phase 1 step 3c-3 — SDLC review (consolidated, 2026-07-03)
+
+**Scope:** `59e4d7b` + `9cc6025` + `32603fa` (3c-3a/b/c). **Checks:** `go build ./...` ✅ · `go
+vet` ✅ · `golangci-lint --build-tags it` 0 issues ✅ · `gofmt` clean ✅ · `go test -race` (unit) ✅
+· full it-suite green vs live ledger ✅ · `go mod tidy` clean ✅ · conventional commits ✅ · not on
+`main` ✅ · no OpenAPI change (internal storage) ✅. Coverage `ledgerstore` 83.6% (>80%).
+
+**Regression:** the whole diff is **additive** — new files + additive methods on the `ledgerClient`
+/ `provisionAPI` interfaces (ledger-store-only). `internal/storage` (Postgres) is untouched → no
+regression to the live path. `OpenAlertResult`/`Store` shapes unchanged. No CRITICAL/HIGH.
+
+**Functionality:** transitions match the Postgres store's observable semantics (verified
+method-by-method against `internal/storage/alert.go`): ack no-op/not-found, resolve/accept
+active-only + snooze-clear, auto-resolve structural no-op, snooze future-only, unsnooze idempotent.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F22 | LOW | On **concurrent** transitions the ledger CAS loser gets a raw `FailedPrecondition` (guard miss), where Postgres (SELECT FOR UPDATE) yields a clean no-op / `ErrNotFound`. The store pre-checks status, so this only bites a genuine race; operator actions are low-concurrency and evaluation-driven auto-resolve is serialized per rule (RFC §5.1). Future: on a guard-miss, re-read and map to no-op/`ErrNotFound`. | ⬜ open (rare; deferred) |
+
+**Verdict:** step 3c-3 is complete and solid. Open follow-ups are all deferred/non-blocking:
+F20 (step-4 query indexes), F21 (cursor pagination for public lists), F22 (concurrent-CAS error
+shape). Next: step 4 (filter translator + `ListRules`/`ListAlerts` with cursor pagination).
 
 ## Proto re-sync procedure (F5)
 
