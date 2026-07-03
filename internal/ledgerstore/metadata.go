@@ -3,7 +3,6 @@ package ledgerstore
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
@@ -127,7 +126,7 @@ func ruleFromAccount(acct *commonpb.Account) (*models.Rule, error) {
 	}
 
 	for k, v := range md {
-		if label, ok := strings.CutPrefix(k, schema.LabelPrefix); ok {
+		if label, ok := labelKey(k); ok {
 			if r.Labels == nil {
 				r.Labels = map[string]string{}
 			}

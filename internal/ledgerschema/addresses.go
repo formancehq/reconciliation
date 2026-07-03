@@ -31,8 +31,7 @@ const (
 const (
 	StateOpen     = "open"
 	StateAck      = "ack"
-	StateResolved = "resolved"
-	StateAccepted = "accepted"
+	StateResolved = "resolved" // also the terminal state for "accepted" (a resolution kind)
 )
 
 // FingerprintHash maps a raw alert fingerprint (which may contain ':' and '|',
@@ -64,14 +63,17 @@ func ParseRuleAccount(address string) (uuid.UUID, error) {
 
 // AlertItemAccount is the canonical alert account: descriptive metadata + the
 // OCC balance + the mirrored status. It never holds the ALERT marker.
-func AlertItemAccount(ruleID, fpHash, period string) string {
-	return "alert:item:rule:" + ruleID + ":fp:" + fpHash + ":per:" + period
+// Segment order is rule → per → fp so (rule, period) is a queryable prefix.
+func AlertItemAccount(ruleID, period, fpHash string) string {
+	return "alert:item:rule:" + ruleID + ":per:" + period + ":fp:" + fpHash
 }
 
 // AlertStateAccount holds the single ALERT marker for a given lifecycle state
-// (EPHEMERAL). status-left: everything after :st:{state}: aggregates by prefix.
-func AlertStateAccount(state, ruleID, fpHash, period string) string {
-	return "alert:st:" + state + ":rule:" + ruleID + ":fp:" + fpHash + ":per:" + period
+// (EPHEMERAL). status-left so `alert:st:open:` aggregates all open markers;
+// rule → per → fp so open markers of a (rule, period) are a prefix (the
+// auto-resolve sweep, ListActiveAlertFingerprints).
+func AlertStateAccount(state, ruleID, period, fpHash string) string {
+	return "alert:st:" + state + ":rule:" + ruleID + ":per:" + period + ":fp:" + fpHash
 }
 
 // IssuedPoolAccount is the overdraft source for ALERT markers of a rule/period.
@@ -91,9 +93,16 @@ func OccPoolAccount(ruleID, period string) string {
 // OpenPrefix aggregates ALERT markers across all open alerts (all rules).
 func OpenPrefix() string { return "alert:st:" + StateOpen + ":" }
 
-// OpenByRulePrefix aggregates open ALERT markers for one rule.
+// OpenByRulePrefix aggregates open ALERT markers for one rule (all periods).
 func OpenByRulePrefix(ruleID string) string {
 	return "alert:st:" + StateOpen + ":rule:" + ruleID + ":"
+}
+
+// OpenByRulePeriodPrefix matches the open ALERT markers of a (rule, period). The
+// trailing segment of each match is `fp:{fpHash}` — the auto-resolve sweep reads
+// them to list active fingerprints (ListActiveAlertFingerprints).
+func OpenByRulePeriodPrefix(ruleID, period string) string {
+	return "alert:st:" + StateOpen + ":rule:" + ruleID + ":per:" + period + ":"
 }
 
 // IssuedByRulePrefix aggregates the issuance pools of one rule (all periods).

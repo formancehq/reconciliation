@@ -41,8 +41,8 @@ func TestAddressBuilders(t *testing.T) {
 		want string
 	}{
 		{"rule", schema.RuleAccount(ruleID), "rule:" + ruleID},
-		{"item", schema.AlertItemAccount(ruleID, fp, period), "alert:item:rule:" + ruleID + ":fp:" + fp + ":per:" + period},
-		{"state", schema.AlertStateAccount(schema.StateOpen, ruleID, fp, period), "alert:st:open:rule:" + ruleID + ":fp:" + fp + ":per:" + period},
+		{"item", schema.AlertItemAccount(ruleID, period, fp), "alert:item:rule:" + ruleID + ":per:" + period + ":fp:" + fp},
+		{"state", schema.AlertStateAccount(schema.StateOpen, ruleID, period, fp), "alert:st:open:rule:" + ruleID + ":per:" + period + ":fp:" + fp},
 		{"issued", schema.IssuedPoolAccount(ruleID, period), "alert:issued:rule:" + ruleID + ":per:" + period},
 		{"occ", schema.OccPoolAccount(ruleID, period), "alert:occ:rule:" + ruleID + ":per:" + period},
 	}
@@ -58,7 +58,7 @@ func TestOpenPrefixMatchesMarkers(t *testing.T) {
 	t.Parallel()
 
 	fp := schema.FingerprintHash("x")
-	open := schema.AlertStateAccount(schema.StateOpen, ruleID, fp, period)
+	open := schema.AlertStateAccount(schema.StateOpen, ruleID, period, fp)
 
 	if !strings.HasPrefix(open, schema.OpenPrefix()) {
 		t.Errorf("%q is not under global open prefix %q", open, schema.OpenPrefix())
@@ -68,8 +68,14 @@ func TestOpenPrefixMatchesMarkers(t *testing.T) {
 		t.Errorf("%q is not under by-rule open prefix %q", open, schema.OpenByRulePrefix(ruleID))
 	}
 
+	// The (rule, period) sweep prefix must match this open marker, and its
+	// remainder is the fp segment.
+	if !strings.HasPrefix(open, schema.OpenByRulePeriodPrefix(ruleID, period)) {
+		t.Errorf("%q is not under (rule,period) open prefix %q", open, schema.OpenByRulePeriodPrefix(ruleID, period))
+	}
+
 	// A resolved marker must NOT be counted as open.
-	resolved := schema.AlertStateAccount(schema.StateResolved, ruleID, fp, period)
+	resolved := schema.AlertStateAccount(schema.StateResolved, ruleID, period, fp)
 	if strings.HasPrefix(resolved, schema.OpenPrefix()) {
 		t.Errorf("resolved marker %q wrongly matches open prefix", resolved)
 	}

@@ -13,6 +13,7 @@ const (
 
 // Metadata keys on the canonical alert (`alert:item:*`) account.
 const (
+	MetaID               = "id"     // alert UUID (indexed) — the Store addresses alerts by id
 	MetaStatus           = "status" // mirror of the marker position (LWW, for O(1) point-read)
 	MetaSeverity         = "severity"
 	MetaRuleID           = "rule_id"
@@ -21,10 +22,10 @@ const (
 	MetaFirstSeenAt      = "first_seen_at"
 	MetaLastSeenAt       = "last_seen_at"
 	MetaLastEvaluationID = "last_evaluation_id"
-	MetaEvidenceRef      = "evidence_ref"
+	MetaEvidence         = "evidence"   // JSON (inline; evidence-by-reference is a future optimization)
 	MetaResolution       = "resolution" // JSON
 	MetaAck              = "ack"        // JSON
-	MetaSnoozeUntil      = "snooze_until"
+	MetaSnooze           = "snooze"     // JSON
 	MetaReopenedAt       = "reopened_at"
 	MetaParentResolution = "parent_resolution"
 )
@@ -72,17 +73,17 @@ func AccountTypes() map[string]*commonpb.AccountType {
 		},
 		AccountTypeAlertItem: {
 			Name:         AccountTypeAlertItem,
-			Pattern:      "alert:item:rule:{ruleId}:fp:{fpHash}:per:{period}",
+			Pattern:      "alert:item:rule:{ruleId}:per:{period}:fp:{fpHash}",
 			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
-			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid(), "fpHash": fpHash(), "period": period()},
+			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid(), "period": period(), "fpHash": fpHash()},
 		},
 		AccountTypeAlertState: {
 			Name:        AccountTypeAlertState,
-			Pattern:     "alert:st:{state}:rule:{ruleId}:fp:{fpHash}:per:{period}",
+			Pattern:     "alert:st:{state}:rule:{ruleId}:per:{period}:fp:{fpHash}",
 			Persistence: commonpb.AccountTypePersistence_ACCOUNT_TYPE_EPHEMERAL,
 			SegmentTypes: map[string]*commonpb.SegmentType{
-				"state":  rgx(`^(open|ack|resolved|accepted)$`),
-				"ruleId": uuid(), "fpHash": fpHash(), "period": period(),
+				"state":  rgx(`^(open|ack|resolved)$`),
+				"ruleId": uuid(), "period": period(), "fpHash": fpHash(),
 			},
 		},
 		AccountTypeAlertIssued: {
@@ -118,9 +119,9 @@ func MetadataSchema() []*commonpb.SetMetadataFieldTypeCommand {
 
 	fields := []metadataField{
 		// alert:item
-		{MetaStatus, str}, {MetaSeverity, str}, {MetaRuleID, str}, {MetaFingerprint, str},
+		{MetaID, str}, {MetaStatus, str}, {MetaSeverity, str}, {MetaRuleID, str}, {MetaFingerprint, str},
 		{MetaPeriod, str}, {MetaFirstSeenAt, dt}, {MetaLastSeenAt, dt}, {MetaLastEvaluationID, str},
-		{MetaEvidenceRef, str}, {MetaResolution, str}, {MetaAck, str}, {MetaSnoozeUntil, dt},
+		{MetaEvidence, str}, {MetaResolution, str}, {MetaAck, str}, {MetaSnooze, str},
 		{MetaReopenedAt, dt}, {MetaParentResolution, str},
 		// rule
 		{MetaName, str}, {MetaTemplateKind, str}, {MetaEnabled, b}, {MetaSchedule, str},
