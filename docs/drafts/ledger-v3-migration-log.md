@@ -88,6 +88,21 @@ commit; not on main; no OpenAPI change; `CreateLedger` sig change has no externa
 
 ---
 
+### Phase 1 step 3a — LedgerStore rules (SDLC review, 2026-07-03)
+
+Coverage `ledgerstore` 88.3% (>80%); lint/vet/gofmt/-race clean; conventional commit; not on
+main; no OpenAPI change; typed round-trip + gomock create/get/not-found tests. Solid — no
+CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F13 | MED | `CreateRule` is an LWW **upsert** (metadata write, no duplicate guard), whereas Postgres `CreateRule` fails on duplicate PK. Behavioral divergence for the drop-in `Store` contract — document it, or guard (read-before-write / conditional). IDs are generated UUIDs so collisions are unlikely, but the semantic gap is real. | ⬜ open |
+| F14 | MED | Address **parse** logic (`uuid.Parse(strings.TrimPrefix(addr, "rule:"))` in `metadata.go`) duplicates the `rule:{id}` format that `schema.RuleAccount` owns → DRY violation, two places to change. Add `schema.ParseRuleAccount(addr)` next to the builder and use it. (Needed by step 3b `ListRules` anyway.) | ⬜ open → fix in 3b |
+| F15 | LOW | `ruleToMetadata` silently drops `schedule`/`notifications` on a `json.Marshal` error (`if err == nil`). Marshal of these types cannot fail in practice; either propagate the error or comment why it's safe. | ⬜ open |
+| F16 | LOW | `ledgerstore` imports `internal/storage` (the Postgres package) only for `ErrNotFound` → heavy dep for one sentinel. Consider a leaf errors package shared by both stores. | ⬜ open |
+
+---
+
 ## Proto re-sync procedure (F5)
 
 The ledger protos are **copied**, not submoduled (mirrors ledger-connect). To update:
