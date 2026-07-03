@@ -3,7 +3,9 @@ package ledgerstore
 import (
 	"context"
 	"fmt"
+	"slices"
 
+	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -60,6 +62,39 @@ func (s *LedgerStore) ListActiveAlertFingerprints(ctx context.Context, ruleID uu
 	}
 
 	return fps, nil
+}
+
+// ListAlerts returns a cursor-paginated set of alerts, ordered last_seen_at DESC
+// to match the Postgres store. Filters (id / status / severity / fingerprint /
+// ruleID / periodID → metadata; firstSeenAt / lastSeenAt → datetime range) are
+// translated to a ledger QueryFilter; the full matching set is fetched, ordered,
+// then offset-sliced (see pagination.go for the cost note).
+func (s *LedgerStore) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
+	filter, err := buildListFilter(schema.ItemPrefix(), q.Options.QueryBuilder, alertLeaf)
+	if err != nil {
+		return nil, err
+	}
+
+	accts, err := s.client.QueryAccounts(ctx, s.controlLedger, filter, 0)
+	if err != nil {
+		return nil, fmt.Errorf("list alerts: %w", err)
+	}
+
+	alerts := make([]models.Alert, 0, len(accts))
+	for _, acct := range accts {
+		a, derr := alertFromAccount(acct)
+		if derr != nil {
+			return nil, fmt.Errorf("list alerts: decode %s: %w", acct.GetAddress(), derr)
+		}
+
+		alerts = append(alerts, *a)
+	}
+
+	slices.SortFunc(alerts, func(a, b models.Alert) int { return b.LastSeenAt.Compare(a.LastSeenAt) })
+
+	data, hasMore := paginateSlice(alerts, q.Offset, q.PageSize)
+
+	return offsetCursor(bunpaginate.OffsetPaginatedQuery[storage.PaginatedQueryOptions[storage.AlertsFilters]](q), data, hasMore), nil
 }
 
 // GetAlert returns the alert by id, or storage.ErrNotFound.

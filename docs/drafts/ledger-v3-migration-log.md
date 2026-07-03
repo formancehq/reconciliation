@@ -28,7 +28,7 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | `59e4d7b` |
 | 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ✅ done | `9cc6025` |
 | 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ✅ done | `32603fa` |
-| 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ⬜ todo | — |
+| 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ✅ done | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
 | 1 | 6 | fx wiring + config + dual-run feature flag | ⬜ todo | — |
 | 2 | — | Flip reads to the ledger; Postgres as shadow | ⬜ todo | — |
@@ -293,6 +293,36 @@ active-only + snooze-clear, auto-resolve structural no-op, snooze future-only, u
 **Verdict:** step 3c-3 is complete and solid. Open follow-ups are all deferred/non-blocking:
 F20 (step-4 query indexes), F21 (cursor pagination for public lists), F22 (concurrent-CAS error
 shape). Next: step 4 (filter translator + `ListRules`/`ListAlerts` with cursor pagination).
+
+### Phase 1 step 4 — filter translator + ListRules/ListAlerts (SDLC review, 2026-07-03)
+
+`internal/ledgerstore/filter.go` — translates recon's `go-libs/query.Builder` to a
+`commonpb.QueryFilter`. The Builder's node types are unexported and `Walk()` flattens the tree, so
+we go through its JSON form (Builder marshals to the `{$and|$or|$not|$match|…}` shape) and recurse,
+preserving the boolean structure. Per-resource leaf mappers: alert keys → metadata (id/status/
+severity/fingerprint/rule_id/period) or datetime `IntCondition` range (first/last seen); rule
+`id` → address, others → metadata/bool/datetime. Unsupported key/operator/type combinations
+return `storage.ErrInvalidQuery` (no silent mis-mapping). Datetime values are RFC3339 strings →
+int64 micros (matches how the ledger stores + range-queries datetime metadata).
+
+`internal/ledgerstore/pagination.go` + `ListRules`/`ListAlerts` — the ledger lists by address with
+an opaque cursor; recon's Store is offset-paginated and time-ordered. We fetch the full matching
+set (`QueryAccounts`, now cursor-following — see F below), decode, sort (rules created_at DESC,
+alerts last_seen_at DESC), then offset-slice, emitting `bunpaginate.Cursor` with previous/next
+encoded exactly like `bunpaginate.usingOffset` so recon's HTTP layer round-trips them unchanged.
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0)/gofmt/-race clean; coverage `ledgerstore`
+81.6%, `ledgerschema` 85.5% (>80%); conventional commit; not on `main`; no OpenAPI change; additive
+(Postgres path untouched). it-test `TestIntegration_Lists` validates filter translation + indexes
++ sort + offset paging + combined AND filters (ruleID + status) against the live ledger. No
+CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F20 | — | **Resolved.** The provisioner now creates the account-metadata index for every filtered field (id, status, severity, rule_id, period, fingerprint, first/last_seen_at, name, template_kind, enabled, created/updated_at). Note: right after provisioning *new* indexes the first filtered query can briefly exceed the retry budget while the index builds (INDEX_BUILDING→Unavailable); it self-heals on retry (observed once, then stable). | ✅ resolved |
+| F12 | — | **Resolved.** `FilterMetadataString` is now consumed by the filter translator; `PoolByRulePrefix` remains the only speculative helper (drop if unused by GA). | 🟡 mostly |
+| F23 | MED | `ListRules`/`ListAlerts` fetch the **whole matching set** to sort + offset-slice client-side (the ledger streams address-ordered, no server-side time sort or offset). Cheap for filtered lists, O(matches) for an unfiltered one. A cursor-based Store interface + server-side ordering (or an ordered read index) removes it. Supersedes F21. | ⬜ open (deferred) |
+| F24 | LOW | Datetime filters accept only RFC3339 **string** values (numeric epoch values are rejected). Matches how clients send timestamps; revisit if a caller sends epoch numbers. | ⬜ open (POC) |
 
 ## Proto re-sync procedure (F5)
 

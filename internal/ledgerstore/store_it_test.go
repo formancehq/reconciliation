@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/formancehq/go-libs/query"
 	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
@@ -301,6 +302,82 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	// Unsnooze again → idempotent no-op.
 	_, err = store.UnsnoozeAlert(ctx, sn.ID, "ops")
 	require.NoError(t, err, "unsnooze is idempotent")
+}
+
+// TestIntegration_Lists exercises ListRules / ListAlerts (filter translation +
+// metadata indexes + fetch-all + sort + offset paging) against a real Ledger v3.
+//
+//	go test -tags it -run TestIntegration_Lists ./internal/ledgerstore/...
+func TestIntegration_Lists(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, err := ledger.NewClient(itLedgerAddr(), nil)
+	require.NoError(t, err)
+
+	defer func() { _ = client.Close() }()
+
+	const control = "recon-it2"
+
+	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
+	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
+
+	store := New(client, control)
+
+	// --- ListRules, isolated by a unique name (indexed metadata filter). ---
+	name := "it-list-" + uuid.NewString()
+	now := time.Now().Truncate(time.Microsecond).UTC()
+	require.NoError(t, store.CreateRule(ctx, &models.Rule{
+		ID: uuid.New(), Name: name, TemplateKind: models.TemplateLedgerInvariant,
+		Enabled: true, Severity: models.SeverityHigh, Cadence: models.CadenceContinuous,
+		CreatedAt: now, UpdatedAt: now,
+	}))
+
+	ruleOpts := storage.PaginatedQueryOptions[storage.RulesFilters]{PageSize: 10}.WithQueryBuilder(query.Match("name", name))
+	rules, err := store.ListRules(ctx, storage.NewGetRulesQuery(ruleOpts))
+	require.NoError(t, err, "list rules by name")
+	require.Len(t, rules.Data, 1)
+	require.Equal(t, name, rules.Data[0].Name)
+
+	// --- ListAlerts, isolated by a fresh ruleID (indexed metadata filter). ---
+	ruleID := uuid.New()
+	const period = "2026-05"
+
+	open := func(fp string, at time.Time) {
+		_, oerr := store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
+			RuleID: ruleID, Fingerprint: fp, PeriodID: period, Severity: models.SeverityHigh,
+			EvaluationID: uuid.New(), Evidence: json.RawMessage(`{}`), OccurredAt: at,
+		})
+		require.NoError(t, oerr, "open %s", fp)
+	}
+	// Explicit, distinct last_seen_at so the DESC sort assertion is deterministic.
+	open("fp-a", now.Add(-time.Hour))
+	open("fp-b", now)
+
+	byRule := query.Match("ruleID", ruleID.String())
+
+	all, err := store.ListAlerts(ctx, storage.NewGetAlertsQuery(
+		storage.PaginatedQueryOptions[storage.AlertsFilters]{PageSize: 10}.WithQueryBuilder(byRule)))
+	require.NoError(t, err, "list alerts by rule")
+	require.Len(t, all.Data, 2)
+	require.Equal(t, "fp-b", all.Data[0].Fingerprint, "most-recent first")
+
+	// Combined filter: ruleID AND status==OPEN → both open.
+	openOnly := query.And(byRule, query.Match("status", string(models.AlertOpen)))
+	opened, err := store.ListAlerts(ctx, storage.NewGetAlertsQuery(
+		storage.PaginatedQueryOptions[storage.AlertsFilters]{PageSize: 10}.WithQueryBuilder(openOnly)))
+	require.NoError(t, err)
+	require.Len(t, opened.Data, 2)
+
+	// Resolve one; the OPEN-filtered list drops it.
+	_, err = store.AutoResolveAlert(ctx, ruleID, "fp-a", period, uuid.New(), time.Now().UTC())
+	require.NoError(t, err)
+
+	opened, err = store.ListAlerts(ctx, storage.NewGetAlertsQuery(
+		storage.PaginatedQueryOptions[storage.AlertsFilters]{PageSize: 10}.WithQueryBuilder(openOnly)))
+	require.NoError(t, err)
+	require.Len(t, opened.Data, 1)
+	require.Equal(t, "fp-b", opened.Data[0].Fingerprint)
 }
 
 // balance reads one asset's balance on an account (empty string if absent).

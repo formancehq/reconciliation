@@ -52,9 +52,47 @@ func FilterMetadataBool(key string, v bool) *commonpb.QueryFilter {
 	}
 }
 
+// FilterMetadataInt64Range matches a signed-int / datetime metadata field
+// against a bound range (filterexpr: `metadata[key] > min and metadata[key] <
+// max`). Datetime fields are stored as int64 micros and accept int bounds
+// verbatim. Nil min/max leaves that side unbounded.
+func FilterMetadataInt64Range(key string, min, max *int64, minExclusive, maxExclusive bool) *commonpb.QueryFilter {
+	cond := &commonpb.IntCondition{MinExclusive: minExclusive, MaxExclusive: maxExclusive}
+	if min != nil {
+		cond.Min = min
+	}
+
+	if max != nil {
+		cond.Max = max
+	}
+
+	return &commonpb.QueryFilter{
+		Filter: &commonpb.QueryFilter_Field{
+			Field: &commonpb.FieldCondition{
+				Field:     &commonpb.FieldRef{Metadata: key},
+				Condition: &commonpb.FieldCondition_IntCond{IntCond: cond},
+			},
+		},
+	}
+}
+
 // FilterAll ANDs the given filters (filterexpr: `a and b and ...`).
 func FilterAll(filters ...*commonpb.QueryFilter) *commonpb.QueryFilter {
 	return &commonpb.QueryFilter{
 		Filter: &commonpb.QueryFilter_And{And: &commonpb.AndFilter{Filters: filters}},
+	}
+}
+
+// FilterAny ORs the given filters (filterexpr: `a or b or ...`).
+func FilterAny(filters ...*commonpb.QueryFilter) *commonpb.QueryFilter {
+	return &commonpb.QueryFilter{
+		Filter: &commonpb.QueryFilter_Or{Or: &commonpb.OrFilter{Filters: filters}},
+	}
+}
+
+// FilterNot negates a filter (filterexpr: `not (a)`).
+func FilterNot(f *commonpb.QueryFilter) *commonpb.QueryFilter {
+	return &commonpb.QueryFilter{
+		Filter: &commonpb.QueryFilter_Not{Not: &commonpb.NotFilter{Filter: f}},
 	}
 }

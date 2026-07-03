@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/formancehq/go-libs/bun/bunpaginate"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
@@ -116,6 +118,39 @@ func (s *LedgerStore) DeleteRule(ctx context.Context, id uuid.UUID) error {
 	}
 
 	return nil
+}
+
+// ListRules returns a cursor-paginated set of rules, ordered created_at DESC to
+// match the Postgres store. The query.Builder filters (id → address; name /
+// templateKind / enabled → metadata; createdAt / updatedAt → datetime range) are
+// translated to a ledger QueryFilter; the full matching set is fetched, ordered,
+// then offset-sliced (see pagination.go for the cost note).
+func (s *LedgerStore) ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+	filter, err := buildListFilter(schema.RulePrefix(), q.Options.QueryBuilder, ruleLeaf)
+	if err != nil {
+		return nil, err
+	}
+
+	accts, err := s.client.QueryAccounts(ctx, s.controlLedger, filter, 0)
+	if err != nil {
+		return nil, fmt.Errorf("list rules: %w", err)
+	}
+
+	rules := make([]models.Rule, 0, len(accts))
+	for _, acct := range accts {
+		r, derr := ruleFromAccount(acct)
+		if derr != nil {
+			return nil, fmt.Errorf("list rules: decode %s: %w", acct.GetAddress(), derr)
+		}
+
+		rules = append(rules, *r)
+	}
+
+	slices.SortFunc(rules, func(a, b models.Rule) int { return b.CreatedAt.Compare(a.CreatedAt) })
+
+	data, hasMore := paginateSlice(rules, q.Offset, q.PageSize)
+
+	return offsetCursor(bunpaginate.OffsetPaginatedQuery[storage.PaginatedQueryOptions[storage.RulesFilters]](q), data, hasMore), nil
 }
 
 // applyRulePatch mutates rule in place with the non-nil fields of patch.

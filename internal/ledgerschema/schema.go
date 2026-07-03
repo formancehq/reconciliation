@@ -138,16 +138,26 @@ func MetadataSchema() []*commonpb.SetMetadataFieldTypeCommand {
 
 // MetadataIndexes returns the account-metadata secondary indexes to create at
 // provisioning. SetMetadataFieldType declares a field's TYPE but does NOT make
-// it queryable — an equality filter (`metadata[k] == v`) needs an explicit
-// index, created via CreateIndex. `id` is required: the Store addresses alerts
-// by UUID (GetAlert/AckAlert/…), and the only id→address path is a lookup on the
-// indexed `id`. Step 4 (filtered lists) extends this with status/severity/
-// rule_id/period/enabled; ListActiveAlertFingerprints stays index-free (address
-// prefix + client-side status filter), so `id` is the only index 3c-3 needs.
+// it queryable — a `metadata[k] <op> v` filter needs an explicit index, created
+// via CreateIndex. This set covers every field the ListRules/ListAlerts filter
+// translator can query on (the equality keys + the datetime range keys); `id`
+// additionally backs id→address resolution (GetAlert/Ack/…). Dynamic `label.*`
+// keys are intentionally not indexed (unbounded key space).
 func MetadataIndexes() []*commonpb.IndexID {
-	return []*commonpb.IndexID{
-		commonpb.AccountMetadataIndexID(MetaID),
+	keys := []string{
+		// alert:item filter + resolution fields
+		MetaID, MetaStatus, MetaSeverity, MetaRuleID, MetaPeriod, MetaFingerprint,
+		MetaFirstSeenAt, MetaLastSeenAt,
+		// rule filter fields
+		MetaName, MetaTemplateKind, MetaEnabled, MetaCreatedAt, MetaUpdatedAt,
 	}
+
+	idxs := make([]*commonpb.IndexID, 0, len(keys))
+	for _, k := range keys {
+		idxs = append(idxs, commonpb.AccountMetadataIndexID(k))
+	}
+
+	return idxs
 }
 
 // Prepared query names. Only fixed-shape hot queries are prepared; per-rule /

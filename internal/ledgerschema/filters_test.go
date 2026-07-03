@@ -38,6 +38,79 @@ func TestFilterAll(t *testing.T) {
 	}
 }
 
+func TestFilterMetadataString(t *testing.T) {
+	t.Parallel()
+
+	f := schema.FilterMetadataString("status", "OPEN")
+	if got := f.GetField().GetField().GetMetadata(); got != "status" {
+		t.Errorf("field key: got %q", got)
+	}
+
+	if got := f.GetField().GetStringCond().GetHardcoded(); got != "OPEN" {
+		t.Errorf("string cond: got %q", got)
+	}
+}
+
+func TestFilterMetadataInt64Range(t *testing.T) {
+	t.Parallel()
+
+	min := int64(100)
+	f := schema.FilterMetadataInt64Range("first_seen_at", &min, nil, true, false)
+
+	cond := f.GetField().GetIntCond()
+	if cond.GetMin() != 100 {
+		t.Errorf("min: got %d", cond.GetMin())
+	}
+
+	if !cond.GetMinExclusive() {
+		t.Error("min should be exclusive")
+	}
+
+	// nil max leaves the upper bound unset.
+	if cond.Max != nil {
+		t.Errorf("max: want nil, got %v", cond.Max)
+	}
+}
+
+func TestFilterAnyNot(t *testing.T) {
+	t.Parallel()
+
+	any := schema.FilterAny(schema.FilterMetadataString("status", "OPEN"), schema.FilterMetadataString("status", "ACKNOWLEDGED"))
+	if n := len(any.GetOr().GetFilters()); n != 2 {
+		t.Fatalf("or filters: got %d, want 2", n)
+	}
+
+	not := schema.FilterNot(schema.FilterMetadataBool("enabled", true))
+	if not.GetNot().GetFilter().GetField().GetField().GetMetadata() != "enabled" {
+		t.Error("not: inner field mismatch")
+	}
+}
+
+func TestMetadataIndexes(t *testing.T) {
+	t.Parallel()
+
+	idxs := schema.MetadataIndexes()
+	if len(idxs) == 0 {
+		t.Fatal("expected metadata indexes")
+	}
+
+	// id must be indexed — it backs id→address resolution.
+	found := false
+	for _, idx := range idxs {
+		if idx.GetMetadata().GetKey() == schema.MetaID {
+			found = true
+		}
+
+		if idx.GetMetadata().GetTarget() != commonpb.TargetType_TARGET_TYPE_ACCOUNT {
+			t.Errorf("index %q: target %v, want ACCOUNT", idx.GetMetadata().GetKey(), idx.GetMetadata().GetTarget())
+		}
+	}
+
+	if !found {
+		t.Errorf("missing required %q index", schema.MetaID)
+	}
+}
+
 func TestPreparedQueries(t *testing.T) {
 	t.Parallel()
 

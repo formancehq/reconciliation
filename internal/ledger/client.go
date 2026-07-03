@@ -20,8 +20,18 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+// nextCursorTrailerKey is the gRPC trailer the ledger sets with the opaque
+// resume token when a streamed list has more pages (matches the ledger's
+// NextCursorTrailerKey).
+const nextCursorTrailerKey = "x-next-cursor"
+
+// queryPageSize is the per-page size for streamed account queries; QueryAccounts
+// follows the cursor across pages, so this only trades round-trips for memory.
+const queryPageSize = 200
 
 // GRPCRetryPolicy retries on UNAVAILABLE (leader failover, cluster unhealthy).
 const GRPCRetryPolicy = `{
@@ -304,42 +314,61 @@ func deleteMetadataRequest(ledgerName, address, key string) *servicepb.Request {
 	}
 }
 
-// QueryAccounts streams the accounts matching filter and collects them into a
-// slice. A non-zero checkpointID reads from a query checkpoint. Intended for
-// BOUNDED result sets (resolving an alert by its indexed id, sweeping the active
-// alerts of one rule/period); the paginated public list APIs (step 4) will
-// stream with a cursor instead of collecting everything in memory.
-//
-// A metadata-filtered query returns codes.Unavailable while the field's index is
-// still building — the client's retry policy absorbs that transparently.
+// QueryAccounts streams every account matching filter and collects them,
+// following the ledger's x-next-cursor across pages (one ListAccounts call
+// returns a single page). A non-zero checkpointID reads from a query checkpoint.
+// The server-side filter keeps the collected set to the matches only, so this is
+// bounded by the query's selectivity (id lookup → ≤1; a rule/period sweep → its
+// active alerts). A metadata-filtered query returns codes.Unavailable while the
+// field's index is still building — the client's retry policy absorbs that.
 func (c *Client) QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64) ([]*commonpb.Account, error) {
-	stream, err := c.service.ListAccounts(ctx, &servicepb.ListAccountsRequest{
-		Ledger: ledgerName,
-		Options: &commonpb.ListOptions{
-			Read:   &commonpb.ReadOptions{CheckpointId: checkpointID},
-			Filter: filter,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list accounts on %s: %w", ledgerName, err)
-	}
-
-	var accounts []*commonpb.Account
+	var (
+		accounts []*commonpb.Account
+		cursor   string
+	)
 
 	for {
-		acct, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-
+		stream, err := c.service.ListAccounts(ctx, &servicepb.ListAccountsRequest{
+			Ledger: ledgerName,
+			Options: &commonpb.ListOptions{
+				Read:     &commonpb.ReadOptions{CheckpointId: checkpointID},
+				Filter:   filter,
+				PageSize: queryPageSize,
+				Cursor:   cursor,
+			},
+		})
 		if err != nil {
-			return nil, fmt.Errorf("recv account on %s: %w", ledgerName, err)
+			return nil, fmt.Errorf("list accounts on %s: %w", ledgerName, err)
 		}
 
-		accounts = append(accounts, acct)
+		for {
+			acct, rerr := stream.Recv()
+			if errors.Is(rerr, io.EOF) {
+				break
+			}
+
+			if rerr != nil {
+				return nil, fmt.Errorf("recv account on %s: %w", ledgerName, rerr)
+			}
+
+			accounts = append(accounts, acct)
+		}
+
+		cursor = nextCursorFromTrailer(stream.Trailer())
+		if cursor == "" {
+			return accounts, nil
+		}
+	}
+}
+
+// nextCursorFromTrailer reads the opaque next-page token from a streamed list's
+// trailer (empty when the last page has been drained).
+func nextCursorFromTrailer(trailer metadata.MD) string {
+	if vals := trailer.Get(nextCursorTrailerKey); len(vals) > 0 {
+		return vals[0]
 	}
 
-	return accounts, nil
+	return ""
 }
 
 // GetAccount retrieves an account (volumes + metadata) by address. A non-zero
