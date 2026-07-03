@@ -183,6 +183,31 @@ Finding F12 (unused exported helpers) update: `IssuedByRulePrefix` → `PoolByRu
 unused until step 4's filter/list work; `FilterMetadataString` idem). Keep pending step 4; drop
 if unconsumed.
 
+### Chart finalized (2026-07-03) — item / state kept separate
+
+Reviewed whether `alert:item:*` (canonical, NORMAL) and `alert:st:{state}:*` (marker, EPHEMERAL)
+should merge. **Decision: keep separate.** They resolve a genuine addressing conflict: a
+Numscript CAS guard keys off address+asset, so the state must sit at an address that *changes*
+per transition (open→ack→resolved) — while metadata needs a *stable* address (permanent record +
+O(1) point-read). One address can't be both moving and fixed → two accounts. Bonus: EPHEMERAL
+auto-purges drained state accounts, and it matches the Payments-plugin idiom (value moves between
+state accounts). Unlike the pool merge (which removed a *redundant* account), this separation is
+*structural* and stays.
+
+**Considered & rejected — Option G (state-as-asset, one account):** encode state as a burnable
+asset (`S_OPEN`/`S_ACK`/`S_RESOLVED`) on the item; guard via burn instead of move; counts via
+`−balance(pool, S_state)`. It would cut to 3 account types (drop `alert:st:*`), ~halve live
+accounts, and remove EPHEMERAL — preserving guards + counts. Rejected because at recon's low
+control-plane write volume those wins are marginal, while it loses the self-describing chart
+(§4.1.3) and diverges from the platform idiom, and adds a posting per transition. Revisit only if
+minimising account count / removing EPHEMERAL becomes a goal. Metadata-only (no marker) stays
+rejected (loses the atomic guard, §4.1.1).
+
+**Final chart — 4 account types:** `rule:{id}` (NORMAL) · `alert:item:rule:{id}:per:{p}:fp:{h}`
+(NORMAL, metadata + OCC + status mirror) · `alert:st:{state}:rule:{id}:per:{p}:fp:{h}` (EPHEMERAL,
+ALERT marker) · `alert:pool:rule:{id}:per:{p}` (NORMAL, sources ALERT + OCC). Assets: `ALERT`,
+`OCC` (both precision 0). This is the baseline for 3c-3.
+
 ## Proto re-sync procedure (F5)
 
 The ledger protos are **copied**, not submoduled (mirrors ledger-connect). To update:

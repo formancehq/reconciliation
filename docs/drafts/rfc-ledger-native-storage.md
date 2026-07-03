@@ -119,6 +119,14 @@ a movement (how the plugins model payments); the line we keep is *no config/JSON
 postings*. Metadata-only remains a valid, simpler V1 if the team prefers minimal modeling
 over day-one invariant enforcement. ~~Decision for review.~~ **Decided: hybrid (§4.1.2).**
 
+A third variant — **state-as-asset on a single account** (encode the state as a burnable
+`S_{state}` asset on the `item`, guard via burn instead of a move between state-addressed
+accounts) — was considered to collapse `item` + `st:{state}` into one account (3 types, no
+EPHEMERAL). **Rejected** (2026-07-03): the separation resolves a real addressing conflict (the
+CAS guard needs a *moving* state address; metadata needs a *stable* one), and keeping state in
+the address is more self-describing (§4.1.3) and matches the Payments-plugin idiom. The wins were
+marginal at recon's write volume. `item` and `st:{state}` stay separate.
+
 ### 4.1.2 Decided model & account naming (hybrid)
 
 Verified against Ledger v3: overdraft is a Numscript source clause (`allowing unbounded
