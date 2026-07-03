@@ -16,7 +16,7 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 | 0 | — | Reads first: point "pool" at a ledger, PIT → checkpoints | ⬜ todo | — |
 | **1** | **0** | **Ledger v3 gRPC transport** (proto + BucketService client) | ✅ done · reviewed | `5583a69` |
 | 1 | 1 | Chart-of-accounts / schema definition (`internal/ledgerschema`) | ✅ done | `c51be9a` |
-| 1 | 2 | Bootstrap provisioner (CreateLedger + account-types AUDIT + typed metadata + prepared queries) | ✅ done | `<pending>` |
+| 1 | 2 | Bootstrap provisioner (CreateLedger + account-types AUDIT + typed metadata + prepared queries) | ✅ done | `bd95a35` |
 | 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | ⬜ next | — |
 | 1 | 4 | Filter translator (`query.Builder` → `filterexpr`/prepared query) | ⬜ todo | — |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | ⬜ todo | — |
