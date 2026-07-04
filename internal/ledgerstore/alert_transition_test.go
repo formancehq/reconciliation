@@ -117,7 +117,7 @@ func TestResolveAlertManual_ClearsSnooze(t *testing.T) {
 			// Guarded move from the current state (ACK) to resolved.
 			require.Equal(t, schema.NumscriptAlertMove, tx.ScriptName)
 			require.Equal(t, stAddrOf(a, schema.StateAck), tx.Vars[schema.VarStFrom])
-			require.Equal(t, stAddrOf(a, schema.StateResolved), tx.Vars[schema.VarStTo])
+			require.Equal(t, schema.PoolAccount(a.RuleID.String()), tx.Vars[schema.VarStTo], "burned back to the pool")
 			item := tx.AccountMetadata[itemAddrOf(a)]
 			require.Equal(t, "RESOLVED", item.Values[schema.MetaStatus].GetStringValue())
 			require.Contains(t, item.Values, schema.MetaResolution)
@@ -190,7 +190,7 @@ func TestAutoResolveAlert_OpenToResolved(t *testing.T) {
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {
 			require.Equal(t, schema.NumscriptAlertMove, tx.ScriptName)
 			require.Equal(t, stAddrOf(a, schema.StateOpen), tx.Vars[schema.VarStFrom])
-			require.Equal(t, stAddrOf(a, schema.StateResolved), tx.Vars[schema.VarStTo])
+			require.Equal(t, schema.PoolAccount(a.RuleID.String()), tx.Vars[schema.VarStTo], "burned back to the pool")
 			require.Equal(t, "RESOLVED", tx.AccountMetadata[itemAddrOf(a)].Values[schema.MetaStatus].GetStringValue())
 
 			return nil

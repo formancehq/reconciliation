@@ -29,9 +29,13 @@ const (
 // Lifecycle states — the {state} segment of a marker account. The marker sits in
 // exactly one at a time; the drained ones are purged (EPHEMERAL).
 const (
-	StateOpen     = "open"
-	StateAck      = "ack"
-	StateResolved = "resolved" // also the terminal state for "accepted" (a resolution kind)
+	StateOpen = "open"
+	StateAck  = "ack"
+	// StateResolved is NOT a marker location — on close the marker is burned back
+	// to the pool and its state account purges (EPHEMERAL). It survives only as
+	// the status↔segment mapping's terminal value (and covers "accepted", a
+	// resolution kind). Live markers sit only at StateOpen / StateAck.
+	StateResolved = "resolved"
 )
 
 // FingerprintHash maps a raw alert fingerprint (which may contain ':' and '|',

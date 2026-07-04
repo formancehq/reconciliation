@@ -150,7 +150,6 @@ func TestOpenOrUpdateAlert_Reopen(t *testing.T) {
 	in := sampleInput()
 	fpHash := schema.FingerprintHash(in.Fingerprint)
 	itemAddr := schema.AlertItemAccount(in.RuleID.String(), in.PeriodID, fpHash)
-	stResolved := schema.AlertStateAccount(schema.StateResolved, in.RuleID.String(), in.PeriodID, fpHash)
 	stOpen := schema.AlertStateAccount(schema.StateOpen, in.RuleID.String(), in.PeriodID, fpHash)
 
 	prior := &models.Alert{
@@ -165,11 +164,12 @@ func TestOpenOrUpdateAlert_Reopen(t *testing.T) {
 
 	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {
-			// alert_reopen: guarded move st:resolved → st:open + OCC bump.
-			require.Equal(t, schema.NumscriptAlertReopen, tx.ScriptName)
-			require.Equal(t, stResolved, tx.Vars[schema.VarStFrom])
+			// Reopen re-mints the marker (it was burned on close) via alert_open —
+			// no st:resolved to move from.
+			require.Equal(t, schema.NumscriptAlertOpen, tx.ScriptName)
 			require.Equal(t, stOpen, tx.Vars[schema.VarStOpen])
 			require.Equal(t, itemAddr, tx.Vars[schema.VarItem])
+			require.NotContains(t, tx.Vars, schema.VarStFrom, "no marker to move from")
 			// The prior resolution is dropped (present → deleted).
 			require.Equal(t, []string{schema.MetaResolution}, tx.DeleteMetadata[itemAddr])
 			item := tx.AccountMetadata[itemAddr]

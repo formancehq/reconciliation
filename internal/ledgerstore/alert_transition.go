@@ -39,7 +39,8 @@ func (s *LedgerStore) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ac
 		return nil, fmt.Errorf("ack alert %s: %w", id, err)
 	}
 
-	if err := s.moveMarker(ctx, alert, fpHash, schema.StateOpen, schema.StateAck, md, nil,
+	stAck := schema.AlertStateAccount(schema.StateAck, alert.RuleID.String(), alert.PeriodID, fpHash)
+	if err := s.moveMarker(ctx, alert, fpHash, schema.StateOpen, stAck, md, nil,
 		alertActionKey("ack", id.String(), strconv.FormatInt(ack.At.UnixMicro(), 10))); err != nil {
 		return nil, fmt.Errorf("ack alert %s: %w", id, err)
 	}
@@ -71,8 +72,9 @@ func (s *LedgerStore) AcceptAlert(ctx context.Context, id uuid.UUID, resolution 
 	return s.resolve(ctx, id, resolution, "accept")
 }
 
-// resolve is the shared {OPEN,ACK} → RESOLVED transition for the manual /
-// accept paths: a guarded marker move to st:resolved, the resolution + status
+// resolve is the shared {OPEN,ACK} → RESOLVED transition for the manual / accept
+// paths: a guarded burn of the marker back to the pool (drains st:{from} → the
+// account purges, no marker survives for a closed alert), the resolution + status
 // mirror set on the item, and any snooze cleared. Rejects a non-active alert.
 func (s *LedgerStore) resolve(ctx context.Context, id uuid.UUID, resolution *models.Resolution, action string) (*models.Alert, error) {
 	alert, fpHash, err := s.loadAlertForTransition(ctx, id)
@@ -96,7 +98,7 @@ func (s *LedgerStore) resolve(ctx context.Context, id uuid.UUID, resolution *mod
 		return nil, fmt.Errorf("%s alert %s: %w", action, id, err)
 	}
 
-	if err := s.moveMarker(ctx, alert, fpHash, from, schema.StateResolved, md, deletes,
+	if err := s.moveMarker(ctx, alert, fpHash, from, schema.PoolAccount(alert.RuleID.String()), md, deletes,
 		alertActionKey(action, id.String(), strconv.FormatInt(resolution.At.UnixMicro(), 10))); err != nil {
 		return nil, fmt.Errorf("%s alert %s: %w", action, id, err)
 	}
@@ -154,7 +156,7 @@ func (s *LedgerStore) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fi
 		return nil, fmt.Errorf("auto-resolve %s: %w", fingerprint, err)
 	}
 
-	if err := s.moveMarker(ctx, alert, fpHash, from, schema.StateResolved, md, deletes,
+	if err := s.moveMarker(ctx, alert, fpHash, from, schema.PoolAccount(ruleID.String()), md, deletes,
 		alertActionKey("autoresolve", ruleID.String(), fingerprint, periodID, evaluationID.String())); err != nil {
 		return nil, fmt.Errorf("auto-resolve %s: %w", fingerprint, err)
 	}
@@ -178,10 +180,14 @@ func (s *LedgerStore) loadAlertForTransition(ctx context.Context, id uuid.UUID) 
 	return alert, schema.FingerprintHash(alert.Fingerprint), nil
 }
 
-// moveMarker runs the guarded alert_move transition: ALERT marker st:{from} →
-// st:{to} (bare source = CAS), with the item's descriptive/status metadata set
-// (and optional keys deleted) atomically in the same idempotent batch.
-func (s *LedgerStore) moveMarker(ctx context.Context, alert *models.Alert, fpHash, from, to string, md map[string]*commonpb.MetadataValue, deletes map[string][]string, key string) error {
+// moveMarker runs the guarded alert_move transition: the ALERT marker moves
+// st:{fromState} → toAddr (bare source = CAS), with the item's descriptive/status
+// metadata set (and optional keys deleted) atomically in the same idempotent
+// batch. toAddr is a state account for a lifecycle move (open→ack), or the rule
+// pool for a burn-on-close (resolve/accept/auto-resolve) — which drains
+// st:{fromState} to zero so it purges (EPHEMERAL), leaving no marker for a closed
+// alert.
+func (s *LedgerStore) moveMarker(ctx context.Context, alert *models.Alert, fpHash, fromState, toAddr string, md map[string]*commonpb.MetadataValue, deletes map[string][]string, key string) error {
 	rule := alert.RuleID.String()
 	itemAddr := schema.AlertItemAccount(rule, alert.PeriodID, fpHash)
 
@@ -190,8 +196,8 @@ func (s *LedgerStore) moveMarker(ctx context.Context, alert *models.Alert, fpHas
 		ScriptName:    schema.NumscriptAlertMove,
 		ScriptVersion: schema.NumscriptVersion,
 		Vars: map[string]string{
-			schema.VarStFrom: schema.AlertStateAccount(from, rule, alert.PeriodID, fpHash),
-			schema.VarStTo:   schema.AlertStateAccount(to, rule, alert.PeriodID, fpHash),
+			schema.VarStFrom: schema.AlertStateAccount(fromState, rule, alert.PeriodID, fpHash),
+			schema.VarStTo:   toAddr,
 		},
 		AccountMetadata: map[string]*commonpb.MetadataMap{itemAddr: {Values: md}},
 		DeleteMetadata:  deletes,

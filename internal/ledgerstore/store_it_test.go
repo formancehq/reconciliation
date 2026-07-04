@@ -19,6 +19,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // eventuallyConsistent retries fn until it passes: the ledger's read-side
@@ -55,7 +57,7 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it3"
+	const control = "recon-it4"
 
 	// Idempotent bootstrap in AUDIT so the chart is validated but not enforced.
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
@@ -127,7 +129,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it3"
+	const control = "recon-it4"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -230,7 +232,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it3"
+	const control = "recon-it4"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -250,14 +252,14 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 		return res.Alert
 	}
 
-	// Ack → Resolve lifecycle, verifying the marker moves between state accounts.
+	// Ack → burn-on-close → reopen lifecycle.
 	a := open("fp-lifecycle")
 	fpHash := schema.FingerprintHash("fp-lifecycle")
+	stOpen := schema.AlertStateAccount(schema.StateOpen, ruleID.String(), period, fpHash)
 	stAck := schema.AlertStateAccount(schema.StateAck, ruleID.String(), period, fpHash)
-	stResolved := schema.AlertStateAccount(schema.StateResolved, ruleID.String(), period, fpHash)
 
-	// The id-addressed transitions resolve via the metadata index — wait until it
-	// reflects the open before driving them.
+	// AckAlert is id-addressed (metadata index, eventually consistent) — wait
+	// until the index reflects the open, then ack. The rest reads structurally.
 	eventuallyConsistent(t, func(c *assert.CollectT) {
 		_, gerr := store.GetAlert(ctx, a.ID)
 		assert.NoError(c, gerr)
@@ -266,23 +268,35 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	acked, err := store.AckAlert(ctx, a.ID, &models.Ack{By: "ops", At: time.Now().UTC(), Note: "looking"})
 	require.NoError(t, err, "ack")
 	require.Equal(t, models.AlertAcknowledged, acked.Status)
-	require.Equal(t, "1", balance(ctx, t, client, control, stAck, schema.AssetAlert), "marker moved to st:ack")
+	require.Equal(t, "1", balance(ctx, t, client, control, stAck, schema.AssetAlert), "marker at st:ack")
+	require.Equal(t, "0", balanceOrZero(ctx, t, client, control, stOpen, schema.AssetAlert), "st:open drained on ack")
 
-	resolved, err := store.ResolveAlertManual(ctx, a.ID,
-		&models.Resolution{Kind: models.ResolutionFixedByBooking, By: "ops", At: time.Now().UTC()})
-	require.NoError(t, err, "resolve")
-	require.Equal(t, models.AlertResolved, resolved.Status)
-	require.Equal(t, "1", balance(ctx, t, client, control, stResolved, schema.AssetAlert), "marker moved to st:resolved")
+	// Burn-on-close: the marker is burned back to the pool and st:ack purges —
+	// no marker lingers for a closed alert (auto-resolve reads structurally, so
+	// no index wait needed).
+	closed, err := store.AutoResolveAlert(ctx, ruleID, "fp-lifecycle", period, uuid.New(), time.Now().UTC())
+	require.NoError(t, err, "close")
+	require.Equal(t, models.AlertResolved, closed.Status)
+	require.Equal(t, "0", balanceOrZero(ctx, t, client, control, stAck, schema.AssetAlert), "marker burned → st:ack purged")
 
-	byID, err := store.GetAlert(ctx, a.ID)
+	// The item persists as the durable record; its status mirror reads RESOLVED.
+	item, err := client.GetAccount(ctx, control, schema.AlertItemAccount(ruleID.String(), period, fpHash), 0)
 	require.NoError(t, err)
-	require.Equal(t, models.AlertResolved, byID.Status, "resolution persisted")
-	require.NotNil(t, byID.Resolution)
+	require.Equal(t, "RESOLVED", item.GetMetadata()[schema.MetaStatus].GetStringValue(), "status mirror on item")
 
-	// Guard: an alert can't be resolved twice.
-	_, err = store.ResolveAlertManual(ctx, a.ID,
-		&models.Resolution{Kind: models.ResolutionFixedByBooking, By: "ops", At: time.Now().UTC()})
-	require.ErrorIs(t, err, storage.ErrNotFound, "re-resolve rejected")
+	// Reopen: a fresh failure re-mints the marker (nothing to move — it was burned).
+	reopened, err := store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
+		RuleID: ruleID, Fingerprint: "fp-lifecycle", PeriodID: period, Severity: models.SeverityHigh,
+		EvaluationID: uuid.New(), Evidence: json.RawMessage(`{"drift":"2"}`), OccurredAt: time.Now().UTC(),
+	})
+	require.NoError(t, err, "reopen")
+	require.True(t, reopened.Reopened)
+	require.Equal(t, models.AlertOpen, reopened.Alert.Status)
+	require.Equal(t, "1", balance(ctx, t, client, control, stOpen, schema.AssetAlert), "marker re-minted at st:open")
+
+	// Close again so fp-lifecycle is not "active" for the sweep assertion below.
+	_, err = store.AutoResolveAlert(ctx, ruleID, "fp-lifecycle", period, uuid.New(), time.Now().UTC())
+	require.NoError(t, err, "re-close")
 
 	// Auto-resolve by (rule, fingerprint, period).
 	open("fp-auto")
@@ -347,7 +361,7 @@ func TestIntegration_Lists(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it3"
+	const control = "recon-it4"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -433,4 +447,23 @@ func balance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, ad
 	require.NoError(t, err, "get account %s", addr)
 
 	return acct.GetVolumes()[asset].GetBalance()
+}
+
+// balanceOrZero reads an asset balance, treating a purged (NotFound) account or
+// an absent volume as "0" — used to assert an EPHEMERAL marker was drained.
+func balanceOrZero(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, addr, asset string) string {
+	t.Helper()
+
+	acct, err := c.GetAccount(ctx, ledgerName, addr, 0)
+	if status.Code(err) == codes.NotFound {
+		return "0"
+	}
+
+	require.NoError(t, err, "get account %s", addr)
+
+	if bal := acct.GetVolumes()[asset].GetBalance(); bal != "" {
+		return bal
+	}
+
+	return "0"
 }

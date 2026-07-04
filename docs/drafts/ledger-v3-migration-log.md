@@ -33,8 +33,8 @@ pool, numscripts in the ledger library (don't re-litigate; see §4.1.1/§4.1.2 +
 uncommitted `Justfile` change (orphaned `generate-ledger-proto`, leave unstaged); `ledger-local/`.
 **Build/test:** `export PATH=$PATH:$(go env GOPATH)/bin` then `GOROOT= go build ./...`,
 `GOROOT= go test -race ./internal/ledger{,store,schema}/...`, it-tests `GOROOT= go test -tags it
--run TestIntegration ./internal/ledgerstore/... ./internal/ledger/...` (F8: bump the it
-control-ledger name on any chart change). Conventions: `feat(ledger-v3):` commits, update this log
+-p 1 -run TestIntegration ./internal/ledgerstore/... ./internal/ledger/...` (**`-p 1`**: packages
+share one live ledger; F8: bump the it control-ledger name — now `recon-it4` — on any chart change). Conventions: `feat(ledger-v3):` commits, update this log
 + SDLC review per sub-step, stamp commit refs.
 
 ---
@@ -58,6 +58,7 @@ control-ledger name on any chart change). Conventions: `feat(ledger-v3):` commit
 | 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | `59e4d7b` |
 | 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ✅ done | `9cc6025` |
 | 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ✅ done | `32603fa` |
+| 1 | 3c-4 | ↳ burn-on-close (resolve burns the marker → pool → EPHEMERAL purge; reopen re-mints; markers only for active states) | ✅ done | — |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ✅ done · reviewed | `916fee3` |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | 🚧 mechanism done | — |
 | 1 | 5a | ↳ checkpoint mechanism: client (`CreateQueryCheckpoint`/`Delete` + `AggregateVolumes`) + `Checkpoint` lifecycle + `CheckpointReader` (data-ledger reads at a checkpoint) | ✅ done | `6a7e110` |
@@ -401,6 +402,41 @@ read diverges (150). No CRITICAL/HIGH.
 |---|---|---|---|
 | F26 | MED | Checkpoint **lifecycle ownership** is the caller's: an evaluation must `Release` its checkpoint or it leaks (pins SSTs → disk growth). Step 5b/6 must `defer Release` with a cancellation-surviving context, and add a bounded reaper/ring for crash-orphaned checkpoints (ADR-002 §7). | ⬜ open (step 5b/6) |
 | F27 | LOW | `AggregateVolumes` reads are eventually consistent live (same class as F25); the it-test waits via `require.EventuallyWithT` before pinning the checkpoint so the snapshot includes the writes. Checkpoint reads themselves are deterministic (frozen snapshot). | ⬜ noted |
+
+### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
+
+Closes a real leak in the state model: EPHEMERAL purges a marker only at **zero** balance, but
+3c-3's resolve *parked* the marker at `st:resolved` (balance 1) → **resolved markers never
+purged** (accumulate O(all-resolved)). Fix = **burn-on-close** (anticipated in RFC §4.1.2): resolve
+/ accept / auto-resolve **burn** the marker back to the pool (`alert_move` with destination = the
+rule pool) instead of parking it, draining `st:{from}` → EPHEMERAL purge. Consequences:
+
+- **Markers exist only for active alerts** (open / ack). A closed alert has **no marker**; its state
+  lives on the item's `status` mirror + the burn tx. Marker regex tightened to `^(open|ack)$`;
+  `st:resolved` is no longer a marker location (`StateResolved` survives only as the status↔segment
+  mapping value).
+- **Reopen re-mints** (`alert_open`) instead of a guarded move from `st:resolved` (there is no marker
+  to move). Resurface from **ACK** stays a guarded move (`alert_reopen`, marker at `st:ack`). Guards
+  stay where they matter (ack, resolve/burn, ack→open); open and reopen are unguarded mints
+  (idempotency + serialized eval protect — as open always was).
+- `−balance(pool, ALERT)` now = **active (open+ack) count**, self-correcting on close.
+- No new numscript (burn reuses `alert_move` with the pool as destination).
+
+Tests: unit updated (Reopen → `alert_open` re-mint; resolve/auto-resolve → burn to pool); it-test
+`TestIntegration_AlertTransitions` on a fresh **`recon-it4`** now drives ack → **burn (st:ack
+purges)** → **reopen (re-mint at st:open)** → re-close, asserting the marker is gone after close.
+build/vet/lint(0)/gofmt/-race clean.
+
+> **it-test invocation:** run the full it suite with **`-p 1`** — the packages share one live
+> ledger, and default package-level parallelism causes index-propagation contention (a spurious
+> `Eventually` timeout in the ledger checkpoint it-test). `go test -tags it -p 1 -run TestIntegration
+> ./internal/ledgerstore/... ./internal/ledger/...`.
+
+**Chart challenge recap (answered, no further change):** `alert:item` = the durable canonical
+record (stable-address metadata + OCC + status mirror + dedup key + id-index target) — persists like
+the Postgres alert row; bounding it is a retention concern (RFC §10.5). `per:{p}` = the dedup-scope
+segment; continuous rules use the constant `per:continuous` (functionally used by the period-scoped
+sweep) — kept uniform to avoid forking the address shape/code path for a cosmetic gain.
 
 ## Proto re-sync procedure (F5)
 

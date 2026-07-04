@@ -171,20 +171,33 @@ func (s *LedgerStore) updateAlert(ctx context.Context, in storage.OpenAlertInput
 		IdempotencyKey:  alertBatchKey(in),
 	}
 
-	if fromStatus == models.AlertOpen {
-		// Marker already at st:open — a plain repeat, no move.
+	stOpen := schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash)
+
+	switch fromStatus {
+	case models.AlertOpen:
+		// Marker already at st:open — a plain repeat, OCC only, no move.
 		tx.ScriptName = schema.NumscriptAlertBump
 		tx.Vars = map[string]string{
 			schema.VarPool: pool,
 			schema.VarItem: itemAddr,
 		}
-	} else {
-		// Resurface (ack→open) or reopen (resolved→open): guarded marker move.
+	case models.AlertResolved:
+		// Reopen: the marker was burned on close, so there is nothing to move —
+		// re-mint a fresh marker into st:open (like an open), + OCC.
+		tx.ScriptName = schema.NumscriptAlertOpen
+		tx.Vars = map[string]string{
+			schema.VarPool:   pool,
+			schema.VarStOpen: stOpen,
+			schema.VarItem:   itemAddr,
+		}
+	default:
+		// Resurface from ACK: the marker still sits at st:ack — guarded move
+		// st:ack → st:open, + OCC.
 		tx.ScriptName = schema.NumscriptAlertReopen
 		tx.Vars = map[string]string{
 			schema.VarPool:   pool,
-			schema.VarStFrom: schema.AlertStateAccount(statusToState(fromStatus), rule, in.PeriodID, fpHash),
-			schema.VarStOpen: schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash),
+			schema.VarStFrom: schema.AlertStateAccount(schema.StateAck, rule, in.PeriodID, fpHash),
+			schema.VarStOpen: stOpen,
 			schema.VarItem:   itemAddr,
 		}
 	}

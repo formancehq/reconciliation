@@ -81,7 +81,10 @@ func AccountTypes() map[string]*commonpb.AccountType {
 			Pattern:     "alert:st:{state}:rule:{ruleId}:per:{period}:fp:{fpHash}",
 			Persistence: commonpb.AccountTypePersistence_ACCOUNT_TYPE_EPHEMERAL,
 			SegmentTypes: map[string]*commonpb.SegmentType{
-				"state":  rgx(`^(open|ack|resolved)$`),
+				// Only active states hold a marker; on close the marker is burned
+				// back to the pool and the account purges (EPHEMERAL). "resolved"
+				// is a status-mirror value on the item, not a marker location.
+				"state":  rgx(`^(open|ack)$`),
 				"ruleId": uuid(), "period": period(), "fpHash": fpHash(),
 			},
 		},
