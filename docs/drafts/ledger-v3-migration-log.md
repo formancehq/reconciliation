@@ -82,6 +82,7 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | **6a** | **Ledger-only `Store`** (transport + simplification + wiring; Postgres removed) | 🚧 in progress | — |
 | 1 | 6a-1 | ↳ secure transport (`internal/ledgerauth`: Ed25519 signing + TLS + F2 insecure guard) | ✅ done · reviewed | `5f4ab4b` |
 | 1 | 6a-2 | ↳ drop legacy `/policies`+`/reconciliations` + `ledger_vs_pool_drift` template (+ openapi) | ✅ done · reviewed | `299b7a7` |
+| 1 | 6a-2b | ↳ sync product docs to the ledger-only surface (delete v1-vs-legacy, purge legacy refs) | ✅ done | `7acda74` |
 | 1 | 6a-3 | ↳ evaluations non-durable (drop `*Evaluation` + `/evaluations`; `last_evaluation` on alert) | ⬜ todo | — |
 | 1 | 6a-4 | ↳ `ListAlertEvents` → empty + TODO (SAVED_METADATA sink deferred) | ⬜ todo | — |
 | 1 | 6a-5 | ↳ bind `LedgerStore` as sole `Store` + `ledger.Client` fx/flags + remove Postgres (boot DB-less) | ⬜ todo | — |
@@ -512,7 +513,7 @@ CRITICAL/HIGH.
 
 | # | Sev | Finding | Status |
 |---|---|---|---|
-| F28 | LOW | Product-state docs (`docs/technical/{api,templates,architecture,v1-vs-legacy,README}.md`, `docs/README.md`, `docs/prd/README.md`) still describe the legacy `/policies` surface + `ledger_vs_pool_drift`. Historical records (ADR-001, RFC, this log's history) legitimately keep their references. `v1-vs-legacy.md` needs rethinking (its whole premise is the legacy comparison). Sync as **6a-2b** (docs-only). | ⬜ open (6a-2b) |
+| F28 | — | **Resolved (6a-2b, `7acda74`).** Deleted `v1-vs-legacy.md` + purged the legacy `/policies`/`ledger_vs_pool_drift` references across README/prd/technical docs (incl. the POLICY/RECONCILIATION ER entities in architecture.md). Historical records (ADR-001, RFC, this log's history, v1-stories drafts) keep their references intentionally. | ✅ resolved |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
