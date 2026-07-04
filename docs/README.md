@@ -15,7 +15,7 @@ The internal kernel that powers it (CEL over a typed object model + `Source` abs
 The full PRD (v0.5), positioning, scope, phasing, and the two architecture decision records that pin down the most expensive technical choices.
 
 ### [Technical (`technical/`)](./technical/README.md)
-Architecture, the diff vs the legacy `/policies` path, the API reference, the lifecycle workflows, the template catalog, and how to run the stack locally.
+Architecture, the API reference, the lifecycle workflows, the template catalog, and how to run the stack locally.
 
 ### [Drafts (`drafts/`)](./drafts/README.md)
 V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
@@ -27,8 +27,7 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | Topic | Link |
 |-------|------|
 | **PRD v0.5** | [prd/README.md](./prd/README.md) |
-| **What's changing vs today's `/policies`** | [technical/v1-vs-legacy.md](./technical/v1-vs-legacy.md) |
-| **API reference (legacy + V1)** | [technical/api.md](./technical/api.md) |
+| **API reference** | [technical/api.md](./technical/api.md) |
 | **Lifecycle workflows** | [technical/workflows.md](./technical/workflows.md) |
 | **Template catalog** | [technical/templates.md](./technical/templates.md) |
 | **Architecture overview** | [technical/architecture.md](./technical/architecture.md) |
@@ -45,9 +44,9 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | 1 | Local docker stack isolated from `stack/` | ✅ shipped |
 | 2 | Migrations + Go models for `Rule` / `Evaluation` / `Alert` / `AlertEvent` / `Resolution` | ✅ shipped |
 | 3 | Internal CEL kernel (`internal/engine/`) — types, Source, builtins, resolvers, budget | ✅ shipped |
-| 4 | V1 GA template catalog — `ledger_vs_pool_drift` / `ledger_invariant` / `account_threshold` / `source_parity` | ✅ shipped (incl. account_threshold + source_parity per-account scope) |
+| 4 | V1 GA template catalog — `source_parity` / `ledger_invariant` / `account_threshold` | ✅ shipped (incl. account_threshold + source_parity per-account scope) |
 | 5 | Service layer — Rule / Evaluation / Alert orchestration + resolution paths + event-log append | ✅ shipped |
-| 6 | API endpoints + legacy `/policies` facade + OpenAPI | ✅ shipped |
+| 6 | API endpoints + OpenAPI | ✅ shipped |
 | 7 | End-to-end demo UI ([poc-reconciliation-demo](../../poc-reconciliation-demo)) — replaces the planned dockertest harness | ✅ shipped |
 | 8 | V1 GA additions — webhook events ✅ · in-process cron scheduler ✅ (single-instance) · email digest / fctl / EE gating / metering 🚧 | 🚧 in progress |
 

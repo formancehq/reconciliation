@@ -24,7 +24,6 @@ internal/
 │   ├── template.go         Evaluator interface, Outcome, Registry
 │   ├── helpers.go          CEL string rendering, fingerprint, sorted-keys, zeroIfNil
 │   ├── source.go           Shared Source primitive (ledger / payments_pool): resolve + celTerm
-│   ├── ledger_vs_pool_drift.go
 │   ├── ledger_invariant.go
 │   ├── account_threshold.go
 │   └── source_parity.go
@@ -34,7 +33,7 @@ internal/
     ├── rule.go             ✅ V1 rule HTTP handlers + Evaluate
     ├── evaluation.go       ✅ V1 evaluation HTTP handlers
     ├── alert.go            ✅ V1 alert HTTP handlers (ack/resolve/accept + events timeline)
-    └── router.go           ✅ Wires legacy /policies and V1 /rules /evaluations /alerts
+    └── router.go           ✅ Wires the V1 /rules /evaluations /alerts
 ```
 
 ---
@@ -87,7 +86,7 @@ See [engine/engine.go](../../internal/engine/engine.go) for the Compile/Evaluate
 
 ## Templates layer — one-paragraph view
 
-A template owns its own end-to-end evaluation. It scouts the asset universe by calling resolvers directly (e.g. union of ledger + pool balances for `ledger_vs_pool_drift`), then for each asset it renders a fresh CEL string, compiles + evaluates via the kernel, and emits an `Outcome` with a stable fingerprint. The service layer collects outcomes and opens/updates one alert per failing fingerprint (appending one `alert_event` row per outcome).
+A template owns its own end-to-end evaluation. It scouts the asset universe by calling resolvers directly (e.g. union of ledger + pool balances for `source_parity`), then for each asset it renders a fresh CEL string, compiles + evaluates via the kernel, and emits an `Outcome` with a stable fingerprint. The service layer collects outcomes and opens/updates one alert per failing fingerprint (appending one `alert_event` row per outcome).
 
 ```mermaid
 flowchart LR
@@ -113,7 +112,6 @@ erDiagram
     EVALUATION ||--o{ ALERT       : "last_evaluation_id"
     ALERT      ||--o{ ALERT_EVENT : "transitions / history"
     EVALUATION ||--o{ ALERT_EVENT : "evaluation_id (per-eval row)"
-    POLICY     ||--o{ RECONCILIATION : "legacy"
 
     RULE {
         uuid id PK
@@ -165,24 +163,6 @@ erDiagram
         jsonb payload
         ts at
         ts created_at
-    }
-    POLICY {
-        uuid id PK
-        text name
-        text ledger_name
-        jsonb ledger_query
-        uuid payments_pool_id
-    }
-    RECONCILIATION {
-        uuid id PK
-        uuid policy_id FK
-        ts reconciled_at_ledger
-        ts reconciled_at_payments
-        text status
-        jsonb ledger_balances
-        jsonb payments_balances
-        jsonb drift_balances
-        text error
     }
 ```
 

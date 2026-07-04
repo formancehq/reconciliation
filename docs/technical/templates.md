@@ -2,7 +2,7 @@
 
 Templates are the **entire public V1 GA surface** — raw CEL is internal-only (see [ADR-001](../prd/adr-001-cel-kernel.md)). Each template is a typed spec, a validator, an explainer (for the persisted `compiled_cel`), and an end-to-end evaluator that produces one `Outcome` per fingerprint axis (per-asset for V1 GA).
 
-> Status: all four templates are ✅ shipped in [internal/templates/](../../internal/templates/), including `account_threshold` per-account mode.
+> Status: all three templates are ✅ shipped in [internal/templates/](../../internal/templates/), including `account_threshold` per-account mode.
 
 ---
 
@@ -34,7 +34,7 @@ Every template:
 
 A **kernel/template consistency guard** in each template double-checks the kernel's verdict against direct big.Int math and errors loudly on divergence. Catches future kernel drift.
 
-Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` and `ledger_vs_pool_drift` both compose sources through it, so there is one code path for "read a balance source".
+Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` composes sources through it, so there is one code path for "read a balance source".
 
 **Scope.** A ledger source can be read in one of two scopes, a native capability of the Source primitive:
 - **aggregate** (default): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
@@ -44,70 +44,7 @@ Balance reads are centralised in a shared **Source** primitive ([source.go](../.
 
 ## Catalog
 
-### 1. `ledger_vs_pool_drift` (✅ shipped)
-
-Port of today's legacy reconciliation. Compares a dynamic ledger account set against a dynamic payments pool, per asset.
-
-**Spec**
-
-```jsonc
-{
-  "ledger":         "buildr",
-  "ledgerQuery":    { "$match": { "metadata[trust]": "true" } },
-  "paymentsPoolID": "0eb4a31f-751e-42d4-8d5b-2129e6d4cf4c",
-  "ledgerSign":     -1,                              // optional; +1 (default) or -1
-  "tolerance":      { "USD/2": 0, "EUR/2": 50 }      // optional; defaults to 0 per asset
-}
-```
-
-**Validation**
-
-- `ledger`, `ledgerQuery`, `paymentsPoolID` required
-- `ledgerSign` must be `+1`, `-1`, or omitted (defaults to `+1`)
-- `tolerance` values must be ≥ 0
-- `ledgerQuery` must be a non-null, non-empty JSON value
-
-**Asset universe**
-
-Discovered at eval time = `union(ledgerBalances, poolBalances)`. **Every** asset present on either side is checked — including assets absent from `tolerance` (which then default to strict 0).
-
-**Per-asset CEL** (the runtime form). With `ledgerSign: -1` the ledger term carries a leading minus:
-
-```cel
-abs(-balance(ledgerSet("buildr", "<query json>"), "USD/2")
-  + balance(pool("0eb4a31f-…"), "USD/2")) <= 0
-```
-
-**Fingerprint** — `asset:<asset>` (e.g. `asset:USD/2`)
-
-**Evidence** (per outcome)
-
-```jsonc
-{
-  "asset":            "USD/2",
-  "ledgerBalanceRaw": "350",   // raw, before ledgerSign
-  "ledgerBalance":    "-350",  // signed contribution to the sum
-  "ledgerSign":       -1,
-  "poolBalance":      "350",
-  "drift":            "0",
-  "signedDrift":      "0",
-  "tolerance":        0,
-  "compiledCEL":      "abs(-balance(ledgerSet(\"buildr\", \"…\"), \"USD/2\") + balance(pool(\"…\"), \"USD/2\")) <= 0"
-}
-```
-
-**Sign convention** — the rule checks `abs(ledgerSign·ledger + pool) <= tolerance` per asset.
-
-- `ledgerSign = +1` (default) preserves legacy semantics: the ledger side is expected to be the *negative* of the pool side, so `ledger + pool == 0`. Customers porting from legacy `/policies` keep this default.
-- `ledgerSign = -1` is the symmetric case: both sides naturally positive (e.g. a "held" account on the ledger compared against the pool's cash balance). Lifts the prior limitation that ledger balances had to be negative for reconciliation to balance out.
-
-The signed contribution is captured in `evidence.ledgerBalance`; the pre-sign raw value is preserved in `evidence.ledgerBalanceRaw` so audit consumers can cross-check directly against the ledger UI.
-
-**Code**: [internal/templates/ledger_vs_pool_drift.go](../../internal/templates/ledger_vs_pool_drift.go)
-
----
-
-### 2. `ledger_invariant` (✅ shipped)
+### 1. `ledger_invariant` (✅ shipped)
 
 Buildr-style "sum of signed balances must net to zero (within tolerance)" check. Multiple terms over different ledger queries; each carries a `+1` or `-1` sign.
 
@@ -161,7 +98,7 @@ abs(balance(ledgerSet("buildr", "<held query>"), "USD/2")
 
 ---
 
-### 3. `account_threshold` (✅ shipped — aggregate + per_account)
+### 2. `account_threshold` (✅ shipped — aggregate + per_account)
 
 Per-asset min/max bounds on a ledger account set, either aggregated or per account.
 
@@ -220,7 +157,7 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 
 ---
 
-### 4. `source_parity` (✅ shipped)
+### 3. `source_parity` (✅ shipped)
 
 "Two independent records of the same money agree, per asset, within tolerance." Each side is a **Source** — a ledger account set *or* a payments pool — so one template expresses ledger↔pool (the drift use case), **ledger↔ledger** (a sub-ledger reconciled against a control account on another ledger), and pool↔pool, without a bespoke template per pairing.
 
@@ -255,7 +192,7 @@ abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(pool("0eb4a31f
 
 **Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `pool:…`; per_account also carries `account`).
 
-**Relation to `ledger_vs_pool_drift`** — `source_parity` is the equality primitive (`abs(left − right) ≤ tol`). `ledger_vs_pool_drift` is a sum-to-zero relation with a configurable `ledgerSign`; it now resolves and renders both sides through the same shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source" — and layers only its sign arithmetic on top. (Collapsing drift's signed sum and `ledger_invariant`'s N-term sum into a single signed-combination template is a possible future consolidation.) An external bank/PSP-account source kind is a natural next addition once it has a resolver + kernel builtin.
+**The equality primitive** — `source_parity` is the cross-source equality check (`abs(left − right) ≤ tol`), resolving and rendering both sides through the shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source". An external bank/PSP-account source kind is a natural next addition once it has a resolver + kernel builtin.
 
 **Code**: [internal/templates/source_parity.go](../../internal/templates/source_parity.go), [internal/templates/source.go](../../internal/templates/source.go)
 

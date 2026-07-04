@@ -1,68 +1,19 @@
 # API Reference
 
-Reconciliation exposes two API surfaces:
+Reconciliation exposes one API surface:
 
-- **Legacy `/policies`** — preserved verbatim for backwards compatibility. Existing customers keep working with no migration.
-- **V1 Ledger Clarity** (`/rules` / `/evaluations` / `/alerts`) — the new surface. EE-gated at V1 GA.
+- **V1 Ledger Clarity** (`/rules` / `/evaluations` / `/alerts`) — EE-gated at V1 GA.
 
-Both share the same auth scopes (`reconciliation:read`, `reconciliation:write`) and the same `ErrorResponse` shape.
+It uses the auth scopes (`reconciliation:read`, `reconciliation:write`) and the `ErrorResponse` shape described below.
 
-> Status: both legacy and V1 endpoints are ✅ shipped. Event publication remains ⏳ (task #8).
-> OpenAPI lives in [openapi.yaml](../../openapi.yaml) — 16 paths, ~30 schemas.
-
----
-
-## Legacy `/policies` (✅ shipped)
-
-Backed by the `policy` and `reconciliation` tables. At task #6, these become a thin facade over the `Rule` table — wire shape unchanged.
-
-### `POST /policies`
-
-Create a policy.
-
-```json
-{
-  "name": "buildr-pool",
-  "ledgerName": "buildr",
-  "ledgerQuery": { "$match": { "metadata[trust]": "true" } },
-  "paymentsPoolID": "0eb4a31f-751e-42d4-8d5b-2129e6d4cf4c"
-}
-```
-
-Returns `201` + the policy with a generated `id`.
-
-### `GET /policies` · `GET /policies/{id}` · `DELETE /policies/{id}`
-
-Cursor-paginated list, get-by-id, delete. Delete cascades to associated reconciliation rows.
-
-### `POST /policies/{id}/reconciliation`
-
-Run a reconciliation **now** against the supplied PITs.
-
-```json
-{
-  "reconciledAtLedger":   "2026-06-17T15:00:00Z",
-  "reconciledAtPayments": "2026-06-17T15:00:00Z"
-}
-```
-
-Returns `200` + the `Reconciliation` row (`status: "OK" | "NOT_OK"`, balances, drift). Caller picks both PITs; both must be in the past.
-
-### `GET /reconciliations` · `GET /reconciliations/{id}`
-
-History of previous runs.
-
-### Known legacy quirks
-
-- `status` is `OK` even when drift is positive (legacy convention — only negative drift flags). Tracked in [v1-vs-legacy.md §4](./v1-vs-legacy.md#4-drift-status-logic-the-legacy-bug).
-- Payments-side PIT silently returns empty under payments v3. Tracked in [v1-vs-legacy.md §5](./v1-vs-legacy.md#5-payments-side-read).
-- Ledger-side PIT + metadata filter silently returns empty when `ACCOUNT_METADATA_HISTORY: DISABLED` ([ledger#1416](https://github.com/formancehq/ledger/issues/1416)).
+> Status: the V1 endpoints are ✅ shipped. Event publication remains ⏳ (task #8).
+> OpenAPI lives in [openapi.yaml](../../openapi.yaml).
 
 ---
 
 ## V1 Ledger Clarity (✅ shipped)
 
-EE-gated. Same auth surface as the legacy API. The contracts below match what's wired in [`internal/api/router.go`](../../internal/api/router.go) and exposed via [`openapi.yaml`](../../openapi.yaml). Underlying models live in [models/rule.go](../../internal/models/rule.go), [models/evaluation.go](../../internal/models/evaluation.go), [models/alert.go](../../internal/models/alert.go).
+EE-gated. The contracts below match what's wired in [`internal/api/router.go`](../../internal/api/router.go) and exposed via [`openapi.yaml`](../../openapi.yaml). Underlying models live in [models/rule.go](../../internal/models/rule.go), [models/evaluation.go](../../internal/models/evaluation.go), [models/alert.go](../../internal/models/alert.go).
 
 > Handler-level tests live in [v1_handlers_test.go](../../internal/api/v1_handlers_test.go); the end-to-end orchestration test ([v1_orchestration_test.go](../../internal/api/service/v1_orchestration_test.go)) is the canonical reference for the open/update/auto-resolve/re-open flow these endpoints drive.
 

@@ -1,14 +1,13 @@
 # Technical Documentation
 
-Engineering reference for the V1 reconciliation work. Start with the diff doc if you're new to the project; use the topical docs as reference once you have the shape.
+Engineering reference for the V1 reconciliation work. Start with the architecture doc if you're new to the project; use the topical docs as reference once you have the shape.
 
 ## Documents
 
 | Document | What it covers |
 |---|---|
-| [v1-vs-legacy.md](./v1-vs-legacy.md) | The **diff** between today's `/policies` behaviour and the V1 model. Read first. |
 | [architecture.md](./architecture.md) | How `internal/engine/`, `internal/templates/`, `internal/storage/`, and the service layer fit together. |
-| [api.md](./api.md) | Legacy `/policies` API (preserved as a facade) **and** the V1 `/rules` / `/alerts` API. |
+| [api.md](./api.md) | The V1 `/rules` / `/evaluations` / `/alerts` API. |
 | [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate → alert → resolve / accept, plus reopen and engine-error paths. |
 | [templates.md](./templates.md) | The V1 GA template catalog — spec shapes, validation rules, what each compiles to, evidence format. |
 | [alert-period-model.md](./alert-period-model.md) | Why alerts are scoped by reconciliation period (cadence), and how it's implemented. |

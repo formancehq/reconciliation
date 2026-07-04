@@ -73,12 +73,11 @@ The engine internals (rules, expressions, kernel) exist to serve this lifecycle,
 
 ### Goals (V1 GA)
 
-- Three template types: `ledger_vs_pool_drift` (port of today), `ledger_invariant`, `account_threshold`.
+- Three template types: `source_parity`, `ledger_invariant`, `account_threshold`.
 - Cron + on-demand evaluation.
 - **Alert lifecycle including resolution** — auto-resolve on passing evaluation, manual *fixed by booking* (optional transaction refs), manual *accepted by business* (required note + author + evidence snapshot + optional expiry). Full append-only event log per alert (one row per evaluation + one per manual transition) — the audit substrate for `/alerts/{id}/events`.
 - Event publication: `reconciliation.alert.opened | updated | acknowledged | resolved | accepted | reopened`.
 - Webhook delivery via the existing Webhooks module + an email digest owned in-module.
-- Backwards compatibility: existing `Policy` evaluates as `ledger_vs_pool_drift`.
 - EE gating + usage metering.
 
 ### Non-goals (V1)
@@ -140,10 +139,9 @@ See [docs/technical/architecture.md](../technical/architecture.md) for the imple
 
 | Template                | Semantic                                                 | Code |
 | ----------------------- | -------------------------------------------------------- | ---- |
-| `ledger_vs_pool_drift`  | Port of today's drift check                              | ✅ [ledger_vs_pool_drift.go](../../internal/templates/ledger_vs_pool_drift.go) |
+| `source_parity`         | Two balance sources agree within tolerance (built on the shared `Source` primitive) | ✅ [source_parity.go](../../internal/templates/source_parity.go) |
 | `ledger_invariant`      | Σ signed balances ≤ tolerance                            | ✅ [ledger_invariant.go](../../internal/templates/ledger_invariant.go) |
 | `account_threshold`     | Each / aggregate balance within `[lo, hi]`               | ✅ [account_threshold.go](../../internal/templates/account_threshold.go) (aggregate + per-account scope) |
-| `source_parity`         | Two balance sources agree within tolerance (post-spec addition; built on the shared `Source` primitive) | ✅ [source_parity.go](../../internal/templates/source_parity.go) |
 
 ### 6.2 V1.1 fast-follow catalog
 
@@ -162,7 +160,7 @@ See [docs/technical/templates.md](../technical/templates.md) for the live refere
 
 | Phase        | Scope                                                                                                                                                                                                                                          | Why                                                                                                |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| **V1 beta**  | `ledger_vs_pool_drift` (port), `ledger_invariant`, `account_threshold` (aggregate). **On-demand evaluation only.** Persisted evidence. Minimal alert lifecycle (open → resolved + acceptance) with append-only event log. Internal CEL kernel. No scheduler, notifications, fctl, or metering. | Validates rule → evaluation → alert → resolution model with design partners before scheduler/ops complexity lands |
+| **V1 beta**  | `source_parity`, `ledger_invariant`, `account_threshold` (aggregate). **On-demand evaluation only.** Persisted evidence. Minimal alert lifecycle (open → resolved + acceptance) with append-only event log. Internal CEL kernel. No scheduler, notifications, fctl, or metering. | Validates rule → evaluation → alert → resolution model with design partners before scheduler/ops complexity lands |
 | **V1 GA**    | Cron scheduler · webhook + email digest · full resolution model · fctl · EE gating · usage metering                                                                                                                                            | Production-ready for the three named clients                                                       |
 | **V1.1**     | `account_inactivity`, posting-window rules, `metadata_invariant`, `cross_account_ratio` · snooze · flap suppression · richer resolution UX                                                                                                     | Catalog-only & lifecycle polish — no engine change                                                 |
 | **V2**       | External GL adapters · cross-ledger on Ledger v3 · richer resolution workflows · raw-CEL design-partner GA                                                                                                                                     | Opens EE+ Finance-Ops product line                                                                 |
@@ -187,9 +185,9 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 
 - ✅ Storage layer for `Rule` / `Evaluation` / `Alert` / `AlertEvent` / `Resolution` ([migrations](../../internal/storage/migrations/migrations.go))
 - ✅ Internal CEL kernel ([internal/engine/](../../internal/engine/))
-- ✅ Four V1 GA template evaluators — `ledger_vs_pool_drift`, `ledger_invariant`, `account_threshold`, `source_parity` — on a shared `Source` primitive ([internal/templates/](../../internal/templates/))
+- ✅ Three V1 GA template evaluators — `source_parity`, `ledger_invariant`, `account_threshold` — on a shared `Source` primitive ([internal/templates/](../../internal/templates/))
 - ✅ Service layer — rule / evaluation / alert orchestration + resolution paths + append-only event log
-- ✅ API endpoints + legacy `/policies` facade + OpenAPI
+- ✅ API endpoints + OpenAPI
 - ✅ End-to-end demo UI ([poc-reconciliation-demo](../../../poc-reconciliation-demo)) — replaces the planned dockertest harness
 - ✅ Period-scoped alert identity (rule `cadence`: continuous / daily / weekly / monthly) + webhook event publication on alert transitions
 - ✅ In-process cron scheduler (single-instance MVP — see [scheduler.md](../technical/scheduler.md))
@@ -199,7 +197,6 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 
 ## Cross-links
 
-- [V1 vs legacy diff](../technical/v1-vs-legacy.md)
 - [Architecture overview](../technical/architecture.md)
 - [Template catalog reference](../technical/templates.md)
 - [Workflows](../technical/workflows.md)
