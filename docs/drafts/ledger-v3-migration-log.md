@@ -58,7 +58,7 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | `59e4d7b` |
 | 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ✅ done | `9cc6025` |
 | 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ✅ done | `32603fa` |
-| 1 | 3c-4 | ↳ burn-on-close (resolve burns the marker → pool → EPHEMERAL purge; reopen re-mints; markers only for active states) | ✅ done | — |
+| 1 | 3c-4 | ↳ burn-on-close (resolve burns the marker → pool → EPHEMERAL purge; reopen re-mints; markers only for active states) | ✅ done | `2f3ffc3` |
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ✅ done · reviewed | `916fee3` |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | 🚧 mechanism done | — |
 | 1 | 5a | ↳ checkpoint mechanism: client (`CreateQueryCheckpoint`/`Delete` + `AggregateVolumes`) + `Checkpoint` lifecycle + `CheckpointReader` (data-ledger reads at a checkpoint) | ✅ done | `6a7e110` |
