@@ -11,23 +11,17 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 
 ## 👋 Handoff — resume here
 
-**Done:** Phase 1 steps 0–4 + **5a** (checkpoint mechanism, `6a7e110`) + **6a-1..6a-5a** — the server
-now **boots DB-less on the control-ledger** (`LedgerStore` is the sole `service.Store`, wired +
-provisioned + F2-secured, `03d3a84`). Legacy `/policies`+cash-pool gone, evaluations non-durable,
-alert-events deferred to a Phase-3 sink. `CheckpointReader` reads data ledgers at a query checkpoint
-(ADR-002 cut, it-proven). Chart **finalized** — 4 account types (see §4.1.1/§4.1.2 + phase table).
-Scope rationale in "Step 6 — scope decisions" below; per-sub-step reviews follow.
+**Done:** Phase 1 steps 0–4 + **5a** (checkpoint mechanism, `6a7e110`) + **all of step 6a** — the
+server is now **Postgres-free and stateless**, running entirely on the control-ledger `_recon`
+(`LedgerStore` is the sole `service.Store`, F2-secured, provisioned at boot; shared contract types
+live in `internal/store`; `internal/storage`+`internal/events` deleted, net −3.5k lines; `31c5ca6`).
+Legacy `/policies`+cash-pool gone, evaluations non-durable, alert-events deferred to a Phase-3 sink.
+`CheckpointReader` reads data ledgers at a query checkpoint (ADR-002 cut, it-proven). Chart
+**finalized** — 4 account types (see §4.1.1/§4.1.2 + phase table). Scope rationale in "Step 6 — scope
+decisions" below; per-sub-step SDLC reviews follow. **Verified:** DB-less boot smoke + fresh it-tests.
 
-**Next: 6a-5b — delete the dead Postgres code.** The flip is live but the Postgres impl is still
-present-but-unwired. Remove: `internal/storage`'s bun store methods + migrations + `Module` +
-`storage.Storage` (which forces simplifying `Service.inTx` — drop the `RunInTx` type assertion, the
-ledger store is idempotent, no cross-store tx), the `bunconnect`/DB flags + auto-migrate/`migrate`
-commands, and the now-dead `internal/events` (F30). **Keep** the shared DTO/error types the interface
-+ `LedgerStore` use (`Get*Query`, `*Filters`, `OpenAlertInput/Result`, `RulePatch`, `ErrNotFound`,
-`ErrInvalidQuery`, `PaginatedQueryOptions`) — either leave them in a slimmed `storage` pkg or extract
-to a leaf pkg (**F16**). Confirm the storage-package test files go with the impl. build DB-less + it-tests.
-
-**Then step 6b (invasive, engine flip — absorbs 5b).** Change `engine.LedgerResolver`
+**Next: step 6b (invasive, engine flip — absorbs 5b).** This is the last Phase-1 piece. Change
+`engine.LedgerResolver`
 (`AggregateBalance`/`ListAccounts`) `pit`→`checkpointID`. Design fork to settle with the owner:
 (A) split into two resolver interfaces + per-source Tier-1/Tier-2 dispatch, or (B) a `ReadAnchor`
 union. `CheckpointReader` is already the Tier-1 signature but **lacks `ListAccounts`** (add it);
@@ -36,7 +30,7 @@ union. `CheckpointReader` is already the Tier-1 signature but **lacks `ListAccou
 migration** — the `checkpointID` anchor lands on `alert:item` (`last_evaluation`), not a column. Add a
 reaper/ring for orphaned checkpoints (**F26**).
 
-**Watch:** open findings F1/F8/F16/F17/F22/F23/F25/F26/F27/F29/F30/F31 (F2 ✅ resolved @ 6a-5a; details below). **Don't touch:**
+**Watch:** open findings F1/F8/F17/F22/F23/F25/F26/F27/F31 (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b; details below). **Don't touch:**
 `feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
 uncommitted `Justfile` change (orphaned `generate-ledger-proto`, leave unstaged); `ledger-local/`.
 **Build/test:** `export PATH=$PATH:$(go env GOPATH)/bin` then `GOROOT= go build ./...`,
@@ -71,14 +65,14 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | 🚧 mechanism done | — |
 | 1 | 5a | ↳ checkpoint mechanism: client (`CreateQueryCheckpoint`/`Delete` + `AggregateVolumes`) + `Checkpoint` lifecycle + `CheckpointReader` (data-ledger reads at a checkpoint) | ✅ done | `6a7e110` |
 | 1 | 5b | ↳ engine interface flip (`LedgerResolver` pit→checkpointID) + anchor + service acquisition | ⬜ folded into step 6b | — |
-| 1 | **6a** | **Ledger-only `Store`** (transport + simplification + wiring; Postgres removed) | 🚧 in progress | — |
+| 1 | **6a** | **Ledger-only `Store`** (transport + simplification + wiring; Postgres removed) | ✅ **done** | `31c5ca6` |
 | 1 | 6a-1 | ↳ secure transport (`internal/ledgerauth`: Ed25519 signing + TLS + F2 insecure guard) | ✅ done · reviewed | `5f4ab4b` |
 | 1 | 6a-2 | ↳ drop legacy `/policies`+`/reconciliations` + `ledger_vs_pool_drift` template (+ openapi) | ✅ done · reviewed | `299b7a7` |
 | 1 | 6a-2b | ↳ sync product docs to the ledger-only surface (delete v1-vs-legacy, purge legacy refs) | ✅ done | `7acda74` |
 | 1 | 6a-3 | ↳ evaluations non-durable — drop the read surface (`Get/ListEvaluation` + `/evaluations`); `CreateEvaluation` kept (no-op on ledger @ 6a-5) | ✅ done · reviewed | `e282f78` |
 | 1 | 6a-4 | ↳ `ListAlertEvents` → empty + TODO (SAVED_METADATA sink deferred) | ✅ done (folded into 6a-5a) | `03d3a84` |
 | 1 | 6a-5a | ↳ bind `LedgerStore` as sole `Store` + `ledger.Client` fx/flags + provision at boot + remove Postgres wiring (boot DB-less) | ✅ done · reviewed | `03d3a84` |
-| 1 | 6a-5b | ↳ delete dead Postgres code (storage impl, migrations, `RunInTx`, DB flags; extract shared types — F16/F29) | ⬜ todo | — |
+| 1 | 6a-5b | ↳ delete dead Postgres code (storage impl, migrations, `RunInTx`, DB flags, `internal/events`) + extract shared types to `internal/store` (F16/F29/F30) | ✅ done · reviewed | `31c5ca6` |
 | 1 | 6b | engine flip (`LedgerResolver` pit→checkpointID) + per-source dispatch + checkpoint acquisition (no migration) | ⬜ todo | — |
 | 2 | — | Flip reads to the ledger; Postgres as shadow | ⬜ todo | — |
 | 3 | — | Drop Postgres + own message bus (ledger event sink) | ⬜ todo | — |
@@ -570,6 +564,35 @@ only). No CRITICAL/HIGH.
 | F2 | — | **Resolved.** Enforcement (6a-1) + wiring (6a-5a): the server refuses an insecure ledger transport unless `--ledger-insecure` is set; TLS + Ed25519 signing wired from `--ledger-tls-*` / `--ledger-auth-*`. Proven end-to-end (boot-refusal + secure-path smoke). | ✅ resolved |
 | F30 | LOW | `internal/events` (watermill alert-event publisher) is now unimported dead code (its only consumer, `provideAlertEventPublisher`, was removed). Swept with the Postgres deletion in 6a-5b, or when the Phase-3 ledger sink replaces it. | ⬜ open (6a-5b) |
 | F31 | LOW | `Ping` reads `world` with `context.Background()`+5s; `Store.Ping()` is currently uncalled (the `/_healthcheck` uses a static check), so it's a latent contract impl. If wired to health later, confirm `world` reads cleanly on a fresh ledger. | ⬜ noted |
+
+### Phase 1 step 6a-5b — delete Postgres, extract internal/store (SDLC review, 2026-07-05)
+
+Removes the now-dead Postgres layer (server already boots DB-less since 6a-5a). **Reconciliation is
+Postgres-free and stateless.**
+
+- **New leaf package `internal/store`** (4 files, no ORM deps — bunpaginate + go-libs/query only):
+  the storage-agnostic contract types the `Store` interface + `LedgerStore` share —
+  `PaginatedQueryOptions`+`NewPaginatedQueryOptions`, `{Rules,Alerts,AlertEvents}Filters` +
+  `Get*Query` + `New*Query`, `OpenAlertInput`/`OpenAlertResult`, `RulePatch`, and the
+  `ErrNotFound`/`ErrInvalidQuery` sentinels. **Resolves F16.**
+- **Deleted:** all of `internal/storage` (bun impl + migrations + `Storage`/`RunInTx`/
+  `AlertEventPublisher` + tests — **resolves F29**), `internal/events` (dead after 6a-5a —
+  **resolves F30**), and the DB/migrate plumbing in `cmd` (`migrate.go`, `--auto-migrate`,
+  `newMigrate`). `Service.inTx` simplified to `fn(ctx, s.store)` (idempotent store, no cross-store tx).
+- Swept `storage.` → `store.` across **29 files** (incl. the `scheduler` package, which also consumed
+  the moved types). One name-collision handled: files with a local `store` var (the `inTx`/`driveAlerts`
+  param → renamed `st`; ledgerstore tests → aliased `recstore`).
+
+**Checks (re-verified independently):** build/vet/`golangci-lint --build-tags it` (0, incl. `cmd/`)/
+gofmt clean (only the 4 pre-existing dirty engine/template files remain, untouched); `-race` unit tests
+green across api/service/ledgerstore/ledger/ledgerschema/ledgerauth/store/scheduler; **fresh** ledger
+it-tests (`-p 1 -count=1`) pass against the live ledger; **DB-less boot smoke** re-run — server
+provisions the control-ledger and serves `/_healthcheck` `{"default":"OK"}`. Net **−3522 lines**.
+Conventional commit; not on `main`; no OpenAPI change. No CRITICAL/HIGH.
+
+**Step 6a is complete.** The server runs entirely on the control-ledger (`_recon`): rules + alert
+lifecycle on the ledger, evaluations non-durable, alert-events deferred to a Phase-3 sink, secure
+transport (F2). `CheckpointReader` still stands ready for the 6b engine flip.
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
