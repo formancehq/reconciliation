@@ -20,11 +20,12 @@ Legacy `/policies`+cash-pool gone, evaluations non-durable, alert-events deferre
 **finalized** — 4 account types (see §4.1.1/§4.1.2 + phase table). Scope rationale in "Step 6 — scope
 decisions" below; per-sub-step SDLC reviews follow. **Verified:** DB-less boot smoke + fresh it-tests.
 
-**Next: step 6b (invasive, engine flip — absorbs 5b).** This is the last Phase-1 piece. Change
-`engine.LedgerResolver`
-(`AggregateBalance`/`ListAccounts`) `pit`→`checkpointID`. Design fork to settle with the owner:
-(A) split into two resolver interfaces + per-source Tier-1/Tier-2 dispatch, or (B) a `ReadAnchor`
-union. `CheckpointReader` is already the Tier-1 signature but **lacks `ListAccounts`** (add it);
+**Next: step 6b (invasive, engine flip — absorbs 5b). NOT STARTED — owner paused after 6a (2026-07-05).**
+This is the last Phase-1 piece. Change `engine.LedgerResolver`
+(`AggregateBalance`/`ListAccounts`) `pit`→`checkpointID`. **Design fork presented + deferred** — decide
+before touching the kernel: (A) split into two resolver interfaces + per-source Tier-1/Tier-2 dispatch
+(**my rec — matches ADR-002 §6; watch the `engine`↔`internal/ledger` import direction, needs an adapter
+so `CheckpointReader` returns `engine.Account`**), or (B) a `ReadAnchor` union. `CheckpointReader` is already the Tier-1 signature but **lacks `ListAccounts`** (add it);
 `SDKLedgerResolver` stays Tier-2 (pit/latest). Service pins ONE checkpoint per evaluation
 (`AcquireCheckpoint` → `Evaluate` → `Release`, cancellation-surviving ctx — **F26**). **No Postgres
 migration** — the `checkpointID` anchor lands on `alert:item` (`last_evaluation`), not a column. Add a
