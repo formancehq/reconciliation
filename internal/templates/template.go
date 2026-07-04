@@ -95,7 +95,6 @@ func NewRegistry(evaluators ...Evaluator) *Registry {
 // DefaultRegistry returns a Registry with all V1 GA templates registered.
 func DefaultRegistry() *Registry {
 	return NewRegistry(
-		NewLedgerVsPoolDrift(),
 		NewLedgerInvariant(),
 		NewAccountThreshold(),
 		NewSourceParity(),

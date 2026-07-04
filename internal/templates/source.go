@@ -54,8 +54,7 @@ const (
 )
 
 // SourceSpec is a reusable, typed descriptor of "where to read a per-asset
-// balance from". It is the shared primitive under source_parity (and, after the
-// reshape, ledger_vs_pool_drift): a template composes one or more sources and
+// balance from". It is the shared primitive under source_parity: a template composes one or more sources and
 // expresses its invariant over their resolved balances. Only the fields
 // relevant to Kind are populated.
 type SourceSpec struct {

@@ -13,16 +13,6 @@ import (
 
 //go:generate mockgen -source backend.go -destination backend_generated.go -package backend . Service
 type Service interface {
-	// Legacy /policies surface — preserved verbatim for backwards compatibility.
-	Reconciliation(ctx context.Context, policyID string, req *service.ReconciliationRequest) (*models.Reconciliation, error)
-	GetReconciliation(ctx context.Context, id string) (*models.Reconciliation, error)
-	ListReconciliations(ctx context.Context, q storage.GetReconciliationsQuery) (*bunpaginate.Cursor[models.Reconciliation], error)
-
-	CreatePolicy(ctx context.Context, req *service.CreatePolicyRequest) (*models.Policy, error)
-	DeletePolicy(ctx context.Context, id string) error
-	GetPolicy(ctx context.Context, id string) (*models.Policy, error)
-	ListPolicies(ctx context.Context, q storage.GetPoliciesQuery) (*bunpaginate.Cursor[models.Policy], error)
-
 	// V1 — Rule
 	CreateRule(ctx context.Context, req *service.CreateRuleRequest) (*models.Rule, error)
 	GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error)

@@ -16,9 +16,8 @@ import (
 //
 //	abs(balance(left) - balance(right)) <= tolerance
 //
-// Each side is a SourceSpec, so the same template expresses ledger↔pool
-// (today's ledger_vs_pool_drift use case), ledger↔ledger (sub-ledger vs control
-// account), and pool↔pool — without a bespoke template per pairing. This is the
+// Each side is a SourceSpec, so the same template expresses ledger↔ledger (sub-ledger vs control
+// account), ledger↔pool, and pool↔pool — without a bespoke template per pairing. This is the
 // "two independent records of the same money match" primitive.
 type ParitySpec struct {
 	Left  SourceSpec `json:"left"`
@@ -68,7 +67,7 @@ func (t *SourceParity) Validate(raw json.RawMessage) error {
 }
 
 // Explain returns the canonical per-asset CEL form with `<asset>` as a literal
-// placeholder (see LedgerVsPoolDrift.Explain for the convention).
+// placeholder.
 func (t *SourceParity) Explain(raw json.RawMessage) (string, error) {
 	var spec ParitySpec
 	if err := unmarshalSpec(raw, &spec); err != nil {

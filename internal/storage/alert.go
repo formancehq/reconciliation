@@ -219,7 +219,7 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 // ListActiveAlertFingerprints returns the fingerprints of every OPEN /
 // ACKNOWLEDGED alert for the rule WITHIN the given period. The evaluation
 // service uses this to auto-resolve alerts whose fingerprint disappears from
-// the next round of outcomes — e.g. when both sides of a `ledger_vs_pool_drift`
+// the next round of outcomes — e.g. when both sides of a `source_parity`
 // invariant clear to zero and the asset is no longer in either source's balance
 // map. Scoping to periodID is essential: a fresh evaluation of period N must
 // never sweep (auto-resolve) a prior period's open cases — those stand as the

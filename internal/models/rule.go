@@ -16,9 +16,6 @@ import (
 type TemplateKind string
 
 const (
-	// TemplateLedgerVsPoolDrift is the port of today's Policy behaviour:
-	// compare a dynamic ledger account set against a dynamic payments pool.
-	TemplateLedgerVsPoolDrift TemplateKind = "ledger_vs_pool_drift"
 	// TemplateLedgerInvariant asserts that a signed sum of balance(source)
 	// terms is within tolerance — the Buildr-style trust integrity check.
 	TemplateLedgerInvariant TemplateKind = "ledger_invariant"

@@ -142,7 +142,7 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 //   - passing outcome → AutoResolveAlert for that fingerprint
 //   - fingerprint disappears entirely (no outcome at all) → AutoResolveAlert
 //
-// The third case matters for templates like ledger_vs_pool_drift whose
+// The third case matters for templates like source_parity whose
 // asset union is dynamic: when both sides of a USD imbalance clear to zero,
 // "USD/2" simply stops appearing as an outcome. Without the sweep below,
 // that alert would stay OPEN forever despite the condition having cleared.

@@ -39,15 +39,6 @@ func newRouter(
 		r.Use(auth.Middleware(authenticator))
 		r.Use(service.OTLPMiddleware("reconciliation", serviceInfo.Debug))
 
-		r.Get("/reconciliations/{reconciliationID}", getReconciliationHandler(b))
-		r.Get("/reconciliations", listReconciliationsHandler(b))
-
-		r.Post("/policies", createPolicyHandler(b))
-		r.Get("/policies", listPoliciesHandler(b))
-		r.Delete("/policies/{policyID}", deletePolicyHandler(b))
-		r.Get("/policies/{policyID}", getPolicyHandler(b))
-		r.Post("/policies/{policyID}/reconciliation", reconciliationHandler(b))
-
 		// V1 — Rule / Evaluation / Alert
 		r.Post("/rules", createRuleHandler(b))
 		r.Get("/rules", listRulesHandler(b))

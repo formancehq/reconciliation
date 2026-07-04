@@ -51,25 +51,6 @@ func fpKey(ruleID uuid.UUID, fp, periodID string) string {
 
 func (f *fakeV1Store) Ping() error { return nil }
 
-// Legacy /policies methods — not exercised here.
-func (f *fakeV1Store) CreatePolicy(context.Context, *models.Policy) error { return nil }
-func (f *fakeV1Store) DeletePolicy(context.Context, uuid.UUID) error      { return nil }
-func (f *fakeV1Store) GetPolicy(context.Context, uuid.UUID) (*models.Policy, error) {
-	return nil, nil
-}
-func (f *fakeV1Store) ListPolicies(context.Context, storage.GetPoliciesQuery) (*bunpaginate.Cursor[models.Policy], error) {
-	return nil, nil
-}
-func (f *fakeV1Store) CreateReconciation(context.Context, *models.Reconciliation) error {
-	return nil
-}
-func (f *fakeV1Store) GetReconciliation(context.Context, uuid.UUID) (*models.Reconciliation, error) {
-	return nil, nil
-}
-func (f *fakeV1Store) ListReconciliations(context.Context, storage.GetReconciliationsQuery) (*bunpaginate.Cursor[models.Reconciliation], error) {
-	return nil, nil
-}
-
 // Rule
 func (f *fakeV1Store) CreateRule(_ context.Context, r *models.Rule) error {
 	if r.ID == uuid.Nil {
@@ -450,13 +431,17 @@ func newOrchestrationService(t *testing.T, l *orchestrationLedger, p *orchestrat
 	return svc, store
 }
 
-func driftSpec(t *testing.T, ledger, query, pool string, tol map[string]int64) json.RawMessage {
+// paritySpec builds a source_parity rule comparing a ledger account set (left)
+// against a payments pool (right). It replaces the retired ledger_vs_pool_drift
+// helper: parity checks abs(left - right) <= tol, so the pool balances below are
+// the magnitude the ledger should match (the offsetting sign the old drift model
+// encoded is folded into the fixtures).
+func paritySpec(t *testing.T, ledger, query, pool string, tol map[string]int64) json.RawMessage {
 	t.Helper()
-	spec := templates.DriftSpec{
-		Ledger:         ledger,
-		LedgerQuery:    json.RawMessage(query),
-		PaymentsPoolID: pool,
-		Tolerance:      tol,
+	spec := templates.ParitySpec{
+		Left:      templates.SourceSpec{Kind: templates.SourceLedger, Ledger: ledger, Query: json.RawMessage(query)},
+		Right:     templates.SourceSpec{Kind: templates.SourcePaymentsPool, PoolID: pool},
+		Tolerance: tol,
 	}
 	b, err := json.Marshal(spec)
 	if err != nil {
@@ -469,7 +454,7 @@ func mustCreateRule(t *testing.T, svc *Service, spec json.RawMessage) *models.Ru
 	t.Helper()
 	rule, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
 		Name:         "test-rule",
-		TemplateKind: models.TemplateLedgerVsPoolDrift,
+		TemplateKind: models.TemplateSourceParity,
 		TemplateSpec: spec,
 		Severity:     models.SeverityHigh,
 	})
@@ -483,7 +468,7 @@ func mustCreateRule(t *testing.T, svc *Service, spec json.RawMessage) *models.Ru
 
 func TestCreateRule_PersistsCompiledCEL(t *testing.T) {
 	svc, store := newOrchestrationService(t, &orchestrationLedger{current: map[string]*big.Int{}}, &orchestrationPayments{current: map[string]*big.Int{}})
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
 	if rule.CompiledCEL == "" {
 		t.Fatalf("expected compiled_cel to be populated")
 	}
@@ -510,8 +495,8 @@ func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
 	svc, _ := newOrchestrationService(t, &orchestrationLedger{}, &orchestrationPayments{})
 	_, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
 		Name:         "r",
-		TemplateKind: models.TemplateLedgerVsPoolDrift,
-		TemplateSpec: json.RawMessage(`{"ledger": ""}`), // missing required fields
+		TemplateKind: models.TemplateSourceParity,
+		TemplateSpec: json.RawMessage(`{}`), // missing left/right sources
 		Severity:     models.SeverityHigh,
 	})
 	if !errors.Is(err, templates.ErrInvalidSpec) {
@@ -552,9 +537,9 @@ func TestCreateRuleRequest_Validate_CronSchedule(t *testing.T) {
 
 func TestEvaluate_PassNoAlerts(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
-	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-100)}}
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
 
 	ev, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
 	if err != nil {
@@ -574,9 +559,9 @@ func TestEvaluate_PassNoAlerts(t *testing.T) {
 // history lives in alert_event rows, not in chained alert rows.
 func TestEvaluate_LifecycleInPlace(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
-	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-300)}} // drift 50
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(300)}} // drift 50
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
 	ctx := context.Background()
 
 	// 1. First failing eval → opens alert. occurrence_count=1, first 'fail' event.
@@ -605,7 +590,7 @@ func TestEvaluate_LifecycleInPlace(t *testing.T) {
 	}
 
 	// 3. Make the world consistent → eval passes, alert auto-resolves IN PLACE.
-	p.current["USD/2"] = big.NewInt(-350)
+	p.current["USD/2"] = big.NewInt(350)
 	if _, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("eval3: %v", err)
 	}
@@ -625,7 +610,7 @@ func TestEvaluate_LifecycleInPlace(t *testing.T) {
 
 	// 4. Break it again → SAME alert reopens IN PLACE (no new row, no parent
 	//    chain). occurrence_count keeps incrementing (lifetime count).
-	p.current["USD/2"] = big.NewInt(-200)
+	p.current["USD/2"] = big.NewInt(200)
 	if _, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("eval4: %v", err)
 	}
@@ -675,9 +660,9 @@ func TestEvaluate_LifecycleInPlace(t *testing.T) {
 // — driven by the post-loop sweep against ListActiveAlertFingerprints.
 func TestEvaluate_FingerprintDisappears(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
-	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-300)}} // drift 50
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(300)}} // drift 50
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
 
 	// 1. Open an alert on USD/2.
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
@@ -717,7 +702,7 @@ func TestEvaluate_FingerprintDisappears(t *testing.T) {
 func TestEvaluate_EngineError_RaisesMetaAlert(t *testing.T) {
 	l := &orchestrationLedger{failErr: errors.New("ledger upstream timeout")}
 	svc, store := newOrchestrationService(t, l, &orchestrationPayments{current: map[string]*big.Int{}})
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
 
 	ev, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
 	if err != nil {
@@ -751,9 +736,9 @@ func TestEvaluate_EngineError_RaisesMetaAlert(t *testing.T) {
 
 func TestAckResolveAccept_StateTransitions(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
-	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-50)}} // drift 50
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(50)}} // drift 50
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
 
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
@@ -797,9 +782,9 @@ func TestAckResolveAccept_StateTransitions(t *testing.T) {
 
 func TestAccept_RequiresNote(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
-	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-50)}}
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(50)}}
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
 	}
@@ -816,9 +801,9 @@ func TestAccept_RequiresNote(t *testing.T) {
 
 func TestAccept_FreezesEvidence(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
-	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-50)}}
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(50)}}
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
 	}
@@ -862,12 +847,12 @@ func contains(haystack, needle string) bool {
 // alert), and evaluating April never closes March's still-open case.
 func TestEvaluate_PeriodicOpensFreshCasePerPeriod(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
-	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-300)}} // drift 50 → fails
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(300)}} // drift 50 → fails
 	svc, store := newOrchestrationService(t, l, p)
 	rule, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
 		Name:         "monthly-recon",
-		TemplateKind: models.TemplateLedgerVsPoolDrift,
-		TemplateSpec: driftSpec(t, "buildr", `"q"`, "pool", nil),
+		TemplateKind: models.TemplateSourceParity,
+		TemplateSpec: paritySpec(t, "buildr", `"q"`, "pool", nil),
 		Severity:     models.SeverityHigh,
 		Cadence:      models.CadenceMonthly,
 	})

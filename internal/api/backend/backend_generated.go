@@ -75,21 +75,6 @@ func (mr *MockServiceMockRecorder) AckAlert(ctx, id, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckAlert", reflect.TypeOf((*MockService)(nil).AckAlert), ctx, id, req)
 }
 
-// CreatePolicy mocks base method.
-func (m *MockService) CreatePolicy(ctx context.Context, req *service.CreatePolicyRequest) (*models.Policy, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreatePolicy", ctx, req)
-	ret0, _ := ret[0].(*models.Policy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CreatePolicy indicates an expected call of CreatePolicy.
-func (mr *MockServiceMockRecorder) CreatePolicy(ctx, req any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePolicy", reflect.TypeOf((*MockService)(nil).CreatePolicy), ctx, req)
-}
-
 // CreateRule mocks base method.
 func (m *MockService) CreateRule(ctx context.Context, req *service.CreateRuleRequest) (*models.Rule, error) {
 	m.ctrl.T.Helper()
@@ -103,20 +88,6 @@ func (m *MockService) CreateRule(ctx context.Context, req *service.CreateRuleReq
 func (mr *MockServiceMockRecorder) CreateRule(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateRule", reflect.TypeOf((*MockService)(nil).CreateRule), ctx, req)
-}
-
-// DeletePolicy mocks base method.
-func (m *MockService) DeletePolicy(ctx context.Context, id string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeletePolicy", ctx, id)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DeletePolicy indicates an expected call of DeletePolicy.
-func (mr *MockServiceMockRecorder) DeletePolicy(ctx, id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeletePolicy", reflect.TypeOf((*MockService)(nil).DeletePolicy), ctx, id)
 }
 
 // DeleteRule mocks base method.
@@ -176,36 +147,6 @@ func (m *MockService) GetEvaluation(ctx context.Context, id uuid.UUID) (*models.
 func (mr *MockServiceMockRecorder) GetEvaluation(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEvaluation", reflect.TypeOf((*MockService)(nil).GetEvaluation), ctx, id)
-}
-
-// GetPolicy mocks base method.
-func (m *MockService) GetPolicy(ctx context.Context, id string) (*models.Policy, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetPolicy", ctx, id)
-	ret0, _ := ret[0].(*models.Policy)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetPolicy indicates an expected call of GetPolicy.
-func (mr *MockServiceMockRecorder) GetPolicy(ctx, id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPolicy", reflect.TypeOf((*MockService)(nil).GetPolicy), ctx, id)
-}
-
-// GetReconciliation mocks base method.
-func (m *MockService) GetReconciliation(ctx context.Context, id string) (*models.Reconciliation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetReconciliation", ctx, id)
-	ret0, _ := ret[0].(*models.Reconciliation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetReconciliation indicates an expected call of GetReconciliation.
-func (mr *MockServiceMockRecorder) GetReconciliation(ctx, id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetReconciliation", reflect.TypeOf((*MockService)(nil).GetReconciliation), ctx, id)
 }
 
 // GetRule mocks base method.
@@ -268,36 +209,6 @@ func (mr *MockServiceMockRecorder) ListEvaluations(ctx, q any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEvaluations", reflect.TypeOf((*MockService)(nil).ListEvaluations), ctx, q)
 }
 
-// ListPolicies mocks base method.
-func (m *MockService) ListPolicies(ctx context.Context, q storage.GetPoliciesQuery) (*bunpaginate.Cursor[models.Policy], error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListPolicies", ctx, q)
-	ret0, _ := ret[0].(*bunpaginate.Cursor[models.Policy])
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListPolicies indicates an expected call of ListPolicies.
-func (mr *MockServiceMockRecorder) ListPolicies(ctx, q any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPolicies", reflect.TypeOf((*MockService)(nil).ListPolicies), ctx, q)
-}
-
-// ListReconciliations mocks base method.
-func (m *MockService) ListReconciliations(ctx context.Context, q storage.GetReconciliationsQuery) (*bunpaginate.Cursor[models.Reconciliation], error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListReconciliations", ctx, q)
-	ret0, _ := ret[0].(*bunpaginate.Cursor[models.Reconciliation])
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListReconciliations indicates an expected call of ListReconciliations.
-func (mr *MockServiceMockRecorder) ListReconciliations(ctx, q any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReconciliations", reflect.TypeOf((*MockService)(nil).ListReconciliations), ctx, q)
-}
-
 // ListRules mocks base method.
 func (m *MockService) ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
 	m.ctrl.T.Helper()
@@ -325,21 +236,6 @@ func (m *MockService) PatchRule(ctx context.Context, id uuid.UUID, patch storage
 func (mr *MockServiceMockRecorder) PatchRule(ctx, id, patch any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PatchRule", reflect.TypeOf((*MockService)(nil).PatchRule), ctx, id, patch)
-}
-
-// Reconciliation mocks base method.
-func (m *MockService) Reconciliation(ctx context.Context, policyID string, req *service.ReconciliationRequest) (*models.Reconciliation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Reconciliation", ctx, policyID, req)
-	ret0, _ := ret[0].(*models.Reconciliation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// Reconciliation indicates an expected call of Reconciliation.
-func (mr *MockServiceMockRecorder) Reconciliation(ctx, policyID, req any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reconciliation", reflect.TypeOf((*MockService)(nil).Reconciliation), ctx, policyID, req)
 }
 
 // ResolveAlert mocks base method.
