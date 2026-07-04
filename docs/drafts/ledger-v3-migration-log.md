@@ -81,7 +81,7 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | 5b | ↳ engine interface flip (`LedgerResolver` pit→checkpointID) + anchor + service acquisition | ⬜ folded into step 6b | — |
 | 1 | **6a** | **Ledger-only `Store`** (transport + simplification + wiring; Postgres removed) | 🚧 in progress | — |
 | 1 | 6a-1 | ↳ secure transport (`internal/ledgerauth`: Ed25519 signing + TLS + F2 insecure guard) | ✅ done · reviewed | `5f4ab4b` |
-| 1 | 6a-2 | ↳ drop legacy `/policies`+`/reconciliations` + `ledger_vs_pool_drift` template | ⬜ todo | — |
+| 1 | 6a-2 | ↳ drop legacy `/policies`+`/reconciliations` + `ledger_vs_pool_drift` template (+ openapi) | ✅ done · reviewed | `299b7a7` |
 | 1 | 6a-3 | ↳ evaluations non-durable (drop `*Evaluation` + `/evaluations`; `last_evaluation` on alert) | ⬜ todo | — |
 | 1 | 6a-4 | ↳ `ListAlertEvents` → empty + TODO (SAVED_METADATA sink deferred) | ⬜ todo | — |
 | 1 | 6a-5 | ↳ bind `LedgerStore` as sole `Store` + `ledger.Client` fx/flags + remove Postgres (boot DB-less) | ⬜ todo | — |
@@ -483,6 +483,36 @@ No CRITICAL/HIGH.
 | F2-a | LOW | `RequireTransportSecurity()=false` + `god=true` claim inherited from ledger-connect → tokens are full-privilege and usable over plaintext; mitigated by the F2 guard (plaintext needs explicit `AllowInsecure`) + 5-min TTL. The signing key is a high-value secret (deployment concern). | ⬜ noted |
 | F2-b | LOW | `TLSConfig.InsecureSkipVerify` = encrypted-but-unauthenticated TLS (MITM risk); its own explicit flag, dev-only. Flag in ops docs. | ⬜ noted |
 | F2-c | LOW | No bufconn integration test proving the dial options attach to a live gRPC conn (ledger-connect has `grpc_test.go`); exercised by the 6a-5 wiring instead. Mirrors F3. | ⬜ deferred (6a-5) |
+
+### Phase 1 step 6a-2 — drop legacy pool/policy surface + ledger_vs_pool_drift (SDLC review, 2026-07-04)
+
+Removes the entire legacy vertical (see "Step 6 — scope decisions" #2/#3): API routes (`/policies*`,
+`/reconciliations*`) + handlers; `CreatePolicy…ListReconciliations` from the `Store` and `backend.Service`
+interfaces; `Policy`/`Reconciliation` models + Postgres stores + tests; the now-dead `service/utils.go`
+balance helpers and `storageError`; and the `ledger_vs_pool_drift` template (subsumed by `source_parity`,
+whose own doc already names the ledger↔pool case). Registry: `source_parity` + `ledger_invariant` +
+`account_threshold`. `openapi.yaml` legacy paths + components removed (re-validated: YAML parses, no
+dangling `$ref`s). Interface shrinks 28 → 21 methods.
+
+**Orchestration tests converted drift → `source_parity(ledger, pool)`.** These test the service's
+evaluate→alert lifecycle (open/update/auto-resolve/reopen/period-scoping), with the template incidental.
+`source_parity` checks `abs(left − right)` vs drift's `abs(ledgerSign·ledger + pool)` (ledgerSign +1), so
+the pool fixtures are negated: `abs(ledger − (−pool)) == abs(ledger + pool)` preserves **every** PASS/FAIL
+and the `asset:USD/2` fingerprints (verified: `source_parity` aggregate unions assets, missing→0, tol
+default 0, `<=`, `fingerprintFor("asset",asset)`). Negating the pool is also the natural parity framing
+(the magnitude the ledger should match). `service_test.go` deleted (its `mockStore` only served the
+removed legacy tests; `v1_orchestration_test.go` has its own `fakeV1Store`).
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0 issues)/gofmt clean (the 4 pre-existing
+gofmt-dirty files — `engine/{budget,source,types}.go`, `templates/ledger_invariant.go` — are untouched
+by this step); `-race` unit tests green for `api`/`service`/`templates`/`models`; `storage` unit tests
+need Docker (env-unavailable, unaffected by this change); conventional commit; not on `main`; **OpenAPI
+updated** to match the removed routes; mock regenerated (`go generate ./internal/api/backend/`). No
+CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F28 | LOW | Product-state docs (`docs/technical/{api,templates,architecture,v1-vs-legacy,README}.md`, `docs/README.md`, `docs/prd/README.md`) still describe the legacy `/policies` surface + `ledger_vs_pool_drift`. Historical records (ADR-001, RFC, this log's history) legitimately keep their references. `v1-vs-legacy.md` needs rethinking (its whole premise is the legacy comparison). Sync as **6a-2b** (docs-only). | ⬜ open (6a-2b) |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
