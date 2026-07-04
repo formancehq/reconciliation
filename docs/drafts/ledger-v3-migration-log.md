@@ -83,7 +83,7 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | 6a-1 | ↳ secure transport (`internal/ledgerauth`: Ed25519 signing + TLS + F2 insecure guard) | ✅ done · reviewed | `5f4ab4b` |
 | 1 | 6a-2 | ↳ drop legacy `/policies`+`/reconciliations` + `ledger_vs_pool_drift` template (+ openapi) | ✅ done · reviewed | `299b7a7` |
 | 1 | 6a-2b | ↳ sync product docs to the ledger-only surface (delete v1-vs-legacy, purge legacy refs) | ✅ done | `7acda74` |
-| 1 | 6a-3 | ↳ evaluations non-durable (drop `*Evaluation` + `/evaluations`; `last_evaluation` on alert) | ⬜ todo | — |
+| 1 | 6a-3 | ↳ evaluations non-durable — drop the read surface (`Get/ListEvaluation` + `/evaluations`); `CreateEvaluation` kept (no-op on ledger @ 6a-5) | ✅ done · reviewed | `e282f78` |
 | 1 | 6a-4 | ↳ `ListAlertEvents` → empty + TODO (SAVED_METADATA sink deferred) | ⬜ todo | — |
 | 1 | 6a-5 | ↳ bind `LedgerStore` as sole `Store` + `ledger.Client` fx/flags + remove Postgres (boot DB-less) | ⬜ todo | — |
 | 1 | 6b | engine flip (`LedgerResolver` pit→checkpointID) + per-source dispatch + checkpoint acquisition (no migration) | ⬜ todo | — |
@@ -514,6 +514,34 @@ CRITICAL/HIGH.
 | # | Sev | Finding | Status |
 |---|---|---|---|
 | F28 | — | **Resolved (6a-2b, `7acda74`).** Deleted `v1-vs-legacy.md` + purged the legacy `/policies`/`ledger_vs_pool_drift` references across README/prd/technical docs (incl. the POLICY/RECONCILIATION ER entities in architecture.md). Historical records (ADR-001, RFC, this log's history, v1-stories drafts) keep their references intentionally. | ✅ resolved |
+
+### Phase 1 step 6a-3 — evaluations non-durable (SDLC review, 2026-07-04)
+
+Evaluations are a deterministic projection, not a durable queryable entity (RFC §4.4.2). Removed the
+**read surface**: `GET /evaluations` + `GET /evaluations/{id}` routes/handlers, the dead
+`getPaginatedQueryOptionsEvaluations` helper, the two endpoint tests, and `GetEvaluation`/
+`ListEvaluations` from both the `Store` and `backend.Service` interfaces (+ service passthroughs +
+`fakeV1Store` stubs). `openapi.yaml`: `/evaluations` paths + `Evaluations` response +
+`EvaluationsCursorResponse` schema + `EvaluationID` param removed; `Evaluation` + `EvaluationResponse`
+kept (`POST /rules/{id}/evaluate` still returns them). Store interface 21 → 18.
+
+**Key call — `CreateEvaluation` kept (not removed).** The FK `alert_last_eval_fk`
+(`alert.last_evaluation_id NOT NULL → evaluation.id`) means dropping the evaluation *insert* while
+Postgres is still the live store would break every alert insert. So `CreateEvaluation` stays in the
+interface: Postgres keeps persisting the row (FK satisfied, `EvaluateRule` unchanged) until the
+ledger-native store no-ops it in 6a-5 — no broken interim. "last_evaluation on the alert" (the RFC
+default) is already satisfied by `driveAlerts` writing `Evidence` + `LastEvaluationID`. This refines
+the handoff's "drop Create/Get/List + EvaluateRule writes last_evaluation" — the Create drop + the
+EvaluateRule change land in 6a-5 with the Postgres removal, not here.
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit tests green
+(api/service/templates/models + all ledger* packages); conventional commit; not on `main`; OpenAPI
+updated (re-validated: parses, no dangling `$ref`s); mock regenerated. `storage` untouched (Docker-
+gated). No CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F29 | LOW | `internal/storage/evaluation.go`'s read methods (`GetEvaluation`/`ListEvaluations` + `evaluationQueryContext`/`buildEvaluationListQuery` + `GetEvaluationsQuery`/`EvaluationsFilters`) are now unreferenced by the interface — dead but self-consistent (their own `evaluation_test.go` still exercises them, and `rule_test.go` uses `GetEvaluation`). Swept wholesale with the Postgres package in **6a-5**. | ⬜ open (6a-5) |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
