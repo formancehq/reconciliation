@@ -11,22 +11,38 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 
 ## 👋 Handoff — resume here
 
-**Done:** Phase 1 steps 0–4 + **5a** (checkpoint mechanism, `6a7e110`). The `LedgerStore`
-implements the full rules + alert-lifecycle surface; the `CheckpointReader` reads data ledgers at
-a query checkpoint (ADR-002 cut, it-proven). Chart is **finalized** — 4 account types, per-rule
-pool, numscripts in the ledger library (don't re-litigate; see §4.1.1/§4.1.2 + the phase table).
+**Done:** Phase 1 steps 0–4 + **5a** (checkpoint mechanism, `6a7e110`) + **6a-1** (secure ledger
+transport, `5f4ab4b`). The `LedgerStore` implements the full rules + alert-lifecycle surface; the
+`CheckpointReader` reads data ledgers at a query checkpoint (ADR-002 cut, it-proven). Chart is
+**finalized** — 4 account types, per-rule pool, numscripts in the ledger library (don't re-litigate;
+see §4.1.1/§4.1.2 + the phase table).
 
-**Next: step 6 — fx wiring + config + dual-run flag, absorbing step 5b (engine flip).**
-1. Wire `ledger.Client` (config: address/**TLS + Ed25519 signing → closes F2**, refuse insecure
-   outside dev), `LedgerStore`, and `CheckpointReader` behind a dual-run feature flag (Postgres
-   primary + ledger shadow / or a bascule flag).
-2. **5b flip:** change `engine.LedgerResolver` (`AggregateBalance`/`ListAccounts`) `pit`→
-   `checkpointID` — `CheckpointReader` is already that signature, branch it for Tier-1 ledger
-   sources; `SDKLedgerResolver` stays Tier-2 (latest/pit). Service pins ONE checkpoint per
-   evaluation (`AcquireCheckpoint` → `Evaluate` → `Release` with a cancellation-surviving ctx —
-   **F26**), records the `checkpointID` anchor on `Evaluation` (**Postgres migration**: new column)
-   alongside `PitPerSource` (Tier-2). Add a reaper/ring for orphaned checkpoints (**F26**).
-   Consider re-scoping 5b with the owner before the invasive engine+migration work.
+**Scope decided with the owner (2026-07-04) — see "Step 6 — scope decisions" below.** The goal is
+a **Postgres-free** reconciliation: the ledger becomes the *sole* `Store` (no composite, no dual-run
+flag). This drops the legacy policy/cash-pool surface, makes evaluations non-durable, and evaporates
+step 6b's Postgres migration. Step 6 splits into **6a** (non-invasive: transport + simplification +
+ledger-only wiring) then **6b** (invasive engine flip).
+
+**Next: finish step 6a (ledger-only Store).** 6a-1 ✅ done. Remaining:
+- **6a-2** — drop legacy `/policies` + `/reconciliations` (routes, handlers, `Policy`/`Reconciliation`
+  models, 7 Store methods) + the `ledger_vs_pool_drift` template (pool-tied, subsumed by
+  `source_parity`). Keep templates: `source_parity`, `ledger_invariant`, `account_threshold`.
+- **6a-3** — evaluations non-durable (§4.4.2): drop `Create/Get/List Evaluation` + `/evaluations`
+  routes; `EvaluateRule` writes `last_evaluation` onto the alert/rule (removes the cross-store `inTx`
+  concern — no separate evaluation write).
+- **6a-4** — `ListAlertEvents` → empty + documented TODO (SAVED_METADATA sink in Phase 3-4).
+- **6a-5** — bind `LedgerStore` as the sole `service.Store` (`var _ service.Store`), wire
+  `ledger.Client` via `ledgerauth` (fx provider + flags, provision `_recon` at boot, `Ping`→ledger),
+  **remove the Postgres wiring** from `serve.go` → boot DB-less. Closes the wiring half of F2.
+
+**Then step 6b (invasive, engine flip — absorbs 5b).** Change `engine.LedgerResolver`
+(`AggregateBalance`/`ListAccounts`) `pit`→`checkpointID`. Design fork to settle with the owner:
+(A) split into two resolver interfaces + per-source Tier-1/Tier-2 dispatch, or (B) a `ReadAnchor`
+union. `CheckpointReader` is already the Tier-1 signature but **lacks `ListAccounts`** (add it);
+`SDKLedgerResolver` stays Tier-2 (pit/latest). Service pins ONE checkpoint per evaluation
+(`AcquireCheckpoint` → `Evaluate` → `Release`, cancellation-surviving ctx — **F26**). **No Postgres
+migration** — the `checkpointID` anchor lands on `alert:item` (`last_evaluation`), not a column. Add a
+reaper/ring for orphaned checkpoints (**F26**).
 
 **Watch:** open findings F1/F2/F8/F17/F22/F23/F25/F26/F27 (details below). **Don't touch:**
 `feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
@@ -62,8 +78,14 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ✅ done · reviewed | `916fee3` |
 | 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | 🚧 mechanism done | — |
 | 1 | 5a | ↳ checkpoint mechanism: client (`CreateQueryCheckpoint`/`Delete` + `AggregateVolumes`) + `Checkpoint` lifecycle + `CheckpointReader` (data-ledger reads at a checkpoint) | ✅ done | `6a7e110` |
-| 1 | 5b | ↳ engine interface flip (`LedgerResolver` pit→checkpointID) + `Evaluation` anchor + service acquisition | ⬜ folded into step 6 (behind the flag) | — |
-| 1 | 6 | fx wiring + config + dual-run feature flag (+ 5b engine flip) | ⬜ todo | — |
+| 1 | 5b | ↳ engine interface flip (`LedgerResolver` pit→checkpointID) + anchor + service acquisition | ⬜ folded into step 6b | — |
+| 1 | **6a** | **Ledger-only `Store`** (transport + simplification + wiring; Postgres removed) | 🚧 in progress | — |
+| 1 | 6a-1 | ↳ secure transport (`internal/ledgerauth`: Ed25519 signing + TLS + F2 insecure guard) | ✅ done · reviewed | `5f4ab4b` |
+| 1 | 6a-2 | ↳ drop legacy `/policies`+`/reconciliations` + `ledger_vs_pool_drift` template | ⬜ todo | — |
+| 1 | 6a-3 | ↳ evaluations non-durable (drop `*Evaluation` + `/evaluations`; `last_evaluation` on alert) | ⬜ todo | — |
+| 1 | 6a-4 | ↳ `ListAlertEvents` → empty + TODO (SAVED_METADATA sink deferred) | ⬜ todo | — |
+| 1 | 6a-5 | ↳ bind `LedgerStore` as sole `Store` + `ledger.Client` fx/flags + remove Postgres (boot DB-less) | ⬜ todo | — |
+| 1 | 6b | engine flip (`LedgerResolver` pit→checkpointID) + per-source dispatch + checkpoint acquisition (no migration) | ⬜ todo | — |
 | 2 | — | Flip reads to the ledger; Postgres as shadow | ⬜ todo | — |
 | 3 | — | Drop Postgres + own message bus (ledger event sink) | ⬜ todo | — |
 | 4 | — | Semantic events / replay (generic event-log) | ⬜ todo | — |
@@ -402,6 +424,65 @@ read diverges (150). No CRITICAL/HIGH.
 |---|---|---|---|
 | F26 | MED | Checkpoint **lifecycle ownership** is the caller's: an evaluation must `Release` its checkpoint or it leaks (pins SSTs → disk growth). Step 5b/6 must `defer Release` with a cancellation-surviving context, and add a bounded reaper/ring for crash-orphaned checkpoints (ADR-002 §7). | ⬜ open (step 5b/6) |
 | F27 | LOW | `AggregateVolumes` reads are eventually consistent live (same class as F25); the it-test waits via `require.EventuallyWithT` before pinning the checkpoint so the snapshot includes the writes. Checkpoint reads themselves are deterministic (frozen snapshot). | ⬜ noted |
+
+### Step 6 — scope decisions (2026-07-04)
+
+The owner steered step 6 away from the handoff's "composite store + dual-run flag" framing. Decisions
+(these reshape the whole step — recorded here as the source of truth):
+
+1. **Postgres-free goal.** The ledger becomes the **sole `Store`**; there is no composite (Postgres
+   for some domains + ledger for others) and no dual-run/bascule flag. Reconciliation becomes
+   stateless. This collapses the RFC's phased "Phase 3 = drop Postgres" into step 6a.
+2. **Drop legacy `/policies` + cash-pool.** The V0 policy = "ledger accounts vs a Payments pool"
+   (`models.Policy` = `{LedgerName, LedgerQuery}` vs `{PaymentsPoolID}`). Now that Payments sync lives
+   in a ledger (ledger-connect), reconciliation is **Ledger↔Ledger**, so the standalone policy/cash-pool
+   concept no longer holds — it is a `source_parity(ledgerA, ledgerB)` **rule**, not a storage surface.
+   Confirmed in code: `source_parity`'s doc already states it "expresses ledger↔pool (today's
+   `ledger_vs_pool_drift` use case), ledger↔ledger, and pool↔pool". → remove routes, handlers,
+   `Policy`/`Reconciliation` models, the 7 legacy Store methods, and the `ledger_vs_pool_drift`
+   template (subsumed). Retiring the `/policies` API ≠ losing pool comparison: `source_parity` keeps
+   `SourcePaymentsPool` as a Tier-2 side for the transition.
+3. **Templates kept:** `source_parity` (the Ledger↔Ledger reconciliation core), `ledger_invariant`
+   (single-ledger net-to-zero), `account_threshold` (single-ledger threshold). Dropped:
+   `ledger_vs_pool_drift`.
+4. **Evaluations non-durable (RFC §4.4.2, option A+D).** Drop `Create/Get/List Evaluation` + the
+   `/evaluations` routes; `EvaluateRule` records `last_evaluation` (result/pit/evidence/cost) onto the
+   alert (and/or `rule:{id}`), not a durable table. Queryable run-history → a sink later (Phase 3+).
+   **Side effect:** removes the cross-store `inTx` problem — there is no separate evaluation write to
+   keep atomic with the alert transitions; correctness rests on idempotency + guards (RFC §5.1).
+5. **`ListAlertEvents` deferred** — returns empty + a documented TODO; history rides the `_recon`
+   `SAVED_METADATA` stream / a sink in Phase 3-4 (§4.4). Machine + operator paths don't depend on it.
+6. **6b loses its Postgres migration.** With no `evaluation` table, the `checkpointID` anchor lands on
+   `alert:item` (`last_evaluation` metadata), not a new column — migration #10 evaporates; 6b is purely
+   an engine change.
+7. **Sequencing:** 6a (non-invasive: transport → simplification/interface-shrink → ledger-only wiring +
+   Postgres removal) as its own reviewed increments, then 6b (engine flip) separately, with the
+   resolver-interface design fork (split interfaces vs `ReadAnchor` union) settled at that point.
+
+### Phase 1 step 6a-1 — secure ledger transport (SDLC review, 2026-07-04)
+
+`internal/ledgerauth` — Ed25519/EdDSA JWT request signing (`TokenProvider` as gRPC
+`PerRPCCredentials`) + `TLSConfig.Build` + `Config.Build` (assembles creds + per-RPC dial options and
+enforces **F2**: refuse a plaintext transport unless `AllowInsecure` is explicitly set). Ported from
+ledger-connect's `internal/auth`; named `ledgerauth` to avoid colliding with `go-libs/auth`. **Not
+yet wired** — the fx provider + flags land in 6a-5 when the `LedgerStore` consumes the client (mirrors
+5a's mechanism-first split). `ledger.NewClient(address, creds, dialOpts...)` is already the matching
+signature.
+
+**Checks:** build/vet/`golangci-lint` (0)/gofmt/-race clean; coverage `ledgerauth` **94.0%** (>80%);
+conventional commit `feat(ledger-v3)`; not on `main`; additive (no existing code touched → no
+regression to the Postgres path); no OpenAPI change (internal transport); `go mod tidy` clean
+(`go-jose/go-jose/v4` promoted to a direct dep). Unit tests cover token sign/verify/god-claim/expiry/
+metadata/seed-parsing (raw+hex+invalid), TLS build/CA/mTLS/errors, and the F2 guard
+(refuse-by-default / opt-in / TLS / signing-over-TLS / signing-over-insecure / key XOR / malformed key).
+No CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F2 | HIGH | Secure transport (TLS + Ed25519 signing) + refuse-insecure-outside-dev. **Enforcement half done here** (`Config.Build` + `ErrInsecureTransport`, tested). Wiring half (serve.go flags + fx provider constructing the client from config) lands in **6a-5**. | 🟡 enforcement done; wiring in 6a-5 |
+| F2-a | LOW | `RequireTransportSecurity()=false` + `god=true` claim inherited from ledger-connect → tokens are full-privilege and usable over plaintext; mitigated by the F2 guard (plaintext needs explicit `AllowInsecure`) + 5-min TTL. The signing key is a high-value secret (deployment concern). | ⬜ noted |
+| F2-b | LOW | `TLSConfig.InsecureSkipVerify` = encrypted-but-unauthenticated TLS (MITM risk); its own explicit flag, dev-only. Flag in ops docs. | ⬜ noted |
+| F2-c | LOW | No bufconn integration test proving the dial options attach to a live gRPC conn (ledger-connect has `grpc_test.go`); exercised by the 6a-5 wiring instead. Mirrors F3. | ⬜ deferred (6a-5) |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
