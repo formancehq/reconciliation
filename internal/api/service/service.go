@@ -10,7 +10,7 @@ import (
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
 )
@@ -24,8 +24,8 @@ type Store interface {
 	CreateRule(ctx context.Context, rule *models.Rule) error
 	GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error)
 	DeleteRule(ctx context.Context, id uuid.UUID) error
-	PatchRule(ctx context.Context, id uuid.UUID, patch storage.RulePatch) error
-	ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error)
+	PatchRule(ctx context.Context, id uuid.UUID, patch store.RulePatch) error
+	ListRules(ctx context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error)
 
 	// V1 — Evaluation. Evaluations are not a durable, queryable entity
 	// (RFC §4.4.2): the run result is returned from EvaluateRule and its
@@ -35,7 +35,7 @@ type Store interface {
 	CreateEvaluation(ctx context.Context, ev *models.Evaluation) error
 
 	// V1 — Alert
-	OpenOrUpdateAlert(ctx context.Context, in storage.OpenAlertInput) (*storage.OpenAlertResult, error)
+	OpenOrUpdateAlert(ctx context.Context, in store.OpenAlertInput) (*store.OpenAlertResult, error)
 	AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fingerprint, periodID string, evaluationID uuid.UUID, at time.Time) (*models.Alert, error)
 	ListActiveAlertFingerprints(ctx context.Context, ruleID uuid.UUID, periodID string) ([]string, error)
 	AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Alert, error)
@@ -44,8 +44,8 @@ type Store interface {
 	SnoozeAlert(ctx context.Context, id uuid.UUID, until time.Time, by, note string) (*models.Alert, error)
 	UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string) (*models.Alert, error)
 	GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error)
-	ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error)
-	ListAlertEvents(ctx context.Context, alertID uuid.UUID, q storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error)
+	ListAlerts(ctx context.Context, q store.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error)
+	ListAlertEvents(ctx context.Context, alertID uuid.UUID, q store.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error)
 }
 
 // Service is the orchestrator for both the legacy /policies path and the V1
@@ -72,24 +72,12 @@ func NewService(store Store, client SDKFormance, eng *engine.Engine, reg *templa
 	}
 }
 
-// inTx runs fn under a single transaction when the underlying store
-// supports it (the real *storage.Storage does), and forwards the store
-// through unchanged otherwise. Test fakes typically skip the transaction —
-// their in-memory state already gives all-or-nothing semantics naturally,
-// so they don't need to implement bun.RunInTx.
-//
-// The type assertion is defined inline rather than as a named interface
-// because keeping it here avoids dragging storage internals (sql.TxOptions
-// etc.) into the Store interface — Store stays purely about data shapes.
+// inTx runs fn against the store. The ledger-native store is idempotent and
+// has no cross-store transaction boundary, so there is nothing to open or
+// commit here — fn runs directly against the shared store. Kept as a seam so
+// callers that want all-or-nothing semantics have a single place to express
+// it if a transactional store returns.
 func (s *Service) inTx(ctx context.Context, fn func(ctx context.Context, store Store) error) error {
-	type runner interface {
-		RunInTx(ctx context.Context, fn func(ctx context.Context, scoped *storage.Storage) error) error
-	}
-	if tx, ok := s.store.(runner); ok {
-		return tx.RunInTx(ctx, func(ctx context.Context, scoped *storage.Storage) error {
-			return fn(ctx, scoped)
-		})
-	}
 	return fn(ctx, s.store)
 }
 

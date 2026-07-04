@@ -15,7 +15,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	recstore "github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -92,7 +92,7 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 	require.Equal(t, "recon", got.Labels["team"])
 
 	// Patch: flip enabled, rename, drop the "team" label.
-	require.NoError(t, store.PatchRule(ctx, id, storage.RulePatch{
+	require.NoError(t, store.PatchRule(ctx, id, recstore.RulePatch{
 		Enabled: ptr(false),
 		Name:    ptr("it-renamed"),
 		Labels:  ptr(map[string]string{"env": "it"}),
@@ -107,10 +107,10 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 	// Delete → gone.
 	require.NoError(t, store.DeleteRule(ctx, id))
 	_, err = store.GetRule(ctx, id)
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, recstore.ErrNotFound)
 
 	// Delete again → not found.
-	require.ErrorIs(t, store.DeleteRule(ctx, id), storage.ErrNotFound)
+	require.ErrorIs(t, store.DeleteRule(ctx, id), recstore.ErrNotFound)
 }
 
 // TestIntegration_OpenAlert exercises OpenOrUpdateAlert against a real Ledger v3.
@@ -145,7 +145,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 	stOpenAddr := schema.AlertStateAccount(schema.StateOpen, ruleID.String(), period, fpHash)
 	poolAddr := schema.PoolAccount(ruleID.String())
 
-	in := storage.OpenAlertInput{
+	in := recstore.OpenAlertInput{
 		RuleID:       ruleID,
 		Fingerprint:  fp,
 		PeriodID:     period,
@@ -243,7 +243,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	const period = "2026-04"
 
 	open := func(fp string) *models.Alert {
-		res, oerr := store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
+		res, oerr := store.OpenOrUpdateAlert(ctx, recstore.OpenAlertInput{
 			RuleID: ruleID, Fingerprint: fp, PeriodID: period, Severity: models.SeverityHigh,
 			EvaluationID: uuid.New(), Evidence: json.RawMessage(`{"drift":"1"}`), OccurredAt: time.Now().UTC(),
 		})
@@ -285,7 +285,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	require.Equal(t, "RESOLVED", item.GetMetadata()[schema.MetaStatus].GetStringValue(), "status mirror on item")
 
 	// Reopen: a fresh failure re-mints the marker (nothing to move — it was burned).
-	reopened, err := store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
+	reopened, err := store.OpenOrUpdateAlert(ctx, recstore.OpenAlertInput{
 		RuleID: ruleID, Fingerprint: "fp-lifecycle", PeriodID: period, Severity: models.SeverityHigh,
 		EvaluationID: uuid.New(), Evidence: json.RawMessage(`{"drift":"2"}`), OccurredAt: time.Now().UTC(),
 	})
@@ -377,9 +377,9 @@ func TestIntegration_Lists(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	}))
 
-	ruleOpts := storage.PaginatedQueryOptions[storage.RulesFilters]{PageSize: 10}.WithQueryBuilder(query.Match("name", name))
+	ruleOpts := recstore.PaginatedQueryOptions[recstore.RulesFilters]{PageSize: 10}.WithQueryBuilder(query.Match("name", name))
 	eventuallyConsistent(t, func(c *assert.CollectT) {
-		rules, lerr := store.ListRules(ctx, storage.NewGetRulesQuery(ruleOpts))
+		rules, lerr := store.ListRules(ctx, recstore.NewGetRulesQuery(ruleOpts))
 		if !assert.NoError(c, lerr, "list rules by name") {
 			return
 		}
@@ -394,7 +394,7 @@ func TestIntegration_Lists(t *testing.T) {
 	const period = "2026-05"
 
 	open := func(fp string, at time.Time) {
-		_, oerr := store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
+		_, oerr := store.OpenOrUpdateAlert(ctx, recstore.OpenAlertInput{
 			RuleID: ruleID, Fingerprint: fp, PeriodID: period, Severity: models.SeverityHigh,
 			EvaluationID: uuid.New(), Evidence: json.RawMessage(`{}`), OccurredAt: at,
 		})
@@ -406,8 +406,8 @@ func TestIntegration_Lists(t *testing.T) {
 
 	byRule := query.Match("ruleID", ruleID.String())
 	listByRule := func(qb query.Builder) *bunpaginate.Cursor[models.Alert] {
-		page, lerr := store.ListAlerts(ctx, storage.NewGetAlertsQuery(
-			storage.PaginatedQueryOptions[storage.AlertsFilters]{PageSize: 10}.WithQueryBuilder(qb)))
+		page, lerr := store.ListAlerts(ctx, recstore.NewGetAlertsQuery(
+			recstore.PaginatedQueryOptions[recstore.AlertsFilters]{PageSize: 10}.WithQueryBuilder(qb)))
 		require.NoError(t, lerr, "list alerts")
 
 		return page

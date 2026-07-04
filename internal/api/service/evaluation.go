@@ -9,7 +9,7 @@ import (
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
 )
@@ -121,11 +121,11 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	//
 	// Each call into driveAlerts also appends rows to alert_event, so the
 	// audit log stays consistent with the alert table by construction.
-	err = s.inTx(ctx, func(ctx context.Context, store Store) error {
-		if err := store.CreateEvaluation(ctx, evaluation); err != nil {
+	err = s.inTx(ctx, func(ctx context.Context, st Store) error {
+		if err := st.CreateEvaluation(ctx, evaluation); err != nil {
 			return err
 		}
-		return driveAlerts(ctx, store, rule, evaluation, outcomes, periodID, ended)
+		return driveAlerts(ctx, st, rule, evaluation, outcomes, periodID, ended)
 	})
 	if err != nil {
 		return nil, err
@@ -147,7 +147,7 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 // that alert would stay OPEN forever despite the condition having cleared.
 func driveAlerts(
 	ctx context.Context,
-	store Store,
+	st Store,
 	rule *models.Rule,
 	evaluation *models.Evaluation,
 	outcomes []templates.Outcome,
@@ -158,7 +158,7 @@ func driveAlerts(
 	for _, o := range outcomes {
 		seenFingerprints[o.Fingerprint] = struct{}{}
 		if o.Passed {
-			if _, err := store.AutoResolveAlert(ctx, rule.ID, o.Fingerprint, periodID, evaluation.ID, ended); err != nil {
+			if _, err := st.AutoResolveAlert(ctx, rule.ID, o.Fingerprint, periodID, evaluation.ID, ended); err != nil {
 				return fmt.Errorf("auto-resolve %s: %w", o.Fingerprint, err)
 			}
 			continue
@@ -167,7 +167,7 @@ func driveAlerts(
 		if err != nil {
 			return fmt.Errorf("marshal evidence for %s: %w", o.Fingerprint, err)
 		}
-		_, err = store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
+		_, err = st.OpenOrUpdateAlert(ctx, store.OpenAlertInput{
 			RuleID:       rule.ID,
 			Fingerprint:  o.Fingerprint,
 			PeriodID:     periodID,
@@ -185,7 +185,7 @@ func driveAlerts(
 	// Sweep is scoped to this period: a fingerprint that cleared this round
 	// auto-resolves its case for THIS period only. Prior periods' open cases
 	// are untouched — they remain the historical record for their period.
-	activeFPs, err := store.ListActiveAlertFingerprints(ctx, rule.ID, periodID)
+	activeFPs, err := st.ListActiveAlertFingerprints(ctx, rule.ID, periodID)
 	if err != nil {
 		return fmt.Errorf("sweep active alerts: %w", err)
 	}
@@ -193,7 +193,7 @@ func driveAlerts(
 		if _, seen := seenFingerprints[fp]; seen {
 			continue
 		}
-		if _, err := store.AutoResolveAlert(ctx, rule.ID, fp, periodID, evaluation.ID, ended); err != nil {
+		if _, err := st.AutoResolveAlert(ctx, rule.ID, fp, periodID, evaluation.ID, ended); err != nil {
 			return fmt.Errorf("auto-resolve disappeared fingerprint %s: %w", fp, err)
 		}
 	}
@@ -219,7 +219,7 @@ func (s *Service) openEngineErrorAlert(ctx context.Context, rule *models.Rule, e
 		return nil, fmt.Errorf("marshal engine.error evidence: %w", mErr)
 	}
 
-	res, err := s.store.OpenOrUpdateAlert(ctx, storage.OpenAlertInput{
+	res, err := s.store.OpenOrUpdateAlert(ctx, store.OpenAlertInput{
 		RuleID:      rule.ID,
 		Fingerprint: engineErrorFingerprint,
 		// Engine-health is operational, not a per-period reconciliation fact:

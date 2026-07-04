@@ -8,7 +8,7 @@ import (
 	"github.com/formancehq/go-libs/query"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 )
 
 // Query filter translation: recon's list APIs take a go-libs query.Builder; the
@@ -41,7 +41,7 @@ func buildListFilter(prefix string, qb query.Builder, leaf schema.LeafMapper) (*
 
 	translated, err := schema.TranslateQuery(raw, leaf)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", storage.ErrInvalidQuery, err)
+		return nil, fmt.Errorf("%w: %s", store.ErrInvalidQuery, err)
 	}
 
 	if translated == nil {
@@ -71,7 +71,7 @@ func alertLeaf(op, key string, value any) (*commonpb.QueryFilter, error) {
 	case "lastSeenAt":
 		return metaDatetime(op, key, schema.MetaLastSeenAt, value)
 	default:
-		return nil, fmt.Errorf("%w: unknown alert filter key %q", storage.ErrInvalidQuery, key)
+		return nil, fmt.Errorf("%w: unknown alert filter key %q", store.ErrInvalidQuery, key)
 	}
 }
 
@@ -85,7 +85,7 @@ func ruleLeaf(op, key string, value any) (*commonpb.QueryFilter, error) {
 
 		s, ok := value.(string)
 		if !ok {
-			return nil, fmt.Errorf("%w: %q expects a string", storage.ErrInvalidQuery, key)
+			return nil, fmt.Errorf("%w: %q expects a string", store.ErrInvalidQuery, key)
 		}
 
 		// A rule's identity is its address, not metadata.
@@ -101,7 +101,7 @@ func ruleLeaf(op, key string, value any) (*commonpb.QueryFilter, error) {
 	case "updatedAt":
 		return metaDatetime(op, key, schema.MetaUpdatedAt, value)
 	default:
-		return nil, fmt.Errorf("%w: unknown rule filter key %q", storage.ErrInvalidQuery, key)
+		return nil, fmt.Errorf("%w: unknown rule filter key %q", store.ErrInvalidQuery, key)
 	}
 }
 
@@ -112,7 +112,7 @@ func metaEqString(op, key, field string, value any) (*commonpb.QueryFilter, erro
 
 	s, ok := value.(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: %q expects a string value", storage.ErrInvalidQuery, key)
+		return nil, fmt.Errorf("%w: %q expects a string value", store.ErrInvalidQuery, key)
 	}
 
 	return schema.FilterMetadataString(field, s), nil
@@ -125,7 +125,7 @@ func metaEqBool(op, key, field string, value any) (*commonpb.QueryFilter, error)
 
 	b, ok := value.(bool)
 	if !ok {
-		return nil, fmt.Errorf("%w: %q expects a bool value", storage.ErrInvalidQuery, key)
+		return nil, fmt.Errorf("%w: %q expects a bool value", store.ErrInvalidQuery, key)
 	}
 
 	return schema.FilterMetadataBool(field, b), nil
@@ -136,7 +136,7 @@ func metaEqBool(op, key, field string, value any) (*commonpb.QueryFilter, error)
 func metaDatetime(op, key, field string, value any) (*commonpb.QueryFilter, error) {
 	micros, err := datetimeMicros(value)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %q: %s", storage.ErrInvalidQuery, key, err)
+		return nil, fmt.Errorf("%w: %q: %s", store.ErrInvalidQuery, key, err)
 	}
 
 	switch op {
@@ -170,5 +170,5 @@ func datetimeMicros(value any) (int64, error) {
 }
 
 func opErr(op, key string) error {
-	return fmt.Errorf("%w: %q does not support operator %s", storage.ErrInvalidQuery, key, op)
+	return fmt.Errorf("%w: %q does not support operator %s", store.ErrInvalidQuery, key, op)
 }

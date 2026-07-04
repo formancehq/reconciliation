@@ -9,7 +9,7 @@ import (
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
@@ -128,19 +128,19 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 	return rule, nil
 }
 
-// GetRule returns one rule or storage.ErrNotFound.
+// GetRule returns one rule or store.ErrNotFound.
 func (s *Service) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error) {
 	return s.store.GetRule(ctx, id)
 }
 
 // ListRules is a passthrough — the storage layer handles pagination + filters.
-func (s *Service) ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+func (s *Service) ListRules(ctx context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
 	return s.store.ListRules(ctx, q)
 }
 
 // PatchRule applies a partial update. If templateKind or templateSpec changes,
 // the new spec is validated and the compiled_cel is rederived.
-func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch storage.RulePatch) error {
+func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch store.RulePatch) error {
 	// If the caller is changing the template surface, re-validate against the
 	// registry and rederive compiled_cel so explanations stay accurate.
 	if patch.TemplateKind != nil || patch.TemplateSpec != nil {

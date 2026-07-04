@@ -9,7 +9,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 )
 
@@ -29,7 +29,7 @@ func (s *LedgerStore) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.
 	}
 
 	if alert.Status == models.AlertResolved {
-		return nil, fmt.Errorf("snooze alert %s: %w", id, storage.ErrNotFound)
+		return nil, fmt.Errorf("snooze alert %s: %w", id, store.ErrNotFound)
 	}
 
 	snooze := &models.Snooze{Until: until.UTC(), By: by, At: now, Note: note}

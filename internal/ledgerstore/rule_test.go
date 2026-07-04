@@ -10,7 +10,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -98,7 +98,7 @@ func TestLedgerStore_GetRule_NotFoundOnEmptyMetadata(t *testing.T) {
 		Return(&commonpb.Account{Address: schema.RuleAccount(id.String())}, nil)
 
 	_, err := New(m, controlLedger).GetRule(context.Background(), id)
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestLedgerStore_GetRule_NotFoundOnGRPCStatus(t *testing.T) {
@@ -113,7 +113,7 @@ func TestLedgerStore_GetRule_NotFoundOnGRPCStatus(t *testing.T) {
 		Return(nil, status.Error(codes.NotFound, "account not found"))
 
 	_, err := New(m, controlLedger).GetRule(context.Background(), id)
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestLedgerStore_PatchRule(t *testing.T) {
@@ -134,7 +134,7 @@ func TestLedgerStore_PatchRule(t *testing.T) {
 			return nil
 		})
 
-	err := New(m, controlLedger).PatchRule(context.Background(), id, storage.RulePatch{
+	err := New(m, controlLedger).PatchRule(context.Background(), id, store.RulePatch{
 		Name:    ptr("renamed"),
 		Enabled: ptr(false),
 	})
@@ -161,7 +161,7 @@ func TestLedgerStore_PatchRule_PrunesRemovedLabels(t *testing.T) {
 			return nil
 		})
 
-	err := New(m, controlLedger).PatchRule(context.Background(), id, storage.RulePatch{
+	err := New(m, controlLedger).PatchRule(context.Background(), id, store.RulePatch{
 		Labels: ptr(map[string]string{"env": "prod"}),
 	})
 	require.NoError(t, err)
@@ -197,5 +197,5 @@ func TestLedgerStore_DeleteRule_NotFound(t *testing.T) {
 		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
 		Return(&commonpb.Account{Address: schema.RuleAccount(id.String())}, nil)
 
-	require.ErrorIs(t, New(m, controlLedger).DeleteRule(context.Background(), id), storage.ErrNotFound)
+	require.ErrorIs(t, New(m, controlLedger).DeleteRule(context.Background(), id), store.ErrNotFound)
 }

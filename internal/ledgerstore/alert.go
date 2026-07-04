@@ -12,7 +12,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 )
 
@@ -40,7 +40,7 @@ import (
 // ledger's ordered SAVED_METADATA / COMMITTED_TRANSACTION event stream for the
 // control-ledger IS the append-only history (RFC §4.4), so OpenAlertResult.Event
 // is left nil.
-func (s *LedgerStore) OpenOrUpdateAlert(ctx context.Context, in storage.OpenAlertInput) (*storage.OpenAlertResult, error) {
+func (s *LedgerStore) OpenOrUpdateAlert(ctx context.Context, in store.OpenAlertInput) (*store.OpenAlertResult, error) {
 	if in.OccurredAt.IsZero() {
 		in.OccurredAt = time.Now().UTC()
 	}
@@ -86,7 +86,7 @@ func (s *LedgerStore) readAlertItem(ctx context.Context, itemAddr string) (*mode
 
 // openNewAlert handles path 1 — the first fail for this (rule, fingerprint,
 // period).
-func (s *LedgerStore) openNewAlert(ctx context.Context, in storage.OpenAlertInput, fpHash, itemAddr string) (*storage.OpenAlertResult, error) {
+func (s *LedgerStore) openNewAlert(ctx context.Context, in store.OpenAlertInput, fpHash, itemAddr string) (*store.OpenAlertResult, error) {
 	rule := in.RuleID.String()
 
 	alert := &models.Alert{
@@ -125,12 +125,12 @@ func (s *LedgerStore) openNewAlert(ctx context.Context, in storage.OpenAlertInpu
 		return nil, fmt.Errorf("open alert %s: %w", in.Fingerprint, err)
 	}
 
-	return &storage.OpenAlertResult{Alert: alert, Created: true}, nil
+	return &store.OpenAlertResult{Alert: alert, Created: true}, nil
 }
 
 // updateAlert handles paths 2 & 3 — an alert already exists for this
 // (rule, fingerprint, period).
-func (s *LedgerStore) updateAlert(ctx context.Context, in storage.OpenAlertInput, prior *models.Alert, fpHash, itemAddr string) (*storage.OpenAlertResult, error) {
+func (s *LedgerStore) updateAlert(ctx context.Context, in store.OpenAlertInput, prior *models.Alert, fpHash, itemAddr string) (*store.OpenAlertResult, error) {
 	rule := in.RuleID.String()
 	fromStatus := prior.Status
 	reopened := fromStatus == models.AlertResolved
@@ -206,7 +206,7 @@ func (s *LedgerStore) updateAlert(ctx context.Context, in storage.OpenAlertInput
 		return nil, fmt.Errorf("update alert %s: %w", in.Fingerprint, err)
 	}
 
-	return &storage.OpenAlertResult{Alert: prior, Created: false, Reopened: reopened}, nil
+	return &store.OpenAlertResult{Alert: prior, Created: false, Reopened: reopened}, nil
 }
 
 // presentClosureKeys returns the resolution/ack metadata keys currently set on
@@ -226,7 +226,7 @@ func presentClosureKeys(a *models.Alert) []string {
 
 // alertBatchKey derives the idempotency key for an OpenOrUpdateAlert batch,
 // deterministic on (ruleID, fingerprint, periodID, evaluationID).
-func alertBatchKey(in storage.OpenAlertInput) string {
+func alertBatchKey(in store.OpenAlertInput) string {
 	return alertActionKey("openorupdate", in.RuleID.String(), in.Fingerprint, in.PeriodID, in.EvaluationID.String())
 }
 

@@ -11,7 +11,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/api/backend"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -112,7 +112,7 @@ func getAlertHandler(b backend.Backend) http.HandlerFunc {
 
 func listAlertsHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		q := storage.GetAlertsQuery{}
+		q := store.GetAlertsQuery{}
 		if r.URL.Query().Get(QueryKeyCursor) != "" {
 			if err := bunpaginate.UnmarshalCursor(r.URL.Query().Get(QueryKeyCursor), &q); err != nil {
 				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param", QueryKeyCursor))
@@ -124,7 +124,7 @@ func listAlertsHandler(b backend.Backend) http.HandlerFunc {
 				api.BadRequest(w, ErrValidation, err)
 				return
 			}
-			q = storage.NewGetAlertsQuery(*options)
+			q = store.NewGetAlertsQuery(*options)
 		}
 		cursor, err := b.GetService().ListAlerts(r.Context(), q)
 		if err != nil {
@@ -147,7 +147,7 @@ func listAlertEventsHandler(b backend.Backend) http.HandlerFunc {
 			api.BadRequest(w, ErrInvalidID, err)
 			return
 		}
-		q := storage.GetAlertEventsQuery{}
+		q := store.GetAlertEventsQuery{}
 		if r.URL.Query().Get(QueryKeyCursor) != "" {
 			if err := bunpaginate.UnmarshalCursor(r.URL.Query().Get(QueryKeyCursor), &q); err != nil {
 				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param", QueryKeyCursor))
@@ -159,7 +159,7 @@ func listAlertEventsHandler(b backend.Backend) http.HandlerFunc {
 				api.BadRequest(w, ErrValidation, err)
 				return
 			}
-			q = storage.NewGetAlertEventsQuery(*options)
+			q = store.NewGetAlertEventsQuery(*options)
 		}
 		cursor, err := b.GetService().ListAlertEvents(r.Context(), id, q)
 		if err != nil {

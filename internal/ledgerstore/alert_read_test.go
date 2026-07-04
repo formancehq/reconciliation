@@ -7,7 +7,7 @@ import (
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	recstore "github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -55,5 +55,5 @@ func TestGetAlert_NotFound(t *testing.T) {
 		Return(nil, nil)
 
 	_, err := store.GetAlert(context.Background(), uuid.New())
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, recstore.ErrNotFound)
 }

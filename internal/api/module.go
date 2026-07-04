@@ -15,7 +15,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/api/backend"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/engine"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"go.uber.org/fx"
 )
@@ -96,9 +96,9 @@ func handleServiceErrors(w http.ResponseWriter, r *http.Request, err error) {
 		api.BadRequest(w, ErrValidation, err)
 	case errors.Is(err, service.ErrInvalidID):
 		api.BadRequest(w, ErrInvalidID, err)
-	case errors.Is(err, storage.ErrInvalidQuery):
+	case errors.Is(err, store.ErrInvalidQuery):
 		api.BadRequest(w, ErrValidation, err)
-	case errors.Is(err, storage.ErrNotFound):
+	case errors.Is(err, store.ErrNotFound):
 		api.NotFound(w, err)
 	// V1 error classes
 	case errors.Is(err, templates.ErrInvalidSpec):

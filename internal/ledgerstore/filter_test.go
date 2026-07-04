@@ -6,7 +6,7 @@ import (
 
 	"github.com/formancehq/go-libs/query"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,7 +122,7 @@ func TestBuildListFilter_Rejects(t *testing.T) {
 			t.Parallel()
 
 			_, err := buildListFilter(schema.ItemPrefix(), tc.qb, tc.leaf)
-			require.ErrorIs(t, err, storage.ErrInvalidQuery)
+			require.ErrorIs(t, err, store.ErrInvalidQuery)
 		})
 	}
 }

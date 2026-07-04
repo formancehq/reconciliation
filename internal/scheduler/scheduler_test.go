@@ -11,7 +11,7 @@ import (
 	v5log "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +61,7 @@ type fakeRuleSvc struct {
 	hasMore   bool
 }
 
-func (f *fakeRuleSvc) ListRules(_ context.Context, _ storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+func (f *fakeRuleSvc) ListRules(_ context.Context, _ store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
 	return &bunpaginate.Cursor[models.Rule]{Data: f.rules, HasMore: f.hasMore}, nil
 }
 func (f *fakeRuleSvc) EvaluateRule(_ context.Context, id uuid.UUID, _ service.EvaluateRuleRequest) (*models.Evaluation, error) {

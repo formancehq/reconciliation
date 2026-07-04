@@ -16,7 +16,7 @@ import (
 	bunpaginate "github.com/formancehq/go-libs/bun/bunpaginate"
 	service "github.com/formancehq/reconciliation/internal/api/service"
 	models "github.com/formancehq/reconciliation/internal/models"
-	storage "github.com/formancehq/reconciliation/internal/storage"
+	store "github.com/formancehq/reconciliation/internal/store"
 	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -150,7 +150,7 @@ func (mr *MockServiceMockRecorder) GetRule(ctx, id any) *gomock.Call {
 }
 
 // ListAlertEvents mocks base method.
-func (m *MockService) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
+func (m *MockService) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q store.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListAlertEvents", ctx, alertID, q)
 	ret0, _ := ret[0].(*bunpaginate.Cursor[models.AlertEvent])
@@ -165,7 +165,7 @@ func (mr *MockServiceMockRecorder) ListAlertEvents(ctx, alertID, q any) *gomock.
 }
 
 // ListAlerts mocks base method.
-func (m *MockService) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
+func (m *MockService) ListAlerts(ctx context.Context, q store.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListAlerts", ctx, q)
 	ret0, _ := ret[0].(*bunpaginate.Cursor[models.Alert])
@@ -180,7 +180,7 @@ func (mr *MockServiceMockRecorder) ListAlerts(ctx, q any) *gomock.Call {
 }
 
 // ListRules mocks base method.
-func (m *MockService) ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+func (m *MockService) ListRules(ctx context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListRules", ctx, q)
 	ret0, _ := ret[0].(*bunpaginate.Cursor[models.Rule])
@@ -195,7 +195,7 @@ func (mr *MockServiceMockRecorder) ListRules(ctx, q any) *gomock.Call {
 }
 
 // PatchRule mocks base method.
-func (m *MockService) PatchRule(ctx context.Context, id uuid.UUID, patch storage.RulePatch) error {
+func (m *MockService) PatchRule(ctx context.Context, id uuid.UUID, patch store.RulePatch) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PatchRule", ctx, id, patch)
 	ret0, _ := ret[0].(error)

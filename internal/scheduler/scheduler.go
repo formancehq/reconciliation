@@ -21,7 +21,7 @@ import (
 	v5log "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 )
@@ -29,7 +29,7 @@ import (
 // RuleService is the slice of the service the scheduler needs: enumerate rules
 // and evaluate one. Satisfied by *service.Service (and backend.Service).
 type RuleService interface {
-	ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error)
+	ListRules(ctx context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error)
 	EvaluateRule(ctx context.Context, id uuid.UUID, req service.EvaluateRuleRequest) (*models.Evaluation, error)
 }
 
@@ -111,7 +111,7 @@ func (s *Scheduler) fire(ctx context.Context, r models.Rule) {
 // maxRulesPerTick; logs a warning if the deployment has more (rather than
 // silently dropping the overflow).
 func (s *Scheduler) listCronRules(ctx context.Context) ([]models.Rule, error) {
-	q := storage.NewGetRulesQuery(storage.NewPaginatedQueryOptions(storage.RulesFilters{}).WithPageSize(maxRulesPerTick))
+	q := store.NewGetRulesQuery(store.NewPaginatedQueryOptions(store.RulesFilters{}).WithPageSize(maxRulesPerTick))
 	cursor, err := s.svc.ListRules(ctx, q)
 	if err != nil {
 		return nil, err

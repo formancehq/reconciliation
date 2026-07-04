@@ -10,7 +10,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	recstore "github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -39,8 +39,8 @@ func priorAccount(t *testing.T, a *models.Alert, occ string) *commonpb.Account {
 	}
 }
 
-func sampleInput() storage.OpenAlertInput {
-	return storage.OpenAlertInput{
+func sampleInput() recstore.OpenAlertInput {
+	return recstore.OpenAlertInput{
 		RuleID:       uuid.New(),
 		Fingerprint:  "asset:USD/2|account:merchant:m1:held",
 		PeriodID:     "2026-03",

@@ -8,7 +8,7 @@ import (
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 )
 
@@ -138,13 +138,13 @@ func (s *Service) UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *Unsnooze
 	return s.store.UnsnoozeAlert(ctx, id, req.By)
 }
 
-// GetAlert returns the alert or storage.ErrNotFound.
+// GetAlert returns the alert or store.ErrNotFound.
 func (s *Service) GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error) {
 	return s.store.GetAlert(ctx, id)
 }
 
-// ListAlerts is a passthrough — filters live in storage.
-func (s *Service) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
+// ListAlerts is a passthrough — filters live in store.
+func (s *Service) ListAlerts(ctx context.Context, q store.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
 	return s.store.ListAlerts(ctx, q)
 }
 
@@ -152,7 +152,7 @@ func (s *Service) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bu
 // most-recent-first. Paginated because a long-lived alert's timeline is
 // unbounded (one row per failing evaluation). This is the API surface for the
 // "timeline" view and any future audit-export tooling.
-func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
+func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q store.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
 	return s.store.ListAlertEvents(ctx, alertID, q)
 }
 

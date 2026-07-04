@@ -6,7 +6,7 @@ import (
 
 	"github.com/formancehq/go-libs/pointer"
 	"github.com/formancehq/go-libs/query"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 )
 
 func getQueryBuilder(r *http.Request) (query.Builder, error) {
@@ -23,7 +23,7 @@ func getQueryBuilder(r *http.Request) (query.Builder, error) {
 	return query.ParseJSON(r.URL.Query().Get("query"))
 }
 
-func getPaginatedQueryOptionsRules(r *http.Request) (*storage.PaginatedQueryOptions[storage.RulesFilters], error) {
+func getPaginatedQueryOptionsRules(r *http.Request) (*store.PaginatedQueryOptions[store.RulesFilters], error) {
 	qb, err := getQueryBuilder(r)
 	if err != nil {
 		return nil, err
@@ -32,12 +32,12 @@ func getPaginatedQueryOptionsRules(r *http.Request) (*storage.PaginatedQueryOpti
 	if err != nil {
 		return nil, err
 	}
-	return pointer.For(storage.NewPaginatedQueryOptions(storage.RulesFilters{}).
+	return pointer.For(store.NewPaginatedQueryOptions(store.RulesFilters{}).
 		WithQueryBuilder(qb).
 		WithPageSize(pageSize)), nil
 }
 
-func getPaginatedQueryOptionsAlerts(r *http.Request) (*storage.PaginatedQueryOptions[storage.AlertsFilters], error) {
+func getPaginatedQueryOptionsAlerts(r *http.Request) (*store.PaginatedQueryOptions[store.AlertsFilters], error) {
 	qb, err := getQueryBuilder(r)
 	if err != nil {
 		return nil, err
@@ -46,18 +46,18 @@ func getPaginatedQueryOptionsAlerts(r *http.Request) (*storage.PaginatedQueryOpt
 	if err != nil {
 		return nil, err
 	}
-	return pointer.For(storage.NewPaginatedQueryOptions(storage.AlertsFilters{}).
+	return pointer.For(store.NewPaginatedQueryOptions(store.AlertsFilters{}).
 		WithQueryBuilder(qb).
 		WithPageSize(pageSize)), nil
 }
 
-func getPaginatedQueryOptionsAlertEvents(r *http.Request) (*storage.PaginatedQueryOptions[storage.AlertEventsFilters], error) {
+func getPaginatedQueryOptionsAlertEvents(r *http.Request) (*store.PaginatedQueryOptions[store.AlertEventsFilters], error) {
 	pageSize, err := getPageSize(r)
 	if err != nil {
 		return nil, err
 	}
 	// The alert id comes from the path, not a query builder — events have no
 	// user-facing filter surface, so only page size is read here.
-	return pointer.For(storage.NewPaginatedQueryOptions(storage.AlertEventsFilters{}).
+	return pointer.For(store.NewPaginatedQueryOptions(store.AlertEventsFilters{}).
 		WithPageSize(pageSize)), nil
 }

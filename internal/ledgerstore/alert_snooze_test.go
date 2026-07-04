@@ -8,7 +8,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	recstore "github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -62,7 +62,7 @@ func TestSnoozeAlert_Resolved_NotFound(t *testing.T) {
 	expectFindByID(t, client, a, "1")
 
 	_, err := store.SnoozeAlert(context.Background(), a.ID, time.Now().Add(time.Hour), "ops", "")
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, recstore.ErrNotFound)
 }
 
 func TestUnsnoozeAlert_DeletesSnooze(t *testing.T) {

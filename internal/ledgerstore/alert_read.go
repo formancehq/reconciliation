@@ -9,14 +9,14 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 )
 
 // findAlertItem resolves an alert by its UUID to its item account via the
 // indexed `id` metadata field (the address is keyed by rule/period/fp, not the
 // UUID, so a metadata lookup is the only id→address path). Returns
-// storage.ErrNotFound when no item carries that id.
+// store.ErrNotFound when no item carries that id.
 func (s *LedgerStore) findAlertItem(ctx context.Context, id uuid.UUID) (*commonpb.Account, error) {
 	accts, err := s.client.QueryAccounts(ctx, s.controlLedger, schema.FilterAll(
 		schema.FilterAddressPrefix(schema.ItemPrefix()),
@@ -27,7 +27,7 @@ func (s *LedgerStore) findAlertItem(ctx context.Context, id uuid.UUID) (*commonp
 	}
 
 	if len(accts) == 0 {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 
 	// The id is a generated UUID stored one-per-item, so at most one matches.
@@ -69,7 +69,7 @@ func (s *LedgerStore) ListActiveAlertFingerprints(ctx context.Context, ruleID uu
 // ruleID / periodID → metadata; firstSeenAt / lastSeenAt → datetime range) are
 // translated to a ledger QueryFilter; the full matching set is fetched, ordered,
 // then offset-sliced (see pagination.go for the cost note).
-func (s *LedgerStore) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
+func (s *LedgerStore) ListAlerts(ctx context.Context, q store.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
 	filter, err := buildListFilter(schema.ItemPrefix(), q.Options.QueryBuilder, alertLeaf)
 	if err != nil {
 		return nil, err
@@ -94,10 +94,10 @@ func (s *LedgerStore) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) 
 
 	data, hasMore := paginateSlice(alerts, q.Offset, q.PageSize)
 
-	return offsetCursor(bunpaginate.OffsetPaginatedQuery[storage.PaginatedQueryOptions[storage.AlertsFilters]](q), data, hasMore), nil
+	return offsetCursor(bunpaginate.OffsetPaginatedQuery[store.PaginatedQueryOptions[store.AlertsFilters]](q), data, hasMore), nil
 }
 
-// GetAlert returns the alert by id, or storage.ErrNotFound.
+// GetAlert returns the alert by id, or store.ErrNotFound.
 func (s *LedgerStore) GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error) {
 	acct, err := s.findAlertItem(ctx, id)
 	if err != nil {

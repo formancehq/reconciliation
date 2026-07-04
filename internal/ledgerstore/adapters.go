@@ -6,7 +6,7 @@ import (
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 )
 
@@ -41,6 +41,6 @@ func (s *LedgerStore) CreateEvaluation(context.Context, *models.Evaluation) erro
 // operator paths do not depend on it.
 //
 // TODO(phase-3): back this with the `_recon` SAVED_METADATA stream / sink.
-func (s *LedgerStore) ListAlertEvents(context.Context, uuid.UUID, storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
+func (s *LedgerStore) ListAlertEvents(context.Context, uuid.UUID, store.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
 	return &bunpaginate.Cursor[models.AlertEvent]{Data: []models.AlertEvent{}}, nil
 }

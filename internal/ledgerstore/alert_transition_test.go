@@ -9,7 +9,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	recstore "github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -98,7 +98,7 @@ func TestAckAlert_Resolved_NotFound(t *testing.T) {
 	expectFindByID(t, client, a, "1")
 
 	_, err := store.AckAlert(context.Background(), a.ID, &models.Ack{By: "ops", At: time.Now().UTC()})
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, recstore.ErrNotFound)
 }
 
 func TestResolveAlertManual_ClearsSnooze(t *testing.T) {
@@ -146,7 +146,7 @@ func TestResolveAlertManual_AlreadyResolved_NotFound(t *testing.T) {
 
 	_, err := store.ResolveAlertManual(context.Background(), a.ID,
 		&models.Resolution{Kind: models.ResolutionFixedByBooking, By: "ops", At: time.Now().UTC()})
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, recstore.ErrNotFound)
 }
 
 func TestResolveAlertManual_RejectsWrongKind(t *testing.T) {

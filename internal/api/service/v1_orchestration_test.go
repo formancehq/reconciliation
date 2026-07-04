@@ -12,7 +12,7 @@ import (
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
 )
@@ -70,22 +70,22 @@ func (f *fakeV1Store) CreateRule(_ context.Context, r *models.Rule) error {
 func (f *fakeV1Store) GetRule(_ context.Context, id uuid.UUID) (*models.Rule, error) {
 	r, ok := f.rules[id]
 	if !ok {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 	copy := *r
 	return &copy, nil
 }
 func (f *fakeV1Store) DeleteRule(_ context.Context, id uuid.UUID) error {
 	if _, ok := f.rules[id]; !ok {
-		return storage.ErrNotFound
+		return store.ErrNotFound
 	}
 	delete(f.rules, id)
 	return nil
 }
-func (f *fakeV1Store) PatchRule(_ context.Context, id uuid.UUID, p storage.RulePatch) error {
+func (f *fakeV1Store) PatchRule(_ context.Context, id uuid.UUID, p store.RulePatch) error {
 	r, ok := f.rules[id]
 	if !ok {
-		return storage.ErrNotFound
+		return store.ErrNotFound
 	}
 	if p.Name != nil {
 		r.Name = *p.Name
@@ -105,7 +105,7 @@ func (f *fakeV1Store) PatchRule(_ context.Context, id uuid.UUID, p storage.RuleP
 	r.UpdatedAt = time.Now().UTC()
 	return nil
 }
-func (f *fakeV1Store) ListRules(context.Context, storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+func (f *fakeV1Store) ListRules(context.Context, store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
 	return nil, nil
 }
 
@@ -122,7 +122,7 @@ func (f *fakeV1Store) CreateEvaluation(_ context.Context, ev *models.Evaluation)
 	return nil
 }
 
-// recordEvent is the fake's mirror of storage.appendAlertEvent. Centralised so
+// recordEvent is the fake's mirror of store.appendAlertEvent. Centralised so
 // every transition writes the same shape and the test surface for events stays
 // honest.
 func (f *fakeV1Store) recordEvent(alertID uuid.UUID, t models.AlertEventType, prev *models.AlertStatus, next models.AlertStatus, evalID *uuid.UUID, payload json.RawMessage, at time.Time) *models.AlertEvent {
@@ -145,7 +145,7 @@ func (f *fakeV1Store) recordEvent(alertID uuid.UUID, t models.AlertEventType, pr
 }
 
 // Alert — the load-bearing part of the orchestration tests.
-func (f *fakeV1Store) OpenOrUpdateAlert(_ context.Context, in storage.OpenAlertInput) (*storage.OpenAlertResult, error) {
+func (f *fakeV1Store) OpenOrUpdateAlert(_ context.Context, in store.OpenAlertInput) (*store.OpenAlertResult, error) {
 	if in.OccurredAt.IsZero() {
 		in.OccurredAt = time.Now().UTC()
 	}
@@ -171,7 +171,7 @@ func (f *fakeV1Store) OpenOrUpdateAlert(_ context.Context, in storage.OpenAlertI
 		}
 		event := f.recordEvent(alert.ID, models.AlertEventFail, &prev, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt)
 		copy := *alert
-		return &storage.OpenAlertResult{Alert: &copy, Event: event, Created: false, Reopened: reopened}, nil
+		return &store.OpenAlertResult{Alert: &copy, Event: event, Created: false, Reopened: reopened}, nil
 	}
 
 	fresh := &models.Alert{
@@ -194,7 +194,7 @@ func (f *fakeV1Store) OpenOrUpdateAlert(_ context.Context, in storage.OpenAlertI
 	f.byFP[key] = fresh.ID
 	event := f.recordEvent(fresh.ID, models.AlertEventFail, nil, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt)
 	copy := *fresh
-	return &storage.OpenAlertResult{Alert: &copy, Event: event, Created: true}, nil
+	return &store.OpenAlertResult{Alert: &copy, Event: event, Created: true}, nil
 }
 
 func (f *fakeV1Store) AutoResolveAlert(_ context.Context, ruleID uuid.UUID, fingerprint, periodID string, evID uuid.UUID, at time.Time) (*models.Alert, error) {
@@ -224,10 +224,10 @@ func (f *fakeV1Store) AutoResolveAlert(_ context.Context, ruleID uuid.UUID, fing
 func (f *fakeV1Store) AckAlert(_ context.Context, id uuid.UUID, ack *models.Ack) (*models.Alert, error) {
 	alert, ok := f.alerts[id]
 	if !ok {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 	if alert.Status == models.AlertResolved {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 	if alert.Status == models.AlertAcknowledged {
 		copy := *alert
@@ -254,10 +254,10 @@ func (f *fakeV1Store) AcceptAlert(_ context.Context, id uuid.UUID, res *models.R
 func (f *fakeV1Store) applyFakeResolution(id uuid.UUID, res *models.Resolution, eventType models.AlertEventType) (*models.Alert, error) {
 	alert, ok := f.alerts[id]
 	if !ok {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 	if alert.Status == models.AlertResolved {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 	prev := alert.Status
 	alert.Status = models.AlertResolved
@@ -272,7 +272,7 @@ func (f *fakeV1Store) applyFakeResolution(id uuid.UUID, res *models.Resolution, 
 func (f *fakeV1Store) SnoozeAlert(_ context.Context, id uuid.UUID, until time.Time, by, note string) (*models.Alert, error) {
 	alert, ok := f.alerts[id]
 	if !ok || alert.Status == models.AlertResolved {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 	snooze := &models.Snooze{Until: until, By: by, At: time.Now().UTC(), Note: note}
 	alert.Snooze = snooze
@@ -286,7 +286,7 @@ func (f *fakeV1Store) SnoozeAlert(_ context.Context, id uuid.UUID, until time.Ti
 func (f *fakeV1Store) UnsnoozeAlert(_ context.Context, id uuid.UUID, by string) (*models.Alert, error) {
 	alert, ok := f.alerts[id]
 	if !ok {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 	if alert.Snooze == nil {
 		copy := *alert
@@ -303,16 +303,16 @@ func (f *fakeV1Store) UnsnoozeAlert(_ context.Context, id uuid.UUID, by string) 
 func (f *fakeV1Store) GetAlert(_ context.Context, id uuid.UUID) (*models.Alert, error) {
 	alert, ok := f.alerts[id]
 	if !ok {
-		return nil, storage.ErrNotFound
+		return nil, store.ErrNotFound
 	}
 	copy := *alert
 	return &copy, nil
 }
-func (f *fakeV1Store) ListAlerts(context.Context, storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
+func (f *fakeV1Store) ListAlerts(context.Context, store.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
 	return nil, nil
 }
 
-func (f *fakeV1Store) ListAlertEvents(_ context.Context, alertID uuid.UUID, _ storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
+func (f *fakeV1Store) ListAlertEvents(_ context.Context, alertID uuid.UUID, _ store.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
 	out := []models.AlertEvent{}
 	for _, e := range f.events {
 		if e.AlertID == alertID {

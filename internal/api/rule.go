@@ -12,7 +12,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/api/backend"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -98,7 +98,7 @@ func deleteRuleHandler(b backend.Backend) http.HandlerFunc {
 	}
 }
 
-// patchRuleRequest mirrors storage.RulePatch but uses JSON-friendly types so
+// patchRuleRequest mirrors store.RulePatch but uses JSON-friendly types so
 // the on-wire shape matches the rest of the API. Missing fields are left
 // unchanged; an explicit `null` is treated as "unset" only for pointers.
 type patchRuleRequest struct {
@@ -124,7 +124,7 @@ func patchRuleHandler(b backend.Backend) http.HandlerFunc {
 			api.BadRequest(w, ErrMissingOrInvalidBody, err)
 			return
 		}
-		patch := storage.RulePatch{
+		patch := store.RulePatch{
 			Name:          req.Name,
 			TemplateKind:  req.TemplateKind,
 			TemplateSpec:  req.TemplateSpec,
@@ -151,7 +151,7 @@ func patchRuleHandler(b backend.Backend) http.HandlerFunc {
 
 func listRulesHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		q := storage.GetRulesQuery{}
+		q := store.GetRulesQuery{}
 		if r.URL.Query().Get(QueryKeyCursor) != "" {
 			if err := bunpaginate.UnmarshalCursor(r.URL.Query().Get(QueryKeyCursor), &q); err != nil {
 				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param", QueryKeyCursor))
@@ -163,7 +163,7 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 				api.BadRequest(w, ErrValidation, err)
 				return
 			}
-			q = storage.NewGetRulesQuery(*options)
+			q = store.NewGetRulesQuery(*options)
 		}
 		cursor, err := b.GetService().ListRules(r.Context(), q)
 		if err != nil {

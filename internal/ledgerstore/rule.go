@@ -10,7 +10,7 @@ import (
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,20 +35,20 @@ func (s *LedgerStore) CreateRule(ctx context.Context, r *models.Rule) error {
 	return nil
 }
 
-// GetRule reads a rule by ID. Returns storage.ErrNotFound if it has no metadata
+// GetRule reads a rule by ID. Returns store.ErrNotFound if it has no metadata
 // (never created) or the ledger reports the account as missing.
 func (s *LedgerStore) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error) {
 	acct, err := s.client.GetAccount(ctx, s.controlLedger, schema.RuleAccount(id.String()), 0)
 	if err != nil {
 		if isNotFound(err) {
-			return nil, fmt.Errorf("get rule %s: %w", id, storage.ErrNotFound)
+			return nil, fmt.Errorf("get rule %s: %w", id, store.ErrNotFound)
 		}
 
 		return nil, fmt.Errorf("get rule %s: %w", id, err)
 	}
 
 	if len(acct.GetMetadata()) == 0 {
-		return nil, fmt.Errorf("get rule %s: %w", id, storage.ErrNotFound)
+		return nil, fmt.Errorf("get rule %s: %w", id, store.ErrNotFound)
 	}
 
 	rule, err := ruleFromAccount(acct)
@@ -60,9 +60,9 @@ func (s *LedgerStore) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, 
 }
 
 // PatchRule applies a partial update (read-modify-write). Returns
-// storage.ErrNotFound if the rule is gone. Removed labels are deleted so a
+// store.ErrNotFound if the rule is gone. Removed labels are deleted so a
 // label map replacement does not leave stale `label.*` keys behind.
-func (s *LedgerStore) PatchRule(ctx context.Context, id uuid.UUID, patch storage.RulePatch) error {
+func (s *LedgerStore) PatchRule(ctx context.Context, id uuid.UUID, patch store.RulePatch) error {
 	rule, err := s.GetRule(ctx, id)
 	if err != nil {
 		return err // already wrapped (incl. ErrNotFound)
@@ -93,12 +93,12 @@ func (s *LedgerStore) PatchRule(ctx context.Context, id uuid.UUID, patch storage
 }
 
 // DeleteRule removes a rule by clearing all its account metadata. Returns
-// storage.ErrNotFound if the rule does not exist.
+// store.ErrNotFound if the rule does not exist.
 func (s *LedgerStore) DeleteRule(ctx context.Context, id uuid.UUID) error {
 	acct, err := s.client.GetAccount(ctx, s.controlLedger, schema.RuleAccount(id.String()), 0)
 	if err != nil {
 		if isNotFound(err) {
-			return fmt.Errorf("delete rule %s: %w", id, storage.ErrNotFound)
+			return fmt.Errorf("delete rule %s: %w", id, store.ErrNotFound)
 		}
 
 		return fmt.Errorf("delete rule %s: %w", id, err)
@@ -110,7 +110,7 @@ func (s *LedgerStore) DeleteRule(ctx context.Context, id uuid.UUID) error {
 	}
 
 	if len(keys) == 0 {
-		return fmt.Errorf("delete rule %s: %w", id, storage.ErrNotFound)
+		return fmt.Errorf("delete rule %s: %w", id, store.ErrNotFound)
 	}
 
 	if err := s.client.DeleteAccountMetadata(ctx, s.controlLedger, schema.RuleAccount(id.String()), keys...); err != nil {
@@ -125,7 +125,7 @@ func (s *LedgerStore) DeleteRule(ctx context.Context, id uuid.UUID) error {
 // templateKind / enabled → metadata; createdAt / updatedAt → datetime range) are
 // translated to a ledger QueryFilter; the full matching set is fetched, ordered,
 // then offset-sliced (see pagination.go for the cost note).
-func (s *LedgerStore) ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+func (s *LedgerStore) ListRules(ctx context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
 	filter, err := buildListFilter(schema.RulePrefix(), q.Options.QueryBuilder, ruleLeaf)
 	if err != nil {
 		return nil, err
@@ -150,11 +150,11 @@ func (s *LedgerStore) ListRules(ctx context.Context, q storage.GetRulesQuery) (*
 
 	data, hasMore := paginateSlice(rules, q.Offset, q.PageSize)
 
-	return offsetCursor(bunpaginate.OffsetPaginatedQuery[storage.PaginatedQueryOptions[storage.RulesFilters]](q), data, hasMore), nil
+	return offsetCursor(bunpaginate.OffsetPaginatedQuery[store.PaginatedQueryOptions[store.RulesFilters]](q), data, hasMore), nil
 }
 
 // applyRulePatch mutates rule in place with the non-nil fields of patch.
-func applyRulePatch(rule *models.Rule, patch storage.RulePatch) {
+func applyRulePatch(rule *models.Rule, patch store.RulePatch) {
 	if patch.Name != nil {
 		rule.Name = *patch.Name
 	}

@@ -10,14 +10,14 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 )
 
 // AckAlert transitions OPEN → ACKNOWLEDGED with the supplied Ack metadata.
 // Idempotent: re-ack of an already-ACKNOWLEDGED alert returns it UNCHANGED and
 // writes nothing — the original ack (who/when/why) is the audit trail. Rejects a
-// RESOLVED alert with storage.ErrNotFound (matches the Postgres store).
+// RESOLVED alert with store.ErrNotFound (matches the Postgres store).
 func (s *LedgerStore) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (*models.Alert, error) {
 	alert, fpHash, err := s.loadAlertForTransition(ctx, id)
 	if err != nil {
@@ -26,7 +26,7 @@ func (s *LedgerStore) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ac
 
 	switch alert.Status {
 	case models.AlertResolved:
-		return nil, fmt.Errorf("ack alert %s: %w", id, storage.ErrNotFound)
+		return nil, fmt.Errorf("ack alert %s: %w", id, store.ErrNotFound)
 	case models.AlertAcknowledged:
 		return alert, nil // idempotent no-op, preserve the original ack
 	}
@@ -83,7 +83,7 @@ func (s *LedgerStore) resolve(ctx context.Context, id uuid.UUID, resolution *mod
 	}
 
 	if alert.Status == models.AlertResolved {
-		return nil, fmt.Errorf("%s alert %s: %w", action, id, storage.ErrNotFound)
+		return nil, fmt.Errorf("%s alert %s: %w", action, id, store.ErrNotFound)
 	}
 
 	from := statusToState(alert.Status)
