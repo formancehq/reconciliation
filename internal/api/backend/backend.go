@@ -21,10 +21,6 @@ type Service interface {
 	DeleteRule(ctx context.Context, id uuid.UUID) error
 	EvaluateRule(ctx context.Context, id uuid.UUID, req service.EvaluateRuleRequest) (*models.Evaluation, error)
 
-	// V1 — Evaluation
-	GetEvaluation(ctx context.Context, id uuid.UUID) (*models.Evaluation, error)
-	ListEvaluations(ctx context.Context, q storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error)
-
 	// V1 — Alert
 	GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error)
 	ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error)

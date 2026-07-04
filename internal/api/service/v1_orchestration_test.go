@@ -121,17 +121,6 @@ func (f *fakeV1Store) CreateEvaluation(_ context.Context, ev *models.Evaluation)
 	f.evaluations[ev.ID] = &copy
 	return nil
 }
-func (f *fakeV1Store) GetEvaluation(_ context.Context, id uuid.UUID) (*models.Evaluation, error) {
-	ev, ok := f.evaluations[id]
-	if !ok {
-		return nil, storage.ErrNotFound
-	}
-	copy := *ev
-	return &copy, nil
-}
-func (f *fakeV1Store) ListEvaluations(context.Context, storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error) {
-	return nil, nil
-}
 
 // recordEvent is the fake's mirror of storage.appendAlertEvent. Centralised so
 // every transition writes the same shape and the test surface for events stays

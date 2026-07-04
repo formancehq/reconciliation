@@ -355,27 +355,6 @@ func TestListAlertEvents_Nominal(t *testing.T) {
 	require.False(t, got.Cursor.Data[1].IsReopen)
 }
 
-// --- Evaluation handler tests -----------------------------------------------
-
-func TestGetEvaluation_Nominal(t *testing.T) {
-	t.Parallel()
-	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
-
-	id := uuid.New()
-	resp := &models.Evaluation{ID: id, RuleID: uuid.New(), Result: models.EvaluationFail, StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()}
-	mockSvc.EXPECT().GetEvaluation(gomock.Any(), id).Return(resp, nil)
-
-	r := httptest.NewRequest(http.MethodGet, "/evaluations/"+id.String(), nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, r)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	var got sharedapi.BaseResponse[evaluationResponse]
-	sharedapi.Decode(t, rec.Body, &got)
-	require.Equal(t, string(models.EvaluationFail), got.Data.Result)
-}
-
 // --- List handlers ----------------------------------------------------------
 
 func TestListRules_Nominal(t *testing.T) {
@@ -415,26 +394,6 @@ func TestListRules_InvalidPageSize(t *testing.T) {
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestListEvaluations_Nominal(t *testing.T) {
-	t.Parallel()
-	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
-
-	cursor := &bunpaginate.Cursor[models.Evaluation]{
-		PageSize: 15,
-		Data: []models.Evaluation{
-			{ID: uuid.New(), RuleID: uuid.New(), Result: models.EvaluationFail, StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
-		},
-	}
-	mockSvc.EXPECT().ListEvaluations(gomock.Any(), gomock.Any()).Return(cursor, nil)
-
-	r := httptest.NewRequest(http.MethodGet, "/evaluations", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, r)
-
-	require.Equal(t, http.StatusOK, rec.Code)
 }
 
 func TestListAlerts_Nominal(t *testing.T) {

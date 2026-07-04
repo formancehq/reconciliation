@@ -134,21 +134,6 @@ func (mr *MockServiceMockRecorder) GetAlert(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAlert", reflect.TypeOf((*MockService)(nil).GetAlert), ctx, id)
 }
 
-// GetEvaluation mocks base method.
-func (m *MockService) GetEvaluation(ctx context.Context, id uuid.UUID) (*models.Evaluation, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetEvaluation", ctx, id)
-	ret0, _ := ret[0].(*models.Evaluation)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetEvaluation indicates an expected call of GetEvaluation.
-func (mr *MockServiceMockRecorder) GetEvaluation(ctx, id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEvaluation", reflect.TypeOf((*MockService)(nil).GetEvaluation), ctx, id)
-}
-
 // GetRule mocks base method.
 func (m *MockService) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error) {
 	m.ctrl.T.Helper()
@@ -192,21 +177,6 @@ func (m *MockService) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) 
 func (mr *MockServiceMockRecorder) ListAlerts(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAlerts", reflect.TypeOf((*MockService)(nil).ListAlerts), ctx, q)
-}
-
-// ListEvaluations mocks base method.
-func (m *MockService) ListEvaluations(ctx context.Context, q storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListEvaluations", ctx, q)
-	ret0, _ := ret[0].(*bunpaginate.Cursor[models.Evaluation])
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListEvaluations indicates an expected call of ListEvaluations.
-func (mr *MockServiceMockRecorder) ListEvaluations(ctx, q any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEvaluations", reflect.TypeOf((*MockService)(nil).ListEvaluations), ctx, q)
 }
 
 // ListRules mocks base method.

@@ -2,17 +2,9 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
-	"net/http"
 	"time"
 
-	"github.com/formancehq/go-libs/api"
-	"github.com/formancehq/go-libs/bun/bunpaginate"
-	"github.com/formancehq/reconciliation/internal/api/backend"
 	"github.com/formancehq/reconciliation/internal/models"
-	"github.com/formancehq/reconciliation/internal/storage"
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 type evaluationResponse struct {
@@ -40,46 +32,5 @@ func renderEvaluation(ev *models.Evaluation) *evaluationResponse {
 		Error:        ev.Error,
 		CostUnits:    ev.CostUnits,
 		CreatedAt:    ev.CreatedAt,
-	}
-}
-
-func getEvaluationHandler(b backend.Backend) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := uuid.Parse(chi.URLParam(r, "evaluationID"))
-		if err != nil {
-			api.BadRequest(w, ErrInvalidID, err)
-			return
-		}
-		ev, err := b.GetService().GetEvaluation(r.Context(), id)
-		if err != nil {
-			handleServiceErrors(w, r, err)
-			return
-		}
-		api.Ok(w, renderEvaluation(ev))
-	}
-}
-
-func listEvaluationsHandler(b backend.Backend) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		q := storage.GetEvaluationsQuery{}
-		if r.URL.Query().Get(QueryKeyCursor) != "" {
-			if err := bunpaginate.UnmarshalCursor(r.URL.Query().Get(QueryKeyCursor), &q); err != nil {
-				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param", QueryKeyCursor))
-				return
-			}
-		} else {
-			options, err := getPaginatedQueryOptionsEvaluations(r)
-			if err != nil {
-				api.BadRequest(w, ErrValidation, err)
-				return
-			}
-			q = storage.NewGetEvaluationsQuery(*options)
-		}
-		cursor, err := b.GetService().ListEvaluations(r.Context(), q)
-		if err != nil {
-			handleServiceErrors(w, r, err)
-			return
-		}
-		api.RenderCursor(w, *cursor)
 	}
 }

@@ -47,9 +47,6 @@ func newRouter(
 		r.Delete("/rules/{ruleID}", deleteRuleHandler(b))
 		r.Post("/rules/{ruleID}/evaluate", evaluateRuleHandler(b))
 
-		r.Get("/evaluations", listEvaluationsHandler(b))
-		r.Get("/evaluations/{evaluationID}", getEvaluationHandler(b))
-
 		r.Get("/alerts", listAlertsHandler(b))
 		r.Get("/alerts/{alertID}", getAlertHandler(b))
 		r.Get("/alerts/{alertID}/events", listAlertEventsHandler(b))

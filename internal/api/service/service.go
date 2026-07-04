@@ -27,10 +27,12 @@ type Store interface {
 	PatchRule(ctx context.Context, id uuid.UUID, patch storage.RulePatch) error
 	ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error)
 
-	// V1 — Evaluation
+	// V1 — Evaluation. Evaluations are not a durable, queryable entity
+	// (RFC §4.4.2): the run result is returned from EvaluateRule and its
+	// break evidence lives on the alert (Evidence + LastEvaluationID). There
+	// is no read surface. CreateEvaluation persists on Postgres today; the
+	// ledger-native store treats it as a no-op (step 6a-5).
 	CreateEvaluation(ctx context.Context, ev *models.Evaluation) error
-	GetEvaluation(ctx context.Context, id uuid.UUID) (*models.Evaluation, error)
-	ListEvaluations(ctx context.Context, q storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error)
 
 	// V1 — Alert
 	OpenOrUpdateAlert(ctx context.Context, in storage.OpenAlertInput) (*storage.OpenAlertResult, error)

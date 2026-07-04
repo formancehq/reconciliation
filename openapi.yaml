@@ -93,36 +93,6 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
-  /evaluations:
-    get:
-      summary: List evaluations
-      operationId: listEvaluations
-      tags: [reconciliation.v1]
-      parameters:
-        - $ref: '#/components/parameters/PageSize'
-        - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilder' }
-      responses:
-        '200': { $ref: '#/components/responses/Evaluations' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-
-  /evaluations/{evaluationID}:
-    get:
-      summary: Get an evaluation
-      operationId: getEvaluation
-      tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/EvaluationID' }]
-      responses:
-        '200': { $ref: '#/components/responses/Evaluation' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-
   /alerts:
     get:
       summary: List alerts
@@ -299,12 +269,6 @@ components:
       required: true
       description: The rule ID.
       schema: { type: string, format: uuid }
-    EvaluationID:
-      name: evaluationID
-      in: path
-      required: true
-      description: The evaluation ID.
-      schema: { type: string, format: uuid }
     AlertID:
       name: alertID
       in: path
@@ -341,11 +305,6 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/EvaluationResponse' }
-    Evaluations:
-      description: OK
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/EvaluationsCursorResponse' }
     Alert:
       description: OK
       content:
@@ -570,21 +529,6 @@ components:
       required: [data]
       properties:
         data: { $ref: '#/components/schemas/Evaluation' }
-    EvaluationsCursorResponse:
-      type: object
-      required: [cursor]
-      properties:
-        cursor:
-          type: object
-          required: [pageSize, hasMore, data]
-          properties:
-            pageSize: { type: integer, format: int64 }
-            hasMore: { type: boolean }
-            previous: { type: string }
-            next: { type: string }
-            data:
-              type: array
-              items: { $ref: '#/components/schemas/Evaluation' }
 
     Alert:
       type: object

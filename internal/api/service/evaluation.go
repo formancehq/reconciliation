@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
@@ -199,16 +198,6 @@ func driveAlerts(
 		}
 	}
 	return nil
-}
-
-// GetEvaluation is a passthrough.
-func (s *Service) GetEvaluation(ctx context.Context, id uuid.UUID) (*models.Evaluation, error) {
-	return s.store.GetEvaluation(ctx, id)
-}
-
-// ListEvaluations is a passthrough.
-func (s *Service) ListEvaluations(ctx context.Context, q storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error) {
-	return s.store.ListEvaluations(ctx, q)
 }
 
 // openEngineErrorAlert opens (or updates / reopens, if recurring) the
