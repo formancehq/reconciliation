@@ -8,7 +8,6 @@ import (
 
 	"github.com/formancehq/go-libs/aws/iam"
 
-	"github.com/formancehq/go-libs/bun/bunconnect"
 	"github.com/formancehq/go-libs/licence"
 
 	sdk "github.com/formancehq/formance-sdk-go/v3"
@@ -23,7 +22,6 @@ import (
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/formancehq/reconciliation/internal/api"
 	"github.com/formancehq/reconciliation/internal/scheduler"
-	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
 	"golang.org/x/oauth2"
@@ -72,7 +70,7 @@ func newServeCommand(version string) *cobra.Command {
 	otlpmetrics.AddFlags(cmd.Flags())
 	otlptraces.AddFlags(cmd.Flags())
 	auth.AddFlags(cmd.Flags())
-	bunconnect.AddFlags(cmd.Flags())
+	addLedgerFlags(cmd.Flags())
 	iam.AddFlags(cmd.Flags())
 	service.AddFlags(cmd.Flags())
 	licence.AddFlags(cmd.Flags())
@@ -84,15 +82,9 @@ func newServeCommand(version string) *cobra.Command {
 
 func runServer(version string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		databaseOptions, err := prepareDatabaseOptions(cmd)
-		if err != nil {
-			return err
-		}
-
 		options := make([]fx.Option, 0)
-		options = append(options, databaseOptions)
-
 		options = append(options,
+			ledgerClientModule(cmd),
 			otlptraces.FXModuleFromFlags(cmd),
 			otlpmetrics.FXModuleFromFlags(cmd),
 			auth.FXModuleFromFlags(cmd),
@@ -114,13 +106,4 @@ func runServer(version string) func(cmd *cobra.Command, args []string) error {
 
 		return service.New(cmd.OutOrStdout(), options...).Run(cmd)
 	}
-}
-
-func prepareDatabaseOptions(cmd *cobra.Command) (fx.Option, error) {
-	connectionOptions, err := bunconnect.ConnectionOptionsFromFlags(cmd)
-	if err != nil {
-		return nil, err
-	}
-
-	return storage.Module(*connectionOptions, service.IsDebug(cmd)), nil
 }

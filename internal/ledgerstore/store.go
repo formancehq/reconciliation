@@ -1,7 +1,7 @@
-// Package ledgerstore implements reconciliation's V1 storage surface (rules,
-// alerts, evaluations) on a Ledger v3 control-ledger, as an alternative to the
-// PostgreSQL store. During the migration it is composed with the Postgres store
-// (legacy /policies methods stay on Postgres); see
+// Package ledgerstore implements reconciliation's storage surface (rules,
+// alerts) on a Ledger v3 control-ledger (`_recon`) — the sole Store, replacing
+// PostgreSQL. Evaluations are non-durable (CreateEvaluation is a no-op) and
+// alert-event history is deferred to a ledger event sink (adapters.go); see
 // docs/drafts/rfc-ledger-native-storage.md.
 package ledgerstore
 

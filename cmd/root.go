@@ -18,6 +18,20 @@ const (
 	stackClientIDFlag     = "stack-client-id"
 	stackClientSecretFlag = "stack-client-secret"
 	listenFlag            = "listen"
+
+	// Control-ledger storage (ledger-native — replaces Postgres). The transport
+	// refuses an insecure connection unless --ledger-insecure is set (F2).
+	ledgerAddressFlag       = "ledger-grpc-address"
+	ledgerControlNameFlag   = "ledger-control-name"
+	ledgerAuthKeyIDFlag     = "ledger-auth-key-id"
+	ledgerAuthKeyFileFlag   = "ledger-auth-key-file"
+	ledgerAuthSubjectFlag   = "ledger-auth-subject"
+	ledgerTLSCAFlag         = "ledger-tls-ca-file"
+	ledgerTLSCertFlag       = "ledger-tls-cert-file"
+	ledgerTLSKeyFlag        = "ledger-tls-key-file"
+	ledgerTLSServerNameFlag = "ledger-tls-server-name"
+	ledgerTLSSkipVerifyFlag = "ledger-tls-insecure-skip-verify"
+	ledgerInsecureFlag      = "ledger-insecure"
 )
 
 func NewRootCommand() *cobra.Command {
