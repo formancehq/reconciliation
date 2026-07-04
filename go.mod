@@ -9,6 +9,7 @@ require (
 	github.com/formancehq/go-libs/v3 v3.3.0
 	github.com/formancehq/go-libs/v5 v5.6.1
 	github.com/go-chi/chi/v5 v5.2.5
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/google/cel-go v0.28.1
 	github.com/google/uuid v1.6.0
 	github.com/holiman/uint256 v1.3.2
@@ -87,7 +88,6 @@ require (
 	github.com/getkin/kin-openapi v0.134.0 // indirect
 	github.com/go-chi/chi v4.1.2+incompatible // indirect
 	github.com/go-chi/render v1.0.3 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
