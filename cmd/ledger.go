@@ -39,6 +39,25 @@ func addLedgerFlags(flags *pflag.FlagSet) {
 	flags.String(ledgerTLSServerNameFlag, "", "Override the TLS server name for the ledger handshake")
 	flags.Bool(ledgerTLSSkipVerifyFlag, false, "Disable ledger TLS certificate verification (dev only)")
 	flags.Bool(ledgerInsecureFlag, false, "Allow a plaintext, unauthenticated ledger connection (local/dev only)")
+	flags.String(eventsSinkURLFlag, "", "HTTP webhook URL for the ledger events sink (alert transition delivery); empty disables the sink")
+	flags.String(eventsSinkSecretFlag, "", "Optional HMAC-SHA256 secret for the events sink X-Webhook-Signature header")
+}
+
+// reconciliationEventsSinkName is the stable name of the webhook sink recon
+// provisions. Per-sink cursor/status key off the name, so it must be constant
+// across boots (AddEventsSink is add-or-update).
+const reconciliationEventsSinkName = "reconciliation"
+
+// reconciliationSinkEventTypes are the ledger event types that carry alert
+// transitions: lifecycle moves (open/ack/resolve/accept/auto-resolve) are
+// COMMITTED_TRANSACTION (marker move + account_metadata), snooze/unsnooze are
+// SAVED_METADATA/DELETED_METADATA. Consumers filter on event.ledger == control.
+func reconciliationSinkEventTypes() []commonpb.EventType {
+	return []commonpb.EventType{
+		commonpb.EventType_COMMITTED_TRANSACTION,
+		commonpb.EventType_SAVED_METADATA,
+		commonpb.EventType_DELETED_METADATA,
+	}
 }
 
 // ledgerClientModule wires the ledger gRPC client (secure transport per F2),
@@ -113,6 +132,22 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 						logger.Infof("checkpoint reaper: %s (continuing)", err)
 					} else if n > 0 {
 						logger.Infof("checkpoint reaper: released %d orphaned checkpoint(s)", n)
+					}
+
+					// Register the alert-transition delivery sink (RFC §4.4), when
+					// configured. Idempotent add-or-update; the sink delivers the
+					// self-describing transition events (ED-1) to the webhook.
+					if url := flagStr(cmd, eventsSinkURLFlag); url != "" {
+						if err := client.AddEventsSink(ctx, ledger.EventSinkConfig{
+							Name:       reconciliationEventsSinkName,
+							Endpoint:   url,
+							Secret:     flagStr(cmd, eventsSinkSecretFlag),
+							EventTypes: reconciliationSinkEventTypes(),
+						}); err != nil {
+							return err // a misconfigured sink should fail boot loudly
+						}
+
+						logger.Infof("events sink %q → %s registered", reconciliationEventsSinkName, url)
 					}
 
 					return nil

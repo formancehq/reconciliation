@@ -31,6 +31,11 @@ const (
 	ledgerTLSServerNameFlag = "ledger-tls-server-name"
 	ledgerTLSSkipVerifyFlag = "ledger-tls-insecure-skip-verify"
 	ledgerInsecureFlag      = "ledger-insecure"
+
+	// Event delivery (RFC §4.4): the ledger's HTTP webhook sink delivers alert
+	// transition events; reconciliation runs no message bus. Unset URL → no sink.
+	eventsSinkURLFlag    = "events-sink-url"
+	eventsSinkSecretFlag = "events-sink-secret"
 )
 
 func NewRootCommand() *cobra.Command {
