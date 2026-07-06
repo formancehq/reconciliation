@@ -46,13 +46,22 @@ Tier-2 ledger path nothing constructs — dropped as YAGNI (re-introduce A at §
   `ReapOrphanedCheckpoints` (age-thresholded 15m ≫ 30s MaxWallClock, so never reaps a live checkpoint even
   another instance's) runs at startup in the provisioner OnStart. it-test `TestIntegration_ReapOrphanedCheckpoints`.
 
-**Next: Phase 2+ (post-Phase-1).** The original Phase 2 ("flip reads, Postgres as shadow") / Phase 3
-("drop Postgres") framing was **absorbed by the 6a Postgres-free pivot** — those are already done. What
-remains from the RFC: the **alert-event sink** (`ListAlertEvents` returns empty today; history rides a
-`_recon` `SAVED_METADATA` stream — RFC §4.4, deferred at 6a), the **webhook/event delivery** gap (dropped
-at 6a-5a), and semantic events / replay (Phase 4). Also open: checkpoint **anchor persistence** for
-replay-reproducibility (needs retained/scheduled checkpoints, §7) — not needed while break evidence is the
-durable audit (§8). A dedicated PR off `main` should follow (rebase after PR #83).
+**Post-Phase-1: Event delivery (in progress).** The original Phase 2/3 (Postgres) framing was absorbed by
+the 6a pivot. Current workstream = deliver alert events without a recon-owned message bus (RFC §4.4):
+owner chose **"delivery now, history deferred" (2026-07-06)**. Key mechanic: most transitions are
+`CreateTransaction` batches (marker move + `account_metadata`) → `COMMITTED_TRANSACTION` events; only
+snooze/unsnooze are `SAVED_METADATA`/`DELETED_METADATA` — the sink must cover all three.
+- **ED-1 ✅ (`07a0bd5`)** — self-describing `last_transition` envelope stamped on every transition so each
+  log event says what happened. `Client.ApplyMetadata` (atomic set+delete) added for unsnooze.
+- **ED-2 ⬜ next** — `Client.AddEventsSink` + provision an idempotent HTTP webhook sink at boot
+  (`event_types=[COMMITTED_TRANSACTION,SAVED_METADATA,DELETED_METADATA]`, target via `--events-sink-url`),
+  replacing the publisher dropped at 6a-5a. `GetEventsSinks` verifies. `ListAlertEvents` stays empty.
+- **Deferred (Phase 4):** `ListAlertEvents` paginated history needs a **queryable sink** (ClickHouse/
+  Databricks — the ledger log has no account filter, so per-request replay is O(all _recon writes));
+  semantic event types + replay API; checkpoint **anchor persistence** (needs retained/scheduled
+  checkpoints, §7 — not needed while break evidence is the durable audit, §8).
+
+A dedicated PR off `main` should follow (rebase after PR #83).
 
 **Watch:** open findings F1/F8/F17/F22/F23/F25/F27/F31/**F32** (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b, **F26 @ 6b-3**; F32 mitigated in-recon @ 6b-2, upstream ledger follow-up recommended; details below). **Don't touch:**
 `feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
@@ -102,9 +111,11 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | 6b-2 | ↳ interface flip `pit`→`checkpointID` + `EvalInput.CheckpointID` + per-source read + `internal/ledgerresolver` adapter + rewire + service checkpoint acquisition + **F32 readiness wait** | ✅ done · reviewed | `15639d8` |
 | 1 | 6b-2b | ↳ remove inert `SafetyMargin` from request/schedule/API + OpenAPI | ✅ done · reviewed | `4bc73be` |
 | 1 | 6b-3 | ↳ checkpoint reaper for crash orphans — control-ledger registry + age-thresholded startup reap (F26 resolved) | ✅ done · reviewed | `4fb1ad0` |
-| 2 | — | Flip reads to the ledger; Postgres as shadow | ⬜ todo | — |
-| 3 | — | Drop Postgres + own message bus (ledger event sink) | ⬜ todo | — |
-| 4 | — | Semantic events / replay (generic event-log) | ⬜ todo | — |
+| 2/3 | — | ~~Flip reads / Postgres shadow / drop Postgres~~ — **absorbed by the 6a Postgres-free pivot** (already done) | ✅ absorbed | — |
+| **ED** | — | **Event delivery** (RFC §4.4) — self-describing transitions + ledger event sink; "delivery now, history deferred" (owner, 2026-07-06) | 🚧 in progress | — |
+| ED | ED-1 | ↳ self-describing `last_transition` envelope stamped on every alert transition (+ `Client.ApplyMetadata` atomic set+delete) | ✅ done · reviewed | `07a0bd5` |
+| ED | ED-2 | ↳ provision the ledger `AddEventsSink` (HTTP webhook, `event_types=[COMMITTED_TRANSACTION,SAVED_METADATA,DELETED_METADATA]`) at boot | ⬜ todo | — |
+| 4 | — | `ListAlertEvents` (queryable history via a ClickHouse/Databricks sink) + semantic events / replay (generic event-log) | ⬜ deferred | — |
 
 Docs baseline commit: `c54dc4d` (RFC + ADR-002 rewrite).
 
@@ -739,6 +750,31 @@ Conventional commit; not on `main`; no OpenAPI change.
 |---|---|---|---|
 | F26 | — | **Resolved.** Cancellation-surviving Release (6b-2) + startup age-thresholded reaper (6b-3). | ✅ resolved |
 | — | LOW | Reaper is **startup-only** — orphans clean on the next boot (aligns with crash→restart under an orchestrator). A long-lived instance that never restarts won't reap its own orphans until it does; acceptable since deferred Release covers the common path. A periodic reaper can be added if needed. | ⬜ noted |
+
+### Event delivery step ED-1 — self-describing alert transition events (SDLC review, 2026-07-06)
+
+First post-Phase-1 step (RFC §4.4, "delivery now"). Stamps a `last_transition` envelope
+(`{type: reconciliation.alert.<t>, subject, alertID, prevStatus, newStatus, occurredAt, correlationID,
+payload}`) into `alert:item` metadata on every transition, so each ledger log entry for that write is
+self-describing for an event-sink consumer — `COMMITTED_TRANSACTION` for lifecycle moves (open/ack/
+resolve/accept/auto-resolve), `SAVED_METADATA`/`DELETED_METADATA` for snooze/unsnooze. Stamped at all 7
+write paths by adding the key to the existing atomic metadata write (zero extra round-trips). The key is
+**undeclared** (like `label.*`) → no chart change, no it control-ledger bump. `correlationID` = the
+evaluation id for eval-driven transitions (open/occurred/reopened/auto-resolved), empty for operator
+actions (ack/resolve/accept/snooze/unsnooze). Added **`Client.ApplyMetadata`** (atomic set+delete) so
+unsnooze records the transition (now attributing the actor `by`) and clears the snooze key in one batch;
+`SaveAccountMetadataValues` refactored to share the add-request builder.
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit (envelope shape +
+operator-vs-eval correlation; snooze/unsnooze mock expectations updated) + full it-suite incl.
+`TestIntegration_TransitionEventStamped` (opened→acknowledged envelopes on the live ledger); conventional
+commit; not on `main`; no chart/OpenAPI change; mock regenerated. No CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| — | LOW | `last_transition` is LWW — the account holds only the latest transition; full history is the log's ordered sequence of these writes (read via the sink), consistent with the deferred `ListAlertEvents`. | ✅ by design |
+| — | LOW | `occurred` covers both OPEN→OPEN (repeat) and ACK→OPEN (resurface); `prevStatus` disambiguates for consumers. | ✅ acceptable |
+| F17 | — | Envelope derives from occurrence/evidence state already in the batch, so it doesn't materially widen the content-sensitive-idempotency window. | ⬜ unchanged |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
