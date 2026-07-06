@@ -28,7 +28,7 @@ func TestRuleMetadataRoundTrip(t *testing.T) {
 		Enabled:       true,
 		Severity:      models.SeverityHigh,
 		Cadence:       models.CadenceContinuous,
-		Schedule:      &models.Schedule{Kind: models.ScheduleKind("cron"), Expr: "0 0 * * *", TZ: "UTC", SafetyMargin: 30 * time.Second},
+		Schedule:      &models.Schedule{Kind: models.ScheduleKind("cron"), Expr: "0 0 * * *", TZ: "UTC"},
 		Notifications: []string{"webhook-1", "email-ops"},
 		Labels:        map[string]string{"env": "prod", "team": "treasury"},
 		CreatedAt:     now,

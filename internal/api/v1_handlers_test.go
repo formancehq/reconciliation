@@ -150,39 +150,6 @@ func TestEvaluateRule_Nominal(t *testing.T) {
 	require.Equal(t, string(models.EvaluationPass), got.Data.Result)
 }
 
-func TestEvaluateRule_InvalidSafetyMargin(t *testing.T) {
-	t.Parallel()
-	b, _ := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
-
-	id := uuid.New()
-	body := []byte(`{"safetyMargin": "not-a-duration"}`)
-	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader(body))
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, r)
-
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestEvaluateRule_NegativeSafetyMargin a negative margin would push PIT into
-// the future, which is meaningless for reconciliation (always reads history,
-// never projections). Must be rejected at the boundary with 400.
-func TestEvaluateRule_NegativeSafetyMargin(t *testing.T) {
-	t.Parallel()
-	b, _ := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
-
-	id := uuid.New()
-	body := []byte(`{"safetyMargin": "-30s"}`)
-	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader(body))
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, r)
-
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	// `>=` is HTML-escaped inside the JSON body, so match on the prefix only.
-	require.Contains(t, rec.Body.String(), "safetyMargin must be")
-}
-
 // --- Alert handler tests -----------------------------------------------------
 
 func TestAckAlert_Nominal(t *testing.T) {

@@ -22,12 +22,8 @@ const checkpointReleaseTimeout = 10 * time.Second
 //   - PIT defaults to time.Now() when zero. It is the nominal instant used to
 //     derive the reconciliation period and as the Tier-2 (pool) audit timestamp;
 //     Tier-1 ledger reads are anchored on a query checkpoint (ADR-002), not PIT.
-//   - SafetyMargin is now inert: a query checkpoint is an atomic cut (no
-//     in-flight-commit race) and pools read latest, so nothing consumes it. The
-//     field is retained for wire compatibility pending removal in step 6b-2b.
 type EvaluateRuleRequest struct {
-	PIT          time.Time
-	SafetyMargin time.Duration
+	PIT time.Time
 }
 
 // EvaluateRule runs the template for the rule, persists an Evaluation row, and

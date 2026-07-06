@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -175,19 +174,11 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 }
 
 // evaluateRuleRequest is the API-shaped equivalent of service.EvaluateRuleRequest.
-// `at` defaults to "now". `safetyMargin` is honoured exactly (including "0s")
-// when supplied; defaultEvaluateSafetyMargin applies when the field is absent
-// from the JSON body.
+// `at` defaults to "now". (The former `safetyMargin` was removed with the
+// checkpoint flip — ledger reads anchor on a query checkpoint, not a shifted PIT.)
 type evaluateRuleRequest struct {
-	At           *time.Time `json:"at,omitempty"`
-	SafetyMargin string     `json:"safetyMargin,omitempty"` // Go duration string ("30s", "1m", "0s")
+	At *time.Time `json:"at,omitempty"`
 }
-
-// defaultEvaluateSafetyMargin is the value the API hands to the service when
-// the client omits safetyMargin entirely. Matches PRD §11 — the schedule's
-// safetyMargin field also defaults to 30s. Lives at the API boundary so a
-// caller that explicitly sets "0s" gets actual zero, not the production default.
-const defaultEvaluateSafetyMargin = 30 * time.Second
 
 func evaluateRuleHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -203,25 +194,9 @@ func evaluateRuleHandler(b backend.Backend) http.HandlerFunc {
 				return
 			}
 		}
-		svcReq := service.EvaluateRuleRequest{SafetyMargin: defaultEvaluateSafetyMargin}
+		var svcReq service.EvaluateRuleRequest
 		if req.At != nil {
 			svcReq.PIT = *req.At
-		}
-		if req.SafetyMargin != "" {
-			d, err := time.ParseDuration(req.SafetyMargin)
-			if err != nil {
-				api.BadRequest(w, ErrValidation, errors.New("invalid safetyMargin: "+err.Error()))
-				return
-			}
-			// A negative margin would push PIT into the future, which is
-			// nonsensical for reconciliation (we always read history, not
-			// projections). Reject at the boundary rather than silently
-			// honouring it inside the engine.
-			if d < 0 {
-				api.BadRequest(w, ErrValidation, errors.New("safetyMargin must be >= 0"))
-				return
-			}
-			svcReq.SafetyMargin = d // honour exact value, including 0
 		}
 		ev, err := b.GetService().EvaluateRule(r.Context(), id, svcReq)
 		if err != nil {

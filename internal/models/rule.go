@@ -108,58 +108,13 @@ const (
 )
 
 // Schedule controls when a rule is evaluated. Cron-specific fields are zero
-// for on_demand schedules; consumers should branch on Kind.
-//
-// SafetyMargin is `time.Duration` in Go but transits the wire as a Go duration
-// string ("30s", "1m"), matching the OpenAPI contract. Custom Marshal/Unmarshal
-// methods handle the translation; `json:"-"` keeps the default encoder from
-// leaking nanoseconds into the JSON output.
+// for on_demand schedules; consumers should branch on Kind. It marshals with
+// the default encoder — plain string fields, no custom logic (the former
+// SafetyMargin duration field was removed with the checkpoint flip, step 6b-2b).
 type Schedule struct {
-	Kind         ScheduleKind  `json:"kind"`
-	Expr         string        `json:"expr,omitempty"`
-	TZ           string        `json:"tz,omitempty"`
-	SafetyMargin time.Duration `json:"-"`
-}
-
-// scheduleWire is the on-the-wire representation: SafetyMargin is a string in
-// Go-duration format. Kept private — callers see the Schedule struct.
-type scheduleWire struct {
-	Kind         ScheduleKind `json:"kind"`
-	Expr         string       `json:"expr,omitempty"`
-	TZ           string       `json:"tz,omitempty"`
-	SafetyMargin string       `json:"safetyMargin,omitempty"`
-}
-
-func (s Schedule) MarshalJSON() ([]byte, error) {
-	w := scheduleWire{
-		Kind: s.Kind,
-		Expr: s.Expr,
-		TZ:   s.TZ,
-	}
-	if s.SafetyMargin != 0 {
-		w.SafetyMargin = s.SafetyMargin.String()
-	}
-	return json.Marshal(w)
-}
-
-func (s *Schedule) UnmarshalJSON(data []byte) error {
-	var w scheduleWire
-	if err := json.Unmarshal(data, &w); err != nil {
-		return err
-	}
-	s.Kind = w.Kind
-	s.Expr = w.Expr
-	s.TZ = w.TZ
-	if w.SafetyMargin == "" {
-		s.SafetyMargin = 0
-		return nil
-	}
-	d, err := time.ParseDuration(w.SafetyMargin)
-	if err != nil {
-		return fmt.Errorf("schedule.safetyMargin: %w", err)
-	}
-	s.SafetyMargin = d
-	return nil
+	Kind ScheduleKind `json:"kind"`
+	Expr string       `json:"expr,omitempty"`
+	TZ   string       `json:"tz,omitempty"`
 }
 
 // Rule is the customer-facing entity: a template + spec + schedule + delivery.

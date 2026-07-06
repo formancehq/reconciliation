@@ -379,7 +379,6 @@ components:
         kind: { type: string, enum: [on_demand, cron] }
         expr: { type: string, example: "*/15 * * * *" }
         tz: { type: string, example: "UTC" }
-        safetyMargin: { type: string, example: "30s", description: "Go duration string" }
     Ack:
       type: object
       required: [by, at]
@@ -500,7 +499,6 @@ components:
       type: object
       properties:
         at: { type: string, format: date-time, description: "PIT for the evaluation. Defaults to now." }
-        safetyMargin: { type: string, example: "30s", description: "Go duration string subtracted from `at`. Defaults to 30s." }
     Evaluation:
       type: object
       required: [id, ruleID, startedAt, endedAt, result, createdAt]
