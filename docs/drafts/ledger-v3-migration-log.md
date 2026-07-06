@@ -20,30 +20,34 @@ Legacy `/policies`+cash-pool gone, evaluations non-durable, alert-events deferre
 **finalized** — 4 account types (see §4.1.1/§4.1.2 + phase table). Scope rationale in "Step 6 — scope
 decisions" below; per-sub-step SDLC reviews follow. **Verified:** DB-less boot smoke + fresh it-tests.
 
-**In progress: step 6b (invasive, engine flip — absorbs 5b). Last Phase-1 piece. Fork DECIDED
-(2026-07-06): owner chose Option C** — flip the single `LedgerResolver` interface `pit`→`checkpointID`
-and retire the pit-based `SDKLedgerResolver`. Rationale: on a close re-read ADR-002 §6 literally
-prescribes the single-interface flip ("Tier-2 resolvers keep PIT/latest") — Phase 1 has **no live
-Tier-2 *ledger* source** (a cross-cluster ledger is §11 future); the only Tier-2 source is the payments
-pool, which already has its own `PaymentsResolver`. So the Tier-1/Tier-2 split *is* the existing
-`SourceKind` switch (ledger→checkpoint, pool→latest); A (two ledger interfaces) / B (`ReadAnchor` union)
-both preserved a Tier-2 ledger path nothing constructs — dropped as YAGNI (re-introduce A at §11).
+**Step 6b (invasive engine flip — absorbs 5b) — 6b-1 + 6b-2 DONE. Option C** (owner, 2026-07-06):
+flip the single `LedgerResolver` interface `pit`→`checkpointID`, retire the pit-based
+`SDKLedgerResolver`. Rationale: ADR-002 §6 literally prescribes the single-interface flip ("Tier-2
+resolvers keep PIT/latest") — Phase 1 has **no live Tier-2 *ledger* source** (cross-cluster ledger is
+§11 future); the only Tier-2 source is the payments pool, which already has its own `PaymentsResolver`.
+So the Tier-1/Tier-2 split *is* the existing `SourceKind` switch (ledger→checkpoint, pool→latest);
+A (two ledger interfaces) / B (`ReadAnchor` union) both preserved a Tier-2 ledger path nothing
+constructs — dropped as YAGNI (re-introduce A at §11).
 
 **6b sub-steps:**
 - **6b-1 ✅ done (`32e6bb0`)** — `CheckpointReader.ListAccounts` + streaming `Client.QueryAccountsFunc`
-  (budget-enforced mid-stream, returns engine-free `ledger.Account`). Mechanism-first, not yet wired.
-- **6b-2 ⬜ next (the flip, atomic)** — `engine.LedgerResolver` `pit`→`checkpointID` (both methods);
-  `EvalInput{CheckpointID, PIT}` (drop the now-dead SafetyMargin *subtraction* — checkpoint is atomic,
-  pool reads latest, so no consumer remains); `resolveBalances`/templates read ledger @ checkpoint, pool
-  @ latest; `pitPerSource` becomes **Tier-2-only** (ledger↔ledger evals record the checkpointID, not a
-  PIT); retire `SDKLedgerResolver` + trim `engine.SDKClient` to the pool method; add adapter pkg
-  `internal/ledgerresolver` (wraps `CheckpointReader`, maps `ledger.Account`→`engine.Account`); rewire
-  `provideResolvers`; `EvaluateRule` pins ONE checkpoint per eval (`AcquireCheckpoint`→`Evaluate`→
-  `Release`, cancellation-surviving ctx — **F26**) + records the anchor on `alert:item` (`last_evaluation`),
-  **no Postgres migration** (Postgres is gone).
-- **6b-3 ⬜ todo** — reaper/ring for crash-orphaned checkpoints (**F26**).
+  (budget-enforced mid-stream, returns engine-free `ledger.Account`).
+- **6b-2 ✅ done (`15639d8`)** — the flip: `engine.LedgerResolver` `pit`→`checkpointID`;
+  `EvalInput{CheckpointID, PIT}` (SafetyMargin subtraction dropped); templates read ledger @ checkpoint,
+  pool @ latest; `pitPerSource` **Tier-2-only**; `SDKLedgerResolver` retired + `engine.SDKClient`
+  trimmed; new adapter `internal/ledgerresolver`; `EvaluateRule` pins ONE checkpoint per eval
+  (Acquire→Evaluate→Release, cancellation-surviving ctx — **F26**). **F32** found+fixed:
+  `AcquireCheckpoint` now waits for the async read-index to materialize (probe the control ledger)
+  before returning — else the first read races it and gets a non-retryable `Unknown`. End-to-end
+  it-test `TestIntegration_EvaluateAtCheckpoint` proves the flip on a live ledger.
+- **6b-2b ⬜ todo** — remove the now-inert `SafetyMargin` from the request/schedule model/API + OpenAPI
+  (wire-contract change, kept out of the kernel flip).
+- **6b-3 ⬜ todo** — reaper/ring for crash-orphaned checkpoints (**F26**). Also: no checkpoint *anchor*
+  persisted yet (fresh-per-eval + immediate Release ⇒ the id points at a deleted checkpoint; durable
+  break evidence is the audit per ADR-002 §8). Real replay-reproducibility needs retained/scheduled
+  checkpoints (§7) — a Phase-2+ concern.
 
-**Watch:** open findings F1/F8/F17/F22/F23/F25/F26/F27/F31 (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b; details below). **Don't touch:**
+**Watch:** open findings F1/F8/F17/F22/F23/F25/F26/F27/F31/**F32** (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b; F32 mitigated in-recon @ 6b-2, upstream ledger follow-up recommended; details below). **Don't touch:**
 `feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
 uncommitted `Justfile` change (orphaned `generate-ledger-proto`, leave unstaged); `ledger-local/`.
 **Build/test:** `export PATH=$PATH:$(go env GOPATH)/bin` then `GOROOT= go build ./...`,
@@ -88,8 +92,9 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | 6a-5b | ↳ delete dead Postgres code (storage impl, migrations, `RunInTx`, DB flags, `internal/events`) + extract shared types to `internal/store` (F16/F29/F30) | ✅ done · reviewed | `31c5ca6` |
 | 1 | **6b** | **engine flip** (`LedgerResolver` pit→checkpointID, Option C) + checkpoint acquisition (no migration) | 🚧 in progress | — |
 | 1 | 6b-1 | ↳ `CheckpointReader.ListAccounts` + streaming `Client.QueryAccountsFunc` (budget-enforced, engine-free `ledger.Account`) | ✅ done · reviewed | `32e6bb0` |
-| 1 | 6b-2 | ↳ interface flip + `EvalInput.CheckpointID` + per-source read + `internal/ledgerresolver` adapter + rewire + service checkpoint acquisition + anchor | ⬜ todo | — |
-| 1 | 6b-3 | ↳ reaper/ring for crash-orphaned checkpoints (F26) | ⬜ todo | — |
+| 1 | 6b-2 | ↳ interface flip `pit`→`checkpointID` + `EvalInput.CheckpointID` + per-source read + `internal/ledgerresolver` adapter + rewire + service checkpoint acquisition + **F32 readiness wait** | ✅ done · reviewed | `15639d8` |
+| 1 | 6b-2b | ↳ remove inert `SafetyMargin` from request/schedule/API + OpenAPI | ⬜ todo | — |
+| 1 | 6b-3 | ↳ reaper/ring for crash-orphaned checkpoints (F26) + checkpoint anchor when checkpoints are retained (§7) | ⬜ todo | — |
 | 2 | — | Flip reads to the ledger; Postgres as shadow | ⬜ todo | — |
 | 3 | — | Drop Postgres + own message bus (ledger event sink) | ⬜ todo | — |
 | 4 | — | Semantic events / replay (generic event-log) | ⬜ todo | — |
@@ -657,6 +662,37 @@ abort, write-after-checkpoint invisibility). No CRITICAL/HIGH/MEDIUM.
 |---|---|---|---|
 | — | LOW | `MetadataToMap` keeps only `StringValue`-typed metadata (bool/datetime dropped). Matches the SDK path + existing `ledgerstore` usage; data-ledger metadata filtering is server-side so the returned `Metadata` map is informational. | ✅ acceptable, noted |
 | F23 | — | **Partially mitigated** for the resolver read path (`ListAccounts` bounds memory to `limit+1` via `QueryAccountsFunc`). Public `ListRules`/`ListAlerts` still collect-all via `QueryAccounts` → F23 stays open there, but the streaming seam to fix it now exists. | ⬜ open (lists) |
+
+### Phase 1 step 6b-2 — engine flip to checkpoint-anchored reads (SDLC review, 2026-07-06)
+
+The invasive kernel flip (Option C). Data-ledger reads move from SDK+pit to the gRPC control-plane at a
+query checkpoint (ADR-002 §6): one checkpoint pinned per evaluation is a globally consistent cross-ledger
+cut, so a ledger↔ledger rule reads both sides skew-free.
+
+- **Engine:** `LedgerResolver.AggregateBalance`/`ListAccounts` `pit time.Time` → `checkpointID uint64`.
+  `EvalInput` is now `{CheckpointID, PIT}`; the SafetyMargin *subtraction* is gone (a checkpoint is an
+  atomic cut and pools read latest, so the PIT-race guard has no consumer left). `pitPerSource` is
+  **Tier-2-only** — ledger sources are anchored by the shared checkpoint, so a ledger↔ledger evaluation
+  records an empty map; only pool sources record a PIT (§10.1). `Source.PIT` removed (dead after flip).
+  `SDKLedgerResolver` retired; `engine.SDKClient` trimmed to the pool read (`SDKPaymentsResolver` stays).
+- **Adapter + wiring:** new leaf-bridge `internal/ledgerresolver` wraps `ledger.CheckpointReader` and
+  maps `ledger.Account`→`engine.Account`, keeping `internal/ledger` engine-free AND `internal/api/service`
+  ledger-free. `provideResolvers` backs `Ledger` with the checkpoint reader over `*ledger.Client`.
+  `EvaluateRule` pins ONE checkpoint per eval (Acquire→Evaluate→Release; Release on a
+  cancellation-surviving ctx so a cancelled/expired eval still frees the SST-pinning checkpoint — **F26**).
+  `service.Checkpointer` (acquire→release-func) abstracts it; the impl is wired in `cmd` (probe ledger =
+  control-ledger flag) so the service layer takes no `internal/ledger` dependency.
+- **Checks:** build/vet(+`-tags it`)/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit green
+  (engine/templates/api/service/ledgerresolver/ledger/ledgerstore/scheduler); full it-suite +
+  **end-to-end** `TestIntegration_EvaluateAtCheckpoint` (CreateRule → write two live data ledgers →
+  EvaluateRule at a real pinned checkpoint → PASS/no-alert, then imbalance → FAIL/alert; stable ×3);
+  DB-less boot smoke. Conventional commit; not on `main`; no OpenAPI change. Net −48 LOC. No CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F32 | MED | **Checkpoint read-index materializes asynchronously.** `CreateQueryCheckpoint` commits the id via Raft immediately, but the ledger's index-builder builds the checkpoint's (global) read index afterwards; a read in that ~100–130ms window fails with a **non-retryable gRPC `Unknown`** — the server logs "opening checkpoint read index … does not exist" but returns only "unknown server error", so the client cannot match+retry at the read site. Older it-tests passed on timing luck; the control-ledger's concurrent index backfill widens the window. **Fixed in recon:** `AcquireCheckpoint(ctx, probeLedger)` now probes the control ledger at the new checkpoint (bounded ~5s) until readable, then returns a usable snapshot (deletes it on timeout — no leak). Also observed server-side: "creating read index checkpoint N: link …sst: no such file" (SST compacted between snapshot+link) → index-builder retries and succeeds. **Proper fix is upstream** (ledger should return a retryable code, or block create until materialized) — recommend filing a ledger issue. | 🟡 mitigated in-recon; upstream follow-up |
+| — | LOW | `EvaluateRuleRequest.SafetyMargin` now inert (checkpoint atomic; pool latest) but still populated by API/scheduler. Accepted-but-ignored interim; wire/API/OpenAPI removal → **6b-2b**. | ⬜ 6b-2b |
+| — | LOW | Checkpoint **anchor not persisted**: fresh-per-eval + immediate Release ⇒ the `checkpointID` points at a deleted checkpoint, so recording it has little value; the durable break evidence (the numbers) is the audit (§8). Replay-reproducibility needs retained/scheduled checkpoints (§7) — Phase-2+/6b-3. | ⬜ noted |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
