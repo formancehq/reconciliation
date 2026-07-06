@@ -73,6 +73,21 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 			return ledgerstore.New(client, flagStr(cmd, ledgerControlNameFlag))
 		}),
 
+		// The evaluation checkpointer: acquire → release func over the ledger
+		// client (ADR-002 §6). It probes the control ledger to confirm the fresh
+		// checkpoint's read index is materialized before use (F32). Provided here,
+		// not in the api layer, because the probe ledger is the control-ledger flag.
+		fx.Provide(func(client *ledger.Client) service.Checkpointer {
+			control := flagStr(cmd, ledgerControlNameFlag)
+			return checkpointerFunc(func(ctx context.Context) (uint64, func(context.Context) error, error) {
+				cp, err := client.AcquireCheckpoint(ctx, control)
+				if err != nil {
+					return 0, nil, err
+				}
+				return cp.ID, cp.Release, nil
+			})
+		}),
+
 		// Provision the control-ledger (chart + metadata indexes + numscripts) at
 		// startup. Idempotent: a restart against an existing ledger is a no-op.
 		fx.Invoke(func(lc fx.Lifecycle, client *ledger.Client) {
@@ -88,6 +103,13 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 			})
 		}),
 	)
+}
+
+// checkpointerFunc adapts a plain function to service.Checkpointer.
+type checkpointerFunc func(ctx context.Context) (uint64, func(context.Context) error, error)
+
+func (f checkpointerFunc) AcquireCheckpoint(ctx context.Context) (uint64, func(context.Context) error, error) {
+	return f(ctx)
 }
 
 func flagStr(cmd *cobra.Command, name string) string {

@@ -4,23 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"math/big"
-	"time"
 )
 
-// LedgerResolver is the kernel's contract for ledger-backed sources.
-// Implementations call the Formance Ledger SDK; tests inject in-memory fakes.
+// LedgerResolver is the kernel's contract for ledger-backed (Tier-1) sources.
+// Reads are anchored on a query checkpoint (ADR-002 §6): a globally consistent
+// cross-ledger cut, so aggregating ledgers A and B at the same checkpointID
+// yields a skew-free snapshot. checkpointID 0 reads live state. The production
+// impl is internal/ledgerresolver over the ledger gRPC client; tests inject
+// in-memory fakes.
 type LedgerResolver interface {
 	// AggregateBalance returns per-asset aggregate balance(s) for accounts
-	// matched by query at the given PIT. PIT + metadata filtering is safe on
-	// supported ledgers (>= v2.4.11, where ledger#1416 is fixed); earlier
-	// versions silently returned empty under ACCOUNT_METADATA_HISTORY=DISABLED
-	// (see project memory ledger-aggregate-pit-metadata).
-	AggregateBalance(ctx context.Context, ledger string, query json.RawMessage, pit time.Time) (map[string]*big.Int, error)
+	// matched by query, read at checkpointID.
+	AggregateBalance(ctx context.Context, ledger string, query json.RawMessage, checkpointID uint64) (map[string]*big.Int, error)
 
-	// ListAccounts returns the accounts matched by the query at the given PIT.
-	// Used for per-account templates (account_threshold per_account). The
-	// engine enforces a max-accounts-scanned budget before calling.
-	ListAccounts(ctx context.Context, ledger string, query json.RawMessage, pit time.Time, limit int) ([]Account, error)
+	// ListAccounts returns the accounts matched by the query, read at
+	// checkpointID. Used for per-account templates (account_threshold /
+	// source_parity per_account). The engine enforces a max-accounts-scanned
+	// budget (passed as limit); the resolver errors rather than truncating past it.
+	ListAccounts(ctx context.Context, ledger string, query json.RawMessage, checkpointID uint64, limit int) ([]Account, error)
 }
 
 // PaymentsResolver is the kernel's contract for payments-pool-backed sources.

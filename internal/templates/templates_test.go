@@ -19,7 +19,7 @@ type fakeLedger struct {
 	accounts map[string][]engine.Account    // (ledger|query) → accounts (for per_account)
 }
 
-func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query json.RawMessage, _ time.Time) (map[string]*big.Int, error) {
+func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query json.RawMessage, _ uint64) (map[string]*big.Int, error) {
 	if f.balances == nil {
 		return map[string]*big.Int{}, nil
 	}
@@ -30,7 +30,7 @@ func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query js
 	}
 	return b, nil
 }
-func (f *fakeLedger) ListAccounts(_ context.Context, ledger string, query json.RawMessage, _ time.Time, limit int) ([]engine.Account, error) {
+func (f *fakeLedger) ListAccounts(_ context.Context, ledger string, query json.RawMessage, _ uint64, limit int) ([]engine.Account, error) {
 	if f.accounts == nil {
 		return nil, nil
 	}

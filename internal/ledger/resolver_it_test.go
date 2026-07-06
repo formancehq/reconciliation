@@ -64,7 +64,7 @@ func TestIntegration_CheckpointConsistentReads(t *testing.T) {
 	requireEventualBalance(ctx, t, reader, ledgerA, q, asset, 0, "100")
 	requireEventualBalance(ctx, t, reader, ledgerB, q, asset, 0, "100")
 
-	cp, err := client.AcquireCheckpoint(ctx)
+	cp, err := client.AcquireCheckpoint(ctx, ledgerA)
 	require.NoError(t, err, "acquire checkpoint")
 
 	defer func() { _ = cp.Release(ctx) }()
@@ -123,7 +123,7 @@ func TestIntegration_CheckpointListAccounts(t *testing.T) {
 		assert.Len(c, accts, 2)
 	}, 5*time.Second, 25*time.Millisecond)
 
-	cp, err := client.AcquireCheckpoint(ctx)
+	cp, err := client.AcquireCheckpoint(ctx, ledgerName)
 	require.NoError(t, err, "acquire checkpoint")
 
 	defer func() { _ = cp.Release(ctx) }()

@@ -380,7 +380,7 @@ type orchestrationLedger struct {
 	failErr error
 }
 
-func (f *orchestrationLedger) AggregateBalance(_ context.Context, _ string, _ json.RawMessage, _ time.Time) (map[string]*big.Int, error) {
+func (f *orchestrationLedger) AggregateBalance(_ context.Context, _ string, _ json.RawMessage, _ uint64) (map[string]*big.Int, error) {
 	if f.failErr != nil {
 		return nil, f.failErr
 	}
@@ -390,8 +390,17 @@ func (f *orchestrationLedger) AggregateBalance(_ context.Context, _ string, _ js
 	}
 	return out, nil
 }
-func (f *orchestrationLedger) ListAccounts(context.Context, string, json.RawMessage, time.Time, int) ([]engine.Account, error) {
+func (f *orchestrationLedger) ListAccounts(context.Context, string, json.RawMessage, uint64, int) ([]engine.Account, error) {
 	return nil, errors.New("ListAccounts not implemented")
+}
+
+// noopCheckpointer stands in for the ledger checkpoint lifecycle in unit tests:
+// it pins nothing (checkpointID 0 = live reads against the fakes) and its release
+// is a no-op.
+type noopCheckpointer struct{}
+
+func (noopCheckpointer) AcquireCheckpoint(context.Context) (uint64, func(context.Context) error, error) {
+	return 0, func(context.Context) error { return nil }, nil
 }
 
 type orchestrationPayments struct {
@@ -416,7 +425,7 @@ func newOrchestrationService(t *testing.T, l *orchestrationLedger, p *orchestrat
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
-	svc := NewService(store, nil, eng, templates.DefaultRegistry(), res)
+	svc := NewService(store, nil, eng, templates.DefaultRegistry(), res, noopCheckpointer{})
 	return svc, store
 }
 

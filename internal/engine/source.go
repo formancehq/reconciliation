@@ -25,17 +25,16 @@ const (
 // CEL value: built by source-constructor builtins (ledgerSet, pool, …) and
 // consumed by aggregator builtins (balance, balances, accounts, …).
 //
-// Each Source captures the PIT it resolved at — populated by the engine at
-// Evaluate time so a single rule with multiple sources can be assigned
-// per-source PITs (which is also what gets persisted in evaluation.pit_per_source).
+// The read anchor is not carried per-Source: Tier-1 (ledger) sources all read at
+// the evaluation's shared checkpointID (held on the evalCtx), and Tier-2 (pool)
+// sources read latest, recording their audit PIT in pitPerSource (ADR-002 §6).
 type Source struct {
 	Kind   SourceKind
-	Key    string           // stable key used in pit_per_source map, e.g. "ledgerSet:0"
-	Ledger string           // LedgerSet, LedgerPostings
-	Query  json.RawMessage  // LedgerSet, LedgerPostings — the metadata-query JSON
-	PoolID string           // PaymentsPool
-	Window time.Duration    // LedgerPostings (V1.1+)
-	PIT    time.Time        // resolved at evaluate time
+	Key    string          // stable key used in pit_per_source map, e.g. "payments_pool:0"
+	Ledger string          // LedgerSet, LedgerPostings
+	Query  json.RawMessage // LedgerSet, LedgerPostings — the metadata-query JSON
+	PoolID string          // PaymentsPool
+	Window time.Duration   // LedgerPostings (V1.1+)
 }
 
 // celSourceType is the named opaque type CEL uses to type-check source-handling

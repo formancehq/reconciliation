@@ -79,15 +79,18 @@ func (e *Engine) Compile(expression string) (*Compiled, error) {
 	return &Compiled{Source: expression}, nil
 }
 
-// EvalInput carries the per-evaluation knobs.
-//   - PIT: the point-in-time every Source resolves at by default; the
-//     resolver-side then honours or coerces this to its own model (see ADR-002).
-//   - SafetyMargin: the engine subtracts this from PIT before passing it to
-//     resolvers, avoiding races with in-flight commits whose timestamps could
-//     land at PIT-1ms. Default 0; templates default to a sane non-zero value.
+// EvalInput carries the per-evaluation knobs (ADR-002 two-tier model).
+//   - CheckpointID: the query checkpoint every Tier-1 (ledger) Source reads at —
+//     a globally consistent cross-ledger cut pinned once per evaluation by the
+//     service. 0 reads live state.
+//   - PIT: the nominal evaluation instant. Tier-2 (pool / heterogeneous) sources
+//     read "latest" and record this as their audit timestamp; the service also
+//     derives the reconciliation period from it. Ledger sources ignore it — they
+//     read at CheckpointID. No safety-margin knob: a checkpoint is an atomic cut,
+//     so the old PIT-race guard has no purpose (and the pool reads latest).
 type EvalInput struct {
+	CheckpointID uint64
 	PIT          time.Time
-	SafetyMargin time.Duration
 }
 
 // EvalOutput is what the service layer persists onto evaluation rows + uses to
@@ -97,7 +100,7 @@ type EvalOutput struct {
 	Passed       bool
 	Result       any                  // raw CEL eval result; useful for debugging templates
 	Evidence     map[string]any       // evaluator-supplied breakdown for incident.evidence
-	PitPerSource map[string]time.Time // resolved PIT per Source, by stable key
+	PitPerSource map[string]time.Time // Tier-2 (pool) audit PIT per Source; ledger sources anchored by CheckpointID (ADR-002 §10.1)
 	CostUnits    int64                // accounts scanned this eval (see budget)
 	Error        error                // engine-side runtime error; rule may still be valid
 }
@@ -109,13 +112,9 @@ func (e *Engine) Evaluate(ctx context.Context, c *Compiled, in EvalInput) (*Eval
 	if c == nil {
 		return nil, fmt.Errorf("%w: nil compiled program", ErrEvaluate)
 	}
-	pit := in.PIT
-	if in.SafetyMargin > 0 {
-		pit = pit.Add(-in.SafetyMargin)
-	}
 
 	budget := newBudgetTracker(e.limits)
-	ec := newEvalCtx(ctx, pit, e.resolvers, budget)
+	ec := newEvalCtx(ctx, in.CheckpointID, in.PIT, e.resolvers, budget)
 
 	// Build a per-eval env that re-declares everything WITH bindings closed
 	// over ec. We re-parse the source here because cel-go programs are tied

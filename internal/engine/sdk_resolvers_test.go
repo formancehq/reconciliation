@@ -2,82 +2,48 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
-	"time"
 
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/shared"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeSDKClient implements engine.SDKClient; only V2ListAccounts is meaningful
-// here. pages is consumed one per call (simulating cursor pagination).
+// fakeSDKClient implements the trimmed engine.SDKClient (pool reads only).
 type fakeSDKClient struct {
-	pages []shared.V2AccountsCursorResponseCursor
-	calls int
+	resp *operations.V3GetPoolBalancesLatestResponse
+	err  error
 }
 
-func (f *fakeSDKClient) V2GetBalancesAggregated(context.Context, operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error) {
-	return nil, nil
-}
 func (f *fakeSDKClient) V3GetPoolBalancesLatest(context.Context, operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
-	return nil, nil
-}
-func (f *fakeSDKClient) V2ListAccounts(_ context.Context, _ operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error) {
-	cur := f.pages[f.calls]
-	f.calls++
-	return &operations.V2ListAccountsResponse{V2AccountsCursorResponse: &shared.V2AccountsCursorResponse{Cursor: cur}}, nil
+	return f.resp, f.err
 }
 
-func vol(input, output int64) shared.V2Volume {
-	return shared.V2Volume{Input: big.NewInt(input), Output: big.NewInt(output)}
-}
-
-// ListAccounts derives per-asset balances from volumes and walks the cursor.
-func TestSDKLedgerResolver_ListAccounts_PaginatesAndDerivesBalance(t *testing.T) {
-	next := "page2"
-	client := &fakeSDKClient{pages: []shared.V2AccountsCursorResponseCursor{
-		{
-			HasMore: true,
-			Next:    &next,
-			Data: []shared.V2Account{
-				{Address: "merchant:a", Volumes: map[string]shared.V2Volume{"USD/2": vol(500, 150)}},             // 350
-				{Address: "merchant:b", Volumes: map[string]shared.V2Volume{"USD/2": {Balance: big.NewInt(42)}}}, // explicit balance
-			},
-		},
-		{
-			HasMore: false,
-			Data: []shared.V2Account{
-				{Address: "merchant:c", Volumes: map[string]shared.V2Volume{"EUR/2": vol(100, 100)}}, // 0
+func TestSDKPaymentsResolver_PoolBalanceLatest(t *testing.T) {
+	client := &fakeSDKClient{resp: &operations.V3GetPoolBalancesLatestResponse{
+		V3PoolBalancesResponse: &shared.V3PoolBalancesResponse{
+			Data: []shared.V3PoolBalance{
+				{Asset: "USD/2", Amount: big.NewInt(350)},
+				{Asset: "EUR/2", Amount: big.NewInt(-100)},
+				{Asset: "GBP/2", Amount: nil}, // skipped
 			},
 		},
 	}}
-	r := NewSDKLedgerResolver(client)
+	r := NewSDKPaymentsResolver(client)
 
-	accts, err := r.ListAccounts(context.Background(), "main", nil, time.Now(), 50_000)
+	out, err := r.PoolBalanceLatest(context.Background(), "pool_xyz")
 	require.NoError(t, err)
-	require.Equal(t, 2, client.calls, "should have walked both pages")
-	require.Len(t, accts, 3)
-
-	require.Equal(t, "merchant:a", accts[0].Address)
-	require.Equal(t, "350", accts[0].Balances["USD/2"].String(), "input - output")
-	require.Equal(t, "42", accts[1].Balances["USD/2"].String(), "explicit Balance wins")
-	require.Equal(t, "0", accts[2].Balances["EUR/2"].String())
+	require.Equal(t, "350", out["USD/2"].String())
+	require.Equal(t, "-100", out["EUR/2"].String())
+	require.NotContains(t, out, "GBP/2", "nil amounts are skipped")
 }
 
-// The accounts budget aborts with an error rather than truncating.
-func TestSDKLedgerResolver_ListAccounts_BudgetExceeded(t *testing.T) {
-	client := &fakeSDKClient{pages: []shared.V2AccountsCursorResponseCursor{{
-		HasMore: false,
-		Data: []shared.V2Account{
-			{Address: "a", Volumes: map[string]shared.V2Volume{"USD/2": vol(1, 0)}},
-			{Address: "b", Volumes: map[string]shared.V2Volume{"USD/2": vol(1, 0)}},
-		},
-	}}}
-	r := NewSDKLedgerResolver(client)
+func TestSDKPaymentsResolver_SurfacesError(t *testing.T) {
+	r := NewSDKPaymentsResolver(&fakeSDKClient{err: errors.New("payments down")})
 
-	_, err := r.ListAccounts(context.Background(), "main", nil, time.Now(), 1)
+	_, err := r.PoolBalanceLatest(context.Background(), "pool_xyz")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "budget")
+	require.Contains(t, err.Error(), "payments down")
 }

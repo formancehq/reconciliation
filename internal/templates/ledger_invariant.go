@@ -96,17 +96,13 @@ func (t *LedgerInvariant) Evaluate(
 		return nil, err
 	}
 
-	pit := in.PIT
-	if in.SafetyMargin > 0 {
-		pit = pit.Add(-in.SafetyMargin)
-	}
-
-	// Scout each term's balances at the chosen PIT. Done up-front so we can
-	// build the direct-math check AND a deterministic Outcome list keyed by
-	// spec.Tolerance asset order.
+	// Scout each term's balances at the evaluation's checkpoint. Done up-front so
+	// we can build the direct-math check AND a deterministic Outcome list keyed by
+	// spec.Tolerance asset order. All terms are ledger sources (Tier-1), so they
+	// share the checkpoint — a cross-ledger consistent cut (ADR-002).
 	termBalances := make([]map[string]*big.Int, len(spec.Terms))
 	for i, term := range spec.Terms {
-		b, err := resolvers.Ledger.AggregateBalance(ctx, term.Ledger, term.Query, pit)
+		b, err := resolvers.Ledger.AggregateBalance(ctx, term.Ledger, term.Query, in.CheckpointID)
 		if err != nil {
 			return nil, fmt.Errorf("scout terms[%d] (%s): %w", i, term.Ledger, err)
 		}

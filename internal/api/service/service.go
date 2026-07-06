@@ -48,27 +48,37 @@ type Store interface {
 	ListAlertEvents(ctx context.Context, alertID uuid.UUID, q store.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error)
 }
 
-// Service is the orchestrator for both the legacy /policies path and the V1
-// rule/evaluation/alert surface. V1-only callers can ignore `client`;
-// legacy /policies callers can ignore `engine` and `templates`.
+// Checkpointer pins a query checkpoint for the span of one evaluation
+// (ADR-002 §6): every Tier-1 (ledger) source in the evaluation reads at it, so
+// ledgers A and B are aggregated at one globally consistent cross-ledger cut.
+// The returned release frees the checkpoint — it pins SSTs from compaction, so
+// the caller MUST release it, on a context that outlives the evaluation's
+// cancellation (F26). A checkpointID of 0 means "live"; a no-op checkpointer
+// degrades gracefully to live reads (used in tests).
+type Checkpointer interface {
+	AcquireCheckpoint(ctx context.Context) (checkpointID uint64, release func(context.Context) error, err error)
+}
+
+// Service is the orchestrator for the V1 rule/evaluation/alert surface.
 type Service struct {
-	store     Store
-	client    SDKFormance
-	engine    *engine.Engine
-	templates *templates.Registry
-	resolvers engine.Resolvers
+	store        Store
+	client       SDKFormance
+	engine       *engine.Engine
+	templates    *templates.Registry
+	resolvers    engine.Resolvers
+	checkpointer Checkpointer
 }
 
 // NewService constructs the service with all collaborators. V1 work requires
-// non-nil engine + templates + resolvers; legacy /policies calls will still
-// work if those are nil (kept for tests / partial wiring).
-func NewService(store Store, client SDKFormance, eng *engine.Engine, reg *templates.Registry, res engine.Resolvers) *Service {
+// non-nil engine + templates + resolvers + checkpointer.
+func NewService(store Store, client SDKFormance, eng *engine.Engine, reg *templates.Registry, res engine.Resolvers, cp Checkpointer) *Service {
 	return &Service{
-		store:     store,
-		client:    client,
-		engine:    eng,
-		templates: reg,
-		resolvers: res,
+		store:        store,
+		client:       client,
+		engine:       eng,
+		templates:    reg,
+		resolvers:    res,
+		checkpointer: cp,
 	}
 }
 

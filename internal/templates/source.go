@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"time"
 
 	"encoding/json"
 
@@ -101,12 +100,13 @@ func (s SourceSpec) resolverNeed() string {
 	return "ledger"
 }
 
-// resolve reads the per-asset balance map for this source. The ledger source
-// honours pit; the pool source is always latest (see SourcePaymentsPool).
-func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, pit time.Time) (map[string]*big.Int, error) {
+// resolve reads the per-asset balance map for this source. A ledger source is
+// Tier-1: read at the evaluation's checkpoint (in.CheckpointID). A pool source is
+// Tier-2: always latest (see SourcePaymentsPool), ignoring the anchor.
+func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, in engine.EvalInput) (map[string]*big.Int, error) {
 	switch s.Kind {
 	case SourceLedger:
-		return resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query, pit)
+		return resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query, in.CheckpointID)
 	case SourcePaymentsPool:
 		return resolvers.Payments.PoolBalanceLatest(ctx, s.PoolID)
 	default:
@@ -134,15 +134,15 @@ func (s SourceSpec) celTerm(assetExpr string) string {
 // no per-account breakdown keyed to ledger addresses.
 func (s SourceSpec) supportsPerAccount() bool { return s.Kind == SourceLedger }
 
-// resolveAccounts fans the source out into one balance map per matched account.
-// Ledger sources only; pools are aggregate-only (returns ErrInvalidSpec). limit
-// is the evaluation's accounts budget — the resolver errors rather than
-// silently truncating past it.
-func (s SourceSpec) resolveAccounts(ctx context.Context, resolvers engine.Resolvers, pit time.Time, limit int) ([]engine.Account, error) {
+// resolveAccounts fans the source out into one balance map per matched account,
+// read at the evaluation's checkpoint (in.CheckpointID). Ledger sources only;
+// pools are aggregate-only (returns ErrInvalidSpec). limit is the evaluation's
+// accounts budget — the resolver errors rather than silently truncating past it.
+func (s SourceSpec) resolveAccounts(ctx context.Context, resolvers engine.Resolvers, in engine.EvalInput, limit int) ([]engine.Account, error) {
 	if s.Kind != SourceLedger {
 		return nil, fmt.Errorf("%w: per-account scope is not supported for source kind %q (pools are aggregate-only)", ErrInvalidSpec, s.Kind)
 	}
-	return resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, pit, limit)
+	return resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, in.CheckpointID, limit)
 }
 
 // accountAddressQuery renders the metadata-query JSON selecting exactly one

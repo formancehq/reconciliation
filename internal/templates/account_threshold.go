@@ -115,17 +115,13 @@ func (t *AccountThreshold) Evaluate(
 		return nil, err
 	}
 
-	pit := in.PIT
-	if in.SafetyMargin > 0 {
-		pit = pit.Add(-in.SafetyMargin)
-	}
 	src := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.Query}
 
 	if spec.Mode == ThresholdPerAccount {
-		return t.evaluatePerAccount(ctx, &spec, src, eng, resolvers, pit)
+		return t.evaluatePerAccount(ctx, &spec, src, eng, resolvers, in)
 	}
 
-	ledgerBalances, err := src.resolve(ctx, resolvers, pit)
+	ledgerBalances, err := src.resolve(ctx, resolvers, in)
 	if err != nil {
 		return nil, fmt.Errorf("scout ledger balances: %w", err)
 	}
@@ -195,13 +191,15 @@ func (t *AccountThreshold) evaluatePerAccount(
 	src SourceSpec,
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
-	pit time.Time,
+	in engine.EvalInput,
 ) ([]Outcome, error) {
-	accounts, err := src.resolveAccounts(ctx, resolvers, pit, eng.MaxAccountsScanned())
+	accounts, err := src.resolveAccounts(ctx, resolvers, in, eng.MaxAccountsScanned())
 	if err != nil {
 		return nil, fmt.Errorf("scout accounts on %s: %w", src.label(), err)
 	}
-	pitPerSource := map[string]time.Time{src.label(): pit}
+	// Ledger source → Tier-1, anchored by the shared checkpoint; pitPerSource
+	// stays empty (ADR-002 §10.1).
+	pitPerSource := map[string]time.Time{}
 	assets := sortedKeys(spec.Bounds)
 	outcomes := make([]Outcome, 0, len(accounts)*len(assets))
 	for _, acct := range accounts {

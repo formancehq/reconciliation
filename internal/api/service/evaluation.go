@@ -14,13 +14,17 @@ import (
 	"github.com/google/uuid"
 )
 
+// checkpointReleaseTimeout bounds the best-effort checkpoint cleanup that runs
+// on a cancellation-surviving context after each evaluation (F26).
+const checkpointReleaseTimeout = 10 * time.Second
+
 // EvaluateRuleRequest carries the PIT context for a rule evaluation.
-//   - PIT defaults to time.Now() when zero.
-//   - SafetyMargin is honoured *exactly* — including zero. Defaults belong at
-//     the caller (the API handler picks 30s when the client omits the field).
-//     This split exists so a caller that explicitly wants zero margin (the
-//     demo runner, integration tests) can ask for it without the service
-//     silently clobbering them back to the production-style 30s.
+//   - PIT defaults to time.Now() when zero. It is the nominal instant used to
+//     derive the reconciliation period and as the Tier-2 (pool) audit timestamp;
+//     Tier-1 ledger reads are anchored on a query checkpoint (ADR-002), not PIT.
+//   - SafetyMargin is now inert: a query checkpoint is an atomic cut (no
+//     in-flight-commit race) and pools read latest, so nothing consumes it. The
+//     field is retained for wire compatibility pending removal in step 6b-2b.
 type EvaluateRuleRequest struct {
 	PIT          time.Time
 	SafetyMargin time.Duration
@@ -55,12 +59,26 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	if req.PIT.IsZero() {
 		req.PIT = time.Now().UTC()
 	}
-	// SafetyMargin is intentionally NOT defaulted here — see the type comment.
+
+	// Pin ONE query checkpoint for the whole evaluation: every Tier-1 ledger
+	// source reads at it, so a cross-ledger rule sees a single consistent cut
+	// (ADR-002 §6). Release on a cancellation-surviving context so a cancelled or
+	// deadline-exceeded evaluation still frees the checkpoint (it pins SSTs — F26);
+	// a stray leak is swept by the reaper (step 6b-3).
+	checkpointID, release, err := s.checkpointer.AcquireCheckpoint(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire query checkpoint: %w", err)
+	}
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkpointReleaseTimeout)
+		defer cancel()
+		_ = release(releaseCtx)
+	}()
 
 	started := time.Now().UTC()
 	outcomes, evalErr := ev.Evaluate(ctx, rule.TemplateSpec, s.engine, s.resolvers, engine.EvalInput{
+		CheckpointID: checkpointID,
 		PIT:          req.PIT,
-		SafetyMargin: req.SafetyMargin,
 	})
 	ended := time.Now().UTC()
 

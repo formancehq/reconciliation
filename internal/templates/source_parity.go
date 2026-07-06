@@ -99,20 +99,15 @@ func (t *SourceParity) Evaluate(
 		return nil, err
 	}
 
-	pit := in.PIT
-	if in.SafetyMargin > 0 {
-		pit = pit.Add(-in.SafetyMargin)
-	}
-
 	if spec.Scope == ScopePerAccount {
-		return t.evaluatePerAccount(ctx, &spec, eng, resolvers, pit)
+		return t.evaluatePerAccount(ctx, &spec, eng, resolvers, in)
 	}
 
-	leftBalances, err := spec.Left.resolve(ctx, resolvers, pit)
+	leftBalances, err := spec.Left.resolve(ctx, resolvers, in)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s: %w", spec.Left.label(), err)
 	}
-	rightBalances, err := spec.Right.resolve(ctx, resolvers, pit)
+	rightBalances, err := spec.Right.resolve(ctx, resolvers, in)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s: %w", spec.Right.label(), err)
 	}
@@ -180,20 +175,22 @@ func (t *SourceParity) evaluatePerAccount(
 	spec *ParitySpec,
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
-	pit time.Time,
+	in engine.EvalInput,
 ) ([]Outcome, error) {
 	limit := eng.MaxAccountsScanned()
-	leftAccts, err := spec.Left.resolveAccounts(ctx, resolvers, pit, limit)
+	leftAccts, err := spec.Left.resolveAccounts(ctx, resolvers, in, limit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s accounts: %w", spec.Left.label(), err)
 	}
-	rightAccts, err := spec.Right.resolveAccounts(ctx, resolvers, pit, limit)
+	rightAccts, err := spec.Right.resolveAccounts(ctx, resolvers, in, limit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s accounts: %w", spec.Right.label(), err)
 	}
 	leftByAddr := accountsByAddress(leftAccts)
 	rightByAddr := accountsByAddress(rightAccts)
-	pitPerSource := map[string]time.Time{spec.Left.label(): pit, spec.Right.label(): pit}
+	// Both sides are ledger sources (Validate enforces it) → Tier-1, anchored by
+	// the shared checkpoint, so pitPerSource stays empty (ADR-002 §10.1).
+	pitPerSource := map[string]time.Time{}
 
 	outcomes := make([]Outcome, 0, len(leftByAddr))
 	for _, addr := range unionAssets(leftByAddr, rightByAddr) { // sorted union of addresses
