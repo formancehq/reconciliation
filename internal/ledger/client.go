@@ -250,7 +250,38 @@ func (c *Client) SaveAccountMetadata(ctx context.Context, ledgerName, address st
 // SaveAccountMetadataValues saves typed metadata on an account (no transaction).
 // Setting metadata on a fresh address creates the account.
 func (c *Client) SaveAccountMetadataValues(ctx context.Context, ledgerName, address string, metadata map[string]*commonpb.MetadataValue) error {
-	_, err := c.Apply(ctx, &servicepb.Request{
+	_, err := c.Apply(ctx, addMetadataRequest(ledgerName, address, metadata))
+
+	return err
+}
+
+// ApplyMetadata sets and/or deletes account metadata keys in one atomic batch —
+// the metadata-only counterpart to CreateTransaction's set+delete reconciliation
+// (used e.g. to record a transition and clear a snooze together). Deleting an
+// absent key fails the batch, so callers list only keys known to be present.
+func (c *Client) ApplyMetadata(ctx context.Context, ledgerName, address string, set map[string]*commonpb.MetadataValue, deleteKeys ...string) error {
+	reqs := make([]*servicepb.Request, 0, 1+len(deleteKeys))
+	if len(set) > 0 {
+		reqs = append(reqs, addMetadataRequest(ledgerName, address, set))
+	}
+
+	for _, k := range deleteKeys {
+		reqs = append(reqs, deleteMetadataRequest(ledgerName, address, k))
+	}
+
+	if len(reqs) == 0 {
+		return nil
+	}
+
+	_, err := c.Apply(ctx, reqs...)
+
+	return err
+}
+
+// addMetadataRequest builds a single AddMetadata action for an account. Shared by
+// SaveAccountMetadataValues and ApplyMetadata so the add shape lives in one place.
+func addMetadataRequest(ledgerName, address string, metadata map[string]*commonpb.MetadataValue) *servicepb.Request {
+	return &servicepb.Request{
 		Type: &servicepb.Request_Apply{
 			Apply: &servicepb.LedgerApplyRequest{
 				Ledger: ledgerName,
@@ -268,9 +299,7 @@ func (c *Client) SaveAccountMetadataValues(ctx context.Context, ledgerName, addr
 				},
 			},
 		},
-	})
-
-	return err
+	}
 }
 
 // DeleteAccountMetadata deletes the given metadata keys from an account in a

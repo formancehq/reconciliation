@@ -27,6 +27,11 @@ const (
 	MetaSnooze           = "snooze"     // JSON
 	MetaReopenedAt       = "reopened_at"
 	MetaParentResolution = "parent_resolution"
+	// MetaLastTransition is a self-describing transition envelope (JSON) stamped
+	// on every alert transition so the ledger log event for that write carries
+	// "what happened" for event-sink consumers (RFC §4.4). Undeclared like the
+	// labels — stored as string as-is, not queried.
+	MetaLastTransition = "last_transition"
 )
 
 // Metadata keys on the rule (`rule:*`) account.

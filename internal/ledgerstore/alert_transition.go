@@ -31,11 +31,16 @@ func (s *LedgerStore) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ac
 		return alert, nil // idempotent no-op, preserve the original ack
 	}
 
+	prev := alert.Status
 	alert.Status = models.AlertAcknowledged
 	alert.Ack = ack
 
 	md, err := alertToMetadata(alert)
 	if err != nil {
+		return nil, fmt.Errorf("ack alert %s: %w", id, err)
+	}
+
+	if err := stampTransition(md, transitionAcknowledged, alert, prev, "", ack.At, map[string]any{"ack": ack}); err != nil {
 		return nil, fmt.Errorf("ack alert %s: %w", id, err)
 	}
 
@@ -86,6 +91,7 @@ func (s *LedgerStore) resolve(ctx context.Context, id uuid.UUID, resolution *mod
 		return nil, fmt.Errorf("%s alert %s: %w", action, id, store.ErrNotFound)
 	}
 
+	prev := alert.Status
 	from := statusToState(alert.Status)
 	deletes := s.snoozeDelete(alert, fpHash)
 
@@ -95,6 +101,14 @@ func (s *LedgerStore) resolve(ctx context.Context, id uuid.UUID, resolution *mod
 
 	md, err := alertToMetadata(alert)
 	if err != nil {
+		return nil, fmt.Errorf("%s alert %s: %w", action, id, err)
+	}
+
+	transition := transitionResolved
+	if action == "accept" {
+		transition = transitionAccepted
+	}
+	if err := stampTransition(md, transition, alert, prev, "", resolution.At, map[string]any{"resolution": resolution}); err != nil {
 		return nil, fmt.Errorf("%s alert %s: %w", action, id, err)
 	}
 
@@ -143,6 +157,7 @@ func (s *LedgerStore) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fi
 		return nil, nil // already closed — nothing active to resolve
 	}
 
+	prev := alert.Status
 	from := statusToState(alert.Status)
 	deletes := s.snoozeDelete(alert, fpHash)
 
@@ -153,6 +168,11 @@ func (s *LedgerStore) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fi
 
 	md, err := alertToMetadata(alert)
 	if err != nil {
+		return nil, fmt.Errorf("auto-resolve %s: %w", fingerprint, err)
+	}
+
+	if err := stampTransition(md, transitionAutoResolved, alert, prev, evaluationID.String(), at,
+		map[string]any{"resolution": alert.Resolution}); err != nil {
 		return nil, fmt.Errorf("auto-resolve %s: %w", fingerprint, err)
 	}
 

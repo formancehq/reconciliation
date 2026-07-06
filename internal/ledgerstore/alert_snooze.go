@@ -39,28 +39,31 @@ func (s *LedgerStore) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.
 		return nil, fmt.Errorf("snooze alert %s: %w", id, err)
 	}
 
-	itemAddr := schema.AlertItemAccount(alert.RuleID.String(), alert.PeriodID, fpHash)
-	if err := s.client.SaveAccountMetadataValues(ctx, s.controlLedger, itemAddr,
-		map[string]*commonpb.MetadataValue{schema.MetaSnooze: strVal(string(b))}); err != nil {
+	alert.Snooze = snooze
+
+	// Status-neutral: prev == new. The snooze value and the transition record land
+	// in one metadata write, so the SAVED_METADATA event is self-describing.
+	md := map[string]*commonpb.MetadataValue{schema.MetaSnooze: strVal(string(b))}
+	if err := stampTransition(md, transitionSnoozed, alert, alert.Status, "", now, map[string]any{"snooze": snooze}); err != nil {
 		return nil, fmt.Errorf("snooze alert %s: %w", id, err)
 	}
 
-	alert.Snooze = snooze
+	itemAddr := schema.AlertItemAccount(alert.RuleID.String(), alert.PeriodID, fpHash)
+	if err := s.client.SaveAccountMetadataValues(ctx, s.controlLedger, itemAddr, md); err != nil {
+		return nil, fmt.Errorf("snooze alert %s: %w", id, err)
+	}
 
 	return alert, nil
 }
 
 // UnsnoozeAlert lifts a snooze early. Idempotent: an alert with no snooze is
-// returned unchanged with no write. A NotFound on the delete is swallowed (the
-// key is already gone → the effect is done), which also makes a gRPC retransmit
-// of the delete safe.
+// returned unchanged with no write. A NotFound is swallowed (the snooze key is
+// already gone → the effect is done), which also makes a gRPC retransmit safe.
 //
-// `by` attributes the action; the ledger's DELETED_METADATA event carries no
-// actor field, so attribution is deferred to the future semantic event-log
-// (RFC §4.4). Accepted here to satisfy the Store contract.
+// The snooze delete and the self-describing transition record land in one atomic
+// batch, so `by` is now attributed (in the last_transition payload) — the
+// DELETED_METADATA event alone carries no actor.
 func (s *LedgerStore) UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string) (*models.Alert, error) {
-	_ = by // no actor field on DELETED_METADATA; see doc comment
-
 	alert, fpHash, err := s.loadAlertForTransition(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("unsnooze alert %s: %w", id, err)
@@ -70,8 +73,15 @@ func (s *LedgerStore) UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string
 		return alert, nil // no-op — nothing to lift
 	}
 
+	// Status-neutral: prev == new. Record the transition (with the actor) and
+	// clear the snooze key atomically.
+	md := map[string]*commonpb.MetadataValue{}
+	if err := stampTransition(md, transitionUnsnoozed, alert, alert.Status, "", time.Now().UTC(), map[string]any{"by": by}); err != nil {
+		return nil, fmt.Errorf("unsnooze alert %s: %w", id, err)
+	}
+
 	itemAddr := schema.AlertItemAccount(alert.RuleID.String(), alert.PeriodID, fpHash)
-	if err := s.client.DeleteAccountMetadata(ctx, s.controlLedger, itemAddr, schema.MetaSnooze); err != nil && !isNotFound(err) {
+	if err := s.client.ApplyMetadata(ctx, s.controlLedger, itemAddr, md, schema.MetaSnooze); err != nil && !isNotFound(err) {
 		return nil, fmt.Errorf("unsnooze alert %s: %w", id, err)
 	}
 

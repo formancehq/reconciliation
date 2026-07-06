@@ -42,6 +42,25 @@ func (m *MockledgerClient) EXPECT() *MockledgerClientMockRecorder {
 	return m.recorder
 }
 
+// ApplyMetadata mocks base method.
+func (m *MockledgerClient) ApplyMetadata(ctx context.Context, ledgerName, address string, set map[string]*commonpb.MetadataValue, deleteKeys ...string) error {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, ledgerName, address, set}
+	for _, a := range deleteKeys {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "ApplyMetadata", varargs...)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ApplyMetadata indicates an expected call of ApplyMetadata.
+func (mr *MockledgerClientMockRecorder) ApplyMetadata(ctx, ledgerName, address, set any, deleteKeys ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, ledgerName, address, set}, deleteKeys...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApplyMetadata", reflect.TypeOf((*MockledgerClient)(nil).ApplyMetadata), varargs...)
+}
+
 // CreateTransaction mocks base method.
 func (m *MockledgerClient) CreateTransaction(ctx context.Context, in ledger.CreateTransactionInput) error {
 	m.ctrl.T.Helper()

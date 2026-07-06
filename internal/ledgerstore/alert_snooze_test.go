@@ -27,9 +27,11 @@ func TestSnoozeAlert_SetsSnoozeMetadata(t *testing.T) {
 	client.EXPECT().
 		SaveAccountMetadataValues(gomock.Any(), testControl, itemAddrOf(a), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _, _ string, md map[string]*commonpb.MetadataValue) error {
-			// Only the snooze key is written (status-neutral, no marker move).
+			// The snooze key + a self-describing transition record are written
+			// together (status-neutral, no marker move).
 			require.Contains(t, md, schema.MetaSnooze)
-			require.Len(t, md, 1)
+			require.Contains(t, md, schema.MetaLastTransition)
+			require.Len(t, md, 2)
 
 			return nil
 		})
@@ -76,9 +78,15 @@ func TestUnsnoozeAlert_DeletesSnooze(t *testing.T) {
 	a.Snooze = &models.Snooze{Until: time.Now().Add(time.Hour), By: "ops", At: time.Now().UTC()}
 	expectFindByID(t, client, a, "1")
 
+	// Unsnooze records the transition (with the actor) and clears the snooze key
+	// in one atomic batch.
 	client.EXPECT().
-		DeleteAccountMetadata(gomock.Any(), testControl, itemAddrOf(a), schema.MetaSnooze).
-		Return(nil)
+		ApplyMetadata(gomock.Any(), testControl, itemAddrOf(a), gomock.Any(), schema.MetaSnooze).
+		DoAndReturn(func(_ context.Context, _, _ string, set map[string]*commonpb.MetadataValue, _ ...string) error {
+			require.Contains(t, set, schema.MetaLastTransition)
+
+			return nil
+		})
 
 	got, err := store.UnsnoozeAlert(context.Background(), a.ID, "ops")
 	require.NoError(t, err)

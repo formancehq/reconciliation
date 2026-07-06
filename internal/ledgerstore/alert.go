@@ -110,6 +110,11 @@ func (s *LedgerStore) openNewAlert(ctx context.Context, in store.OpenAlertInput,
 		return nil, fmt.Errorf("open alert %s: %w", in.Fingerprint, err)
 	}
 
+	if err := stampTransition(md, transitionOpened, alert, "", in.EvaluationID.String(), in.OccurredAt,
+		map[string]any{"occurrenceCount": alert.OccurrenceCount}); err != nil {
+		return nil, fmt.Errorf("open alert %s: %w", in.Fingerprint, err)
+	}
+
 	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{
 		Ledger:        s.controlLedger,
 		ScriptName:    schema.NumscriptAlertOpen,
@@ -159,6 +164,15 @@ func (s *LedgerStore) updateAlert(ctx context.Context, in store.OpenAlertInput, 
 
 	md, err := alertToMetadata(prior)
 	if err != nil {
+		return nil, fmt.Errorf("update alert %s: %w", in.Fingerprint, err)
+	}
+
+	transition := transitionOccurred
+	if reopened {
+		transition = transitionReopened
+	}
+	if err := stampTransition(md, transition, prior, fromStatus, in.EvaluationID.String(), in.OccurredAt,
+		map[string]any{"occurrenceCount": prior.OccurrenceCount}); err != nil {
 		return nil, fmt.Errorf("update alert %s: %w", in.Fingerprint, err)
 	}
 
