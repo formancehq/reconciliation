@@ -20,16 +20,28 @@ Legacy `/policies`+cash-pool gone, evaluations non-durable, alert-events deferre
 **finalized** — 4 account types (see §4.1.1/§4.1.2 + phase table). Scope rationale in "Step 6 — scope
 decisions" below; per-sub-step SDLC reviews follow. **Verified:** DB-less boot smoke + fresh it-tests.
 
-**Next: step 6b (invasive, engine flip — absorbs 5b). NOT STARTED — owner paused after 6a (2026-07-05).**
-This is the last Phase-1 piece. Change `engine.LedgerResolver`
-(`AggregateBalance`/`ListAccounts`) `pit`→`checkpointID`. **Design fork presented + deferred** — decide
-before touching the kernel: (A) split into two resolver interfaces + per-source Tier-1/Tier-2 dispatch
-(**my rec — matches ADR-002 §6; watch the `engine`↔`internal/ledger` import direction, needs an adapter
-so `CheckpointReader` returns `engine.Account`**), or (B) a `ReadAnchor` union. `CheckpointReader` is already the Tier-1 signature but **lacks `ListAccounts`** (add it);
-`SDKLedgerResolver` stays Tier-2 (pit/latest). Service pins ONE checkpoint per evaluation
-(`AcquireCheckpoint` → `Evaluate` → `Release`, cancellation-surviving ctx — **F26**). **No Postgres
-migration** — the `checkpointID` anchor lands on `alert:item` (`last_evaluation`), not a column. Add a
-reaper/ring for orphaned checkpoints (**F26**).
+**In progress: step 6b (invasive, engine flip — absorbs 5b). Last Phase-1 piece. Fork DECIDED
+(2026-07-06): owner chose Option C** — flip the single `LedgerResolver` interface `pit`→`checkpointID`
+and retire the pit-based `SDKLedgerResolver`. Rationale: on a close re-read ADR-002 §6 literally
+prescribes the single-interface flip ("Tier-2 resolvers keep PIT/latest") — Phase 1 has **no live
+Tier-2 *ledger* source** (a cross-cluster ledger is §11 future); the only Tier-2 source is the payments
+pool, which already has its own `PaymentsResolver`. So the Tier-1/Tier-2 split *is* the existing
+`SourceKind` switch (ledger→checkpoint, pool→latest); A (two ledger interfaces) / B (`ReadAnchor` union)
+both preserved a Tier-2 ledger path nothing constructs — dropped as YAGNI (re-introduce A at §11).
+
+**6b sub-steps:**
+- **6b-1 ✅ done (`32e6bb0`)** — `CheckpointReader.ListAccounts` + streaming `Client.QueryAccountsFunc`
+  (budget-enforced mid-stream, returns engine-free `ledger.Account`). Mechanism-first, not yet wired.
+- **6b-2 ⬜ next (the flip, atomic)** — `engine.LedgerResolver` `pit`→`checkpointID` (both methods);
+  `EvalInput{CheckpointID, PIT}` (drop the now-dead SafetyMargin *subtraction* — checkpoint is atomic,
+  pool reads latest, so no consumer remains); `resolveBalances`/templates read ledger @ checkpoint, pool
+  @ latest; `pitPerSource` becomes **Tier-2-only** (ledger↔ledger evals record the checkpointID, not a
+  PIT); retire `SDKLedgerResolver` + trim `engine.SDKClient` to the pool method; add adapter pkg
+  `internal/ledgerresolver` (wraps `CheckpointReader`, maps `ledger.Account`→`engine.Account`); rewire
+  `provideResolvers`; `EvaluateRule` pins ONE checkpoint per eval (`AcquireCheckpoint`→`Evaluate`→
+  `Release`, cancellation-surviving ctx — **F26**) + records the anchor on `alert:item` (`last_evaluation`),
+  **no Postgres migration** (Postgres is gone).
+- **6b-3 ⬜ todo** — reaper/ring for crash-orphaned checkpoints (**F26**).
 
 **Watch:** open findings F1/F8/F17/F22/F23/F25/F26/F27/F31 (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b; details below). **Don't touch:**
 `feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
@@ -74,7 +86,10 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | 6a-4 | ↳ `ListAlertEvents` → empty + TODO (SAVED_METADATA sink deferred) | ✅ done (folded into 6a-5a) | `03d3a84` |
 | 1 | 6a-5a | ↳ bind `LedgerStore` as sole `Store` + `ledger.Client` fx/flags + provision at boot + remove Postgres wiring (boot DB-less) | ✅ done · reviewed | `03d3a84` |
 | 1 | 6a-5b | ↳ delete dead Postgres code (storage impl, migrations, `RunInTx`, DB flags, `internal/events`) + extract shared types to `internal/store` (F16/F29/F30) | ✅ done · reviewed | `31c5ca6` |
-| 1 | 6b | engine flip (`LedgerResolver` pit→checkpointID) + per-source dispatch + checkpoint acquisition (no migration) | ⬜ todo | — |
+| 1 | **6b** | **engine flip** (`LedgerResolver` pit→checkpointID, Option C) + checkpoint acquisition (no migration) | 🚧 in progress | — |
+| 1 | 6b-1 | ↳ `CheckpointReader.ListAccounts` + streaming `Client.QueryAccountsFunc` (budget-enforced, engine-free `ledger.Account`) | ✅ done · reviewed | `32e6bb0` |
+| 1 | 6b-2 | ↳ interface flip + `EvalInput.CheckpointID` + per-source read + `internal/ledgerresolver` adapter + rewire + service checkpoint acquisition + anchor | ⬜ todo | — |
+| 1 | 6b-3 | ↳ reaper/ring for crash-orphaned checkpoints (F26) | ⬜ todo | — |
 | 2 | — | Flip reads to the ledger; Postgres as shadow | ⬜ todo | — |
 | 3 | — | Drop Postgres + own message bus (ledger event sink) | ⬜ todo | — |
 | 4 | — | Semantic events / replay (generic event-log) | ⬜ todo | — |
@@ -594,6 +609,54 @@ Conventional commit; not on `main`; no OpenAPI change. No CRITICAL/HIGH.
 **Step 6a is complete.** The server runs entirely on the control-ledger (`_recon`): rules + alert
 lifecycle on the ledger, evaluations non-durable, alert-events deferred to a Phase-3 sink, secure
 transport (F2). `CheckpointReader` still stands ready for the 6b engine flip.
+
+### Step 6b — resolver design fork DECIDED (2026-07-06): Option C
+
+The fork deferred at 6a (A: two resolver interfaces + per-source dispatch vs B: `ReadAnchor` union) was
+put to the owner with a third option surfaced on a close re-read of ADR-002 §6. **Owner chose C.**
+
+- **What §6 literally says:** *"Interface change: `LedgerResolver.AggregateBalance(…, pit)` →
+  `(…, checkpointID)`; same for `ListAccounts`. Tier-2 resolvers keep their PIT/latest semantics."* —
+  i.e. flip **the single** ledger interface; the concrete Tier-2 resolver is the payments **pool**
+  (`PoolBalanceLatest`, already its own interface).
+- **Why A/B were dropped:** both exist to preserve a Tier-2 **ledger** path (`SDKLedgerResolver` + pit).
+  Phase 1 constructs **no such source** — a `ledger` source is just `{ledger, query}` with no
+  cross-cluster marker, and cross-cluster ledger recon is ADR-002 §11 "revisit" (future). A's second
+  interface + B's union both encode a distinction nothing uses. The prior handoff cited A as "matches
+  §6"; the precise reading is that **C** matches §6, and A generalises beyond it. Re-introduce A at §11.
+- **What C means concretely:** the Tier-1/Tier-2 split is the **existing `SourceKind` switch**
+  (`resolveBalances` / `SourceSpec.resolve`): `ledger` → checkpoint (`CheckpointReader`), `pool` →
+  latest (`SDKPaymentsResolver`, unchanged). No tier flag on `Source`. `SDKLedgerResolver` retired.
+  Live read path today is still SDK+pit (`provideResolvers` wires both resolvers off the SDK) — 6b-2
+  swaps the ledger side to the gRPC `CheckpointReader` via the `internal/ledgerresolver` adapter.
+
+### Phase 1 step 6b-1 — CheckpointReader.ListAccounts + streaming QueryAccountsFunc (SDLC review, 2026-07-06)
+
+The per-account read side of the checkpoint reader — the last mechanism piece before the engine flip
+(mirrors the 5a / 6a-1 "mechanism-first, not yet wired" split).
+
+- **`Client.QueryAccountsFunc`** streams matched accounts and invokes a callback per account; a non-nil
+  callback error aborts the stream verbatim. `QueryAccounts` is now a thin collect-all wrapper over it
+  (signature + behaviour unchanged → `ledgerstore` untouched). This is also the streaming seam that
+  could later close **F23** for the public lists.
+- **`CheckpointReader.ListAccounts(ledger, query, checkpointID, limit)`** reads each matched account's
+  per-asset balance frozen at a checkpoint, enforcing the accounts budget **mid-stream** (errors at
+  `limit+1`, never truncates — no fetch-all; strictly better than the retired SDK path). Returns the
+  engine-free **`ledger.Account`** `{Address, Ledger, Metadata, Balances}` so `internal/ledger` stays a
+  leaf; the engine adapter (6b-2) maps it to `engine.Account`. `volumeBalance` prefers the ledger-
+  provided `Balance` else `input − output` (mirrors the SDK resolver); metadata via `commonpb.MetadataToMap`.
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit + fresh it-suite
+(`-p 1`) green; conventional commit; not on `main`; no OpenAPI change; `internal/ledger` confirmed
+engine-free. Coverage `ledger` 34.1% (↑ from 32.7%) — the package is the it-tested gRPC wrapper (F3);
+the pure logic added (`volumeBalance`/`accountFromProto`/`decimalBig`) is unit-tested, the streaming/
+budget path is it-tested (`TestIntegration_CheckpointListAccounts`: frozen per-account snapshot, budget
+abort, write-after-checkpoint invisibility). No CRITICAL/HIGH/MEDIUM.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| — | LOW | `MetadataToMap` keeps only `StringValue`-typed metadata (bool/datetime dropped). Matches the SDK path + existing `ledgerstore` usage; data-ledger metadata filtering is server-side so the returned `Metadata` map is informational. | ✅ acceptable, noted |
+| F23 | — | **Partially mitigated** for the resolver read path (`ListAccounts` bounds memory to `limit+1` via `QueryAccountsFunc`). Public `ListRules`/`ListAlerts` still collect-all via `QueryAccounts` → F23 stays open there, but the streaming seam to fix it now exists. | ⬜ open (lists) |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
