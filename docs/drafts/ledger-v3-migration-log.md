@@ -46,16 +46,18 @@ Tier-2 ledger path nothing constructs — dropped as YAGNI (re-introduce A at §
   `ReapOrphanedCheckpoints` (age-thresholded 15m ≫ 30s MaxWallClock, so never reaps a live checkpoint even
   another instance's) runs at startup in the provisioner OnStart. it-test `TestIntegration_ReapOrphanedCheckpoints`.
 
-**Post-Phase-1: Event delivery (in progress).** The original Phase 2/3 (Postgres) framing was absorbed by
-the 6a pivot. Current workstream = deliver alert events without a recon-owned message bus (RFC §4.4):
+**Post-Phase-1: Event delivery ✅ COMPLETE (ED-1 + ED-2).** The original Phase 2/3 (Postgres) framing was
+absorbed by the 6a pivot. This workstream delivered alert events without a recon-owned message bus (RFC §4.4):
 owner chose **"delivery now, history deferred" (2026-07-06)**. Key mechanic: most transitions are
 `CreateTransaction` batches (marker move + `account_metadata`) → `COMMITTED_TRANSACTION` events; only
 snooze/unsnooze are `SAVED_METADATA`/`DELETED_METADATA` — the sink must cover all three.
 - **ED-1 ✅ (`07a0bd5`)** — self-describing `last_transition` envelope stamped on every transition so each
   log event says what happened. `Client.ApplyMetadata` (atomic set+delete) added for unsnooze.
-- **ED-2 ⬜ next** — `Client.AddEventsSink` + provision an idempotent HTTP webhook sink at boot
-  (`event_types=[COMMITTED_TRANSACTION,SAVED_METADATA,DELETED_METADATA]`, target via `--events-sink-url`),
-  replacing the publisher dropped at 6a-5a. `GetEventsSinks` verifies. `ListAlertEvents` stays empty.
+- **ED-2 ✅ (`c769e17`)** — `Client.{Add,Remove,Get}EventsSink` + boot-provision an idempotent HTTP webhook
+  sink when `--events-sink-url` is set (`event_types=[COMMITTED_TRANSACTION,SAVED_METADATA,DELETED_METADATA]`;
+  `--events-sink-secret` optional), replacing the publisher dropped at 6a-5a. Server is add-only (swallow
+  AlreadyExists for boot; config change = manual remove+re-add, which resets the cursor). Verified via
+  it-test + a boot smoke (`ledgerctl events list` confirms the sink + live delivery attempts).
 - **Deferred (Phase 4):** `ListAlertEvents` paginated history needs a **queryable sink** (ClickHouse/
   Databricks — the ledger log has no account filter, so per-request replay is O(all _recon writes));
   semantic event types + replay API; checkpoint **anchor persistence** (needs retained/scheduled
@@ -112,9 +114,9 @@ share one live ledger; F8: bump the it control-ledger name — now `recon-it4` �
 | 1 | 6b-2b | ↳ remove inert `SafetyMargin` from request/schedule/API + OpenAPI | ✅ done · reviewed | `4bc73be` |
 | 1 | 6b-3 | ↳ checkpoint reaper for crash orphans — control-ledger registry + age-thresholded startup reap (F26 resolved) | ✅ done · reviewed | `4fb1ad0` |
 | 2/3 | — | ~~Flip reads / Postgres shadow / drop Postgres~~ — **absorbed by the 6a Postgres-free pivot** (already done) | ✅ absorbed | — |
-| **ED** | — | **Event delivery** (RFC §4.4) — self-describing transitions + ledger event sink; "delivery now, history deferred" (owner, 2026-07-06) | 🚧 in progress | — |
+| **ED** | — | **Event delivery** (RFC §4.4) — self-describing transitions + ledger event sink; "delivery now, history deferred" (owner, 2026-07-06) | ✅ **done** | `c769e17` |
 | ED | ED-1 | ↳ self-describing `last_transition` envelope stamped on every alert transition (+ `Client.ApplyMetadata` atomic set+delete) | ✅ done · reviewed | `07a0bd5` |
-| ED | ED-2 | ↳ provision the ledger `AddEventsSink` (HTTP webhook, `event_types=[COMMITTED_TRANSACTION,SAVED_METADATA,DELETED_METADATA]`) at boot | ⬜ todo | — |
+| ED | ED-2 | ↳ provision the ledger `AddEventsSink` (HTTP webhook, `event_types=[COMMITTED_TRANSACTION,SAVED_METADATA,DELETED_METADATA]`) at boot; `--events-sink-url`/`--events-sink-secret` | ✅ done · reviewed | `c769e17` |
 | 4 | — | `ListAlertEvents` (queryable history via a ClickHouse/Databricks sink) + semantic events / replay (generic event-log) | ⬜ deferred | — |
 
 Docs baseline commit: `c54dc4d` (RFC + ADR-002 rewrite).
@@ -775,6 +777,29 @@ commit; not on `main`; no chart/OpenAPI change; mock regenerated. No CRITICAL/HI
 | — | LOW | `last_transition` is LWW — the account holds only the latest transition; full history is the log's ordered sequence of these writes (read via the sink), consistent with the deferred `ListAlertEvents`. | ✅ by design |
 | — | LOW | `occurred` covers both OPEN→OPEN (repeat) and ACK→OPEN (resurface); `prevStatus` disambiguates for consumers. | ✅ acceptable |
 | F17 | — | Envelope derives from occurrence/evidence state already in the batch, so it doesn't materially widen the content-sensitive-idempotency window. | ⬜ unchanged |
+
+### Event delivery step ED-2 — provision the ledger events sink (SDLC review, 2026-07-06)
+
+Restores alert-event delivery (dropped at 6a-5a) via the ledger's native HTTP webhook sink — no
+recon-owned message bus. `Client.{Add,Remove,Get}EventsSink` over `BucketService` (Apply
+`Request_AddEventsSink` + the `GetEventsSinks` RPC). Boot-provisions the `reconciliation` webhook sink in
+the provisioner OnStart **when `--events-sink-url` is set** (`--events-sink-secret` optional), with
+`event_types = [COMMITTED_TRANSACTION, SAVED_METADATA, DELETED_METADATA]` — the three types carrying alert
+transitions (lifecycle moves are transactions; snooze/unsnooze are metadata). Unset URL → no sink
+(dev/test quiet). `AddEventsSink` swallows `AlreadyExists` (idempotent boot re-provision, matching
+CreateLedger et al.).
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit + full it-suite incl.
+`TestIntegration_EventsSink` (add → get → idempotent re-add no-op → remove → double-remove no-op);
+**boot smoke** with `--events-sink-url` — the boot log + `ledgerctl events list` confirm the sink
+registered with the right event types + endpoint and the ledger attempting delivery (smoke sink removed
+after); no-flag boot clean. Conventional commit; not on `main`; no OpenAPI change. No CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| — | LOW | Sink filtering is by event **type, not ledger** — the webhook receives events for all ledgers (incl. ledger-connect data-ledger writes); consumers filter on `event.ledger == control`. Per-ledger filtering is upstream-future (RFC §4.4). | ✅ noted |
+| — | LOW | Server is **add-only** (not add-or-update despite the proto comment): changing an existing sink's endpoint/filter needs a manual `RemoveEventsSink` first, which resets the per-sink cursor (re-delivery from the log head). Documented on the method; operator action. | ✅ documented |
+| — | LOW | A failed `AddEventsSink` at boot **fails startup** (consistent with the provisioner). Right for a genuine config error; a transient ledger blip would crash-loop → k8s restart self-heals. Soften to log-and-continue if flaky. | ⬜ noted |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
