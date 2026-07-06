@@ -25,6 +25,18 @@ func NewCheckpointReader(client *Client) *CheckpointReader {
 	return &CheckpointReader{client: client}
 }
 
+// Account is a data-ledger account read at a checkpoint: its address, typed
+// metadata flattened to strings, and per-asset balances. It is the
+// checkpoint-consistent analogue of engine.Account, kept engine-free so
+// internal/ledger stays a leaf — the engine adapter (internal/ledgerresolver)
+// maps it to engine.Account.
+type Account struct {
+	Address  string
+	Ledger   string
+	Metadata map[string]string
+	Balances map[string]*big.Int
+}
+
 // AggregateBalance returns the per-asset aggregate balance of the accounts in
 // ledgerName matching query, read at checkpointID. Passing the same checkpointID
 // for ledgers A and B yields a consistent cross-ledger cut.
@@ -35,6 +47,77 @@ func (r *CheckpointReader) AggregateBalance(ctx context.Context, ledgerName stri
 	}
 
 	return r.client.AggregateVolumes(ctx, ledgerName, filter, checkpointID)
+}
+
+// ListAccounts returns the accounts in ledgerName matching query, read at
+// checkpointID, each carrying its per-asset balance. Used by per-account
+// templates (source_parity / account_threshold per_account). It aborts with an
+// error — never silently truncates — once more than limit accounts have been
+// seen, enforcing the evaluation's accounts budget mid-stream (no fetch-all).
+func (r *CheckpointReader) ListAccounts(ctx context.Context, ledgerName string, query json.RawMessage, checkpointID uint64, limit int) ([]Account, error) {
+	filter, err := schema.TranslateQuery(query, dataLedgerLeaf)
+	if err != nil {
+		return nil, fmt.Errorf("translate query for %s: %w", ledgerName, err)
+	}
+
+	out := make([]Account, 0, 256)
+	if err := r.client.QueryAccountsFunc(ctx, ledgerName, filter, checkpointID, func(acct *commonpb.Account) error {
+		out = append(out, accountFromProto(ledgerName, acct))
+		if len(out) > limit {
+			return fmt.Errorf("listAccounts: matched more than %d accounts on %q (accounts budget)", limit, ledgerName)
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// accountFromProto projects a ledger account onto the engine-free Account view:
+// address, string-flattened metadata, and a per-asset balance derived from each
+// asset's volumes.
+func accountFromProto(ledgerName string, acct *commonpb.Account) Account {
+	balances := make(map[string]*big.Int, len(acct.GetVolumes()))
+	for asset, v := range acct.GetVolumes() {
+		balances[asset] = volumeBalance(v)
+	}
+
+	return Account{
+		Address:  acct.GetAddress(),
+		Ledger:   ledgerName,
+		Metadata: commonpb.MetadataToMap(acct.GetMetadata()),
+		Balances: balances,
+	}
+}
+
+// volumeBalance derives an asset balance from a per-account volume: the
+// ledger-provided Balance when present, else input − output. The fields are
+// arbitrary-precision integers encoded as decimal strings; an empty or
+// unparseable string is treated as 0.
+func volumeBalance(v *commonpb.VolumesWithBalance) *big.Int {
+	if v == nil {
+		return new(big.Int)
+	}
+	if v.GetBalance() != "" {
+		return decimalBig(v.GetBalance())
+	}
+
+	return new(big.Int).Sub(decimalBig(v.GetInput()), decimalBig(v.GetOutput()))
+}
+
+// decimalBig parses a base-10 big.Int, returning 0 for an empty or malformed
+// string (the ledger emits "" for a zero side).
+func decimalBig(s string) *big.Int {
+	if s == "" {
+		return new(big.Int)
+	}
+	if n, ok := new(big.Int).SetString(s, 10); ok {
+		return n
+	}
+
+	return new(big.Int)
 }
 
 // dataLedgerLeaf maps a data-ledger source predicate (the v2 query DSL a

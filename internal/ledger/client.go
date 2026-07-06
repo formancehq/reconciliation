@@ -315,18 +315,16 @@ func deleteMetadataRequest(ledgerName, address, key string) *servicepb.Request {
 	}
 }
 
-// QueryAccounts streams every account matching filter and collects them,
-// following the ledger's x-next-cursor across pages (one ListAccounts call
+// QueryAccountsFunc streams every account matching filter and invokes fn for
+// each, following the ledger's x-next-cursor across pages (one ListAccounts call
 // returns a single page). A non-zero checkpointID reads from a query checkpoint.
-// The server-side filter keeps the collected set to the matches only, so this is
-// bounded by the query's selectivity (id lookup → ≤1; a rule/period sweep → its
-// active alerts). A metadata-filtered query returns codes.Unavailable while the
-// field's index is still building — the client's retry policy absorbs that.
-func (c *Client) QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64) ([]*commonpb.Account, error) {
-	var (
-		accounts []*commonpb.Account
-		cursor   string
-	)
+// fn returning a non-nil error aborts the stream and surfaces that error verbatim
+// — the seam a bounded reader uses to enforce an accounts budget without
+// collecting the whole set into memory first. A metadata-filtered query returns
+// codes.Unavailable while the field's index is still building — the client's
+// retry policy absorbs that.
+func (c *Client) QueryAccountsFunc(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64, fn func(*commonpb.Account) error) error {
+	var cursor string
 
 	for {
 		stream, err := c.service.ListAccounts(ctx, &servicepb.ListAccountsRequest{
@@ -339,7 +337,7 @@ func (c *Client) QueryAccounts(ctx context.Context, ledgerName string, filter *c
 			},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("list accounts on %s: %w", ledgerName, err)
+			return fmt.Errorf("list accounts on %s: %w", ledgerName, err)
 		}
 
 		for {
@@ -349,17 +347,38 @@ func (c *Client) QueryAccounts(ctx context.Context, ledgerName string, filter *c
 			}
 
 			if rerr != nil {
-				return nil, fmt.Errorf("recv account on %s: %w", ledgerName, rerr)
+				return fmt.Errorf("recv account on %s: %w", ledgerName, rerr)
 			}
 
-			accounts = append(accounts, acct)
+			if ferr := fn(acct); ferr != nil {
+				return ferr
+			}
 		}
 
 		cursor = nextCursorFromTrailer(stream.Trailer())
 		if cursor == "" {
-			return accounts, nil
+			return nil
 		}
 	}
+}
+
+// QueryAccounts streams every account matching filter and collects them. The
+// server-side filter keeps the collected set to the matches only, so this is
+// bounded by the query's selectivity (id lookup → ≤1; a rule/period sweep → its
+// active alerts). Callers that need a bounded scan should use QueryAccountsFunc
+// and stop from the callback instead of collecting unboundedly here.
+func (c *Client) QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64) ([]*commonpb.Account, error) {
+	var accounts []*commonpb.Account
+
+	if err := c.QueryAccountsFunc(ctx, ledgerName, filter, checkpointID, func(acct *commonpb.Account) error {
+		accounts = append(accounts, acct)
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return accounts, nil
 }
 
 // nextCursorFromTrailer reads the opaque next-page token from a streamed list's
