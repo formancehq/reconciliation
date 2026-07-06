@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"time"
 
+	v5log "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerauth"
@@ -18,6 +20,11 @@ import (
 // satisfies the service contract at the wiring seam (keeps the ledgerstore
 // package from depending on the service layer).
 var _ service.Store = (*ledgerstore.LedgerStore)(nil)
+
+// orphanedCheckpointMaxAge bounds how old a registered checkpoint must be before
+// the startup reaper treats it as a crash orphan. Far above the engine's
+// MaxWallClock (30s) so a live evaluation's checkpoint is never reaped.
+const orphanedCheckpointMaxAge = 15 * time.Minute
 
 // addLedgerFlags registers the control-ledger transport + naming flags.
 func addLedgerFlags(flags *pflag.FlagSet) {
@@ -89,16 +96,26 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 		}),
 
 		// Provision the control-ledger (chart + metadata indexes + numscripts) at
-		// startup. Idempotent: a restart against an existing ledger is a no-op.
-		fx.Invoke(func(lc fx.Lifecycle, client *ledger.Client) {
+		// startup, then reap any query checkpoints a prior crash orphaned (F26).
+		// Idempotent: a restart against an existing ledger is a no-op.
+		fx.Invoke(func(lc fx.Lifecycle, client *ledger.Client, logger v5log.Logger) {
+			control := flagStr(cmd, ledgerControlNameFlag)
 			lc.Append(fx.Hook{
 				OnStart: func(ctx context.Context) error {
-					prov := ledger.NewProvisioner(
-						client,
-						flagStr(cmd, ledgerControlNameFlag),
-						commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT,
-					)
-					return prov.Provision(ctx)
+					prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
+					if err := prov.Provision(ctx); err != nil {
+						return err
+					}
+
+					// Age-thresholded so a live checkpoint (held ≪ threshold) is never
+					// reaped; boot-time cleanup never fails startup.
+					if n, err := client.ReapOrphanedCheckpoints(ctx, control, orphanedCheckpointMaxAge, time.Now()); err != nil {
+						logger.Infof("checkpoint reaper: %s (continuing)", err)
+					} else if n > 0 {
+						logger.Infof("checkpoint reaper: released %d orphaned checkpoint(s)", n)
+					}
+
+					return nil
 				},
 			})
 		}),
