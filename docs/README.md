@@ -48,6 +48,15 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | 5 | Service layer — Rule / Evaluation / Alert orchestration + resolution paths + event-log append | ✅ shipped |
 | 6 | API endpoints + OpenAPI | ✅ shipped |
 | 7 | End-to-end demo UI ([poc-reconciliation-demo](../../poc-reconciliation-demo)) — replaces the planned dockertest harness | ✅ shipped |
-| 8 | V1 GA additions — webhook events ✅ · in-process cron scheduler ✅ (single-instance) · email digest / fctl / EE gating / metering 🚧 | 🚧 in progress |
+| 8 | V1 GA additions — event delivery via the ledger events sink ✅ · in-process cron scheduler ✅ (single-instance) · email digest / fctl / EE gating / metering 🚧 | 🚧 in progress |
 
-Filed upstream: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416) — `/aggregate/balances` PIT + metadata silently returns empty under `ACCOUNT_METADATA_HISTORY: DISABLED`.
+> **Ledger-native migration (branch `feat/reconciliation-ledger-v3`).** The storage layer above was
+> subsequently reshaped: reconciliation is now **Postgres-free**, running on a Ledger v3
+> control-ledger (`_recon`), reading the reconciled ledgers at query checkpoints, and delivering
+> events via the ledger's native sink. Steps 2 (migrations/models → ledger accounts), 5 (event-log →
+> ledger log), and the reads are superseded — see the
+> [migration log](./drafts/ledger-v3-migration-log.md) and [architecture.md](./technical/architecture.md).
+
+Recon reads data-ledgers via the gRPC `AggregateVolumes` / `ListAccounts` at a query checkpoint
+(ADR-002), not the REST `/aggregate/balances` PIT path — so [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416)
+(PIT + metadata empty under `ACCOUNT_METADATA_HISTORY: DISABLED`) is off recon's read path.

@@ -4,11 +4,14 @@ The V1 product surface is a **business lifecycle**, not a rules engine. This doc
 
 > **Observe → Detect → Alert → Evidence → Resolve or Accept**
 
-Each diagram below shows one flow. The status legend in [README.md](./README.md) marks what's implemented today vs planned.
+Each diagram shows one flow. Since the ledger-native migration, all state lives on the
+control-ledger `_recon` and the ledgers being reconciled are read at **query checkpoints**
+(see [architecture.md](./architecture.md) and [ADR-002](../prd/adr-002-pit-consistency.md)).
 
-> **Canonical reference test.** Every flow on this page is exercised end-to-end
-> in [`v1_orchestration_test.go`](../../internal/api/service/v1_orchestration_test.go).
-> If the diagrams and the test ever diverge, the test is the source of truth.
+> **Canonical reference test.** The evaluate→alert flows are exercised end-to-end in
+> [`v1_orchestration_test.go`](../../internal/api/service/v1_orchestration_test.go) (unit, fakes)
+> and [`evaluation_it_test.go`](../../internal/api/service/evaluation_it_test.go) (against a live
+> ledger, at a real checkpoint). If the diagrams and the tests diverge, the tests win.
 
 ---
 
@@ -17,33 +20,30 @@ Each diagram below shows one flow. The status legend in [README.md](./README.md)
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U  as Operator (API / fctl)
-    participant Svc as Service.CreateRule ✅
-    participant Reg as templates.Registry ✅
-    participant Eng as engine.Engine ✅
-    participant DB  as Postgres
+    participant U   as Operator (API / fctl)
+    participant Svc as Service.CreateRule
+    participant Reg as templates.Registry
+    participant Eng as engine.Engine
+    participant L   as Ledger (_recon)
 
     U->>Svc: POST /rules { templateKind, templateSpec, … }
-    Svc->>Reg: Get(templateKind)
-    Reg-->>Svc: Evaluator
-    Svc->>Reg: evaluator.Validate(spec)
+    Svc->>Reg: Get(templateKind).Validate(spec)
     alt invalid spec
         Reg-->>Svc: ErrInvalidSpec
         Svc-->>U: 400 VALIDATION
     end
     Svc->>Reg: evaluator.Explain(spec) → representative CEL
-    Reg-->>Svc: compiledCEL
     Svc->>Eng: Compile(compiledCEL)  (sanity-check it parses)
-    Eng-->>Svc: ok
-    Svc->>DB: INSERT INTO reconciliations.rule
-    DB-->>Svc: row
+    Svc->>L: SaveAccountMetadata(rule:{id}, typed metadata)
+    L-->>Svc: applied
     Svc-->>U: 201 Created { rule }
 ```
 
 **Notes**
 
-- `Explain()` returns one representative CEL string for the rule's `compiled_cel` column. Real evaluation re-renders the per-asset CEL at run time — `compiled_cel` is for explainability and the future `rules explain` endpoint.
-- Metadata-filtered ledger templates need no special handling: the ledger#1416 PIT+metadata bug is fixed in **ledger v2.4.11** (Reconciliation's minimum), so there is no create-time feature-flag refusal.
+- The rule is a typed-metadata account `rule:{id}` on `_recon` — no relational row.
+- `Explain()` returns one representative CEL string for `compiled_cel` (explainability); real
+  evaluation re-renders the per-asset CEL at run time.
 
 ---
 
@@ -52,49 +52,53 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Trig as Trigger (cron ✅ / POST evaluate ✅)
-    participant Svc  as Service.EvaluateRule ✅
-    participant Reg  as templates.Registry ✅
-    participant Eng  as engine.Engine ✅
-    participant Res  as SDK Resolvers ✅
-    participant Alr  as Storage.OpenOrUpdate/AutoResolveAlert ✅
-    participant Log  as Storage.AlertEvent (append-only) ✅
-    participant DB   as Postgres
+    participant Trig as Trigger (cron / POST evaluate)
+    participant Svc  as Service.EvaluateRule
+    participant CP   as Checkpointer (ledger)
+    participant Reg  as templates.Registry
+    participant Eng  as engine.Engine
+    participant Data as data-ledgers A/B
+    participant L    as Ledger (_recon)
 
     Trig->>Svc: evaluate(rule)
-    Svc->>Reg: Get(rule.templateKind).Evaluate(spec, eng, resolvers, in)
-    Reg->>Res: AggregateBalance / PoolBalanceLatest  (per source)
-    Res-->>Reg: balances (per asset)
-    Reg->>Eng: Compile(per-asset CEL)
-    Reg->>Eng: Evaluate(compiled, in)
-    Eng->>Res: balance(source, asset) via builtin
-    Res-->>Eng: int64
-    Eng-->>Reg: pass/fail + pitPerSource
+    Svc->>CP: AcquireCheckpoint()  (pins one cross-ledger cut)
+    CP-->>Svc: checkpointID
+    Svc->>Reg: Evaluate(spec, eng, resolvers, {checkpointID, PIT})
+    Reg->>Data: AggregateVolumes(query, checkpointID)  (Tier-1, per source)
+    Data-->>Reg: balances (per asset)
+    Reg->>Eng: Compile + Evaluate(per-asset CEL, checkpointID)
+    Eng->>Data: balance(source) via builtin @ checkpointID
+    Eng-->>Reg: pass/fail
     Reg-->>Svc: []Outcome  (one per fingerprint axis)
-    Svc->>DB: INSERT evaluation (PASS/FAIL/ERROR + pit_per_source + evidence)
-    DB-->>Svc: evaluationId
     loop For each failing outcome
-        Svc->>Alr: OpenOrUpdateAlert(rule, outcome, evaluationId)
-        Alr->>Log: append 'fail' event (prev_status, new_status=OPEN)
+        Svc->>L: OpenOrUpdateAlert — Numscript batch (marker + metadata + last_transition)
     end
-    loop For each passing outcome
-        Svc->>Alr: AutoResolveAlert(rule, outcome.fingerprint, evaluationId)
-        Alr->>Log: append 'pass' event (prev_status, new_status=RESOLVED)
+    loop For each passing / disappeared fingerprint
+        Svc->>L: AutoResolveAlert — guarded burn (marker → pool)
     end
+    Svc->>CP: Release(checkpointID)  (cancellation-surviving ctx)
     Svc-->>Trig: evaluation { result, outcomes }
 ```
 
 **Notes**
 
-- The `Outcome` list always covers every asset the template cares about — passing assets included. The service uses that to **auto-resolve** prior alerts whose fingerprint isn't in the failing set.
-- Resolver / kernel errors short-circuit the loop and raise an `engine.error` meta-alert instead of a data alert — see §5.
-- `CreateEvaluation` + every alert/event write happen inside one transaction, so a mid-loop failure rolls everything back.
+- The service pins **one checkpoint per evaluation**; every Tier-1 ledger source (and the kernel
+  cross-check) reads at it, so ledgers A and B are compared at one consistent cut. Tier-2 pool
+  sources read "latest". Released on a cancellation-surviving context (**F26**).
+- The `Outcome` list covers every asset the template touched — passing included — so the service
+  can **auto-resolve** prior alerts whose fingerprint isn't in the failing set.
+- **No durable evaluation row.** The result is returned; the break `evidence` is durable on
+  `alert:item`; there is no `/evaluations` read surface (RFC §4.4.2). Correctness rests on
+  idempotent, guarded per-alert batches — there is no cross-store transaction to roll back.
+- Resolver / kernel errors short-circuit and raise an `engine.error` meta-alert (§6).
 
 ---
 
 ## 3. Alert lifecycle
 
-An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint)` pair. There is exactly one Alert per pair for the lifetime of the rule — re-opens flip `status` back to `OPEN` **in place**, they do not create new rows. The full transition history lives in the `alert_event` log.
+An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)`. There is exactly
+one alert per triple — re-opens flip `status` back to `OPEN` **in place**. The transition history
+is the ledger log (§8).
 
 ```mermaid
 stateDiagram-v2
@@ -106,22 +110,22 @@ stateDiagram-v2
     ACKNOWLEDGED --> RESOLVED: next eval passes (auto)
     ACKNOWLEDGED --> RESOLVED: POST /alerts/{id}/resolve { fixed_by_booking }
     ACKNOWLEDGED --> RESOLVED: POST /alerts/{id}/accept (accepted_by_business)
-    RESOLVED --> OPEN: same fingerprint fails again (reopen — same row)
+    RESOLVED --> OPEN: same fingerprint fails again (reopen — same alert)
     OPEN --> OPEN: POST /snooze · /unsnooze (status-neutral mute)
 ```
 
-**Invariants**
+**Invariants** — the mechanics behind this state machine are the account model in
+[architecture.md](./architecture.md#the-control-ledger-data-model):
 
-- Exactly **one** alert row per `(rule_id, fingerprint)` — enforced by the UNIQUE constraint on the `alert` table (see [migration #6](../../internal/storage/migrations/migrations.go)).
-- Reopen after `RESOLVED` flips status back to `OPEN` on the **same row**. The lifetime `occurrence_count` keeps incrementing. The prior `resolution` and `ack` are cleared on the alert row but **preserved** as `alert_event` rows.
-- Every transition (fail, pass, ack, resolve, accept, snooze, unsnooze) appends one row to `alert_event`. That log is append-only by convention — code paths never UPDATE or DELETE.
-- **Snooze is status-neutral**: a snoozed `OPEN` alert stays `OPEN` and still counts against period-green — only its notifications are muted (see §5).
-
-### Reading the history
-
-The alert row carries the *current* state (status, current evidence, current resolution if RESOLVED). For the **timeline** of the alert — every evaluation that touched it, every manual transition, every prior resolution across reopen cycles — query `alert_event` via `GET /alerts/{id}/events`. That endpoint is the single source of truth for audit reconstruction.
-
-A `fail` event with `prev_status = RESOLVED` IS a reopen. The API surfaces this as a derived `isReopen` flag on each event response.
+- Exactly **one** `alert:item:*` account per `(rule, fingerprint, period)`. The `ALERT` **marker**
+  (`alert:st:{state}:*`, EPHEMERAL) is the status source-of-truth; a guarded Numscript move is the
+  compare-and-swap that serialises transitions — no DB unique constraint.
+- **Reopen** flips `status` back to `OPEN` on the same item and re-mints the marker (it was burned
+  on close); the `OCC` balance (occurrence count) keeps climbing; the prior `resolution`/`ack` keys
+  are cleared on the item but preserved in the log.
+- Every transition writes a self-describing `last_transition` envelope in the same atomic batch, so
+  the ledger log is the faithful timeline.
+- **Snooze is status-neutral**: a snoozed alert stays `OPEN`/`ACK`; only the mute intent is recorded (§5).
 
 ---
 
@@ -129,86 +133,59 @@ A `fail` event with `prev_status = RESOLVED` IS a reopen. The API surfaces this 
 
 ```mermaid
 flowchart LR
-    subgraph "Closure paths"
-        A[Auto-resolved<br/>next eval passes] --> R(RESOLVED on the alert row<br/>+ pass event)
-        F[Fixed by booking<br/>POST /resolve + tx refs] --> R2(RESOLVED on the alert row<br/>+ resolve event)
-        B[Accepted by business<br/>POST /accept + note + evidence snapshot<br/>+ optional expiresAt] --> R3(RESOLVED on the alert row<br/>+ accept event)
+    subgraph Closure
+        A[Auto-resolved<br/>next eval passes] --> R(RESOLVED — burn marker → pool<br/>+ last_transition auto_resolved)
+        F[Fixed by booking<br/>POST /resolve + tx refs] --> R2(RESOLVED<br/>+ last_transition resolved)
+        B[Accepted by business<br/>POST /accept + note + evidence snapshot] --> R3(RESOLVED<br/>+ last_transition accepted)
     end
-    R -.fingerprint fails again.-> Reopen(Same alert row<br/>status → OPEN<br/>+ fail event with prev=RESOLVED)
+    R -.fingerprint fails again.-> Reopen(Same alert<br/>status → OPEN, re-mint marker<br/>+ last_transition reopened)
     R2 -.fingerprint fails again.-> Reopen
     R3 -.fingerprint fails again.-> Reopen
 ```
 
-**Required artefacts per path**
+| Path | Author | Note | Tx refs | Evidence snapshot |
+|---|---|---|---|---|
+| `auto` | system | — | — | — |
+| `fixed_by_booking` | operator | optional | optional | — |
+| `accepted_by_business` | operator | **required** | — | frozen at acceptance |
 
-| Path | Author | Timestamp | Note | Transaction refs | Evidence snapshot | Expires |
-|---|---|---|---|---|---|---|
-| `auto`               | system | now | — | — | — | — |
-| `fixed_by_booking`   | operator | now | optional | optional | — | — |
-| `accepted_by_business` | operator | now | **required** | — | frozen at acceptance | optional |
-
-Stored on the alert row as `resolution` (JSONB) for the *current* closure, and in `alert_event.payload` for the historical record of every prior resolution across reopen cycles.
-
-```jsonc
-{
-  "kind": "accepted_by_business",
-  "by":   "treasurer@buildr.com",
-  "at":   "2026-06-17T12:34:56Z",
-  "note": "Settlement lag on GBP corridor, confirmed by treasury.",
-  "evidenceSnapshot": { "asset": "GBP/2", "drift": "50000", "tolerance": 0, … },
-  "expiresAt": "2026-07-17T00:00:00Z"
-}
-```
+The *current* closure is typed metadata (`resolution`) on `alert:item`; the historical record of
+every prior closure across reopen cycles is the sequence of `last_transition` envelopes in the
+ledger log.
 
 ---
 
 ## 5. Snooze & notification suppression
 
-Once rules fire on a [schedule](./scheduler.md), a still-broken alert would
-re-notify on every tick. Two mechanisms keep the notification channel
-signal-rich; **both suppress the message, never the record** — the `alert_event`
-log still captures every failing evaluation, and a suppressed alert is still
-`OPEN` and still counts against period-green.
+Once rules fire on a [schedule](./scheduler.md), a still-broken alert would re-emit an event on
+every tick. Reconciliation **records** the signal an operator needs to suppress noise, but — since
+the ledger-native migration — **it no longer gates delivery itself**. Delivery is the ledger
+events sink (§8); *suppression is now a consumer concern* (the Webhooks module / a future digest),
+driven by the data recon exposes:
 
-| | Trigger | Lifespan | Suppresses |
-|---|---|---|---|
-| **Repeat suppression** (#1) | automatic | per-evaluation | a fail on an already-`OPEN` alert whose evidence is **materially identical** to the last |
-| **Snooze** | operator (`POST /snooze`) | time-boxed, auto-expires | **all** notifications for the alert until `until` — even if the evidence changes |
-
-The full mechanics (the `notify` flag, canonical evidence equality, the single
-`recordAlertEvent` gate) live in
-[notification-suppression.md](./notification-suppression.md). The snooze
-lifecycle:
+| | What recon records | Who suppresses |
+|---|---|---|
+| **Repeat** (materially-identical fail on an `OPEN` alert) | an `OCC` bump + a fresh `last_transition` (`occurred`) with the current evidence | consumer (dedupe on unchanged evidence) — the write-side `notify` gate was removed with Postgres |
+| **Snooze** | `snooze` metadata (until/by/at/note) on the item + `last_transition` (`snoozed`/`unsnoozed`) | consumer (honour `snooze.until`) |
 
 ```mermaid
 flowchart LR
-    S[POST /alerts/id/snooze<br/>until = T, by, note] --> M(snooze set on alert row<br/>+ snooze event)
-    M -.failing evals before T.-> Mute[recorded, notify=false<br/>no webhook — even on change]
-    M -- failing eval at/after T --> Exp[snooze cleared<br/>one updated published<br/>'still failing']
-    M -- POST /alerts/id/unsnooze --> Lift[snooze cleared<br/>+ unsnooze event<br/>normal #1 behaviour resumes]
+    S[POST /alerts/id/snooze<br/>until = T, by, note] --> M(snooze metadata set on item<br/>+ last_transition snoozed)
+    M -- POST /alerts/id/unsnooze --> Lift[snooze cleared atomically<br/>+ last_transition unsnoozed by actor]
+    M -.resolve/accept/auto.-> Clr[snooze cleared on close]
 ```
 
 **Rules**
 
-- **Snooze** requires an active (`OPEN`/`ACKNOWLEDGED`) alert and a **future**
-  `until`. Re-snoozing overwrites the window. Resolving an alert (auto, fixed,
-  accepted) clears any snooze, so a later reopen is never silently muted.
-- **Auto-expiry**: the first failing evaluation at or after `until` clears the
-  snooze and notifies **once** ("still failing after the mute lapsed") — it does
-  not replay the silenced run.
-- **Unsnooze** lifts a snooze early and is idempotent (a no-op, emitting nothing,
-  if the alert isn't snoozed).
-- `snooze` and `unsnooze` are status-neutral `alert_event` rows
-  (`prev_status == new_status`) and themselves notify
-  (`reconciliation.alert.snoozed` / `.unsnoozed`), so downstream consumers can
-  reflect the mute state.
+- **Snooze** requires an active (`OPEN`/`ACK`) alert and a **future** `until`; re-snoozing
+  overwrites the window; closing an alert clears any snooze (so a later reopen is never silently muted).
+- **Unsnooze** lifts a snooze early, idempotently, and now **attributes the actor** (`by`) — the
+  clear + the `last_transition` land in one atomic batch (`Client.ApplyMetadata`).
+- `snooze`/`unsnooze` are status-neutral (`prevStatus == newStatus`).
 
-> **V1 scope.** Snooze is **per-alert**. Rule-level snooze (a maintenance window
-> that mutes a whole rule before it fires) and snooze-vs-digest interaction are
-> tracked as follow-ups, not in this cut.
-
-The current snooze (until/by/at/note) lives on the alert row as `snooze` (JSONB);
-every snooze/unsnooze action is also in `alert_event` for audit.
+See [notification-suppression.md](./notification-suppression.md) for why suppression matters and
+what a consumer needs. Write-side repeat-suppression and delivery muting are **deferred** to the
+consumer/semantic-event work (RFC §4.4).
 
 ---
 
@@ -217,41 +194,50 @@ every snooze/unsnooze action is also in `alert_event` for audit.
 ```mermaid
 flowchart TB
     Eval[Engine.Evaluate] -- runtime error --> Translate[ErrEvaluate wrap]
-    Translate --> Svc[Service.EvaluateRule ✅]
-    Svc --> EngEvt[INSERT evaluation<br/>result = ERROR]
-    Svc --> MetaAlr[Open engine.error meta-alert<br/>labels: { kind: 'engine.error' }<br/>fingerprint: 'engine.error']
+    Translate --> Svc[Service.EvaluateRule]
+    Svc --> MetaAlr["Open engine.error meta-alert<br/>fingerprint: engine.error<br/>label kind: engine.error"]
     MetaAlr -.distinct channel.- Notif[Notifications]
 ```
 
-Why a separate path: a kernel/resolver failure (timeout, CEL builtin throw, budget exceeded) is not a *financial* alert. Routing it through the same channel as data alerts would contaminate the financial-alert feed and confuse ops. The meta-alert uses the same alert + event infrastructure as data alerts — only the `engine.error` fingerprint and the `kind: engine.error` label distinguish it.
-
-The translation happens in [engine/errors.go](../../internal/engine/errors.go) via `ErrEvaluate`.
+A kernel/resolver failure (resolver timeout, CEL builtin throw, budget exceeded) is not a
+*financial* alert, so it opens a synthetic `engine.error` meta-alert (same alert infrastructure, a
+distinct `engine.error` fingerprint + `kind: engine.error` label) instead of a data alert. The
+evaluation returns `ERROR` (non-durable). Translation lives in
+[engine/errors.go](../../internal/engine/errors.go).
 
 ---
 
-## 7. Evaluation idempotence & PIT propagation
+## 7. Checkpoint consistency
 
 ```mermaid
 flowchart LR
-    Tick[Schedule tick @ T] --> Sub[Subtract safety margin]
-    Sub --> PIT["PIT = T - 30s"]
-    PIT --> Sources["Each Source.PIT = T - 30s"]
-    Sources --> Eng[Engine.Evaluate]
-    Eng --> Persist["INSERT evaluation<br/>pit_per_source = { 'ledger_set:0': T-30s, … }"]
-    Persist --> Audit[Replayable at the same PIT]
+    Tick[Evaluate @ T] --> Acq[AcquireCheckpoint → checkpointID C]
+    Acq --> Read["Tier-1 sources read A, B @ C<br/>(one consistent cross-ledger cut)"]
+    Read --> Eval[Engine.Evaluate]
+    Eval --> Rel[Release C]
 ```
 
-Every `Evaluation` row stores the **resolved** PIT per `Source`. This means an auditor can pose the question *"what was the answer at the time the rule fired?"* and get a reproducible result by replaying each source's PIT call. See [ADR-002](../prd/adr-002-pit-consistency.md).
+There is **no arbitrary PIT** in Ledger v3 — the anchor is a **query checkpoint** (ADR-002). One
+checkpoint pinned per evaluation freezes ledgers A, B and `_recon` at the same log sequence, so a
+cross-ledger rule reads a skew-free snapshot. `PIT` survives only as the nominal instant used to
+derive the reconciliation period and as the audit timestamp for Tier-2 (pool) sources. While a
+checkpoint is retained, the read is re-derivable; the durable break `evidence` on `alert:item`
+survives regardless (ADR-002 §8).
 
 ---
 
-## 8. Audit log evolution — alert_event as the seed
+## 8. Audit history & delivery — the ledger log
 
-The `alert_event` table is structured as append-only today: every transition is written via a single helper (`appendAlertEvent`), and no code path issues UPDATE or DELETE against it. That's enough for V1 GA — operators get a faithful timeline for every alert.
+There is **no `alert_event` table**. The control-ledger's ordered, append-only log *is* the audit
+history: every transition is a `COMMITTED_TRANSACTION` (marker move + `account_metadata`) or, for
+snooze/unsnooze, a `SAVED_METADATA`/`DELETED_METADATA` entry — each carrying the self-describing
+`last_transition` envelope. The ledger already gives the cryptographic transaction-log guarantees
+recon used to aspire to.
 
-The longer-term direction is the same kind of cryptographic audit chain the Ledger uses for transactions. The table is shaped so that evolution is additive:
-
-- A per-alert `seq` column can be added later for strict ordering inside one alert's timeline (without breaking existing reads, which order by `(at, id)`).
-- A `prev_hash` / `hash` pair can chain events into a Merkle-style log, so a single root hash per alert proves the entire history is intact.
-
-None of that is in V1 GA — flagging it here so the alert_event shape stays compatible with that direction. The instrumentation point for any of it is `appendAlertEvent` in [internal/storage/alert.go](../../internal/storage/alert.go).
+- **Delivery** rides the ledger's native **events sink** ([architecture.md](./architecture.md#event-delivery)):
+  when `--events-sink-url` is set, recon provisions an HTTP webhook sink for
+  `[COMMITTED_TRANSACTION, SAVED_METADATA, DELETED_METADATA]`; consumers filter on
+  `event.ledger == _recon`.
+- **`GET /alerts/{id}/events` (`ListAlertEvents`) returns empty today** — paginated per-alert
+  history needs a downstream queryable sink (ClickHouse/Databricks), because the ledger log has no
+  per-account filter (RFC §10). Deferred.

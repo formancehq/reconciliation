@@ -77,7 +77,10 @@ buckets to April).
 
 [`EvaluateRule`](../../internal/api/service/evaluation.go) computes
 `periodID = rule.Cadence.PeriodID(req.PIT)` once and threads it through
-`driveAlerts` into every alert write:
+`driveAlerts` into every alert write. (`req.PIT` here is the **nominal evaluation
+instant** — it buckets the period and timestamps Tier-2 sources; the ledger reads
+themselves are anchored on a query checkpoint, not this instant — see
+[ADR-002](../prd/adr-002-pit-consistency.md).)
 
 - **Open / update** — `OpenOrUpdateAlert` dedups on `(rule_id, fingerprint,
   period_id)`. First fail in a period → `opened`; subsequent → `updated`; after

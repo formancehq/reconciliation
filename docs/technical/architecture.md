@@ -1,6 +1,11 @@
 # Architecture
 
-Where the pieces live and how they fit together. For the *why* behind the kernel choice, see [ADR-001](../prd/adr-001-cel-kernel.md); for PIT and cross-source consistency, [ADR-002](../prd/adr-002-pit-consistency.md).
+Where the pieces live and how they fit together, **after the ledger-native migration**.
+Reconciliation is now **Postgres-free and stateless**: all its state lives on a Ledger v3
+control-ledger (`_recon`), and it reads the ledgers it reconciles at globally-consistent
+**query checkpoints**. For the *why* behind the kernel, see [ADR-001](../prd/adr-001-cel-kernel.md);
+for the checkpoint consistency model, [ADR-002](../prd/adr-002-pit-consistency.md); for the
+storage/event design and its rationale, the [ledger-native storage RFC](../drafts/rfc-ledger-native-storage.md).
 
 ---
 
@@ -8,33 +13,30 @@ Where the pieces live and how they fit together. For the *why* behind the kernel
 
 ```text
 internal/
-├── models/                 ✅ Go types — Rule, Evaluation, Alert, AlertEvent, Resolution
-├── storage/                ✅ Postgres CRUD via bun
-│   └── migrations/         ✅ Append-only Up migrations (v3.7.2 SDK)
-├── engine/                 ✅ Internal CEL kernel
-│   ├── types.go            Account, Balance, Posting
-│   ├── source.go           Source opaque CEL type
-│   ├── resolvers.go        LedgerResolver, PaymentsResolver interfaces
-│   ├── builtins.go         CEL function declarations + per-eval bindings
-│   ├── engine.go           Compile + Evaluate
-│   ├── budget.go           Limits + budgetTracker
-│   ├── errors.go           ErrCompile / ErrEvaluate translation
-│   └── sdk_resolvers.go    SDK-backed resolver impls (V2.GetLedger, V2.GetBalancesAggregated, V3.GetPoolBalancesLatest)
-├── templates/              ✅ V1 GA template catalog
-│   ├── template.go         Evaluator interface, Outcome, Registry
-│   ├── helpers.go          CEL string rendering, fingerprint, sorted-keys, zeroIfNil
-│   ├── source.go           Shared Source primitive (ledger / payments_pool): resolve + celTerm
-│   ├── ledger_invariant.go
-│   ├── account_threshold.go
-│   └── source_parity.go
+├── models/          Go types — Rule, Evaluation, Alert, AlertEvent, Resolution
+├── store/           Storage-agnostic contract types + sentinels (leaf; no ORM) — the
+│                    Store interface shape shared by the service and ledgerstore
+├── ledgerpb/        Generated Ledger v3 gRPC protos (synced from ledger-connect)
+├── ledger/          Ledger v3 gRPC client: transactions, metadata, account/log queries,
+│                    query checkpoints (+ reaper), events sinks; CheckpointReader; provisioner
+├── ledgerauth/      Ed25519 request signing + TLS; refuses insecure transport by default (F2)
+├── ledgerschema/    Chart of accounts, metadata schema/indexes, address builders, numscript
+│                    library, and the query translator (recon query → ledger filter)
+├── ledgerstore/     LedgerStore — the sole service.Store, backed by the control-ledger `_recon`
+├── ledgerresolver/  Adapter: ledger.CheckpointReader → engine.LedgerResolver (Tier-1)
+├── engine/          Internal CEL kernel
+│   ├── types.go / source.go / resolvers.go / builtins.go / engine.go / budget.go / errors.go
+│   └── sdk_resolvers.go   SDKPaymentsResolver only (Tier-2 pool; the SDK ledger resolver is retired)
+├── templates/       V1 GA template catalog (source.go, ledger_invariant, account_threshold, source_parity)
 └── api/
-    ├── service/            ✅ Rule / Evaluation / Alert orchestration (rule.go, evaluation.go, alert.go)
-    ├── backend/            ✅ Backend interface + generated mock (now covers all V1 methods)
-    ├── rule.go             ✅ V1 rule HTTP handlers + Evaluate
-    ├── evaluation.go       ✅ V1 evaluation HTTP handlers
-    ├── alert.go            ✅ V1 alert HTTP handlers (ack/resolve/accept + events timeline)
-    └── router.go           ✅ Wires the V1 /rules /evaluations /alerts
+    ├── service/     Rule / Evaluation / Alert orchestration; pins one checkpoint per evaluation
+    ├── backend/     Backend interface + generated mock
+    ├── rule.go / alert.go   HTTP handlers
+    └── router.go
 ```
+
+There is **no `storage/` package and no `internal/events`** — both were deleted with Postgres.
+Shared contract types moved to the leaf `internal/store`.
 
 ---
 
@@ -42,168 +44,184 @@ internal/
 
 ```mermaid
 flowchart TB
-    subgraph "API layer ✅"
-        HTTP[HTTP handlers] --> Svc[Rule / Evaluation / Alert services]
+    subgraph API
+        HTTP[HTTP handlers] --> Svc[Rule / Evaluation / Alert service]
     end
-    Svc --> Reg[templates.Registry ✅]
-    Svc --> Store[storage.Storage ✅]
-    Reg --> Eng[engine.Engine ✅]
-    Eng --> Res[SDK Resolvers ✅]
-    Res --> Ledger[Formance Ledger]
-    Res --> Payments[Formance Payments]
-    Store --> PG[(Postgres)]
+    Svc --> Reg[templates.Registry]
+    Svc --> Store[LedgerStore]
+    Svc --> CP[Checkpointer]
+    Reg --> Eng[engine.Engine]
+    Eng --> LR["Ledger resolver (Tier-1)<br/>CheckpointReader adapter"]
+    Eng --> PR["Payments resolver (Tier-2)<br/>SDK latest"]
+    Store --> Recon[("control-ledger _recon<br/>(gRPC)")]
+    CP --> Recon
+    LR --> Data[("data-ledgers A/B<br/>@ query checkpoint")]
+    PR --> Payments[Formance Payments]
 ```
 
 | Layer | Responsibility | Key types |
 |---|---|---|
-| **HTTP** ✅ | OpenAPI-typed surface; auth scopes; cursor pagination | Handlers in [`internal/api/`](../../internal/api/); routes in [`router.go`](../../internal/api/router.go) |
-| **Service** ✅ | Validation, state changes, alert dedup, resolution lifecycle, event log append | Methods on `Service` (rule.go / evaluation.go / alert.go) |
-| **Templates** ✅ | Typed specs → CEL; per-fingerprint outcomes | `Evaluator`, `Outcome`, `Registry` |
-| **Engine** ✅ | CEL evaluation, budget, PIT propagation, resolver dispatch | `Engine`, `Source`, `Resolvers`, `Limits` |
-| **Resolvers** ✅ | SDK calls; feature-flag cache; data shaping | `SDKLedgerResolver`, `SDKPaymentsResolver` |
-| **Storage** ✅ | bun CRUD; unique constraint per (rule, fingerprint); append-only `alert_event` log; cascade deletes | `Storage`, models |
+| **HTTP** | OpenAPI-typed surface; auth scopes; cursor pagination | handlers in [`internal/api/`](../../internal/api/), routes in [`router.go`](../../internal/api/router.go) |
+| **Service** | Validation, evaluation orchestration, **checkpoint acquisition**, alert dedup + lifecycle | `Service` (rule.go / evaluation.go / alert.go), `Checkpointer` |
+| **Templates** | Typed specs → CEL; per-fingerprint outcomes; kernel cross-check | `Evaluator`, `Outcome`, `Registry` |
+| **Engine** | CEL evaluation, budget, resolver dispatch (**anchored on `checkpointID`**) | `Engine`, `Source`, `Resolvers`, `Limits` |
+| **Resolvers** | Tier-1 ledger reads at a checkpoint; Tier-2 pool reads "latest" | `ledgerresolver.Resolver` (over `CheckpointReader`), `engine.SDKPaymentsResolver` |
+| **Storage** | Rules + alert lifecycle as Numscript batches + typed metadata on `_recon`; evaluations non-durable | `LedgerStore`, `ledger.Client`, `ledgerschema` |
 
 ---
 
-## The kernel — one-paragraph view
+## The kernel — checkpoint-anchored
 
-A `Source` is an opaque CEL value that names a backend dataset (`LedgerSet(ledger, query)`, `PaymentsPool(id)`, `LedgerPostings(...)` — last one V1.1). Builtins like `balance(Source)` and `balances(Source)` consume sources and call the matching resolver. Each evaluation builds a fresh CEL env whose bindings close over the current context (ctx, resolvers, budget, PIT). The validation env at construction time has *declarations only* — used for type-checking at rule-create time without exercising resolvers.
+A `Source` is an opaque CEL value naming a backend dataset (`ledgerSet(ledger, query)`,
+`pool(id)`). Builtins (`balance`, `balances`, `sum`, `abs`) consume sources and call the
+matching resolver. Each evaluation builds a fresh CEL env whose bindings close over the
+per-eval context — crucially the **`checkpointID`** the service pinned (not a PIT). The
+validation env at construction time has *declarations only*, for type-checking at rule-create
+time without exercising resolvers.
+
+Two resolver tiers (ADR-002):
+- **Tier-1 — ledger sources** read at the evaluation's shared `checkpointID` (a globally
+  consistent cross-ledger cut). Backed by `ledgerresolver.Resolver` over `ledger.CheckpointReader`.
+- **Tier-2 — payments pool** reads "latest" via the SDK; cross-system skew is absorbed by the
+  template's `tolerance`.
 
 ```mermaid
 flowchart LR
-    Tmpl[Template renders per-asset CEL] --> Compile[engine.Compile against validation env]
-    Compile --> Evaluate[engine.Evaluate]
-    Evaluate --> Bindings[Build per-eval env with bindings]
+    Tmpl[Template renders per-asset CEL] --> Compile[engine.Compile]
+    Compile --> Evaluate["engine.Evaluate(checkpointID)"]
+    Evaluate --> Bindings[Per-eval env bindings]
     Bindings --> Run[program.ContextEval]
-    Run --> Resolvers[Resolver calls via builtins]
-    Resolvers -.-> SDKLedger[V2.GetBalancesAggregated]
-    Resolvers -.-> SDKPayments[V3.GetPoolBalancesLatest]
+    Run --> LR["ledger source → AggregateVolumes(checkpointID)"]
+    Run --> PR["pool source → PoolBalancesLatest"]
 ```
 
-See [engine/engine.go](../../internal/engine/engine.go) for the Compile/Evaluate flow, [engine/builtins.go](../../internal/engine/builtins.go) for the CEL function set, and [engine/sdk_resolvers.go](../../internal/engine/sdk_resolvers.go) for the SDK wiring.
+See [engine/engine.go](../../internal/engine/engine.go), [engine/builtins.go](../../internal/engine/builtins.go),
+and the adapter [ledgerresolver/resolver.go](../../internal/ledgerresolver/resolver.go).
 
 ---
 
-## Templates layer — one-paragraph view
+## The control-ledger data model
 
-A template owns its own end-to-end evaluation. It scouts the asset universe by calling resolvers directly (e.g. union of ledger + pool balances for `source_parity`), then for each asset it renders a fresh CEL string, compiles + evaluates via the kernel, and emits an `Outcome` with a stable fingerprint. The service layer collects outcomes and opens/updates one alert per failing fingerprint (appending one `alert_event` row per outcome).
+Reconciliation stores everything on `_recon` — there is no relational schema. The chart has
+**4 account types** plus two precision-0 assets, `ALERT` (the lifecycle marker) and `OCC`
+(occurrence counter). The data-ledgers being reconciled (A, B) are *external* and read-only to
+recon; they are not part of this chart.
+
+| Account | Type | Role |
+|---|---|---|
+| `rule:{id}` | NORMAL | the rule — typed metadata (spec, cadence, compiled CEL, notifications, labels) |
+| `alert:item:rule:{id}:per:{p}:fp:{h}` | NORMAL | **canonical alert record** — metadata (`status` mirror, severity, evidence, resolution, ack, snooze, **`last_transition`**, labels) + `OCC` balance = occurrence count |
+| `alert:st:{state}:rule:{id}:per:{p}:fp:{h}` | **EPHEMERAL** | the `ALERT` **marker** — source-of-truth for status; `state ∈ {open, ack}` |
+| `alert:pool:rule:{id}` | NORMAL | mint source for `ALERT`+`OCC` (overdraft) and free gauges |
+| `internal:checkpoints` | (undeclared, AUDIT) | reaper registry — one `cp:{id}` = timestamp key per live query checkpoint |
+
+The **marker is the status source-of-truth**; the `status` metadata key is an LWW mirror for O(1)
+point-reads. Both are written in **one atomic Numscript batch**, so they never diverge.
+
+### Transition workflow
+
+Four numscripts (library, pinned `v1.0.0`): `alert_open` (mint marker + OCC), `alert_bump`
+(OCC only), `alert_move` (guarded marker move, no OCC), `alert_reopen` (guarded move + OCC).
 
 ```mermaid
-flowchart LR
-    Spec[templateSpec] --> Scout[resolver.AggregateBalance / PoolBalanceLatest]
-    Scout --> Universe[Union of assets]
-    Universe --> ForEach[For each asset]
-    ForEach --> CEL[Render asset-specific CEL]
-    CEL --> Engine[engine.Compile + Evaluate]
-    Engine --> Outcome[Outcome { fingerprint, passed, evidence }]
-    ForEach --> Outcomes[List of Outcome]
+flowchart TB
+    Pool["alert:pool:rule:{id}<br/>(mint ALERT + OCC, overdraft)"]
+    Pool -- "open: mint 1 ALERT + 1 OCC (alert_open)" --> StOpen["alert:st:open<br/>(marker)"]
+    StOpen -- "repeat: +1 OCC (alert_bump)" --> StOpen
+    StOpen -- "ack: guarded move (alert_move)" --> StAck["alert:st:ack<br/>(marker)"]
+    StAck -- "resolve / accept / auto-resolve: BURN marker → pool (alert_move)" --> Closed["(no marker)<br/>EPHEMERAL purges st:{state}"]
+    StOpen -- "resolve / accept / auto-resolve: BURN → pool" --> Closed
+    Closed -- "reopen (was RESOLVED): re-mint (alert_open) +OCC" --> StOpen
+    StAck -- "resurface (new fail): guarded move (alert_reopen) +OCC" --> StOpen
 ```
 
-Each template also performs a **kernel/template consistency check** — it runs the same per-asset comparison twice (direct big.Int math + via the kernel) and errors loudly on divergence. Catches kernel drift early.
+- **Every transition is one guarded, idempotent transaction.** The numscript's *bare source*
+  (the marker must hold the funds) acts as a **compare-and-swap**: an illegal transition fails
+  the whole batch. The item's status mirror + descriptive metadata + `last_transition` envelope
+  are set in the same batch.
+- **Burn-on-close.** Resolving drains the marker back to the pool → `alert:st:{state}` hits zero →
+  **EPHEMERAL purges it** → a closed alert has *no* marker (no accumulation). Reopen re-mints.
+- **Free gauges.** `−balance(pool, ALERT)` = active (open+ack) alerts; `−balance(pool, OCC)` =
+  total occurrences.
+- **Snooze / unsnooze** are metadata-only (no marker move), status-neutral.
+- **Idempotency.** Each batch carries a deterministic key over `(action, rule, fingerprint,
+  period, evaluationID)` — a gRPC retransmit is deduplicated by the ledger (see **F17** in the
+  migration log for the content-sensitive caveat).
+
+Addresses, assets, metadata keys, and the numscript library live in
+[`internal/ledgerschema`](../../internal/ledgerschema/); the lifecycle writes in
+[`internal/ledgerstore`](../../internal/ledgerstore/).
 
 ---
 
-## Storage shape
+## Reads — query checkpoints
 
-```mermaid
-erDiagram
-    RULE       ||--o{ EVALUATION  : "evaluated by"
-    RULE       ||--o{ ALERT       : "raises"
-    EVALUATION ||--o{ ALERT       : "last_evaluation_id"
-    ALERT      ||--o{ ALERT_EVENT : "transitions / history"
-    EVALUATION ||--o{ ALERT_EVENT : "evaluation_id (per-eval row)"
+`EvaluateRule` **pins one query checkpoint per evaluation** (ADR-002): `AcquireCheckpoint` →
+`Evaluate` → `Release` (released on a cancellation-surviving context so a cancelled eval still
+frees the SST-pinning checkpoint). Every Tier-1 ledger source in the evaluation reads at that
+checkpoint, so ledgers A and B are compared at one globally-consistent cut — no skew.
 
-    RULE {
-        uuid id PK
-        text name
-        text template_kind
-        jsonb template_spec
-        text compiled_cel
-        bool enabled
-        text severity
-        jsonb schedule
-        jsonb notifications
-        jsonb labels
-        ts created_at
-        ts updated_at
-    }
-    EVALUATION {
-        uuid id PK
-        uuid rule_id FK
-        ts started_at
-        ts ended_at
-        jsonb pit_per_source
-        text result
-        jsonb evidence
-        text error
-        bigint cost_units
-    }
-    ALERT {
-        uuid id PK
-        uuid rule_id FK
-        text fingerprint
-        text status
-        text severity
-        ts first_seen_at
-        ts last_seen_at
-        bigint occurrence_count "lifetime"
-        uuid last_evaluation_id FK
-        jsonb evidence "current"
-        jsonb ack "current"
-        jsonb resolution "current"
-        jsonb labels
-    }
-    ALERT_EVENT {
-        uuid id PK
-        uuid alert_id FK
-        uuid evaluation_id FK "nullable"
-        text type "fail|pass|ack|resolve|accept"
-        text prev_status "nullable"
-        text new_status
-        jsonb payload
-        ts at
-        ts created_at
-    }
-```
+- A checkpoint's read index materializes **asynchronously** after creation, so `AcquireCheckpoint`
+  probes until it is readable before returning (**F32**).
+- Crash-orphaned checkpoints (a hard crash between acquire and release) are swept by an
+  age-thresholded **reaper** at boot, using the `internal:checkpoints` registry (**F26**).
 
-### Key invariants
-
-- **`alert_unique_pair`** — UNIQUE constraint on `(rule_id, fingerprint)` in the `alert` table. Exactly one alert row per pair for the lifetime of the rule; concurrent failing evaluations either update or (on a true first-open race) retry as update.
-- **`alert.occurrence_count`** is the **lifetime** count of FAIL events on the alert — it survives reopen cycles. Per-episode counts are derived by filtering `alert_event` between status transitions.
-- **`alert_event` is append-only by convention** — no code path issues UPDATE or DELETE against it. A future migration can layer a per-alert `seq` + `prev_hash`/`hash` chain on top without breaking readers (mirrors the Ledger transaction log shape).
-- **`ON DELETE CASCADE`** — deleting a `Rule` cleans up its evaluations, alerts, and alert events.
-- **`touch_updated_at` trigger** — `updated_at` advances on every UPDATE for `rule` and `alert`. Verified in [migrations.go](../../internal/storage/migrations/migrations.go) and exercised in storage tests.
+Evaluations are a **deterministic projection**, not a durable entity (RFC §4.4.2): the run
+result is returned from `EvaluateRule`, the break `evidence` is durable on `alert:item`, and there
+is no evaluation read surface.
 
 ---
 
-## Concurrency model
+## Event delivery
 
-- **Engine** is concurrency-safe; a single instance is the long-lived dep injected at startup.
-- **Per-eval CEL env** is built fresh per `Engine.Evaluate` call — no shared state between concurrent evaluations.
-- **Budget tracker** uses `atomic.Int64` for `accountsScanned`.
-- **Resolvers** cache feature flags but are otherwise stateless per call.
-- **Alert dedup** relies on the UNIQUE constraint on `(rule_id, fingerprint)`, not application-level locking. Concurrent failing evaluations attempting to insert the same fingerprint will race; one succeeds, the loser retries and falls into the update path. See [storage/alert.go](../../internal/storage/alert.go) and the concurrency regression test in [alert_test.go](../../internal/storage/alert_test.go).
-- **Alert event appends** happen in the same transaction as the alert UPDATE/INSERT — the log can never reflect a state the alert table doesn't.
+Reconciliation runs **no message bus**. On every transition the store stamps a self-describing
+`last_transition` envelope (`reconciliation.alert.<type>`, subject, prev/new status,
+correlationID, payload) into `alert:item` metadata, so each Ledger log entry for that write is
+self-describing — `COMMITTED_TRANSACTION` for lifecycle moves, `SAVED_METADATA`/`DELETED_METADATA`
+for snooze/unsnooze.
+
+Delivery is the ledger's native **events sink**: when `--events-sink-url` is configured, recon
+provisions an HTTP webhook sink at boot for `[COMMITTED_TRANSACTION, SAVED_METADATA,
+DELETED_METADATA]`. The ledger delivers matching events to the webhook (e.g. the Webhooks
+module); consumers filter on `event.ledger == _recon` (sink filtering is by event type, not
+ledger — RFC §4.4). See [ledger/events_sink.go](../../internal/ledger/events_sink.go).
+
+---
+
+## Concurrency & consistency
+
+- **Engine** is concurrency-safe; a single instance is injected at startup. Each `Evaluate`
+  builds a fresh per-eval CEL env — no shared state. Budget uses `atomic.Int64`.
+- **Alert dedup / transitions** rely on **ledger CAS** (the marker bare-source guard) +
+  deterministic idempotency keys — *not* an application lock or a DB unique constraint. A losing
+  concurrent transition fails its guard (see **F22**: a raw `FailedPrecondition` where Postgres
+  yielded a clean no-op).
+- **Marker ↔ status mirror** are written in one atomic batch, so the log never reflects a state
+  the item doesn't.
+- **Statelessness** — recon holds no local state; multiple replicas share `_recon`. The
+  checkpoint reaper's age threshold (≫ the 30s eval budget) makes it safe across replicas.
 
 ---
 
 ## Dependencies
 
-| Library | Pinned at | Why |
-|---|---|---|
-| `github.com/google/cel-go` | v0.28.1 | Kernel evaluator. See [ADR-001](../prd/adr-001-cel-kernel.md) §6. |
-| `github.com/formancehq/formance-sdk-go/v3` | v3.7.2 | Has `V3.GetPoolBalancesLatest` — required to avoid the legacy PIT empty path. |
-| `github.com/uptrace/bun` | (inherited via go-libs) | ORM; existing project convention. |
-| `github.com/formancehq/go-libs/migrations` | inherited | Migration framework. |
+| Library | Why |
+|---|---|
+| `github.com/google/cel-go` | Kernel evaluator ([ADR-001](../prd/adr-001-cel-kernel.md) §6). |
+| `google.golang.org/grpc` + `internal/ledgerpb` | Ledger v3 gRPC transport (control-ledger + data-ledger reads). |
+| `github.com/go-jose/go-jose/v4` | Ed25519 request signing for the secure ledger transport (F2). |
+| `github.com/formancehq/formance-sdk-go/v3` | `V3.GetPoolBalancesLatest` — the Tier-2 payments-pool read. |
+
+`bun` and the migrations framework are **gone** with Postgres.
 
 ---
 
-## What's not in this diagram (yet)
+## What's not here yet
 
-- **Scheduler** (in-process cron loop) — ✅ shipped, single-instance MVP ([scheduler.md](./scheduler.md)); advisory-lock / Temporal multi-replica leasing ⏳.
-- **Webhook event publisher** — ⏳ task #8.
-- **Email digest** — ⏳ task #8.
-- **fctl wiring** — ⏳ task #8.
-- **EE gating + usage metering** — ⏳ task #8.
-
-The kernel + templates + storage are designed so each of these slot in without touching what's already shipped.
+- **`ListAlertEvents` (paginated history)** — returns empty; a queryable history needs a
+  downstream sink (ClickHouse/Databricks), since the ledger log has no per-account filter (RFC §10).
+- **Semantic event types + replay API** — the future generic event-log; today's events are
+  generic log-derived events carrying the `last_transition` envelope.
+- **Checkpoint anchor persistence** for exact replay — needs retained/scheduled checkpoints (§7).
+- **Scheduler multi-replica leasing** — the in-process cron loop is single-instance for now
+  ([scheduler.md](./scheduler.md)).

@@ -62,7 +62,7 @@ The product surface centres on the five-stage lifecycle:
 | **Observe**   | A library of pre-built controls (templates) over their ledger state                     | Rule definitions, scheduled or on-demand                                            |
 | **Detect**    | A break is identified at a known point in time                                          | Evaluator runs predicate; failure becomes a fingerprinted candidate alert            |
 | **Alert**     | A stable, ack-able, severity-tagged record per (rule, fingerprint) they can operate against | Open / acknowledged / resolved lifecycle, in place; full append-only history per alert |
-| **Evidence**  | The exact numbers and accounts that made the rule fail, frozen at break time            | Evaluation record with PIT-consistent snapshot                                      |
+| **Evidence**  | The exact numbers and accounts that made the rule fail, frozen at break time            | Durable evidence on the alert, from a checkpoint-consistent snapshot (ADR-002)      |
 | **Resolve or Accept** | Either *booked a correction* or *formally accepted the discrepancy*               | Two resolution paths, both audit-trailed                                            |
 
 The engine internals (rules, expressions, kernel) exist to serve this lifecycle, not the other way around.
@@ -174,7 +174,7 @@ See [docs/technical/templates.md](../technical/templates.md) for the live refere
 See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 
 - **Product name.** Ledger Clarity (lean) vs Ledger Transparency.
-- **Acceptance expiry behaviour.** Alert reopens **in place** (same id, status → OPEN) — the prior acceptance is preserved as an `alert_event` row, the alert row's current `resolution` is cleared. Flapping stays visible via the event timeline.
+- **Acceptance expiry behaviour.** Alert reopens **in place** (same id, status → OPEN) — the prior acceptance is preserved in the control-ledger log, the item's current `resolution` is cleared. Flapping stays visible via the event timeline.
 - **Scheduler host.** In-process vs Temporal. Lean Temporal; needs architecture review.
 - **CEL builtin naming review** before any post-GA exposure to customers.
 - **Notification fatigue** is the biggest product risk. Mitigation: stable alert per (rule, fingerprint), severity-aware delivery, digest mode default for low/medium.

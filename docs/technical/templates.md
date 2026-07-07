@@ -14,8 +14,8 @@ flowchart LR
     Spec --> Explain[Explain → representative CEL]
     Explain --> Persist[Saved to rule.compiled_cel]
     Spec --> Evaluate
-    Evaluate --> Scout[Scout via SDK resolvers]
-    Scout --> Universe[Determine fingerprint axis\n(asset universe)]
+    Evaluate --> Scout["Scout via resolvers (ledger @ checkpoint, pool latest)"]
+    Scout --> Universe["Determine fingerprint axis<br/>(asset universe)"]
     Universe --> Loop[For each axis value]
     Loop --> RenderCEL[Render per-axis CEL]
     RenderCEL --> Compile[engine.Compile]
@@ -173,8 +173,8 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 ```
 
 A `SourceSpec` is `{ "kind": "ledger" | "payments_pool", ... }`:
-- `ledger` → requires `ledger` + `query` (read at the eval PIT)
-- `payments_pool` → requires `poolID` (always latest; payments v3 has no faithful PIT read, so cross-system skew is absorbed by `tolerance`)
+- `ledger` → requires `ledger` + `query`. **Tier-1**: read at the evaluation's query checkpoint — a consistent cross-ledger cut (ADR-002), so two ledger sources compare skew-free.
+- `payments_pool` → requires `poolID`. **Tier-2**: always latest (payments has no checkpoint), so cross-system skew is absorbed by `tolerance`.
 
 **Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B. It requires **both** sides to be ledger sources (a pool is aggregate-only); see [the scope model](#how-templates-work).
 

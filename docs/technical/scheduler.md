@@ -6,10 +6,10 @@
 ## What it does
 
 A rule can declare a **cron schedule** (`schedule.kind = "cron"`, with a cron
-`expr`, optional `tz`, and `safetyMargin`). When the scheduler is enabled, it
-fires `EvaluateRule` for each such rule at its scheduled times — the same code
-path a manual evaluation takes, so detection, the period model, the alert
-lifecycle, and webhooks all behave identically.
+`expr` and optional `tz`). When the scheduler is enabled, it fires `EvaluateRule`
+for each such rule at its scheduled times — the same code path a manual
+evaluation takes (each pins its own query checkpoint), so detection, the period
+model, the alert lifecycle, and event delivery all behave identically.
 
 The cron expression is **validated at rule-create time** (`POST /rules`) — a bad
 expression is rejected up front, not discovered silently at run time.
@@ -35,18 +35,20 @@ never the host's local zone).
 ## ⚠️ Single-active-instance assumption
 
 This scheduler fires on **every process it runs in**. With multiple replicas it
-would fire each schedule N times (N× evaluations, N× webhooks). For V1 it must
+would fire each schedule N times (N× evaluations, N× events). For V1 it must
 run on **exactly one instance** (or stay disabled). Reconciliation evaluations
 are largely idempotent within a period — duplicate runs dedup onto the same
-alert — but **webhooks would be delivered multiple times**, so don't scale the
-scheduler out as-is.
+alert (the guarded marker CAS + idempotency keys) — but **events would be
+emitted multiple times**, so don't scale the scheduler out as-is.
 
 ## Planned follow-up (multi-replica safety)
 
 Per [PRD §8](../prd/README.md), the scheduler host is a deliberate open
-decision. The in-process MVP is the lean V1 start; the path to running safely on
-N replicas is one of:
-- a **Postgres advisory lock** so only one replica's loop fires, or
+decision. The in-process MVP is the lean V1 start; with Postgres gone, the path
+to running safely on N replicas is one of:
+- a **ledger-native lease** — a compare-and-swap on a control-ledger account
+  (a bare-source guard, like the alert marker) so only the lease-holder's loop
+  fires, or
 - moving schedules to **Temporal** (already in the stack) for durable,
   exactly-once, observable scheduling.
 

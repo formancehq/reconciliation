@@ -2,12 +2,13 @@
 
 Reconciliation exposes one API surface:
 
-- **V1 Ledger Clarity** (`/rules` / `/evaluations` / `/alerts`) — EE-gated at V1 GA.
+- **V1 Ledger Clarity** (`/rules` / `/alerts`) — EE-gated at V1 GA.
 
 It uses the auth scopes (`reconciliation:read`, `reconciliation:write`) and the `ErrorResponse` shape described below.
 
-> Status: the V1 endpoints are ✅ shipped. Event publication remains ⏳ (task #8).
-> OpenAPI lives in [openapi.yaml](../../openapi.yaml).
+> Status: the V1 endpoints are ✅ shipped; alert-transition events are delivered via the ledger's
+> native events sink (see [Events](#events) below). Evaluations are **non-durable** — there is no
+> evaluations read surface. OpenAPI lives in [openapi.yaml](../../openapi.yaml).
 
 ---
 
@@ -56,9 +57,10 @@ Filterable via query builder: `?type=ledger_invariant`, `?ledger=buildr`, `?enab
 
 Toggle `enabled`, change `severity`, edit `schedule`, replace `notifications` / `labels`. `templateSpec` edits require re-validation; the API rejects changes that would invalidate active alerts.
 
-#### `DELETE /rules/{id}` — cascade
+#### `DELETE /rules/{id}`
 
-Drops the rule and (via FK) all its evaluations, alerts, and alert events.
+Removes the rule (its `rule:{id}` account metadata). Alerts already raised persist as their own
+accounts — there is no relational cascade.
 
 ### Evaluations
 
@@ -66,12 +68,14 @@ Drops the rule and (via FK) all its evaluations, alerts, and alert events.
 
 ```json
 {
-  "reconciledAt":  "2026-06-17T15:00:00Z",
-  "safetyMargin": "30s"
+  "at": "2026-06-17T15:00:00Z"
 }
 ```
 
-Returns `200` + the evaluation record:
+`at` is optional (defaults to now) — the nominal instant used to derive the reconciliation period
+and as the Tier-2 (pool) audit timestamp. Ledger sources are read at a **query checkpoint** the
+service pins for the run, not at `at` (ADR-002); there is no `safetyMargin` (a checkpoint is an
+atomic cut). Returns `200` + the evaluation result (not persisted — see the status note):
 
 ```json
 {
@@ -80,22 +84,22 @@ Returns `200` + the evaluation record:
   "startedAt":    "…",
   "endedAt":      "…",
   "result":       "PASS" | "FAIL" | "ERROR",
-  "pitPerSource": { "ledger_set:0": "…", "payments_pool:0": "…" },
+  "pitPerSource": { "payments_pool:0": "…" },
   "evidence":     [ { "fingerprint": "asset:USD/2", "passed": false, "evidence": {…} }, … ],
   "costUnits":    0,
   "error":        ""
 }
 ```
 
-`evidence` records **only the failing fingerprints** — the overall `result` (`PASS`/`FAIL`/`ERROR`) carries the verdict, and persisting the full passing roster every tick is pure write amplification for wide rules. An all-`PASS` evaluation therefore has `"evidence": []`. The failing detail you'd query lives here and (per-fingerprint, with lifecycle) on the alerts.
-
-#### `GET /rules/{id}/evaluations` — history
-
-Cursor-paginated, ordered by `created_at DESC`.
+`pitPerSource` records the audit PIT for **Tier-2 (pool) sources only** — a ledger↔ledger rule is
+anchored by the shared checkpoint, so its map is empty (ADR-002 §10.1). `evidence` records **only
+the failing fingerprints** (an all-`PASS` evaluation has `"evidence": []`); the durable copy of a
+break's evidence lives on the alert. There is **no evaluations history endpoint** — an evaluation
+is a deterministic projection, not a durable entity (RFC §4.4.2).
 
 ### Alerts
 
-An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one row per triple. Within a period, reopens after RESOLVED flip status back to OPEN **in place** (same id); the same fingerprint failing in a *new* period is a fresh case (new id). For a `continuous`-cadence rule there is a single ongoing period, so it behaves as one immortal case per `(rule, fingerprint)`. The full transition history lives in `alert_event` and is exposed at `GET /alerts/{id}/events`. See [alert-period-model.md](./alert-period-model.md).
+An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one alert per triple. Within a period, reopens after RESOLVED flip status back to OPEN **in place** (same id); the same fingerprint failing in a *new* period is a fresh case (new id). For a `continuous`-cadence rule there is a single ongoing period, so it behaves as one immortal case per `(rule, fingerprint)`. The transition history is the control-ledger's append-only log (see [Events](#events)). See [alert-period-model.md](./alert-period-model.md).
 
 #### `GET /alerts` — list
 
@@ -124,35 +128,14 @@ Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?periodID=2026-03`
 
 `occurrenceCount` is the count of FAIL events on this alert across its reopen cycles **within its period** (for a `continuous`-cadence rule, that's the lifetime count, since there is one unbounded period). Finer per-episode counts can be derived from `/events`.
 
-#### `GET /alerts/{id}/events` — append-only timeline
+#### `GET /alerts/{id}/events` — append-only timeline (⏳ deferred)
 
-Returns a page of the events recorded for this alert: every evaluation that touched it plus every manual transition. Most-recent-first, **cursor-paginated** (`?pageSize=`, `?cursor=`) like the other list endpoints. Pagination is required, not optional: a long-lived alert (a `continuous`-cadence rule, or an `engine.error` meta-alert) accumulates one event row per failing evaluation indefinitely — notification suppression keeps those rows off the bus but **not** out of the table — so the timeline is unbounded.
-
-```json
-{
-  "cursor": {
-    "pageSize": 15,
-    "hasMore": true,
-    "next": "…",
-    "data": [
-      {
-        "id":         "evt_…",
-        "alertID":    "alr_…",
-        "evaluationID": "ev_…",
-        "type":       "fail",
-        "prevStatus": "RESOLVED",
-        "newStatus":  "OPEN",
-        "payload":    { "asset": "USD/2", "drift": "75", … },
-        "at":         "2026-06-21T08:42:00Z",
-        "isReopen":   true,
-        "notify":     true
-      }
-    ]
-  }
-}
-```
-
-`type` is one of `fail` / `pass` / `ack` / `resolve` / `accept`. `prevStatus` is `null` only for the alert's inaugural event. `isReopen` is a derived boolean — true when a `fail` lands on a previously-RESOLVED alert.
+**Returns an empty page today.** The transition history exists — it is the control-ledger's ordered
+log, and each transition carries a self-describing `last_transition` envelope (see [Events](#events))
+— but a *paginated per-alert* read needs a downstream queryable sink (ClickHouse/Databricks): the
+ledger log has no per-account filter, so per-request replay of the whole `_recon` log is not viable
+(RFC §10). The endpoint is wired and returns the cursor shape below with `data: []` until that sink
+lands.
 
 #### `POST /alerts/{id}/ack`
 
@@ -183,7 +166,7 @@ Status transitions to `RESOLVED` with `resolution.kind = "fixed_by_booking"` (or
 }
 ```
 
-Note is **required**. Evidence at acceptance time is frozen onto `resolution.evidenceSnapshot`. If `expiresAt` is set and the rule still fails at expiry, the alert reopens in place (same id) — the prior resolution is preserved as an `alert_event` row, the alert row's current `resolution` is cleared.
+Note is **required**. Evidence at acceptance time is frozen onto `resolution.evidenceSnapshot`. If `expiresAt` is set and the rule still fails at expiry, the alert reopens in place (same id) — the prior resolution is preserved in the ledger log, the item's current `resolution` is cleared.
 
 #### `POST /alerts/{id}/snooze` — mute notifications until a future instant
 
@@ -191,7 +174,7 @@ Note is **required**. Evidence at acceptance time is frozen onto `resolution.evi
 { "by": "ops@buildr.com", "until": "2026-06-25T18:00:00Z", "note": "migration in flight" }
 ```
 
-Mutes the alert's notifications until `until` (which must be in the future). The alert keeps failing, keeps its status, and **keeps counting against period-green** — only its webhooks go quiet, even if the discrepancy moves. The first failing evaluation at or after `until` clears the snooze and notifies once. Re-snoozing overwrites the window; resolving the alert clears it. Rejects a RESOLVED alert and a non-future `until`. The current snooze is exposed on the alert as `snooze`. See [notification-suppression.md](./notification-suppression.md) and [workflows.md §5](./workflows.md).
+Records a mute intent until `until` (which must be in the future): the alert keeps failing, keeps its status, and **keeps counting against period-green**. The `snooze` metadata + a `snoozed` transition are written; a consumer honours the window — recon no longer gates delivery itself (see [notification-suppression.md](./notification-suppression.md) and [workflows.md §5](./workflows.md)). Re-snoozing overwrites the window; resolving the alert clears it. Rejects a RESOLVED alert and a non-future `until`. The current snooze is exposed on the alert as `snooze`.
 
 #### `POST /alerts/{id}/unsnooze` — lift a snooze early
 
@@ -203,66 +186,55 @@ Clears an active snooze before its window elapses. Idempotent — unsnoozing an 
 
 ---
 
-## Events (✅ implemented)
+<a id="events"></a>
+## Events
 
-Every *notifying* alert state transition publishes one message to the Formance
-message bus (go-libs/v5 `messagingfx`), consumed by the **Webhooks** module
-exactly like `ledger.*` / `payments.*` events. One `alert_event` row with
-`notify = true` ⇒ one outbound message: emission is hooked at the single dispatch
-point (`recordAlertEvent`) and sent **after the transaction commits**, so a
-rolled-back evaluation emits nothing.
+Reconciliation runs **no message bus of its own**. Every alert transition writes a self-describing
+`last_transition` envelope into the `alert:item` metadata in the same atomic batch as the state
+change, so the control-ledger's log entry for that write carries "what happened":
+`COMMITTED_TRANSACTION` for lifecycle moves (open/ack/resolve/accept/auto-resolve),
+`SAVED_METADATA`/`DELETED_METADATA` for snooze/unsnooze.
 
-A repeated failing evaluation of an already-`OPEN` alert that carries
-**materially-identical evidence** is recorded (`notify = false`) but **not
-published** — see [notification-suppression.md](./notification-suppression.md).
-This keeps a scheduled, still-broken rule from re-paging on every tick.
+Delivery is the **ledger's native events sink**. When the operator sets `--events-sink-url`,
+reconciliation provisions an HTTP webhook sink at boot (name `reconciliation`, event types
+`[COMMITTED_TRANSACTION, SAVED_METADATA, DELETED_METADATA]`, optional `--events-sink-secret` for the
+`X-Webhook-Signature` HMAC). The ledger delivers each matching committed log entry to the endpoint
+(e.g. the Webhooks module). Sink filtering is by event *type*, not ledger, so consumers filter on
+`event.ledger == _recon`.
 
-| Event | Fires when | `alert_event` row |
-|---|---|---|
-| `reconciliation.alert.opened`       | First failing eval for a fingerprint | `fail`, `prevStatus = null` |
-| `reconciliation.alert.updated`      | Failure while OPEN/ACKNOWLEDGED **with new evidence** (identical repeats are suppressed) | `fail`, `prevStatus ∈ {OPEN, ACKNOWLEDGED}`, `notify = true` |
-| `reconciliation.alert.acknowledged` | Human ack'd | `ack` |
-| `reconciliation.alert.resolved`     | Auto-resolve (`pass`) or `fixed_by_booking` (`resolve`) | `pass` / `resolve` |
-| `reconciliation.alert.accepted`     | Business acceptance | `accept` |
-| `reconciliation.alert.reopened`     | Same fingerprint fails after a closed alert (status → OPEN, same alert id) | `fail`, `prevStatus = RESOLVED` |
-| `reconciliation.alert.snoozed`      | Operator muted the alert until a future instant | `snooze` |
-| `reconciliation.alert.unsnoozed`    | Snooze lifted early | `unsnooze` |
+| Transition (`type`) | Fires when |
+|---|---|
+| `reconciliation.alert.opened`        | first failing eval for a fingerprint |
+| `reconciliation.alert.occurred`      | repeat failure while OPEN/ACK (OCC bump) |
+| `reconciliation.alert.reopened`      | same fingerprint fails after RESOLVED (status → OPEN) |
+| `reconciliation.alert.acknowledged`  | human ack'd |
+| `reconciliation.alert.resolved`      | `fixed_by_booking` closure |
+| `reconciliation.alert.accepted`      | business acceptance |
+| `reconciliation.alert.auto_resolved` | next eval passes (system close) |
+| `reconciliation.alert.snoozed` / `.unsnoozed` | operator mute / lift |
 
-The event name is a pure function of the row (`events.EventTypeFor`) — there is
-no separate event-kind column to keep in sync. An idempotent no-op (e.g. re-ack
-of an already-acknowledged alert, or unsnoozing an alert that isn't snoozed)
-writes no row and therefore emits no event. A failing evaluation that repeats
-materially-identical evidence on an already-OPEN alert, or fails while an active
-snooze is in force, writes a row with `notify = false` and is **not** published
-— see [notification-suppression.md](./notification-suppression.md).
-
-**Envelope.** Standard `publish.EventMessage`: `app = "reconciliation"`,
-`version = "v1"`, `type ∈ {alert.opened, alert.updated, alert.acknowledged,
-alert.resolved, alert.accepted, alert.reopened, alert.snoozed,
-alert.unsnoozed}`, `idempotencyKey =` the `alert_event` id. The Webhooks worker
-lowercases and joins `app` + `type`, so subscribers match against the full names
-in the table above. All events publish to a single logical topic
-(`reconciliation`); the operator's `--publisher-topic-mapping` routes it to the
-bus subject Webhooks subscribes to.
-
-**Payload.** The full current `Alert` row (which carries the latest evaluation's
-`evidence`, plus `resolution` / `ack` / `labels`) paired with the triggering
-`alert_event` row (transition `type`, `prevStatus` → `newStatus`, originating
-`evaluationID`, and the resolution/ack detail in its `payload`):
+**Envelope** (the `last_transition` metadata value, carried in the log entry's `account_metadata`
+or `saved_metadata` payload):
 
 ```json
 {
-  "alert": { "id": "…", "ruleID": "…", "fingerprint": "asset:USD/2", "periodID": "2026-03", "status": "RESOLVED", "evidence": { … }, "resolution": { … }, … },
-  "event": { "id": "…", "alertID": "…", "type": "resolve", "prevStatus": "ACKNOWLEDGED", "newStatus": "RESOLVED", "evaluationID": "…", "payload": { … }, "at": "2026-06-22T10:00:00Z" }
+  "type": "reconciliation.alert.resolved",
+  "subject": "alert:{ruleID}:{fingerprint}",
+  "alertID": "…",
+  "prevStatus": "ACKNOWLEDGED",
+  "newStatus": "RESOLVED",
+  "occurredAt": "2026-06-22T10:00:00Z",
+  "correlationID": "{evaluationID}",
+  "payload": { "resolution": { "kind": "fixed_by_booking", "by": "…", "note": "…" } }
 }
 ```
 
-Delivery routing (which event goes to which endpoint) is configured per
-subscription in the Webhooks module — every event above is published
-unconditionally; the customer subscribes to what they care about and fans out to
-Jira / PagerDuty / Slack via their own Webhook consumer. The per-recipient
-**email digest** is owned in-module and ships separately at V1 GA (its
-aggregation is awkward to push down to Webhooks).
+`correlationID` is the evaluation id for eval-driven transitions (opened/occurred/reopened/
+auto_resolved), empty for operator actions. **No recon-side notify gate** — the ledger emits an
+event per committed write; repeat-suppression and snooze *muting* are a **consumer** concern (the
+Webhooks module / a future digest), driven by the `occurred` bumps and the `snooze` metadata (see
+[notification-suppression.md](./notification-suppression.md)). This is a deliberate deferral (RFC §4.4);
+the write-side `notify` flag and the watermill publisher were removed with Postgres.
 
 ---
 
@@ -281,6 +253,6 @@ All endpoints share the existing `ErrorResponse` shape:
 | 401 | `UNAUTHORIZED`       | Missing/invalid token |
 | 403 | `FORBIDDEN`          | Token lacks the required scope |
 | 404 | `NOT_FOUND`          | Resource doesn't exist |
-| 409 | `CONFLICT`           | Concurrent first-open race rejected by unique constraint (the retry path catches this automatically — surfaced only when retries are exhausted) |
+| 409 | `CONFLICT`           | Concurrent transition lost the ledger marker guard (compare-and-swap); low-concurrency control-plane, rare (see F22 in the migration log) |
 | 422 | `BUSINESS_RULE`      | E.g. accept-without-note, resolve-on-already-resolved |
 | 500 | `INTERNAL`           | Engine error, resolver timeout — also raises an `engine.error` meta-alert |

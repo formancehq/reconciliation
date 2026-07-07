@@ -58,12 +58,12 @@ The change is only that Tier 1 (same-cluster ledgers) is **no longer heterogeneo
 
 ```mermaid
 flowchart LR
-    Svc["Service: pin checkpoint_id = C\n(scheduled or rolling)"] --> Engine[Engine.Evaluate]
-    Engine --> Bind["Bind sources:\nledger → checkpoint C\nheterogeneous → own PIT"]
+    Svc["Service: pin checkpoint_id = C<br/>(scheduled or rolling)"] --> Engine[Engine.Evaluate]
+    Engine --> Bind["Bind sources:<br/>ledger → checkpoint C<br/>heterogeneous → own PIT"]
     Bind --> Eval[Run CEL]
-    Eval --> A["ledger A resolver:\nAggregateVolumes(checkpoint=C)"]
-    Eval --> B["ledger B resolver:\nAggregateVolumes(checkpoint=C)"]
-    Eval --> Ext["external source:\nread @ own PIT (+ tolerance)"]
+    Eval --> A["ledger A resolver:<br/>AggregateVolumes(checkpoint=C)"]
+    Eval --> B["ledger B resolver:<br/>AggregateVolumes(checkpoint=C)"]
+    Eval --> Ext["external source:<br/>read @ own PIT (+ tolerance)"]
     A --> Rec["record: checkpoint_id=C + log_sequence"]
     B --> Rec
     Ext --> Rec2["record: pit_per_source (Tier 2)"]

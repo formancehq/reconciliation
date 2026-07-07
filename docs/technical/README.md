@@ -6,13 +6,13 @@ Engineering reference for the V1 reconciliation work. Start with the architectur
 
 | Document | What it covers |
 |---|---|
-| [architecture.md](./architecture.md) | How `internal/engine/`, `internal/templates/`, `internal/storage/`, and the service layer fit together. |
-| [api.md](./api.md) | The V1 `/rules` / `/evaluations` / `/alerts` API. |
-| [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate → alert → resolve / accept, plus reopen and engine-error paths. |
+| [architecture.md](./architecture.md) | How the CEL kernel, templates, the ledger-native store (`_recon`), and the service layer fit together — plus the account model + transition workflow. |
+| [api.md](./api.md) | The V1 `/rules` / `/alerts` API + the events sink (evaluations are non-durable). |
+| [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate (at a checkpoint) → alert → resolve / accept, plus reopen, engine-error, and event delivery. |
 | [templates.md](./templates.md) | The V1 GA template catalog — spec shapes, validation rules, what each compiles to, evidence format. |
 | [alert-period-model.md](./alert-period-model.md) | Why alerts are scoped by reconciliation period (cadence), and how it's implemented. |
 | [scheduler.md](./scheduler.md) | The in-process cron scheduler — how rules fire automatically, and the single-instance caveat. |
-| [notification-suppression.md](./notification-suppression.md) | Why a still-broken alert stops re-paging on every scheduler tick — the `notify` flag, and "suppress the message, not the record". |
+| [notification-suppression.md](./notification-suppression.md) | Why a still-broken alert shouldn't re-page on every tick — and why suppression now lives at the consumer. |
 
 ## Status legend used throughout
 

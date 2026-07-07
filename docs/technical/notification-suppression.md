@@ -1,147 +1,69 @@
 # Notification suppression — repeated identical fails
 
-> Why a still-broken alert stops re-paging on every scheduler tick, and how
-> that's implemented without touching the audit record. ✅ Shipped.
+> Why a still-broken alert shouldn't re-page on every scheduler tick, and where
+> that responsibility now lives after the ledger-native migration.
 
 ## The problem
 
-Before the in-process [scheduler](./scheduler.md) landed, evaluation was
-on-demand: an alert re-failed only when a human (or a script) re-ran the rule,
-so the `reconciliation.alert.updated` event was rare and meaningful.
+Once rules evaluate on a [cadence](./scheduler.md), a rule that stays broken
+produces a transition **every tick**: a 5-minute cron that keeps failing emits a
+`reconciliation.alert.occurred` event every 5 minutes, indefinitely. None of
+those repeats carry information the consumer doesn't already have. Delivered
+straight through to Slack / PagerDuty / email that is a pager flood, and it
+trains operators to ignore the channel. The same is true of an alert an operator
+has deliberately **snoozed**: it keeps failing, but the operator has said "don't
+page me about this until T".
 
-Once rules evaluate on a cadence, that stops being true. Every failing
-evaluation appends a `fail` row and publishes a webhook
-([api.md §Events](./api.md#events)), and the row→event mapping is
-`fail + prev ∈ {OPEN, ACKNOWLEDGED} → updated`. So a rule on a 5-minute cron
-that stays broken emits `reconciliation.alert.updated` **every 5 minutes,
-indefinitely** — each one fanning out through Webhooks to the customer's Slack /
-PagerDuty / email. A discrepancy that hovers at the tolerance boundary makes it
-worse. None of those repeats carry information the consumer doesn't already
-have. That is a pager flood, and it trains operators to ignore the channel.
+## Where suppression lives now
 
-## The decision
+Reconciliation no longer runs a message bus, and **no longer gates delivery at
+the write layer**. Delivery is the ledger's native events sink
+([api.md §Events](./api.md#events)): the ledger emits one event per committed log
+entry, and the consumer (the Webhooks module, or a future per-recipient digest)
+decides what to page. Reconciliation's job is to make every transition
+**self-describing enough that a consumer can suppress correctly** — it records
+the signal, it does not silence the pager itself.
 
-Make the notification a **per-event decision**, computed once when the row is
-written, and stored on the row as `alert_event.notify`:
+> **Record everything; page selectively — at the consumer.** The control-ledger
+> log is the complete, per-evaluation history (every `occurred` bump is a real
+> log entry). A suppressed alert is still `OPEN` and still counts against "is
+> this period green?". Suppression removes *messages*, never *records* — and now
+> that filtering happens downstream of the log, not upstream of it.
 
-- `notify = true` → the transition is published to the message bus.
-- `notify = false` → the transition is recorded in the append-only log for
-  audit, but **never published**.
+## What recon exposes for a consumer to suppress on
 
-Only one case is ever suppressed: a **steady-state repeat** — an already-`OPEN`
-alert failing again with **materially-identical evidence**. Everything that
-carries new information stays `notify = true`:
+Every transition carries a self-describing `last_transition` envelope
+(`type`, `prevStatus`→`newStatus`, `correlationID`, `payload`), so a consumer has
+what it needs without reverse-engineering the metadata diff:
 
-| Transition | Published? | Why |
+| Case | Signal recon emits | How a consumer suppresses |
 |---|---|---|
-| `opened` — first fail in the period | ✅ | new case |
-| `reopened` — fail after a resolve (`prev = RESOLVED`) | ✅ | the case came back |
-| resurfacing — fail on an `ACKNOWLEDGED` alert (`prev = ACKNOWLEDGED` → `OPEN`) | ✅ | the ack no longer holds |
-| `updated` — fail on `OPEN`, **evidence changed** | ✅ | the discrepancy moved |
-| `updated` — fail on `OPEN`, **evidence identical** | 🚫 suppressed | nothing new to say |
-| `acknowledged` / `resolved` / `accepted` | ✅ | manual transitions always notify |
+| **Steady-state repeat** — an already-`OPEN` alert failing again with materially-identical evidence | `reconciliation.alert.occurred` with the current `evidence` in the alert item | dedupe: don't page if the evidence is unchanged since the last delivered event for this alert |
+| **Snooze** — operator muted the alert until `T` | `reconciliation.alert.snoozed` + the `snooze` metadata (`until`/`by`/`note`) on the item | hold notifications for the alert until `snooze.until`; `reconciliation.alert.unsnoozed` lifts it (with the actor) |
 
-> **We suppress the message, not the record.** A suppressed fail still writes
-> its `alert_event` row and still increments `occurrence_count`. The
-> append-only log remains a complete, per-evaluation history; only the *pager*
-> goes quiet. This preserves the audit guarantee the
-> [period model](./alert-period-model.md) depends on — and a suppressed alert is
-> still `OPEN`, so it still counts against "is this period green?".
+Everything that carries new information — `opened`, `reopened`, an `occurred`
+whose evidence **moved**, and every manual transition (`acknowledged`,
+`resolved`, `accepted`) — is a distinct event the consumer should page.
 
-## What counts as "materially identical"
+## What changed from the Postgres design
 
-Evidence equality is **canonical**, not byte-for-byte. The incoming evidence is
-freshly marshalled by a template; the stored evidence has been round-tripped
-through Postgres `jsonb`. Semantically-equal payloads routinely differ in key
-order and whitespace across that boundary, so a raw `bytes.Equal` would treat
-every repeat as a change and suppress nothing.
+The V1 Postgres store computed the suppression decision **write-side**: an
+`alert_event.notify` boolean, set from a canonical `sameEvidenceJSON` comparison,
+gated at a single `recordAlertEvent` dispatch point. That mechanism —
+`alert_event`, `notify`, `sameEvidenceJSON`, the watermill publisher — was
+**removed with Postgres** (migration step 6a-5b). It did not move into the
+ledger store; it was **deliberately deferred to the consumer / the future
+semantic event-log** (RFC §4.4). The trade-off: the ledger delivers more events
+(one per write), and correct suppression now depends on the consumer honouring
+the `occurred`/`snooze` signals above.
 
-`storage.sameEvidenceJSON` compares the canonical form of each payload: object
-keys sorted (Go's `encoding/json` marshals map keys in sorted order) and numeric
-literals preserved verbatim via `json.Number` (so large balances don't lose
-precision through a `float64`). Two empty payloads are equal; **a payload that
-fails to parse is treated as different** — the safe default is to notify when in
-doubt.
+## Follow-ups
 
-This is deliberately strict: `drift: "99" → "98"` (both failing) *is* a change
-and publishes. Smoothing near-identical-but-not-equal values is a separate
-concern (hysteresis / flap detection), explicitly **not** in this change.
-
-## Implementation
-
-The change is small and lives entirely in the storage + model layers — no engine
-changes, no new API surface.
-
-1. **Schema** ([migrations.go](../../internal/storage/migrations/migrations.go))
-   — `alert_event` carries `notify boolean NOT NULL DEFAULT true`. The whole V1
-   alert model is unreleased, so this is folded straight into the table's
-   `CREATE TABLE` rather than tacked on as a separate `ALTER` — no useless
-   migration step. The `DEFAULT true` keeps "every transition notifies" as the
-   baseline, so only the deliberately-suppressed cases ever write `false`.
-
-2. **Decision** ([storage/alert.go](../../internal/storage/alert.go),
-   `openOrUpdateAlertOnce`) — on the update/reopen path we capture the alert's
-   current evidence *before* the `UPDATE` overwrites it, then compute:
-
-   ```go
-   notify := reopened ||
-       prev != models.AlertOpen ||
-       !sameEvidenceJSON(prevEvidence, in.Evidence)
-   ```
-
-   The single insertion point `appendAlertEvent` takes `notify` and persists it;
-   every other caller (first open, ack, resolve, accept, auto-resolve `pass`)
-   passes `true`.
-
-3. **Gate** ([storage/store.go](../../internal/storage/store.go),
-   `recordAlertEvent`) — the one hook that turns an appended row into an outbound
-   message returns early when `event.Notify == false`. This covers both dispatch
-   paths (immediate for manual API actions, buffered-until-commit for the
-   evaluation path) in one place, and emits a `Debug` log so suppression is
-   observable. The invariant on this hook refines from *one row ⇒ one message* to
-   **one row with `notify = true` ⇒ one message**.
-
-## Workflow
-
-```text
-scheduler tick → evaluate rule → FAIL outcome → OpenOrUpdateAlert
-                                                      │
-                          ┌───────────────────────────┼───────────────────────────┐
-                          ▼                            ▼                            ▼
-                   no active alert            OPEN, evidence changed        OPEN, evidence identical
-                   → opened (notify)          → updated (notify)            → updated (notify=FALSE)
-                          │                            │                            │
-                          ▼                            ▼                            ▼
-                    append row + publish        append row + publish         append row, NO publish
-                                                                          (occurrence_count still ++)
-```
-
-The append-only log is identical in all three branches — a row per evaluation.
-The only difference is whether `recordAlertEvent` hands that row to the
-publisher.
-
-## Configuration
-
-On by default, globally — there is no per-rule toggle. Because the full failing
-history stays in the log regardless, suppression loses no audit data, so there's
-nothing to gate behind a flag. If a kill-switch is ever needed it can be added at
-the `recordAlertEvent` gate without touching the decision or the schema.
-
-## Relationship to snooze
-
-Suppression is automatic and machine-driven: it silences duplicate *noise* the
-system generates. **Snooze** (see [workflows.md §Snooze](./workflows.md)) is the
-human counterpart — a time-boxed, operator-initiated mute of an alert that *is*
-changing and would otherwise legitimately notify. Both reuse the same principle
-(suppress the notification, never the record) and, in the implementation, the
-same `notify` decision point.
-
-## Open question — log volume
-
-Suppression keeps the *pager* quiet but, by design, still writes a `fail` row per
-evaluation. A continuously-broken rule on a fast cadence therefore still grows
-`alert_event` linearly. Whether to additionally collapse identical repeats in the
-log itself (e.g. bump `occurrence_count` + `last_seen_at` without a new row, or
-roll up to a counter) is a separate, deliberately-deferred decision — it trades
-audit granularity for storage, and is tracked alongside the
-[audit-log evolution](./workflows.md) notes.
+- **A suppressing consumer** (dedupe-on-unchanged-evidence + honour-snooze) in
+  the Webhooks module or a per-recipient digest — the natural home now that
+  events are generic and consumer-interpreted.
+- **Semantic event types** (RFC §4.4) could re-introduce a first-class
+  "materially unchanged" marker so consumers don't re-derive equality.
+- **Log-volume roll-up** — collapsing identical repeats in the ledger log itself
+  (vs one entry per tick) trades audit granularity for storage; deferred, tracked
+  with the [audit-log direction](./workflows.md#8-audit-history--delivery--the-ledger-log).
