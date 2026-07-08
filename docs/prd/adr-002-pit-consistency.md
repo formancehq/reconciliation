@@ -1,6 +1,6 @@
 # ADR-002 — Consistency model: aligned checkpoint for same-cluster ledgers, per-source PIT for heterogeneous sources
 
-**Status:** Accepted — **revised for the ledger-native migration** (see [RFC: Ledger-native storage](../drafts/rfc-ledger-native-storage.md) §4.5). Supersedes the V1 per-source-only model for same-cluster Ledger↔Ledger reconciliation; the per-source model is retained for heterogeneous sources.
+**Status:** Accepted — **revised for the ledger-native migration** (see [RFC: Ledger-native storage](../drafts/rfc-ledger-native-storage.md) §4.5). Supersedes the V1 per-source-only model for same-cluster Ledger↔Ledger reconciliation; the per-source model is retained for heterogeneous sources. **The Tier-1 aligned-checkpoint model below is itself superseded by [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md)**: reconciliation reads live and records an immutable `_recon` capture — query checkpoints are removed. §5's per-source + tolerance reasoning still holds for the cases that need a cut (multi-ledger); §6 (checkpoint interface flip), §7 (checkpoint cadence) and the checkpoint lifecycle commitments (§10.3) are obsolete.
 **Linked from:** [PRD §9](./README.md), [RFC §4.5](../drafts/rfc-ledger-native-storage.md)
 **Last updated:** 2026-07-03
 

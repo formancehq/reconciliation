@@ -2,10 +2,12 @@
 
 Where the pieces live and how they fit together, **after the ledger-native migration**.
 Reconciliation is now **Postgres-free and stateless**: all its state lives on a Ledger v3
-control-ledger (`_recon`), and it reads the ledgers it reconciles at globally-consistent
-**query checkpoints**. For the *why* behind the kernel, see [ADR-001](../prd/adr-001-cel-kernel.md);
-for the checkpoint consistency model, [ADR-002](../prd/adr-002-pit-consistency.md); for the
-storage/event design and its rationale, the [ledger-native storage RFC](../drafts/rfc-ledger-native-storage.md).
+control-ledger (`_recon`), it reads the ledgers it reconciles **live**, and it records each
+evaluation as an immutable `_recon` **capture** transaction. For the *why* behind the kernel, see
+[ADR-001](../prd/adr-001-cel-kernel.md); for the read/consistency model,
+[ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md) (which supersedes the checkpoint model
+of [ADR-002](../prd/adr-002-pit-consistency.md)); for the storage/event design, the
+[ledger-native storage RFC](../drafts/rfc-ledger-native-storage.md).
 
 ---
 
@@ -18,18 +20,18 @@ internal/
 │                    Store interface shape shared by the service and ledgerstore
 ├── ledgerpb/        Generated Ledger v3 gRPC protos (synced from ledger-connect)
 ├── ledger/          Ledger v3 gRPC client: transactions, metadata, account/log queries,
-│                    query checkpoints (+ reaper), events sinks; CheckpointReader; provisioner
+│                    events sinks; live Reader; provisioner
 ├── ledgerauth/      Ed25519 request signing + TLS; refuses insecure transport by default (F2)
 ├── ledgerschema/    Chart of accounts, metadata schema/indexes, address builders, numscript
 │                    library, and the query translator (recon query → ledger filter)
 ├── ledgerstore/     LedgerStore — the sole service.Store, backed by the control-ledger `_recon`
-├── ledgerresolver/  Adapter: ledger.CheckpointReader → engine.LedgerResolver (Tier-1)
+├── ledgerresolver/  Adapter: ledger.Reader (live) → engine.LedgerResolver
 ├── engine/          Internal CEL kernel
 │   ├── types.go / source.go / resolvers.go / builtins.go / engine.go / budget.go / errors.go
 │   └── sdk_resolvers.go   SDKPaymentsResolver only (Tier-2 pool; the SDK ledger resolver is retired)
 ├── templates/       V1 GA template catalog (source.go, ledger_invariant, account_threshold, source_parity)
 └── api/
-    ├── service/     Rule / Evaluation / Alert orchestration; pins one checkpoint per evaluation
+    ├── service/     Rule / Evaluation / Alert orchestration; live reads + a capture per evaluation
     ├── backend/     Backend interface + generated mock
     ├── rule.go / alert.go   HTTP handlers
     └── router.go
@@ -49,50 +51,47 @@ flowchart TB
     end
     Svc --> Reg[templates.Registry]
     Svc --> Store[LedgerStore]
-    Svc --> CP[Checkpointer]
     Reg --> Eng[engine.Engine]
-    Eng --> LR["Ledger resolver (Tier-1)<br/>CheckpointReader adapter"]
+    Eng --> LR["Ledger resolver<br/>live Reader adapter"]
     Eng --> PR["Payments resolver (Tier-2)<br/>SDK latest"]
-    Store --> Recon[("control-ledger _recon<br/>(gRPC)")]
-    CP --> Recon
-    LR --> Data[("data-ledgers A/B<br/>@ query checkpoint")]
+    Store --> Recon[("control-ledger _recon (gRPC)<br/>rules, alerts, captures")]
+    LR --> Data[("data-ledgers A/B<br/>(live)")]
     PR --> Payments[Formance Payments]
 ```
 
 | Layer | Responsibility | Key types |
 |---|---|---|
 | **HTTP** | OpenAPI-typed surface; auth scopes; cursor pagination | handlers in [`internal/api/`](../../internal/api/), routes in [`router.go`](../../internal/api/router.go) |
-| **Service** | Validation, evaluation orchestration, **checkpoint acquisition**, alert dedup + lifecycle | `Service` (rule.go / evaluation.go / alert.go), `Checkpointer` |
-| **Templates** | Typed specs → CEL; per-fingerprint outcomes; kernel cross-check | `Evaluator`, `Outcome`, `Registry` |
-| **Engine** | CEL evaluation, budget, resolver dispatch (**anchored on `checkpointID`**) | `Engine`, `Source`, `Resolvers`, `Limits` |
-| **Resolvers** | Tier-1 ledger reads at a checkpoint; Tier-2 pool reads "latest" | `ledgerresolver.Resolver` (over `CheckpointReader`), `engine.SDKPaymentsResolver` |
-| **Storage** | Rules + alert lifecycle as Numscript batches + typed metadata on `_recon`; evaluations non-durable | `LedgerStore`, `ledger.Client`, `ledgerschema` |
+| **Service** | Validation, evaluation orchestration, **capture recording**, alert dedup + lifecycle | `Service` (rule.go / evaluation.go / alert.go) |
+| **Templates** | Typed specs → direct `big.Int` math; per-fingerprint outcomes; rendered CEL for explainability | `Evaluator`, `Outcome`, `Registry` |
+| **Engine** | CEL type-check at rule-create + budget/resolver dispatch (live reads) | `Engine`, `Source`, `Resolvers`, `Limits` |
+| **Resolvers** | Ledger reads **live**; Tier-2 pool reads "latest" | `ledgerresolver.Resolver` (over `ledger.Reader`), `engine.SDKPaymentsResolver` |
+| **Storage** | Rules + alert lifecycle + immutable evaluation **captures** as Numscript batches + typed metadata on `_recon` | `LedgerStore`, `ledger.Client`, `ledgerschema` |
 
 ---
 
-## The kernel — checkpoint-anchored
+## The kernel — CEL for validation + explainability
 
 A `Source` is an opaque CEL value naming a backend dataset (`ledgerSet(ledger, query)`,
-`pool(id)`). Builtins (`balance`, `balances`, `sum`, `abs`) consume sources and call the
-matching resolver. Each evaluation builds a fresh CEL env whose bindings close over the
-per-eval context — crucially the **`checkpointID`** the service pinned (not a PIT). The
-validation env at construction time has *declarations only*, for type-checking at rule-create
-time without exercising resolvers.
+`pool(id)`) over builtins (`balance`, `balances`, `sum`, `abs`). At **rule-create** time the engine
+type-checks the rule's CEL against a *declarations-only* env — no resolver is exercised. Built-in
+**templates evaluate in typed Go** over a single live read per source (ADR-003); they render the
+equivalent CEL into `evidence.compiledCEL` for explainability but do **not** run it (the golden test
+`TestCrossCheck_*` guards that the two agree). `engine.Evaluate` (the CEL runtime) is reserved for
+the post-GA raw-CEL power mode.
 
-Two resolver tiers (ADR-002):
-- **Tier-1 — ledger sources** read at the evaluation's shared `checkpointID` (a globally
-  consistent cross-ledger cut). Backed by `ledgerresolver.Resolver` over `ledger.CheckpointReader`.
-- **Tier-2 — payments pool** reads "latest" via the SDK; cross-system skew is absorbed by the
-  template's `tolerance`.
+Resolvers (ADR-003):
+- **Ledger sources** read **live** — a single `AggregateVolumes` is an internally consistent
+  snapshot; cross-ledger skew is absorbed by the template's `tolerance`. Backed by
+  `ledgerresolver.Resolver` over `ledger.Reader`.
+- **Payments pool (Tier-2)** reads "latest" via the SDK.
 
 ```mermaid
 flowchart LR
-    Tmpl[Template renders per-asset CEL] --> Compile[engine.Compile]
-    Compile --> Evaluate["engine.Evaluate(checkpointID)"]
-    Evaluate --> Bindings[Per-eval env bindings]
-    Bindings --> Run[program.ContextEval]
-    Run --> LR["ledger source → AggregateVolumes(checkpointID)"]
-    Run --> PR["pool source → PoolBalancesLatest"]
+    Tmpl["Template: direct big.Int math"] --> Reads["resolve sources (live)"]
+    Reads --> LR["ledger source → AggregateVolumes (live)"]
+    Reads --> PR["pool source → PoolBalancesLatest"]
+    Tmpl --> Evidence["render compiledCEL into evidence"]
 ```
 
 See [engine/engine.go](../../internal/engine/engine.go), [engine/builtins.go](../../internal/engine/builtins.go),
@@ -103,9 +102,9 @@ and the adapter [ledgerresolver/resolver.go](../../internal/ledgerresolver/resol
 ## The control-ledger data model
 
 Reconciliation stores everything on `_recon` — there is no relational schema. The chart has
-**4 account types** plus two precision-0 assets, `ALERT` (the lifecycle marker) and `OCC`
-(occurrence counter). The data-ledgers being reconciled (A, B) are *external* and read-only to
-recon; they are not part of this chart.
+**6 account types** plus three precision-0 assets — `ALERT` (the lifecycle marker), `OCC`
+(occurrence counter), and `CAPTURE` (per-evaluation counter). The data-ledgers being reconciled
+(A, B) are *external* and read-only to recon; they are not part of this chart.
 
 | Account | Type | Role |
 |---|---|---|
@@ -113,15 +112,17 @@ recon; they are not part of this chart.
 | `alert:item:rule:{id}:per:{p}:fp:{h}` | NORMAL | **canonical alert record** — metadata (`status` mirror, severity, evidence, resolution, ack, snooze, **`last_transition`**, labels) + `OCC` balance = occurrence count |
 | `alert:st:{state}:rule:{id}:per:{p}:fp:{h}` | **EPHEMERAL** | the `ALERT` **marker** — source-of-truth for status; `state ∈ {open, ack}` |
 | `alert:pool:rule:{id}` | NORMAL | mint source for `ALERT`+`OCC` (overdraft) and free gauges |
-| `internal:checkpoints` | (undeclared, AUDIT) | reaper registry — one `cp:{id}` = timestamp key per live query checkpoint |
+| `capture:rule:{id}:per:{p}` | NORMAL | **evaluation capture bucket** (ADR-003) — one immutable capture tx per evaluation (snapshot in tx metadata); `−balance(·, CAPTURE)` = count |
+| `capture:pool:rule:{id}` | NORMAL | mint source for `CAPTURE` (overdraft) |
 
 The **marker is the status source-of-truth**; the `status` metadata key is an LWW mirror for O(1)
 point-reads. Both are written in **one atomic Numscript batch**, so they never diverge.
 
 ### Transition workflow
 
-Four numscripts (library, pinned `v1.0.0`): `alert_open` (mint marker + OCC), `alert_bump`
-(OCC only), `alert_move` (guarded marker move, no OCC), `alert_reopen` (guarded move + OCC).
+Five numscripts (library, pinned `v1.0.0`): `alert_open` (mint marker + OCC), `alert_bump`
+(OCC only), `alert_move` (guarded marker move, no OCC), `alert_reopen` (guarded move + OCC),
+and `capture` (mint 1 `CAPTURE` → capture bucket).
 
 ```mermaid
 flowchart TB
@@ -154,21 +155,22 @@ Addresses, assets, metadata keys, and the numscript library live in
 
 ---
 
-## Reads — query checkpoints
+## Reads — live + capture
 
-`EvaluateRule` **pins one query checkpoint per evaluation** (ADR-002): `AcquireCheckpoint` →
-`Evaluate` → `Release` (released on a cancellation-surviving context so a cancelled eval still
-frees the SST-pinning checkpoint). Every Tier-1 ledger source in the evaluation reads at that
-checkpoint, so ledgers A and B are compared at one globally-consistent cut — no skew.
+`EvaluateRule` reads its data ledgers **live** (ADR-003): each `ledgerSet` source is one
+`AggregateVolumes` — an internally consistent server-side snapshot — so a single-ledger universe is
+skew-free. Cross-ledger rules read each side separately (per-source); the transient skew is absorbed
+by the template's `tolerance` (a period close reconciles settled state; continuous monitoring
+self-corrects on the next tick). A certifiable atomic multi-ledger read is a future ledger primitive
+([EN-1480](https://formance-team.atlassian.net/browse/EN-1480)); `min_log_sequence` (a live-read
+freshness floor) is available but unused.
 
-- A checkpoint's read index materializes **asynchronously** after creation, so `AcquireCheckpoint`
-  probes until it is readable before returning (**F32**).
-- Crash-orphaned checkpoints (a hard crash between acquire and release) are swept by an
-  age-thresholded **reaper** at boot, using the `internal:checkpoints` registry (**F26**).
-
-Evaluations are a **deterministic projection**, not a durable entity (RFC §4.4.2): the run
-result is returned from `EvaluateRule`, the break `evidence` is durable on `alert:item`, and there
-is no evaluation read surface.
+Every evaluation is recorded as an **immutable capture transaction** on `_recon` (ADR-003): a
+self-describing snapshot (`verdict`, `trigger`, `evidence`, …) on a `COMMITTED_TRANSACTION`, plus a
+`CAPTURE` counter unit in the `capture:rule:{id}:per:{p}` bucket. This is the durable "what reconciled
+and when" — positive assurance on a pass, break evidence on a fail — receipt-signed and append-only,
+replacing a queryable evaluation table (RFC §4.4.2). The run result is also returned from
+`EvaluateRule`.
 
 ---
 
@@ -198,8 +200,9 @@ ledger — RFC §4.4). See [ledger/events_sink.go](../../internal/ledger/events_
   yielded a clean no-op).
 - **Marker ↔ status mirror** are written in one atomic batch, so the log never reflects a state
   the item doesn't.
-- **Statelessness** — recon holds no local state; multiple replicas share `_recon`. The
-  checkpoint reaper's age threshold (≫ the 30s eval budget) makes it safe across replicas.
+- **Statelessness** — recon holds no local state; multiple replicas share `_recon`. Reads are
+  live and each write (alert transition, capture) is idempotent per (rule, period, evaluation), so
+  concurrent replicas converge without coordination.
 
 ---
 
@@ -222,6 +225,8 @@ ledger — RFC §4.4). See [ledger/events_sink.go](../../internal/ledger/events_
   downstream sink (ClickHouse/Databricks), since the ledger log has no per-account filter (RFC §10).
 - **Semantic event types + replay API** — the future generic event-log; today's events are
   generic log-derived events carrying the `last_transition` envelope.
-- **Checkpoint anchor persistence** for exact replay — needs retained/scheduled checkpoints (§7).
+- **Certifiable atomic multi-ledger read** for exact replay / provable simultaneity — a future
+  ledger primitive ([EN-1480](https://formance-team.atlassian.net/browse/EN-1480)); today's capture
+  records the observed numbers (durable evidence), not a re-queryable cut.
 - **Scheduler multi-replica leasing** — the in-process cron loop is single-instance for now
   ([scheduler.md](./scheduler.md)).

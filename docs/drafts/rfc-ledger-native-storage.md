@@ -299,7 +299,11 @@ cluster-level config, not code we maintain:
 1. **Alert lifecycle history (`alert_event`).** No versioned-metadata-keys hack needed:
    the ordered `SAVED_METADATA` event stream for `_recon` *is* the transition log,
    deduplicable by the monotonic `sequence` field. Consumers filter by `event.ledger == "_recon"`.
-2. **Evaluations — high volume, NOT a durable ledger table (deliberate).** Rationale: an
+2. **Evaluations — high volume, NOT a durable ledger table (deliberate).** **[Revised by
+   [ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md): each evaluation is now recorded as an immutable
+   `_recon` **capture transaction** — durable and ledger-native. The reasoning below explains why a
+   Postgres evaluation *table* was rejected; the capture is the durable, receipt-signed record that
+   replaces it, covering passes (positive assurance) as well as breaks.]** Rationale: an
    evaluation is a **deterministic projection** — `result = f(rule spec, source balances @PIT)`
    — re-derivable because the ledger already holds the balances. Alerts, by contrast, carry
    non-derivable human state (ack, resolution notes) → alerts are durable, evaluations need
@@ -347,6 +351,12 @@ filtering is listed as a *future* consideration upstream.
   ```
 
 ### 4.5 PIT consistency — query checkpoints (resolved)
+
+> **Superseded by [ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md).** Query checkpoints
+> were removed: reconciliation reads its data ledgers **live** and records an immutable `_recon`
+> **capture** per evaluation; cross-ledger skew is absorbed by tolerance, and a certifiable atomic
+> multi-ledger read is a future ledger primitive ([EN-1480](https://formance-team.atlassian.net/browse/EN-1480)).
+> The checkpoint reasoning below is retained as design history.
 
 v3 has **no arbitrary PIT** (the v2 `moves`-diff approach was dropped). The anchor is a
 **query checkpoint**, and for Ledger↔Ledger this is *stronger* than v2's cross-system PIT.

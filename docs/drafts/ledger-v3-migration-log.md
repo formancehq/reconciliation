@@ -11,7 +11,17 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 
 ## 👋 Handoff — resume here
 
-**Done:** Phase 1 steps 0–4 + **5a** (checkpoint mechanism, `6a7e110`) + **all of step 6a** — the
+**🎉 Checkpoint alternative COMPLETE (2026-07-08, ADR-003).** Query checkpoints **removed** — recon
+reads its data ledgers **live** and records each evaluation as an immutable `_recon` **capture**
+transaction (audit-grade: receipt-signed, append-only; positive assurance on pass, break evidence on
+fail). Owner-steered pivot away from the per-eval checkpoint (cluster-wide, Raft/SST-heavy, discarded
+per eval). 4 reviewed steps: 1 remove cross-check (`13b0357`), 2 drop checkpoints + live reads
+(`8979795`, **closes F26 + F32**), 3 capture in `_recon` (`932e931`, chart +2 types/+1 asset/+1
+numscript, it-ledger `recon-it4`→`recon-it5`), 4 docs (ADR-003 rewrite + ADR-002/RFC/architecture
+sync). Multi-ledger atomic-read gap tracked upstream as **EN-1480**. All green: unit -race, live
+it-suite, lint 0, gofmt. Details in the "checkpoint alternative" workstream section below.
+
+**Done (earlier):** Phase 1 steps 0–4 + **5a** (checkpoint mechanism, `6a7e110`) + **all of step 6a** — the
 server is now **Postgres-free and stateless**, running entirely on the control-ledger `_recon`
 (`LedgerStore` is the sole `service.Store`, F2-secured, provisioned at boot; shared contract types
 live in `internal/store`; `internal/storage`+`internal/events` deleted, net −3.5k lines; `31c5ca6`).
@@ -65,7 +75,7 @@ snooze/unsnooze are `SAVED_METADATA`/`DELETED_METADATA` — the sink must cover 
 
 A dedicated PR off `main` should follow (rebase after PR #83).
 
-**Watch:** open findings F1/F8/F17/F22/F23/F25/F27/F31/**F32** (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b, **F26 @ 6b-3**; F32 mitigated in-recon @ 6b-2, upstream ledger follow-up recommended; details below). **Don't touch:**
+**Watch:** open findings F1/F8/F17/F22/F23/F25/F27/F31 (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b, F26 @ 6b-3; **F26 + F32 now without object** — checkpoints removed @ checkpoint-alternative step 2; F8 still open, it-ledger bumped `recon-it5` @ step 3). **Don't touch:**
 `feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
 uncommitted `Justfile` change (orphaned `generate-ledger-proto`, leave unstaged); `ledger-local/`.
 **Build/test:** `export PATH=$PATH:$(go env GOPATH)/bin` then `GOROOT= go build ./...`,
@@ -865,7 +875,7 @@ on `main`; no OpenAPI change. Large net deletion.
 | — | LOW | Live reads are eventually-consistent on the read index (F25/F27): a read just after a write may briefly lag. Acceptable for reconciliation (settled balances; the next tick re-observes); a `min_log_sequence` freshness floor is available if ever needed (deferred). | ✅ noted |
 | — | LOW | `in engine.EvalInput` is now unused in `LedgerInvariant`/`AccountThreshold` `Evaluate` (interface-required); still consumed by `SourceParity` (pool PIT) + carried for the period/`RecordCapture` in the service. | ✅ acceptable |
 
-### Checkpoint alternative — Étape 3: audit-grade capture in `_recon` (SDLC review, 2026-07-08)
+### Checkpoint alternative — Étape 3: audit-grade capture in `_recon` (`932e931`, SDLC review, 2026-07-08)
 
 Every evaluation now records an immutable **capture** transaction on the control ledger (ADR-003):
 the durable "what reconciled and when" — positive assurance on a pass, break evidence on a fail —
