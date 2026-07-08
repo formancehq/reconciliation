@@ -25,9 +25,9 @@ const (
 // CEL value: built by source-constructor builtins (ledgerSet, pool, …) and
 // consumed by aggregator builtins (balance, balances, accounts, …).
 //
-// The read anchor is not carried per-Source: Tier-1 (ledger) sources all read at
-// the evaluation's shared checkpointID (held on the evalCtx), and Tier-2 (pool)
-// sources read latest, recording their audit PIT in pitPerSource (ADR-002 §6).
+// The read anchor is not carried per-Source: ledger sources read live (a single
+// aggregate is an internally consistent snapshot), and Tier-2 (pool) sources read
+// latest, recording their audit PIT in pitPerSource (ADR-003).
 type Source struct {
 	Kind   SourceKind
 	Key    string          // stable key used in pit_per_source map, e.g. "payments_pool:0"

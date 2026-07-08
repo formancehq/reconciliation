@@ -174,8 +174,8 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 }
 
 // evaluateRuleRequest is the API-shaped equivalent of service.EvaluateRuleRequest.
-// `at` defaults to "now". (The former `safetyMargin` was removed with the
-// checkpoint flip — ledger reads anchor on a query checkpoint, not a shifted PIT.)
+// `at` defaults to "now". (The former `safetyMargin` was removed with the read
+// model change — ledger reads are live, not at a shifted PIT.)
 type evaluateRuleRequest struct {
 	At *time.Time `json:"at,omitempty"`
 }

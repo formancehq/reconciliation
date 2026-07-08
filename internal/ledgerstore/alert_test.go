@@ -65,7 +65,7 @@ func TestOpenOrUpdateAlert_NewOpen(t *testing.T) {
 	stOpen := schema.AlertStateAccount(schema.StateOpen, in.RuleID.String(), in.PeriodID, fpHash)
 	pool := schema.PoolAccount(in.RuleID.String())
 
-	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr, gomock.Any()).Return(nil, notFound())
+	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr).Return(nil, notFound())
 
 	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {
@@ -115,7 +115,7 @@ func TestOpenOrUpdateAlert_Repeat(t *testing.T) {
 		CreatedAt: in.OccurredAt.Add(-time.Hour),
 	}
 
-	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr, gomock.Any()).Return(priorAccount(t, prior, "2"), nil)
+	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr).Return(priorAccount(t, prior, "2"), nil)
 
 	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {
@@ -160,7 +160,7 @@ func TestOpenOrUpdateAlert_Reopen(t *testing.T) {
 		Resolution: &models.Resolution{Kind: models.ResolutionAuto, By: "system", At: in.OccurredAt.Add(-time.Hour)},
 	}
 
-	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr, gomock.Any()).Return(priorAccount(t, prior, "5"), nil)
+	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr).Return(priorAccount(t, prior, "5"), nil)
 
 	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {
@@ -212,7 +212,7 @@ func TestOpenOrUpdateAlert_ResurfaceFromAck(t *testing.T) {
 		Ack:       &models.Ack{By: "ops", At: in.OccurredAt.Add(-time.Hour), Note: "looking"},
 	}
 
-	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr, gomock.Any()).Return(priorAccount(t, prior, "1"), nil)
+	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddr).Return(priorAccount(t, prior, "1"), nil)
 
 	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, tx ledger.CreateTransactionInput) error {

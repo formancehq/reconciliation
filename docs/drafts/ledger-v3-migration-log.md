@@ -809,7 +809,7 @@ reads + an immutable audit-grade **capture transaction** in `_recon`. Rationale 
 tracked upstream as **EN-1480** (batched read on one snapshot). Staged: (1) remove the runtime
 cross-check, (2) remove checkpoints + live reads, (3) capture-as-transaction, (4) docs.
 
-### Checkpoint alternative — Étape 1: remove the kernel/template cross-check (SDLC review, 2026-07-08)
+### Checkpoint alternative — Étape 1: remove the kernel/template cross-check (`13b0357`, SDLC review, 2026-07-08)
 
 The three *aggregate* templates (`source_parity`, `ledger_invariant`, `account_threshold`) re-ran their
 check through the CEL kernel (`eng.Compile`+`eng.Evaluate` per asset) and asserted the kernel verdict
@@ -834,6 +834,36 @@ not on `main` ✅ · no OpenAPI change ✅ · `engine`/checkpoint code untouched
 | # | Sev | Finding | Status |
 |---|---|---|---|
 | — | LOW | `eng` is now an unused param of `LedgerInvariant.Evaluate` (interface-required; lint skips interface methods). Kept for the `Evaluator` contract; still used by the other two templates' per_account paths. | ✅ acceptable |
+
+### Checkpoint alternative — Étape 2: drop checkpoints, live reads (SDLC review, 2026-07-08)
+
+Reconciliation no longer creates query checkpoints. Ledger reads are **live** — a single
+`AggregateVolumes` is computed against one server-side Pebble snapshot (internally consistent);
+cross-ledger reads are per-source, their skew absorbed by tolerance (ADR-003). The atomic
+multi-ledger cut is deferred to a ledger primitive (**EN-1480**).
+
+Removed: `internal/ledger/checkpoint.go` + `checkpoint_registry.go` (Acquire/Release/wait/record/
+forget/reap); client `CreateQueryCheckpoint`/`DeleteQueryCheckpoint`; the `checkpointID` param from
+the client read helpers (`AggregateVolumes`/`QueryAccountsFunc`/`QueryAccounts`/`GetAccount` — always
+live) and from the engine (`EvalInput.CheckpointID`, `LedgerResolver`), templates, and the
+`ledgerresolver` adapter; `service.Checkpointer` (+ the per-eval Acquire/Release in `EvaluateRule`);
+the `cmd` checkpointer provider + startup reaper. `CheckpointReader` → `Reader`/`NewReader` (it reads
+live). ledgerstore control-ledger reads pass no anchor; mock regenerated. it-tests rewritten to the
+live model (`TestIntegration_LiveReads` / `LiveListAccounts` / `EvaluateLive`);
+`checkpoint_registry_it_test.go` deleted.
+
+**Findings closed:** **F26** (checkpoint lifecycle/reaper) and **F32** (checkpoint read-index race)
+are now **without object** — there are no checkpoints.
+
+**Checks:** build/vet(+`-tags it`)/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit
+green; full it-suite (`-p 1 -count=1`, `recon-it4`) green against the live ledger — live
+`source_parity` PASS→FAIL end-to-end, live per-account reads + budget abort. Conventional commit; not
+on `main`; no OpenAPI change. Large net deletion.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| — | LOW | Live reads are eventually-consistent on the read index (F25/F27): a read just after a write may briefly lag. Acceptable for reconciliation (settled balances; the next tick re-observes); a `min_log_sequence` freshness floor is available if ever needed (deferred). | ✅ noted |
+| — | LOW | `in engine.EvalInput` is now unused in `LedgerInvariant`/`AccountThreshold` `Evaluate` (interface-required); still consumed by `SourceParity` (pool PIT) + carried for the period/`RecordCapture` in the service. | ✅ acceptable |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 

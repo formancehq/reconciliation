@@ -10,10 +10,10 @@ import (
 )
 
 // SDKClient is the minimum SDK surface the kernel's Tier-2 resolvers need. Ledger
-// (Tier-1) sources no longer go through the SDK — they read the gRPC control-plane
-// at a checkpoint (internal/ledgerresolver, ADR-002) — so only the payments-pool
-// read remains here. The service layer supplies a real `*sdk.Formance` (or a thin
-// adapter) at wiring time.
+// sources no longer go through the SDK — they read the gRPC control-plane live
+// (internal/ledgerresolver, ADR-003) — so only the payments-pool read remains
+// here. The service layer supplies a real `*sdk.Formance` (or a thin adapter) at
+// wiring time.
 type SDKClient interface {
 	V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error)
 }

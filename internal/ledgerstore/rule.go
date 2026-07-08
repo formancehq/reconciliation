@@ -38,7 +38,7 @@ func (s *LedgerStore) CreateRule(ctx context.Context, r *models.Rule) error {
 // GetRule reads a rule by ID. Returns store.ErrNotFound if it has no metadata
 // (never created) or the ledger reports the account as missing.
 func (s *LedgerStore) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error) {
-	acct, err := s.client.GetAccount(ctx, s.controlLedger, schema.RuleAccount(id.String()), 0)
+	acct, err := s.client.GetAccount(ctx, s.controlLedger, schema.RuleAccount(id.String()))
 	if err != nil {
 		if isNotFound(err) {
 			return nil, fmt.Errorf("get rule %s: %w", id, store.ErrNotFound)
@@ -95,7 +95,7 @@ func (s *LedgerStore) PatchRule(ctx context.Context, id uuid.UUID, patch store.R
 // DeleteRule removes a rule by clearing all its account metadata. Returns
 // store.ErrNotFound if the rule does not exist.
 func (s *LedgerStore) DeleteRule(ctx context.Context, id uuid.UUID) error {
-	acct, err := s.client.GetAccount(ctx, s.controlLedger, schema.RuleAccount(id.String()), 0)
+	acct, err := s.client.GetAccount(ctx, s.controlLedger, schema.RuleAccount(id.String()))
 	if err != nil {
 		if isNotFound(err) {
 			return fmt.Errorf("delete rule %s: %w", id, store.ErrNotFound)
@@ -131,7 +131,7 @@ func (s *LedgerStore) ListRules(ctx context.Context, q store.GetRulesQuery) (*bu
 		return nil, err
 	}
 
-	accts, err := s.client.QueryAccounts(ctx, s.controlLedger, filter, 0)
+	accts, err := s.client.QueryAccounts(ctx, s.controlLedger, filter)
 	if err != nil {
 		return nil, fmt.Errorf("list rules: %w", err)
 	}

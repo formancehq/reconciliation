@@ -17,24 +17,22 @@ import (
 // Each Engine.Evaluate call builds a fresh evalCtx, then constructs a CEL env
 // whose function bindings reference it.
 type evalCtx struct {
-	ctx          context.Context
-	checkpointID uint64
-	pit          time.Time
-	resolvers    Resolvers
-	budget       *budgetTracker
+	ctx       context.Context
+	pit       time.Time
+	resolvers Resolvers
+	budget    *budgetTracker
 	// pitPerSource records the audit PIT for each Tier-2 (pool) Source, keyed by
-	// Source.Key. Tier-1 (ledger) sources are anchored by checkpointID, not here
-	// (ADR-002 §10.1), so a ledger↔ledger evaluation leaves this empty.
+	// Source.Key. Ledger sources read live (ADR-003), so a ledger↔ledger
+	// evaluation leaves this empty.
 	pitPerSource map[string]time.Time
 	// sourceCounter assigns stable keys (ledger_set:0, ledger_set:1, payments_pool:0, …)
 	// so the same expression always names its sources the same way across runs.
 	sourceCounter map[SourceKind]int
 }
 
-func newEvalCtx(ctx context.Context, checkpointID uint64, pit time.Time, resolvers Resolvers, budget *budgetTracker) *evalCtx {
+func newEvalCtx(ctx context.Context, pit time.Time, resolvers Resolvers, budget *budgetTracker) *evalCtx {
 	return &evalCtx{
 		ctx:           ctx,
-		checkpointID:  checkpointID,
 		pit:           pit,
 		resolvers:     resolvers,
 		budget:        budget,
@@ -182,8 +180,8 @@ func (e *evalCtx) makeLedgerSet(ledger, query ref.Val) ref.Val {
 	if !ok {
 		return types.NewErr("ledgerSet: query must be string, got %T", query.Value())
 	}
-	// Tier-1: read at the evaluation's shared checkpointID (recorded via that
-	// anchor, not pitPerSource). Key is still assigned for stable naming.
+	// Ledger source: read live (ADR-003), not recorded in pitPerSource. Key is
+	// still assigned for stable naming.
 	return &Source{
 		Kind:   SourceLedgerSet,
 		Key:    e.keyFor(SourceLedgerSet),
@@ -214,7 +212,7 @@ func (e *evalCtx) resolveBalances(src *Source) (map[string]*big.Int, error) {
 		if e.resolvers.Ledger == nil {
 			return nil, fmt.Errorf("ledger resolver not configured")
 		}
-		return e.resolvers.Ledger.AggregateBalance(e.ctx, src.Ledger, src.Query, e.checkpointID)
+		return e.resolvers.Ledger.AggregateBalance(e.ctx, src.Ledger, src.Query)
 	case SourcePaymentsPool:
 		if e.resolvers.Payments == nil {
 			return nil, fmt.Errorf("payments resolver not configured")

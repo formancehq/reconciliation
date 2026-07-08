@@ -20,8 +20,8 @@ type ledgerClient interface {
 	SaveAccountMetadataValues(ctx context.Context, ledgerName, address string, md map[string]*commonpb.MetadataValue) error
 	ApplyMetadata(ctx context.Context, ledgerName, address string, set map[string]*commonpb.MetadataValue, deleteKeys ...string) error
 	DeleteAccountMetadata(ctx context.Context, ledgerName, address string, keys ...string) error
-	GetAccount(ctx context.Context, ledgerName, address string, checkpointID uint64) (*commonpb.Account, error)
-	QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64) ([]*commonpb.Account, error)
+	GetAccount(ctx context.Context, ledgerName, address string) (*commonpb.Account, error)
+	QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter) ([]*commonpb.Account, error)
 	CreateTransaction(ctx context.Context, in ledger.CreateTransactionInput) error
 }
 

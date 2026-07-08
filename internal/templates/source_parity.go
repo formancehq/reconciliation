@@ -100,21 +100,21 @@ func (t *SourceParity) Evaluate(
 	}
 
 	if spec.Scope == ScopePerAccount {
-		return t.evaluatePerAccount(ctx, &spec, eng, resolvers, in)
+		return t.evaluatePerAccount(ctx, &spec, eng, resolvers)
 	}
 
-	leftBalances, err := spec.Left.resolve(ctx, resolvers, in)
+	leftBalances, err := spec.Left.resolve(ctx, resolvers)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s: %w", spec.Left.label(), err)
 	}
-	rightBalances, err := spec.Right.resolve(ctx, resolvers, in)
+	rightBalances, err := spec.Right.resolve(ctx, resolvers)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s: %w", spec.Right.label(), err)
 	}
 
 	assets := unionAssets(leftBalances, rightBalances)
-	// Ledger sources are checkpoint-anchored (ADR-002); only pool sources record
-	// an audit PIT. Same for every asset in this evaluation, so compute it once.
+	// Ledger sources are read live; only pool sources record an audit PIT. Same
+	// for every asset in this evaluation, so compute it once.
 	pitPerSource := poolPitPerSource(in.PIT, spec.Left, spec.Right)
 	outcomes := make([]Outcome, 0, len(assets))
 	for _, asset := range assets {
@@ -129,8 +129,8 @@ func (t *SourceParity) Evaluate(
 		// The canonical CEL form is rendered into evidence for explainability;
 		// the direct big.Int math above is authoritative. Kernel/template
 		// equivalence is a golden-tested code property (TestCrossCheck_*), not a
-		// per-evaluation runtime check — a checkpoint/live read is identical on
-		// both paths, so re-running it through the kernel added cost, not safety.
+		// per-evaluation runtime check — a live read is identical on both paths,
+		// so re-running it through the kernel added cost, not safety.
 		expr := fmt.Sprintf(
 			`abs(%s - %s) <= %d`,
 			spec.Left.celTerm(celString(asset)), spec.Right.celTerm(celString(asset)), tolerance,
@@ -167,21 +167,20 @@ func (t *SourceParity) evaluatePerAccount(
 	spec *ParitySpec,
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
-	in engine.EvalInput,
 ) ([]Outcome, error) {
 	limit := eng.MaxAccountsScanned()
-	leftAccts, err := spec.Left.resolveAccounts(ctx, resolvers, in, limit)
+	leftAccts, err := spec.Left.resolveAccounts(ctx, resolvers, limit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s accounts: %w", spec.Left.label(), err)
 	}
-	rightAccts, err := spec.Right.resolveAccounts(ctx, resolvers, in, limit)
+	rightAccts, err := spec.Right.resolveAccounts(ctx, resolvers, limit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s accounts: %w", spec.Right.label(), err)
 	}
 	leftByAddr := accountsByAddress(leftAccts)
 	rightByAddr := accountsByAddress(rightAccts)
-	// Both sides are ledger sources (Validate enforces it) → Tier-1, anchored by
-	// the shared checkpoint, so pitPerSource stays empty (ADR-002 §10.1).
+	// Both sides are ledger sources (Validate enforces it) → read live, so
+	// pitPerSource stays empty (ADR-003).
 	pitPerSource := map[string]time.Time{}
 
 	outcomes := make([]Outcome, 0, len(leftByAddr))

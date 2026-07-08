@@ -74,7 +74,7 @@ func TestIntegration_TransitionEventStamped(t *testing.T) {
 func lastTransition(ctx context.Context, t *testing.T, c *ledger.Client, control, itemAddr string) transitionEvent {
 	t.Helper()
 
-	acct, err := c.GetAccount(ctx, control, itemAddr, 0)
+	acct, err := c.GetAccount(ctx, control, itemAddr)
 	require.NoError(t, err)
 
 	raw := acct.GetMetadata()[schema.MetaLastTransition].GetStringValue()

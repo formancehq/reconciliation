@@ -100,9 +100,8 @@ func (s *Scheduler) tick(ctx context.Context, last, now time.Time) {
 // rule's failure must not stop the scheduler (and EvaluateRule already raises an
 // engine.error meta-alert on engine-side failures).
 func (s *Scheduler) fire(ctx context.Context, r models.Rule) {
-	// PIT defaults to now inside EvaluateRule; the reconciliation reads anchor on
-	// a query checkpoint, not a per-source PIT (ADR-002), so a scheduled fire
-	// carries no extra read knobs.
+	// PIT defaults to now inside EvaluateRule; ledger reads are live (ADR-003), so
+	// a scheduled fire carries no extra read knobs.
 	if _, err := s.svc.EvaluateRule(ctx, r.ID, service.EvaluateRuleRequest{}); err != nil {
 		s.logger.Errorf("scheduler: evaluate rule %s: %s", r.ID, err)
 	}

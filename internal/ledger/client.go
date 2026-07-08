@@ -346,20 +346,19 @@ func deleteMetadataRequest(ledgerName, address, key string) *servicepb.Request {
 
 // QueryAccountsFunc streams every account matching filter and invokes fn for
 // each, following the ledger's x-next-cursor across pages (one ListAccounts call
-// returns a single page). A non-zero checkpointID reads from a query checkpoint.
+// returns a single page). Reads live state.
 // fn returning a non-nil error aborts the stream and surfaces that error verbatim
 // — the seam a bounded reader uses to enforce an accounts budget without
 // collecting the whole set into memory first. A metadata-filtered query returns
 // codes.Unavailable while the field's index is still building — the client's
 // retry policy absorbs that.
-func (c *Client) QueryAccountsFunc(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64, fn func(*commonpb.Account) error) error {
+func (c *Client) QueryAccountsFunc(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, fn func(*commonpb.Account) error) error {
 	var cursor string
 
 	for {
 		stream, err := c.service.ListAccounts(ctx, &servicepb.ListAccountsRequest{
 			Ledger: ledgerName,
 			Options: &commonpb.ListOptions{
-				Read:     &commonpb.ReadOptions{CheckpointId: checkpointID},
 				Filter:   filter,
 				PageSize: queryPageSize,
 				Cursor:   cursor,
@@ -396,10 +395,10 @@ func (c *Client) QueryAccountsFunc(ctx context.Context, ledgerName string, filte
 // bounded by the query's selectivity (id lookup → ≤1; a rule/period sweep → its
 // active alerts). Callers that need a bounded scan should use QueryAccountsFunc
 // and stop from the callback instead of collecting unboundedly here.
-func (c *Client) QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64) ([]*commonpb.Account, error) {
+func (c *Client) QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter) ([]*commonpb.Account, error) {
 	var accounts []*commonpb.Account
 
-	if err := c.QueryAccountsFunc(ctx, ledgerName, filter, checkpointID, func(acct *commonpb.Account) error {
+	if err := c.QueryAccountsFunc(ctx, ledgerName, filter, func(acct *commonpb.Account) error {
 		accounts = append(accounts, acct)
 
 		return nil
@@ -421,14 +420,14 @@ func nextCursorFromTrailer(trailer metadata.MD) string {
 }
 
 // AggregateVolumes returns the per-asset aggregate balance (input − output) of
-// the accounts matching filter. A non-zero checkpointID reads from a query
-// checkpoint instead of live state — the checkpoint-consistent read that lets an
-// evaluation aggregate ledgers A and B at the same instant (ADR-002).
-func (c *Client) AggregateVolumes(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, checkpointID uint64) (map[string]*big.Int, error) {
+// the accounts matching filter, read from live state (the server computes it
+// against one consistent Pebble snapshot, so a single call is internally
+// consistent). Reconciliation reads its account universes live and records the
+// observed state in an immutable _recon capture (ADR-003).
+func (c *Client) AggregateVolumes(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter) (map[string]*big.Int, error) {
 	resp, err := c.service.AggregateVolumes(ctx, &servicepb.AggregateVolumesRequest{
-		Ledger:       ledgerName,
-		Filter:       filter,
-		CheckpointId: checkpointID,
+		Ledger: ledgerName,
+		Filter: filter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("aggregate volumes on %s: %w", ledgerName, err)
@@ -442,55 +441,11 @@ func (c *Client) AggregateVolumes(ctx context.Context, ledgerName string, filter
 	return out, nil
 }
 
-// CreateQueryCheckpoint creates a query checkpoint via Raft and returns its
-// assigned id and the max log sequence it pins. Because all ledgers share one
-// log, the checkpoint is a globally consistent cross-ledger cut — the anchor for
-// reading A and B at the same instant (ADR-002). Checkpoints are NOT auto-cleaned:
-// the caller owns the lifecycle (see Checkpoint).
-func (c *Client) CreateQueryCheckpoint(ctx context.Context) (checkpointID, maxSequence uint64, err error) {
-	resp, err := c.Apply(ctx, &servicepb.Request{
-		Type: &servicepb.Request_CreateQueryCheckpoint{CreateQueryCheckpoint: &servicepb.CreateQueryCheckpointRequest{}},
-	})
-	if err != nil {
-		return 0, 0, fmt.Errorf("create query checkpoint: %w", err)
-	}
-
-	for _, log := range resp.GetLogs() {
-		if cp := log.GetPayload().GetCreatedQueryCheckpoint(); cp != nil {
-			return cp.GetCheckpointId(), cp.GetMaxSequence(), nil
-		}
-	}
-
-	return 0, 0, fmt.Errorf("create query checkpoint: response carried no CreatedQueryCheckpointLog")
-}
-
-// DeleteQueryCheckpoint removes a query checkpoint via Raft, releasing the SSTs
-// it pinned. Idempotent-friendly: a NotFound is swallowed so a double-release is
-// safe.
-func (c *Client) DeleteQueryCheckpoint(ctx context.Context, checkpointID uint64) error {
-	_, err := c.Apply(ctx, &servicepb.Request{
-		Type: &servicepb.Request_DeleteQueryCheckpoint{
-			DeleteQueryCheckpoint: &servicepb.DeleteQueryCheckpointRequest{CheckpointId: checkpointID},
-		},
-	})
-	if status.Code(err) == codes.NotFound {
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("delete query checkpoint %d: %w", checkpointID, err)
-	}
-
-	return nil
-}
-
-// GetAccount retrieves an account (volumes + metadata) by address. A non-zero
-// checkpointID reads from a query checkpoint instead of live state.
-func (c *Client) GetAccount(ctx context.Context, ledgerName, address string, checkpointID uint64) (*commonpb.Account, error) {
+// GetAccount retrieves an account (volumes + metadata) by address, from live state.
+func (c *Client) GetAccount(ctx context.Context, ledgerName, address string) (*commonpb.Account, error) {
 	acct, err := c.service.GetAccount(ctx, &servicepb.GetAccountRequest{
-		Ledger:       ledgerName,
-		Address:      address,
-		CheckpointId: checkpointID,
+		Ledger:  ledgerName,
+		Address: address,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get account %s@%s: %w", address, ledgerName, err)

@@ -20,7 +20,7 @@ type fakeLedger struct {
 	err error
 }
 
-func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query json.RawMessage, _ uint64) (map[string]*big.Int, error) {
+func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query json.RawMessage) (map[string]*big.Int, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -32,7 +32,7 @@ func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query js
 	return b, nil
 }
 
-func (f *fakeLedger) ListAccounts(_ context.Context, _ string, _ json.RawMessage, _ uint64, _ int) ([]Account, error) {
+func (f *fakeLedger) ListAccounts(_ context.Context, _ string, _ json.RawMessage, _ int) ([]Account, error) {
 	return nil, errors.New("ListAccounts not implemented in fake")
 }
 
@@ -167,9 +167,9 @@ func TestEvaluate_DriftNonZero_Fail(t *testing.T) {
 	}
 }
 
-// TestEvaluate_Tier2PIT_Recorded checks the two-tier audit split (ADR-002 §10.1):
-// a Tier-2 pool source records its audit PIT in pitPerSource, while the Tier-1
-// ledger source does NOT (it's anchored by the shared checkpoint).
+// TestEvaluate_Tier2PIT_Recorded checks the audit split (ADR-003): a Tier-2 pool
+// source records its audit PIT in pitPerSource, while a ledger source does NOT
+// (it is read live, not at a per-source PIT).
 func TestEvaluate_Tier2PIT_Recorded(t *testing.T) {
 	pit := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
@@ -184,7 +184,7 @@ func TestEvaluate_Tier2PIT_Recorded(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 
-	out, err := eng.Evaluate(context.Background(), c, EvalInput{CheckpointID: 42, PIT: pit})
+	out, err := eng.Evaluate(context.Background(), c, EvalInput{PIT: pit})
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -192,8 +192,8 @@ func TestEvaluate_Tier2PIT_Recorded(t *testing.T) {
 		t.Fatalf("expected pass, got fail")
 	}
 
-	// Only the pool source (Tier-2) is recorded; the ledger source is anchored by
-	// the checkpoint, not a per-source PIT.
+	// Only the pool source (Tier-2) is recorded; the ledger source is read live,
+	// not at a per-source PIT.
 	if len(out.PitPerSource) != 1 {
 		t.Fatalf("expected 1 Tier-2 PIT entry, got %d: %v", len(out.PitPerSource), out.PitPerSource)
 	}
@@ -204,30 +204,6 @@ func TestEvaluate_Tier2PIT_Recorded(t *testing.T) {
 		if !gotPIT.Equal(pit) {
 			t.Errorf("Tier-2 PIT for %s = %v, want %v (no safety-margin subtraction)", key, gotPIT, pit)
 		}
-	}
-}
-
-// TestEvaluate_LedgerReadsAtCheckpoint verifies the kernel passes the
-// evaluation's CheckpointID (not a PIT) to the ledger resolver.
-func TestEvaluate_LedgerReadsAtCheckpoint(t *testing.T) {
-	var capturedCheckpoint uint64
-	l := &fakeLedgerWithCapture{
-		fakeLedger: fakeLedger{balances: map[string]map[string]*big.Int{
-			"l|q": {"USD/2": big.NewInt(1)},
-		}},
-		onAggregate: func(cp uint64) { capturedCheckpoint = cp },
-	}
-	eng := newTestEngine(t, &l.fakeLedger, nil)
-	eng.resolvers.Ledger = l // override with capturing variant
-	c, err := eng.Compile(`balance(ledgerSet("l","q")) == 1`)
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	if _, err := eng.Evaluate(context.Background(), c, EvalInput{CheckpointID: 7, PIT: time.Now()}); err != nil {
-		t.Fatalf("Evaluate: %v", err)
-	}
-	if capturedCheckpoint != 7 {
-		t.Errorf("resolver called with checkpointID %d, want 7", capturedCheckpoint)
 	}
 }
 
@@ -278,20 +254,6 @@ func TestEvaluate_AbsMinInt64Overflow(t *testing.T) {
 	if !errors.Is(err, ErrEvaluate) {
 		t.Fatalf("expected ErrEvaluate from abs(MinInt64), got %v", err)
 	}
-}
-
-// --- helper: capturing fake -------------------------------------------------
-
-type fakeLedgerWithCapture struct {
-	fakeLedger
-	onAggregate func(uint64)
-}
-
-func (f *fakeLedgerWithCapture) AggregateBalance(ctx context.Context, ledger string, query json.RawMessage, checkpointID uint64) (map[string]*big.Int, error) {
-	if f.onAggregate != nil {
-		f.onAggregate(checkpointID)
-	}
-	return f.fakeLedger.AggregateBalance(ctx, ledger, query, checkpointID)
 }
 
 // silence unused-import warning if a future refactor drops references

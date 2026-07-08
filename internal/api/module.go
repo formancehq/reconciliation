@@ -52,9 +52,9 @@ func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
 		fx.Supply(serviceInfo),
 		fx.Provide(fx.Annotate(service.NewSDKFormance, fx.As(new(service.SDKFormance)))),
 
-		// V1 engine + templates wiring. Tier-1 (ledger) reads go through the
-		// gRPC control-plane client at a query checkpoint (ADR-002); Tier-2
-		// (pool) reads use the SDK. The SDKFormance interface is a superset of
+		// V1 engine + templates wiring. Ledger reads go through the gRPC
+		// control-plane client live (ADR-003); Tier-2 (pool) reads use the SDK.
+		// The SDKFormance interface is a superset of
 		// engine.SDKClient, so it satisfies the engine's narrower pool contract
 		// via Go's structural subtyping.
 		fx.Provide(provideResolvers),
@@ -78,15 +78,15 @@ func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
 	)
 }
 
-// provideResolvers builds the engine.Resolvers fan-out. The Tier-1 ledger
-// resolver reads data ledgers at a query checkpoint via the gRPC control-plane
-// client (ADR-002); the Tier-2 payments resolver reads pool balances "latest"
-// via the SDK. Kept here (not in the engine package) because assembling the
-// concrete transports is an api-layer wiring concern.
+// provideResolvers builds the engine.Resolvers fan-out. The ledger resolver
+// reads data ledgers live via the gRPC control-plane client (ADR-003); the
+// Tier-2 payments resolver reads pool balances "latest" via the SDK. Kept here
+// (not in the engine package) because assembling the concrete transports is an
+// api-layer wiring concern.
 func provideResolvers(client service.SDKFormance, ledgerClient *ledger.Client) engine.Resolvers {
 	var sdkClient engine.SDKClient = client
 	return engine.Resolvers{
-		Ledger:   ledgerresolver.New(ledger.NewCheckpointReader(ledgerClient)),
+		Ledger:   ledgerresolver.New(ledger.NewReader(ledgerClient)),
 		Payments: engine.NewSDKPaymentsResolver(sdkClient),
 	}
 }

@@ -6,22 +6,23 @@ import (
 	"math/big"
 )
 
-// LedgerResolver is the kernel's contract for ledger-backed (Tier-1) sources.
-// Reads are anchored on a query checkpoint (ADR-002 §6): a globally consistent
-// cross-ledger cut, so aggregating ledgers A and B at the same checkpointID
-// yields a skew-free snapshot. checkpointID 0 reads live state. The production
-// impl is internal/ledgerresolver over the ledger gRPC client; tests inject
-// in-memory fakes.
+// LedgerResolver is the kernel's contract for ledger-backed sources. Reads are
+// live: a single aggregate is internally consistent (one server-side snapshot),
+// so a rule whose universe is one ledger read is skew-free. Cross-ledger reads
+// are per-source (skew absorbed by tolerance) — the atomic multi-ledger cut is a
+// future ledger primitive (EN-1480). The observed state is recorded in an
+// immutable _recon capture (ADR-003). The production impl is
+// internal/ledgerresolver over the ledger gRPC client; tests inject in-memory fakes.
 type LedgerResolver interface {
 	// AggregateBalance returns per-asset aggregate balance(s) for accounts
-	// matched by query, read at checkpointID.
-	AggregateBalance(ctx context.Context, ledger string, query json.RawMessage, checkpointID uint64) (map[string]*big.Int, error)
+	// matched by query, read live.
+	AggregateBalance(ctx context.Context, ledger string, query json.RawMessage) (map[string]*big.Int, error)
 
-	// ListAccounts returns the accounts matched by the query, read at
-	// checkpointID. Used for per-account templates (account_threshold /
-	// source_parity per_account). The engine enforces a max-accounts-scanned
-	// budget (passed as limit); the resolver errors rather than truncating past it.
-	ListAccounts(ctx context.Context, ledger string, query json.RawMessage, checkpointID uint64, limit int) ([]Account, error)
+	// ListAccounts returns the accounts matched by the query, read live. Used for
+	// per-account templates (account_threshold / source_parity per_account). The
+	// engine enforces a max-accounts-scanned budget (passed as limit); the
+	// resolver errors rather than truncating past it.
+	ListAccounts(ctx context.Context, ledger string, query json.RawMessage, limit int) ([]Account, error)
 }
 
 // PaymentsResolver is the kernel's contract for payments-pool-backed sources.

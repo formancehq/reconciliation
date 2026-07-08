@@ -21,7 +21,7 @@ func (s *LedgerStore) findAlertItem(ctx context.Context, id uuid.UUID) (*commonp
 	accts, err := s.client.QueryAccounts(ctx, s.controlLedger, schema.FilterAll(
 		schema.FilterAddressPrefix(schema.ItemPrefix()),
 		schema.FilterMetadataString(schema.MetaID, id.String()),
-	), 0)
+	))
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (s *LedgerStore) ListActiveAlertFingerprints(ctx context.Context, ruleID uu
 	}
 
 	accts, err := s.client.QueryAccounts(ctx, s.controlLedger,
-		schema.FilterAddressPrefix(schema.ItemByRulePeriodPrefix(ruleID.String(), periodID)), 0)
+		schema.FilterAddressPrefix(schema.ItemByRulePeriodPrefix(ruleID.String(), periodID)))
 	if err != nil {
 		return nil, fmt.Errorf("list active alert fingerprints: %w", err)
 	}
@@ -75,7 +75,7 @@ func (s *LedgerStore) ListAlerts(ctx context.Context, q store.GetAlertsQuery) (*
 		return nil, err
 	}
 
-	accts, err := s.client.QueryAccounts(ctx, s.controlLedger, filter, 0)
+	accts, err := s.client.QueryAccounts(ctx, s.controlLedger, filter)
 	if err != nil {
 		return nil, fmt.Errorf("list alerts: %w", err)
 	}

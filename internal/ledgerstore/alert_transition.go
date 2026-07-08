@@ -135,7 +135,7 @@ func (s *LedgerStore) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fi
 	fpHash := schema.FingerprintHash(fingerprint)
 	itemAddr := schema.AlertItemAccount(ruleID.String(), periodID, fpHash)
 
-	acct, err := s.client.GetAccount(ctx, s.controlLedger, itemAddr, 0)
+	acct, err := s.client.GetAccount(ctx, s.controlLedger, itemAddr)
 	if err != nil {
 		if isNotFound(err) {
 			return nil, nil // no alert for this (rule, fingerprint, period)

@@ -65,10 +65,10 @@ func (s *LedgerStore) OpenOrUpdateAlert(ctx context.Context, in store.OpenAlertI
 }
 
 // readAlertItem loads the current alert at its item address, or (nil, nil) when
-// none exists (missing account or no metadata). Reads live state (checkpoint 0);
-// the lifecycle write that follows re-derives the transition from it.
+// none exists (missing account or no metadata). Reads live state; the lifecycle
+// write that follows re-derives the transition from it.
 func (s *LedgerStore) readAlertItem(ctx context.Context, itemAddr string) (*models.Alert, error) {
-	acct, err := s.client.GetAccount(ctx, s.controlLedger, itemAddr, 0)
+	acct, err := s.client.GetAccount(ctx, s.controlLedger, itemAddr)
 	if err != nil {
 		if isNotFound(err) {
 			return nil, nil

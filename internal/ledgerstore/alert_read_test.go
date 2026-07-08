@@ -29,8 +29,8 @@ func TestGetAlert_Found(t *testing.T) {
 
 	// The store resolves by the indexed `id` metadata, scoped to the item prefix.
 	client.EXPECT().
-		QueryAccounts(gomock.Any(), testControl, gomock.Any(), uint64(0)).
-		DoAndReturn(func(_ context.Context, _ string, filter *commonpb.QueryFilter, _ uint64) ([]*commonpb.Account, error) {
+		QueryAccounts(gomock.Any(), testControl, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, filter *commonpb.QueryFilter) ([]*commonpb.Account, error) {
 			require.NotNil(t, filter.GetAnd(), "id lookup ANDs the item-prefix and id conditions")
 
 			return []*commonpb.Account{priorAccount(t, prior, "4")}, nil
@@ -51,7 +51,7 @@ func TestGetAlert_NotFound(t *testing.T) {
 	store := New(client, testControl)
 
 	client.EXPECT().
-		QueryAccounts(gomock.Any(), testControl, gomock.Any(), uint64(0)).
+		QueryAccounts(gomock.Any(), testControl, gomock.Any()).
 		Return(nil, nil)
 
 	_, err := store.GetAlert(context.Background(), uuid.New())

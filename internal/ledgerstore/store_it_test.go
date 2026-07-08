@@ -168,7 +168,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 	require.Equal(t, "1", balance(ctx, t, client, control, itemAddr, schema.AssetOcc), "OCC counter")
 	require.Equal(t, "-1", balance(ctx, t, client, control, poolAddr, schema.AssetAlert), "pool ALERT = -1 live alert")
 
-	item, err := client.GetAccount(ctx, control, itemAddr, 0)
+	item, err := client.GetAccount(ctx, control, itemAddr)
 	require.NoError(t, err)
 	require.Equal(t, "OPEN", item.GetMetadata()[schema.MetaStatus].GetStringValue(), "status mirror")
 	require.Equal(t, res.Alert.ID.String(), item.GetMetadata()[schema.MetaID].GetStringValue(), "id mirror")
@@ -280,7 +280,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	require.Equal(t, "0", balanceOrZero(ctx, t, client, control, stAck, schema.AssetAlert), "marker burned → st:ack purged")
 
 	// The item persists as the durable record; its status mirror reads RESOLVED.
-	item, err := client.GetAccount(ctx, control, schema.AlertItemAccount(ruleID.String(), period, fpHash), 0)
+	item, err := client.GetAccount(ctx, control, schema.AlertItemAccount(ruleID.String(), period, fpHash))
 	require.NoError(t, err)
 	require.Equal(t, "RESOLVED", item.GetMetadata()[schema.MetaStatus].GetStringValue(), "status mirror on item")
 
@@ -331,7 +331,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	_, err = store.SnoozeAlert(ctx, sn.ID, time.Now().Add(time.Hour), "ops", "muting")
 	require.NoError(t, err, "snooze")
 
-	snAcct, err := client.GetAccount(ctx, control, snItem, 0)
+	snAcct, err := client.GetAccount(ctx, control, snItem)
 	require.NoError(t, err)
 	require.Contains(t, snAcct.GetMetadata(), schema.MetaSnooze, "snooze metadata set")
 	require.Equal(t, "OPEN", snAcct.GetMetadata()[schema.MetaStatus].GetStringValue(), "snooze is status-neutral")
@@ -339,7 +339,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	_, err = store.UnsnoozeAlert(ctx, sn.ID, "ops")
 	require.NoError(t, err, "unsnooze")
 
-	snAcct, err = client.GetAccount(ctx, control, snItem, 0)
+	snAcct, err = client.GetAccount(ctx, control, snItem)
 	require.NoError(t, err)
 	require.NotContains(t, snAcct.GetMetadata(), schema.MetaSnooze, "snooze metadata cleared")
 
@@ -443,7 +443,7 @@ func TestIntegration_Lists(t *testing.T) {
 func balance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, addr, asset string) string {
 	t.Helper()
 
-	acct, err := c.GetAccount(ctx, ledgerName, addr, 0)
+	acct, err := c.GetAccount(ctx, ledgerName, addr)
 	require.NoError(t, err, "get account %s", addr)
 
 	return acct.GetVolumes()[asset].GetBalance()
@@ -454,7 +454,7 @@ func balance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, ad
 func balanceOrZero(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, addr, asset string) string {
 	t.Helper()
 
-	acct, err := c.GetAccount(ctx, ledgerName, addr, 0)
+	acct, err := c.GetAccount(ctx, ledgerName, addr)
 	if status.Code(err) == codes.NotFound {
 		return "0"
 	}

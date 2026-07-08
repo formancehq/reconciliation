@@ -76,7 +76,7 @@ func TestLedgerStore_GetRule(t *testing.T) {
 	want := newRule(id)
 
 	m.EXPECT().
-		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
+		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).
 		Return(account(t, want), nil)
 
 	got, err := New(m, controlLedger).GetRule(context.Background(), id)
@@ -94,7 +94,7 @@ func TestLedgerStore_GetRule_NotFoundOnEmptyMetadata(t *testing.T) {
 	id := uuid.New()
 
 	m.EXPECT().
-		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
+		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).
 		Return(&commonpb.Account{Address: schema.RuleAccount(id.String())}, nil)
 
 	_, err := New(m, controlLedger).GetRule(context.Background(), id)
@@ -109,7 +109,7 @@ func TestLedgerStore_GetRule_NotFoundOnGRPCStatus(t *testing.T) {
 	id := uuid.New()
 
 	m.EXPECT().
-		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
+		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).
 		Return(nil, status.Error(codes.NotFound, "account not found"))
 
 	_, err := New(m, controlLedger).GetRule(context.Background(), id)
@@ -124,7 +124,7 @@ func TestLedgerStore_PatchRule(t *testing.T) {
 	id := uuid.New()
 
 	m.EXPECT().
-		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
+		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).
 		Return(account(t, newRule(id)), nil)
 	m.EXPECT().
 		SaveAccountMetadataValues(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).
@@ -151,7 +151,7 @@ func TestLedgerStore_PatchRule_PrunesRemovedLabels(t *testing.T) {
 	base := newRule(id)
 	base.Labels = map[string]string{"env": "prod", "team": "treasury"}
 
-	m.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).Return(account(t, base), nil)
+	m.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).Return(account(t, base), nil)
 	m.EXPECT().SaveAccountMetadataValues(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).Return(nil)
 	// "team" was removed -> its label key must be deleted.
 	m.EXPECT().
@@ -174,7 +174,7 @@ func TestLedgerStore_DeleteRule(t *testing.T) {
 	m := NewMockledgerClient(ctrl)
 	id := uuid.New()
 
-	m.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).Return(account(t, newRule(id)), nil)
+	m.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).Return(account(t, newRule(id)), nil)
 	m.EXPECT().
 		DeleteAccountMetadata(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _, _ string, keys ...string) error {
@@ -194,7 +194,7 @@ func TestLedgerStore_DeleteRule_NotFound(t *testing.T) {
 	id := uuid.New()
 
 	m.EXPECT().
-		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), uint64(0)).
+		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).
 		Return(&commonpb.Account{Address: schema.RuleAccount(id.String())}, nil)
 
 	require.ErrorIs(t, New(m, controlLedger).DeleteRule(context.Background(), id), store.ErrNotFound)

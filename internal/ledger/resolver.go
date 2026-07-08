@@ -11,25 +11,24 @@ import (
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 )
 
-// CheckpointReader reads data ledgers at a query checkpoint — the
-// checkpoint-consistent read side of ADR-002. Its methods mirror the (future)
-// engine.LedgerResolver contract with `checkpointID uint64` replacing `pit`, so
-// it drops into the engine when step 6 flips that interface. checkpointID 0
-// reads live state.
-type CheckpointReader struct {
+// Reader reads data-ledger account universes live for the engine's
+// LedgerResolver (ADR-003). A single aggregate is computed against one
+// server-side snapshot, so it is internally consistent; the observed state is
+// recorded in an immutable _recon capture. Reads are engine-free (return
+// ledger.Account) so internal/ledger stays a leaf — the ledgerresolver adapter
+// maps to engine.Account.
+type Reader struct {
 	client *Client
 }
 
-// NewCheckpointReader builds a reader over the given ledger client.
-func NewCheckpointReader(client *Client) *CheckpointReader {
-	return &CheckpointReader{client: client}
+// NewReader builds a reader over the given ledger client.
+func NewReader(client *Client) *Reader {
+	return &Reader{client: client}
 }
 
-// Account is a data-ledger account read at a checkpoint: its address, typed
-// metadata flattened to strings, and per-asset balances. It is the
-// checkpoint-consistent analogue of engine.Account, kept engine-free so
-// internal/ledger stays a leaf — the engine adapter (internal/ledgerresolver)
-// maps it to engine.Account.
+// Account is a data-ledger account: its address, typed metadata flattened to
+// strings, and per-asset balances. Kept engine-free so internal/ledger stays a
+// leaf — the engine adapter (internal/ledgerresolver) maps it to engine.Account.
 type Account struct {
 	Address  string
 	Ledger   string
@@ -38,30 +37,31 @@ type Account struct {
 }
 
 // AggregateBalance returns the per-asset aggregate balance of the accounts in
-// ledgerName matching query, read at checkpointID. Passing the same checkpointID
-// for ledgers A and B yields a consistent cross-ledger cut.
-func (r *CheckpointReader) AggregateBalance(ctx context.Context, ledgerName string, query json.RawMessage, checkpointID uint64) (map[string]*big.Int, error) {
+// ledgerName matching query, read live. A single aggregate is internally
+// consistent (one server-side snapshot); cross-ledger reads are per-source and
+// their skew is absorbed by the template's tolerance (ADR-003).
+func (r *Reader) AggregateBalance(ctx context.Context, ledgerName string, query json.RawMessage) (map[string]*big.Int, error) {
 	filter, err := schema.TranslateQuery(query, dataLedgerLeaf)
 	if err != nil {
 		return nil, fmt.Errorf("translate query for %s: %w", ledgerName, err)
 	}
 
-	return r.client.AggregateVolumes(ctx, ledgerName, filter, checkpointID)
+	return r.client.AggregateVolumes(ctx, ledgerName, filter)
 }
 
-// ListAccounts returns the accounts in ledgerName matching query, read at
-// checkpointID, each carrying its per-asset balance. Used by per-account
-// templates (source_parity / account_threshold per_account). It aborts with an
-// error — never silently truncates — once more than limit accounts have been
-// seen, enforcing the evaluation's accounts budget mid-stream (no fetch-all).
-func (r *CheckpointReader) ListAccounts(ctx context.Context, ledgerName string, query json.RawMessage, checkpointID uint64, limit int) ([]Account, error) {
+// ListAccounts returns the accounts in ledgerName matching query, read live,
+// each carrying its per-asset balance. Used by per-account templates
+// (source_parity / account_threshold per_account). It aborts with an error —
+// never silently truncates — once more than limit accounts have been seen,
+// enforcing the evaluation's accounts budget mid-stream (no fetch-all).
+func (r *Reader) ListAccounts(ctx context.Context, ledgerName string, query json.RawMessage, limit int) ([]Account, error) {
 	filter, err := schema.TranslateQuery(query, dataLedgerLeaf)
 	if err != nil {
 		return nil, fmt.Errorf("translate query for %s: %w", ledgerName, err)
 	}
 
 	out := make([]Account, 0, 256)
-	if err := r.client.QueryAccountsFunc(ctx, ledgerName, filter, checkpointID, func(acct *commonpb.Account) error {
+	if err := r.client.QueryAccountsFunc(ctx, ledgerName, filter, func(acct *commonpb.Account) error {
 		out = append(out, accountFromProto(ledgerName, acct))
 		if len(out) > limit {
 			return fmt.Errorf("listAccounts: matched more than %d accounts on %q (accounts budget)", limit, ledgerName)

@@ -102,12 +102,12 @@ func (s SourceSpec) resolverNeed() string {
 }
 
 // resolve reads the per-asset balance map for this source. A ledger source is
-// Tier-1: read at the evaluation's checkpoint (in.CheckpointID). A pool source is
-// Tier-2: always latest (see SourcePaymentsPool), ignoring the anchor.
-func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, in engine.EvalInput) (map[string]*big.Int, error) {
+// read live (a single aggregate is an internally consistent snapshot). A pool
+// source is Tier-2: always latest (see SourcePaymentsPool).
+func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers) (map[string]*big.Int, error) {
 	switch s.Kind {
 	case SourceLedger:
-		return resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query, in.CheckpointID)
+		return resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query)
 	case SourcePaymentsPool:
 		return resolvers.Payments.PoolBalanceLatest(ctx, s.PoolID)
 	default:
@@ -136,14 +136,14 @@ func (s SourceSpec) celTerm(assetExpr string) string {
 func (s SourceSpec) supportsPerAccount() bool { return s.Kind == SourceLedger }
 
 // resolveAccounts fans the source out into one balance map per matched account,
-// read at the evaluation's checkpoint (in.CheckpointID). Ledger sources only;
-// pools are aggregate-only (returns ErrInvalidSpec). limit is the evaluation's
-// accounts budget — the resolver errors rather than silently truncating past it.
-func (s SourceSpec) resolveAccounts(ctx context.Context, resolvers engine.Resolvers, in engine.EvalInput, limit int) ([]engine.Account, error) {
+// read live. Ledger sources only; pools are aggregate-only (returns
+// ErrInvalidSpec). limit is the evaluation's accounts budget — the resolver
+// errors rather than silently truncating past it.
+func (s SourceSpec) resolveAccounts(ctx context.Context, resolvers engine.Resolvers, limit int) ([]engine.Account, error) {
 	if s.Kind != SourceLedger {
 		return nil, fmt.Errorf("%w: per-account scope is not supported for source kind %q (pools are aggregate-only)", ErrInvalidSpec, s.Kind)
 	}
-	return resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, in.CheckpointID, limit)
+	return resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, limit)
 }
 
 // accountAddressQuery renders the metadata-query JSON selecting exactly one
@@ -172,7 +172,7 @@ func accountsByAddress(accts []engine.Account) map[string]map[string]*big.Int {
 
 // poolPitPerSource records the audit PIT for each payments-pool source, in the
 // order given, keyed to match the kernel's naming ("payments_pool:N"). Ledger
-// sources are checkpoint-anchored (ADR-002 §10.1) and are not recorded. This
+// sources are read live (ADR-003) and are not recorded. This
 // reproduces, without a kernel eval, the pit_per_source the cross-check used to
 // populate — the templates own it now that they no longer run the CEL kernel.
 func poolPitPerSource(pit time.Time, sources ...SourceSpec) map[string]time.Time {

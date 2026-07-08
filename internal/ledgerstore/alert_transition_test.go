@@ -31,7 +31,7 @@ func expectFindByID(t *testing.T, client *MockledgerClient, a *models.Alert, occ
 	t.Helper()
 
 	client.EXPECT().
-		QueryAccounts(gomock.Any(), testControl, gomock.Any(), uint64(0)).
+		QueryAccounts(gomock.Any(), testControl, gomock.Any()).
 		Return([]*commonpb.Account{priorAccount(t, a, occ)}, nil)
 }
 
@@ -183,7 +183,7 @@ func TestAutoResolveAlert_OpenToResolved(t *testing.T) {
 
 	// Auto-resolve is addressed structurally (GetAccount), not by id lookup.
 	client.EXPECT().
-		GetAccount(gomock.Any(), testControl, itemAddrOf(a), gomock.Any()).
+		GetAccount(gomock.Any(), testControl, itemAddrOf(a)).
 		Return(priorAccount(t, a, "2"), nil)
 
 	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -213,7 +213,7 @@ func TestAutoResolveAlert_NoActiveAlert_NoOp(t *testing.T) {
 	ruleID := uuid.New()
 
 	// No item account → nothing to resolve, no transaction.
-	client.EXPECT().GetAccount(gomock.Any(), testControl, gomock.Any(), gomock.Any()).Return(nil, notFound())
+	client.EXPECT().GetAccount(gomock.Any(), testControl, gomock.Any()).Return(nil, notFound())
 
 	got, err := store.AutoResolveAlert(context.Background(), ruleID, "fp", "2026-03", uuid.New(), time.Now().UTC())
 	require.NoError(t, err)
@@ -228,7 +228,7 @@ func TestAutoResolveAlert_AlreadyResolved_NoOp(t *testing.T) {
 	store := New(client, testControl)
 
 	a := activeAlert(models.AlertResolved)
-	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddrOf(a), gomock.Any()).Return(priorAccount(t, a, "1"), nil)
+	client.EXPECT().GetAccount(gomock.Any(), testControl, itemAddrOf(a)).Return(priorAccount(t, a, "1"), nil)
 	// No CreateTransaction — already closed.
 
 	got, err := store.AutoResolveAlert(context.Background(), a.RuleID, a.Fingerprint, a.PeriodID, uuid.New(), time.Now().UTC())
@@ -257,7 +257,7 @@ func TestListActiveAlertFingerprints(t *testing.T) {
 	}
 
 	client.EXPECT().
-		QueryAccounts(gomock.Any(), testControl, gomock.Any(), uint64(0)).
+		QueryAccounts(gomock.Any(), testControl, gomock.Any()).
 		Return([]*commonpb.Account{
 			mk("fp-open", models.AlertOpen),
 			mk("fp-ack", models.AlertAcknowledged),

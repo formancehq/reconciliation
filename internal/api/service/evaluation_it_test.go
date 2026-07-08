@@ -24,14 +24,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIntegration_EvaluateAtCheckpoint proves the step-6b flip end-to-end: an
-// evaluation pins ONE query checkpoint (via the real ledger client), the
-// source_parity template reads two data ledgers at that checkpoint through the
-// ledgerresolver adapter, and the alert layer opens a case on a genuine break —
-// all against a live Ledger v3.
+// TestIntegration_EvaluateLive proves the live read model end-to-end (ADR-003):
+// an evaluation reads two data ledgers live through the ledgerresolver adapter (no
+// checkpoint), and the alert layer opens a case on a genuine break — all against a
+// live Ledger v3.
 //
-//	go test -tags it -run TestIntegration_EvaluateAtCheckpoint ./internal/api/service/...
-func TestIntegration_EvaluateAtCheckpoint(t *testing.T) {
+//	go test -tags it -run TestIntegration_EvaluateLive ./internal/api/service/...
+func TestIntegration_EvaluateLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -51,14 +50,14 @@ func TestIntegration_EvaluateAtCheckpoint(t *testing.T) {
 		require.NoError(t, client.CreateLedger(ctx, l, nil, nil, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT), "create %s", l)
 	}
 
-	// Wire the real V1 stack: control-ledger store + checkpoint-backed Tier-1
-	// resolver + a stub Tier-2 (unused for ledger↔ledger) + the real checkpointer.
-	reader := ledger.NewCheckpointReader(client)
+	// Wire the real V1 stack: control-ledger store + live Tier-1 reader + a stub
+	// Tier-2 (unused for ledger↔ledger).
+	reader := ledger.NewReader(client)
 	res := engine.Resolvers{Ledger: ledgerresolver.New(reader), Payments: nopPayments{}}
 	eng, err := engine.New(res, engine.DefaultLimits)
 	require.NoError(t, err)
 	store := ledgerstore.New(client, control)
-	svc := NewService(store, nil, eng, templates.DefaultRegistry(), res, ledgerCheckpointer{client: client, probe: control})
+	svc := NewService(store, nil, eng, templates.DefaultRegistry(), res)
 
 	const asset = "USD/2"
 	prefix := "acc:" + suffix + ":"
@@ -79,7 +78,7 @@ func TestIntegration_EvaluateAtCheckpoint(t *testing.T) {
 
 	acct := prefix + "x"
 
-	// Balanced: A == B == 100 → parity holds at the checkpoint → PASS, no alert.
+	// Balanced: A == B == 100 → parity holds → PASS, no alert.
 	writeBalance(ctx, t, client, ledgerA, acct, asset, 100)
 	writeBalance(ctx, t, client, ledgerB, acct, asset, 100)
 	requireEventualAgg(ctx, t, reader, ledgerA, q, asset, "100")
@@ -87,7 +86,7 @@ func TestIntegration_EvaluateAtCheckpoint(t *testing.T) {
 
 	ev, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now().UTC()})
 	require.NoError(t, err)
-	require.Equal(t, models.EvaluationPass, ev.Result, "balanced ledgers reconcile at the checkpoint")
+	require.Equal(t, models.EvaluationPass, ev.Result, "balanced ledgers reconcile")
 	fps, err := store.ListActiveAlertFingerprints(ctx, rule.ID, models.ContinuousPeriod)
 	require.NoError(t, err)
 	require.Empty(t, fps, "a passing evaluation opens no alert")
@@ -98,7 +97,7 @@ func TestIntegration_EvaluateAtCheckpoint(t *testing.T) {
 
 	ev, err = svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now().UTC()})
 	require.NoError(t, err)
-	require.Equal(t, models.EvaluationFail, ev.Result, "imbalanced ledgers break parity at the checkpoint")
+	require.Equal(t, models.EvaluationFail, ev.Result, "imbalanced ledgers break parity")
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		fps, ferr := store.ListActiveAlertFingerprints(ctx, rule.ID, models.ContinuousPeriod)
 		if !assert.NoError(c, ferr) {
@@ -114,23 +113,6 @@ type nopPayments struct{}
 
 func (nopPayments) PoolBalanceLatest(context.Context, string) (map[string]*big.Int, error) {
 	return map[string]*big.Int{}, nil
-}
-
-// ledgerCheckpointer is the production-shaped service.Checkpointer over a real
-// ledger client (mirrors cmd's checkpointer wiring). probe is the ledger used to
-// confirm checkpoint read-index readiness (the control ledger).
-type ledgerCheckpointer struct {
-	client *ledger.Client
-	probe  string
-}
-
-func (l ledgerCheckpointer) AcquireCheckpoint(ctx context.Context) (uint64, func(context.Context) error, error) {
-	cp, err := l.client.AcquireCheckpoint(ctx, l.probe)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	return cp.ID, cp.Release, nil
 }
 
 func evalItAddr() string {
@@ -167,14 +149,14 @@ func writeBalance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerNam
 	require.NoError(t, err, "write %d %s to %s@%s", amount, asset, account, ledgerName)
 }
 
-// requireEventualAgg polls the checkpoint reader's live aggregate until asset
-// equals want (the read index is eventually consistent with writes), so the
-// checkpoint the evaluation pins next is guaranteed to include the writes.
-func requireEventualAgg(ctx context.Context, t *testing.T, r *ledger.CheckpointReader, ledgerName string, q json.RawMessage, asset, want string) {
+// requireEventualAgg polls the live aggregate until asset equals want (the read
+// index is eventually consistent with writes), so the evaluation that follows is
+// guaranteed to observe the writes.
+func requireEventualAgg(ctx context.Context, t *testing.T, r *ledger.Reader, ledgerName string, q json.RawMessage, asset, want string) {
 	t.Helper()
 
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		bal, err := r.AggregateBalance(ctx, ledgerName, q, 0)
+		bal, err := r.AggregateBalance(ctx, ledgerName, q)
 		if !assert.NoError(c, err) {
 			return
 		}

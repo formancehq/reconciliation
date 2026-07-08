@@ -20,7 +20,7 @@ func (s *LedgerStore) Ping() error {
 	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
 
-	_, err := s.client.GetAccount(ctx, s.controlLedger, "world", 0)
+	_, err := s.client.GetAccount(ctx, s.controlLedger, "world")
 	return err
 }
 

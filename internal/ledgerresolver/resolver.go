@@ -1,7 +1,7 @@
-// Package ledgerresolver adapts the ledger gRPC checkpoint reader to the engine's
-// Tier-1 LedgerResolver contract (ADR-002 §6). It is the bridge that keeps
-// internal/ledger engine-free and internal/engine transport-free: it imports
-// both and maps the engine-free ledger.Account onto engine.Account.
+// Package ledgerresolver adapts the ledger gRPC live reader to the engine's
+// LedgerResolver contract (ADR-003). It is the bridge that keeps internal/ledger
+// engine-free and internal/engine transport-free: it imports both and maps the
+// engine-free ledger.Account onto engine.Account.
 package ledgerresolver
 
 import (
@@ -13,28 +13,28 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledger"
 )
 
-// Resolver reads Tier-1 (same-cluster) ledger sources at a query checkpoint via
-// a ledger.CheckpointReader, satisfying engine.LedgerResolver.
+// Resolver reads ledger sources live via a ledger.Reader, satisfying
+// engine.LedgerResolver.
 type Resolver struct {
-	reader *ledger.CheckpointReader
+	reader *ledger.Reader
 }
 
-// New builds a Resolver over the given checkpoint reader.
-func New(reader *ledger.CheckpointReader) *Resolver {
+// New builds a Resolver over the given reader.
+func New(reader *ledger.Reader) *Resolver {
 	return &Resolver{reader: reader}
 }
 
 // AggregateBalance passes through — the reader already returns the per-asset
 // aggregate as map[string]*big.Int (no engine type to convert).
-func (r *Resolver) AggregateBalance(ctx context.Context, ledgerName string, query json.RawMessage, checkpointID uint64) (map[string]*big.Int, error) {
-	return r.reader.AggregateBalance(ctx, ledgerName, query, checkpointID)
+func (r *Resolver) AggregateBalance(ctx context.Context, ledgerName string, query json.RawMessage) (map[string]*big.Int, error) {
+	return r.reader.AggregateBalance(ctx, ledgerName, query)
 }
 
-// ListAccounts reads each matched account at the checkpoint and maps the
-// engine-free ledger.Account onto engine.Account. The budget (limit) is enforced
-// mid-stream by the reader.
-func (r *Resolver) ListAccounts(ctx context.Context, ledgerName string, query json.RawMessage, checkpointID uint64, limit int) ([]engine.Account, error) {
-	accts, err := r.reader.ListAccounts(ctx, ledgerName, query, checkpointID, limit)
+// ListAccounts reads each matched account live and maps the engine-free
+// ledger.Account onto engine.Account. The budget (limit) is enforced mid-stream
+// by the reader.
+func (r *Resolver) ListAccounts(ctx context.Context, ledgerName string, query json.RawMessage, limit int) ([]engine.Account, error) {
+	accts, err := r.reader.ListAccounts(ctx, ledgerName, query, limit)
 	if err != nil {
 		return nil, err
 	}

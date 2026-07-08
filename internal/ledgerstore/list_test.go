@@ -43,7 +43,7 @@ func TestListRules_SortedAndPaginated(t *testing.T) {
 	// Returned in arbitrary order; ListRules must sort created_at DESC (newest first).
 	newest, mid, oldest := mk("newest", 0), mk("mid", 1), mk("oldest", 2)
 	client.EXPECT().
-		QueryAccounts(gomock.Any(), testControl, gomock.Any(), uint64(0)).
+		QueryAccounts(gomock.Any(), testControl, gomock.Any()).
 		Return([]*commonpb.Account{ruleAccount(t, mid), ruleAccount(t, oldest), ruleAccount(t, newest)}, nil)
 
 	// Page 1: pageSize 2 → [newest, mid], more to come.
@@ -72,7 +72,7 @@ func TestListRules_SecondPage(t *testing.T) {
 	}
 
 	client.EXPECT().
-		QueryAccounts(gomock.Any(), testControl, gomock.Any(), uint64(0)).
+		QueryAccounts(gomock.Any(), testControl, gomock.Any()).
 		Return([]*commonpb.Account{ruleAccount(t, mk("newest", 0)), ruleAccount(t, mk("mid", 1)), ruleAccount(t, mk("oldest", 2))}, nil)
 
 	// Page 2: offset 2, pageSize 2 → [oldest], no more.
@@ -103,7 +103,7 @@ func TestListAlerts_SortedByLastSeen(t *testing.T) {
 	}
 
 	client.EXPECT().
-		QueryAccounts(gomock.Any(), testControl, gomock.Any(), uint64(0)).
+		QueryAccounts(gomock.Any(), testControl, gomock.Any()).
 		Return([]*commonpb.Account{priorAccount(t, mk("fp-old", 5), "1"), priorAccount(t, mk("fp-fresh", 0), "1")}, nil)
 
 	page, err := store.ListAlerts(context.Background(), recstore.GetAlertsQuery{PageSize: 10})
