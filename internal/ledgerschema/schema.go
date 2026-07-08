@@ -4,10 +4,29 @@ import "github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 
 // Account-type names (used as the AccountType.Name / the "family" identifier).
 const (
-	AccountTypeRule       = "rule"
-	AccountTypeAlertItem  = "alert-item"
-	AccountTypeAlertState = "alert-state"
-	AccountTypeAlertPool  = "alert-pool"
+	AccountTypeRule        = "rule"
+	AccountTypeAlertItem   = "alert-item"
+	AccountTypeAlertState  = "alert-state"
+	AccountTypeAlertPool   = "alert-pool"
+	AccountTypeCapture     = "capture"      // per-(rule,period) capture bucket (ADR-003)
+	AccountTypeCapturePool = "capture-pool" // per-rule capture mint source
+)
+
+// Capture transaction metadata keys — the self-describing capture envelope stamped
+// on each evaluation's capture transaction (ADR-003). Transaction-level
+// (COMMITTED_TRANSACTION payload), undeclared like the alert labels: stored as-is,
+// not indexed. The immutable, receipt-signed transaction is the audit record.
+const (
+	CaptureType     = "reconciliation.capture" // value of CaptureMetaType
+	CaptureMetaType = "type"
+	CaptureMetaRule = "rule_id"
+	CaptureMetaTmpl = "template_kind"
+	CaptureMetaPer  = "period"
+	CaptureMetaEval = "evaluation_id"
+	CaptureMetaAt   = "captured_at"
+	CaptureMetaVdt  = "verdict"
+	CaptureMetaTrig = "trigger"
+	CaptureMetaEvi  = "evidence"
 )
 
 // Metadata keys on the canonical alert (`alert:item:*`) account.
@@ -99,6 +118,22 @@ func AccountTypes() map[string]*commonpb.AccountType {
 			// by rule only → O(#rules) source accounts.
 			Name:         AccountTypeAlertPool,
 			Pattern:      "alert:pool:rule:{ruleId}",
+			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
+			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid()},
+		},
+		AccountTypeCapture: {
+			// Per-(rule,period) capture bucket: each evaluation records an immutable
+			// capture transaction here (ADR-003). Holds the CAPTURE counter; the
+			// observed snapshot is on each transaction's metadata.
+			Name:         AccountTypeCapture,
+			Pattern:      "capture:rule:{ruleId}:per:{period}",
+			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
+			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid(), "period": period()},
+		},
+		AccountTypeCapturePool: {
+			// Per-rule overdraft source minting the CAPTURE marker (O(#rules)).
+			Name:         AccountTypeCapturePool,
+			Pattern:      "capture:pool:rule:{ruleId}",
 			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
 			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid()},
 		},

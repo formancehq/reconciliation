@@ -86,7 +86,7 @@ func TestAccountTypesChart(t *testing.T) {
 	types := schema.AccountTypes()
 	for _, name := range []string{
 		schema.AccountTypeRule, schema.AccountTypeAlertItem, schema.AccountTypeAlertState,
-		schema.AccountTypeAlertPool,
+		schema.AccountTypeAlertPool, schema.AccountTypeCapture, schema.AccountTypeCapturePool,
 	} {
 		at, ok := types[name]
 		if !ok {

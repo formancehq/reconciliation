@@ -31,6 +31,7 @@ type fakeV1Store struct {
 	alerts      map[uuid.UUID]*models.Alert // keyed by alert id
 	byFP        map[string]uuid.UUID        // "ruleID|fingerprint" → alert id
 	events      []*models.AlertEvent        // chronological, append-only
+	captures    []store.CaptureInput        // recorded evaluation captures (ADR-003)
 }
 
 func newFakeV1Store() *fakeV1Store {
@@ -119,6 +120,11 @@ func (f *fakeV1Store) CreateEvaluation(_ context.Context, ev *models.Evaluation)
 	}
 	copy := *ev
 	f.evaluations[ev.ID] = &copy
+	return nil
+}
+
+func (f *fakeV1Store) RecordCapture(_ context.Context, in store.CaptureInput) error {
+	f.captures = append(f.captures, in)
 	return nil
 }
 

@@ -18,9 +18,18 @@ import (
 //   - PIT defaults to time.Now() when zero. It is the nominal instant used to
 //     derive the reconciliation period and as the Tier-2 (pool) audit timestamp;
 //     ledger reads are live (ADR-003).
+//   - Trigger records what fired the evaluation on the capture record; defaults
+//     to manual.
 type EvaluateRuleRequest struct {
-	PIT time.Time
+	PIT     time.Time
+	Trigger string
 }
+
+// Evaluation trigger values recorded on the capture (ADR-003).
+const (
+	TriggerScheduled = "scheduled"
+	TriggerManual    = "manual"
+)
 
 // EvaluateRule runs the template for the rule, persists an Evaluation row, and
 // opens/updates/auto-resolves alerts per fingerprint. Returns the persisted
@@ -50,6 +59,9 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 
 	if req.PIT.IsZero() {
 		req.PIT = time.Now().UTC()
+	}
+	if req.Trigger == "" {
+		req.Trigger = TriggerManual
 	}
 
 	started := time.Now().UTC()
@@ -108,15 +120,16 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	// cases (see models.Cadence.PeriodID).
 	periodID := rule.Cadence.PeriodID(req.PIT)
 
-	// Atomicity: persist the evaluation row AND drive every alert transition
-	// under a single transaction. A mid-loop failure would otherwise leave a
-	// committed eval visible to the API while the alert table reflects only
-	// some of the outcomes — inconsistent state the UI cannot recover from.
-	//
-	// Each call into driveAlerts also appends rows to alert_event, so the
-	// audit log stays consistent with the alert table by construction.
+	// Record the immutable capture (ADR-003) — the durable "what reconciled and
+	// when", positive assurance on a pass and break evidence on a fail — then drive
+	// every alert transition. The idempotent ledger store has no cross-op
+	// transaction, so inTx runs them sequentially; each write is individually
+	// idempotent per (rule, period, evaluation).
 	err = s.inTx(ctx, func(ctx context.Context, st Store) error {
 		if err := st.CreateEvaluation(ctx, evaluation); err != nil {
+			return err
+		}
+		if err := st.RecordCapture(ctx, captureInput(rule, evaluation, periodID, req.Trigger)); err != nil {
 			return err
 		}
 		return driveAlerts(ctx, st, rule, evaluation, outcomes, periodID, ended)
@@ -126,6 +139,27 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	}
 
 	return evaluation, nil
+}
+
+// captureInput builds the immutable capture record for an evaluation (ADR-003):
+// the verdict, the (bounded) break evidence the evaluation already computed, and
+// what triggered the run.
+func captureInput(rule *models.Rule, ev *models.Evaluation, periodID, trigger string) store.CaptureInput {
+	verdict := "pass"
+	if ev.Result == models.EvaluationFail {
+		verdict = "fail"
+	}
+
+	return store.CaptureInput{
+		RuleID:       rule.ID,
+		TemplateKind: string(rule.TemplateKind),
+		PeriodID:     periodID,
+		EvaluationID: ev.ID,
+		CapturedAt:   ev.EndedAt,
+		Verdict:      verdict,
+		Trigger:      trigger,
+		Evidence:     ev.Evidence,
+	}
 }
 
 // driveAlerts applies the evaluation's outcomes to the alert layer.

@@ -57,7 +57,7 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it4"
+	const control = "recon-it5"
 
 	// Idempotent bootstrap in AUDIT so the chart is validated but not enforced.
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
@@ -129,7 +129,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it4"
+	const control = "recon-it5"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -232,7 +232,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it4"
+	const control = "recon-it5"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -361,7 +361,7 @@ func TestIntegration_Lists(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it4"
+	const control = "recon-it5"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -440,6 +440,56 @@ func TestIntegration_Lists(t *testing.T) {
 }
 
 // balance reads one asset's balance on an account (empty string if absent).
+// TestIntegration_RecordCapture proves the audit-grade capture (ADR-003): an
+// evaluation's capture is written as an immutable transaction on the control
+// ledger — the CAPTURE counter on the (rule, period) bucket increments per
+// evaluation, and a replay of the same evaluation is idempotent (same batch key).
+//
+//	go test -tags it -run TestIntegration_RecordCapture ./internal/ledgerstore/...
+func TestIntegration_RecordCapture(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, err := ledger.NewClient(itLedgerAddr(), nil)
+	require.NoError(t, err)
+
+	defer func() { _ = client.Close() }()
+
+	const control = "recon-it5"
+	require.NoError(t, ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT).Provision(ctx), "provision control-ledger")
+
+	store := New(client, control)
+
+	ruleID := uuid.New() // fresh rule → capture bucket unique to this run
+	const period = "2026-03"
+	captureAddr := schema.CaptureAccount(ruleID.String(), period)
+
+	in := recstore.CaptureInput{
+		RuleID:       ruleID,
+		TemplateKind: string(models.TemplateSourceParity),
+		PeriodID:     period,
+		EvaluationID: uuid.New(),
+		CapturedAt:   time.Now().Truncate(time.Microsecond).UTC(),
+		Verdict:      "pass",
+		Trigger:      "manual",
+		Evidence:     json.RawMessage(`[]`),
+	}
+
+	// First capture → the CAPTURE counter on the bucket is 1.
+	require.NoError(t, store.RecordCapture(ctx, in))
+	require.Equal(t, "1", balance(ctx, t, client, control, captureAddr, schema.AssetCapture), "one capture recorded")
+
+	// Same evaluation replayed → idempotent (same batch key + content): counter stays 1.
+	require.NoError(t, store.RecordCapture(ctx, in))
+	require.Equal(t, "1", balance(ctx, t, client, control, captureAddr, schema.AssetCapture), "replay of the same evaluation is idempotent")
+
+	// A fresh evaluation → a distinct immutable capture: counter is 2.
+	in.EvaluationID = uuid.New()
+	in.Verdict = "fail"
+	require.NoError(t, store.RecordCapture(ctx, in))
+	require.Equal(t, "2", balance(ctx, t, client, control, captureAddr, schema.AssetCapture), "a new evaluation records a new capture")
+}
+
 func balance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, addr, asset string) string {
 	t.Helper()
 

@@ -835,7 +835,7 @@ not on `main` ✅ · no OpenAPI change ✅ · `engine`/checkpoint code untouched
 |---|---|---|---|
 | — | LOW | `eng` is now an unused param of `LedgerInvariant.Evaluate` (interface-required; lint skips interface methods). Kept for the `Evaluator` contract; still used by the other two templates' per_account paths. | ✅ acceptable |
 
-### Checkpoint alternative — Étape 2: drop checkpoints, live reads (SDLC review, 2026-07-08)
+### Checkpoint alternative — Étape 2: drop checkpoints, live reads (`8979795`, SDLC review, 2026-07-08)
 
 Reconciliation no longer creates query checkpoints. Ledger reads are **live** — a single
 `AggregateVolumes` is computed against one server-side Pebble snapshot (internally consistent);
@@ -864,6 +864,41 @@ on `main`; no OpenAPI change. Large net deletion.
 |---|---|---|---|
 | — | LOW | Live reads are eventually-consistent on the read index (F25/F27): a read just after a write may briefly lag. Acceptable for reconciliation (settled balances; the next tick re-observes); a `min_log_sequence` freshness floor is available if ever needed (deferred). | ✅ noted |
 | — | LOW | `in engine.EvalInput` is now unused in `LedgerInvariant`/`AccountThreshold` `Evaluate` (interface-required); still consumed by `SourceParity` (pool PIT) + carried for the period/`RecordCapture` in the service. | ✅ acceptable |
+
+### Checkpoint alternative — Étape 3: audit-grade capture in `_recon` (SDLC review, 2026-07-08)
+
+Every evaluation now records an immutable **capture** transaction on the control ledger (ADR-003):
+the durable "what reconciled and when" — positive assurance on a pass, break evidence on a fail —
+recorded independently of the alert lifecycle. This revises the "evaluations non-durable" decision
+(RFC §4.4.2): the durable record is the capture transaction, not a queryable evaluation table.
+
+- **Chart** (+2 account types, +1 asset, +1 numscript): `capture:rule:{ruleId}:per:{period}` (NORMAL)
+  bucket + `capture:pool:rule:{ruleId}` (NORMAL) mint source; asset `CAPTURE` (precision 0); numscript
+  `capture` mints 1 CAPTURE from the pool into the bucket. `-balance(bucket, CAPTURE)` = captures per
+  (rule, period); each capture is a distinct transaction, so the account's tx log is the period's
+  ordered series.
+- **Snapshot** on the transaction metadata (`COMMITTED_TRANSACTION`, undeclared/self-describing):
+  `type, rule_id, template_kind, period, evaluation_id, captured_at, verdict, trigger, evidence`. The
+  immutable, receipt-signed transaction is the audit record.
+- **Store**: `ledgerstore.RecordCapture` (`internal/ledgerstore/capture.go`) via `CreateTransaction`,
+  idempotent per (rule, period, evaluation) (`alertActionKey("capture", …)`); `store.CaptureInput`.
+- **Wiring**: `EvaluateRule` records the capture inside the eval's `inTx` (before driving alerts);
+  `EvaluateRuleRequest.Trigger` (`scheduled`|`manual`, default manual) — set by the scheduler,
+  defaulted for the API.
+
+**Chart change → it control-ledger bumped `recon-it4` → `recon-it5`** (F8).
+
+**Checks:** build/vet(+`-tags it`)/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit green
+(incl. `TestEvaluateRule_RecordsCapture` — verdict + trigger wiring — and `TestNumscriptCapture`);
+full it-suite (`-p 1 -count=1`, fresh `recon-it5`) green — `TestIntegration_RecordCapture` proves the
+CAPTURE counter increments per eval and a same-eval replay is idempotent, on the live ledger.
+Conventional commit; not on `main`; no OpenAPI change.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| — | LOW | Continuous rules write one capture transaction per evaluation (the assumed cost of the transaction form). Throttling (on-change / heartbeat) is a documented follow-up if continuous volume bites. | ⬜ noted |
+| — | LOW | The capture stores the evaluation's (failing-outcome) evidence + verdict; full pass-side observed balances (all outcomes) and a ledger-signed read proof (EN-1480) are documented follow-ups. | ⬜ noted |
+| F8 | — | Chart evolution on an existing ledger is still unhandled: a fresh deploy gets the capture chart via CreateLedger; an existing one needs an idempotent add-types pass. it-ledger bumped to `recon-it5`. | ⬜ open |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 

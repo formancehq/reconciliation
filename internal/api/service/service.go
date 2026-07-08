@@ -34,6 +34,13 @@ type Store interface {
 	// ledger-native store treats it as a no-op (step 6a-5).
 	CreateEvaluation(ctx context.Context, ev *models.Evaluation) error
 
+	// RecordCapture writes the immutable audit record of an evaluation to the
+	// control ledger (ADR-003): a capture transaction carrying the observed
+	// snapshot (verdict, evidence, trigger). This is the durable "what reconciled
+	// and when" — positive assurance on a pass, break evidence on a fail —
+	// recorded independently of the alert lifecycle.
+	RecordCapture(ctx context.Context, in store.CaptureInput) error
+
 	// V1 — Alert
 	OpenOrUpdateAlert(ctx context.Context, in store.OpenAlertInput) (*store.OpenAlertResult, error)
 	AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fingerprint, periodID string, evaluationID uuid.UUID, at time.Time) (*models.Alert, error)

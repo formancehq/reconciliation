@@ -22,8 +22,9 @@ const DefaultControlLedger = "reconciliation"
 // Assets minted in the control-ledger (precision 0 — they are markers/counters,
 // not money).
 const (
-	AssetAlert = "ALERT" // lifecycle marker: exactly one unit per live alert
-	AssetOcc   = "OCC"   // per-alert occurrence counter (balance on the item account)
+	AssetAlert   = "ALERT"   // lifecycle marker: exactly one unit per live alert
+	AssetOcc     = "OCC"     // per-alert occurrence counter (balance on the item account)
+	AssetCapture = "CAPTURE" // one unit minted per recorded evaluation (capture counter)
 )
 
 // Lifecycle states — the {state} segment of a marker account. The marker sits in
@@ -90,6 +91,21 @@ func AlertStateAccount(state, ruleID, period, fpHash string) string {
 // -balance(this, OCC) = total occurrences for the rule.
 func PoolAccount(ruleID string) string {
 	return "alert:pool:rule:" + ruleID
+}
+
+// CaptureAccount is the (rule, period) capture bucket: every evaluation records an
+// immutable capture transaction here (ADR-003), so the account's transaction log is
+// the period's ordered series of captures and -balance(this, CAPTURE) counts them.
+// The observed state lives in each capture transaction's metadata, not on the account.
+func CaptureAccount(ruleID, period string) string {
+	return "capture:rule:" + ruleID + ":per:" + period
+}
+
+// CapturePool is the per-rule overdraft source that mints the CAPTURE marker for
+// every capture of the rule (keyed by rule → O(#rules) source accounts, mirroring
+// the alert pool). A declared source keeps STRICT enforcement satisfied.
+func CapturePool(ruleID string) string {
+	return "capture:pool:rule:" + ruleID
 }
 
 // --- Aggregation prefixes (for AGGREGATE_VOLUMES) ---

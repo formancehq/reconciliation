@@ -17,11 +17,24 @@ func TestNumscripts(t *testing.T) {
 		byName[ns.Name] = ns
 	}
 
-	require.Len(t, byName, 4)
+	require.Len(t, byName, 5)
 	require.Contains(t, byName, NumscriptAlertOpen)
 	require.Contains(t, byName, NumscriptAlertBump)
 	require.Contains(t, byName, NumscriptAlertReopen)
 	require.Contains(t, byName, NumscriptAlertMove)
+	require.Contains(t, byName, NumscriptCapture)
+}
+
+func TestNumscriptCapture(t *testing.T) {
+	t.Parallel()
+
+	c := content(t, NumscriptCapture)
+
+	// Mints a single CAPTURE marker from the capture pool into the capture bucket.
+	require.Contains(t, c, "["+AssetCapture+" 1]")
+	require.Contains(t, c, "source = $"+VarCapturePool+" allowing unbounded overdraft")
+	require.Contains(t, c, "destination = $"+VarCapture)
+	requireDeclaresVars(t, c, VarCapturePool, VarCapture)
 }
 
 func TestNumscriptAlertMove(t *testing.T) {

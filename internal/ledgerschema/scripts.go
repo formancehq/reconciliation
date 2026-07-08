@@ -19,6 +19,7 @@ const (
 	NumscriptAlertBump   = "alert_bump"   // mint OCC → item (repeat, marker stays put)
 	NumscriptAlertReopen = "alert_reopen" // guarded move st:{from}→st:open + mint OCC (reopen/resurface)
 	NumscriptAlertMove   = "alert_move"   // guarded move st:{from}→st:{to}, no OCC (ack/resolve/accept/auto-resolve)
+	NumscriptCapture     = "capture"      // mint 1 CAPTURE → capture bucket (records one evaluation)
 )
 
 // Numscript var names — the account addresses passed per call.
@@ -28,6 +29,9 @@ const (
 	VarStOpen = "st_open" // the st:open marker account
 	VarStFrom = "st_from" // the marker's current state account (guarded move source)
 	VarStTo   = "st_to"   // the marker's target state account (guarded move destination)
+
+	VarCapturePool = "capture_pool" // the per-rule capture overdraft source
+	VarCapture     = "capture"      // the (rule, period) capture bucket account
 )
 
 // NumscriptDef is one library program to register at provisioning.
@@ -46,7 +50,23 @@ func Numscripts() []NumscriptDef {
 		{NumscriptAlertBump, alertBumpContent(), NumscriptVersion},
 		{NumscriptAlertReopen, alertReopenContent(), NumscriptVersion},
 		{NumscriptAlertMove, alertMoveContent(), NumscriptVersion},
+		{NumscriptCapture, captureContent(), NumscriptVersion},
 	}
+}
+
+// captureContent mints a single CAPTURE marker into the (rule, period) capture
+// bucket (overdraft source, unguarded — one capture per evaluation, deduped by the
+// batch idempotency key). The minimal posting carries the transaction; the observed
+// snapshot rides the transaction metadata (ADR-003).
+func captureContent() string {
+	return fmt.Sprintf(`vars {
+	account $%[1]s
+	account $%[2]s
+}
+send [%[3]s 1] (
+	source = $%[1]s allowing unbounded overdraft
+	destination = $%[2]s
+)`, VarCapturePool, VarCapture, AssetCapture)
 }
 
 // alertOpenContent mints the single ALERT marker into st:open (overdraft, the
