@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	"encoding/json"
 
@@ -165,6 +166,23 @@ func accountsByAddress(accts []engine.Account) map[string]map[string]*big.Int {
 	out := make(map[string]map[string]*big.Int, len(accts))
 	for _, a := range accts {
 		out[a.Address] = a.Balances
+	}
+	return out
+}
+
+// poolPitPerSource records the audit PIT for each payments-pool source, in the
+// order given, keyed to match the kernel's naming ("payments_pool:N"). Ledger
+// sources are checkpoint-anchored (ADR-002 §10.1) and are not recorded. This
+// reproduces, without a kernel eval, the pit_per_source the cross-check used to
+// populate — the templates own it now that they no longer run the CEL kernel.
+func poolPitPerSource(pit time.Time, sources ...SourceSpec) map[string]time.Time {
+	out := map[string]time.Time{}
+	n := 0
+	for _, s := range sources {
+		if s.Kind == SourcePaymentsPool {
+			out[fmt.Sprintf("%s:%d", engine.SourcePaymentsPool, n)] = pit
+			n++
+		}
 	}
 	return out
 }

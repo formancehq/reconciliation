@@ -139,21 +139,11 @@ func (t *AccountThreshold) Evaluate(
 			passed = false
 		}
 
+		// Canonical CEL rendered into evidence for explainability; the direct math
+		// above is authoritative. Kernel/template equivalence is golden-tested
+		// (TestCrossCheck_*), not a per-evaluation runtime check. Single ledger
+		// source → no Tier-2 PIT to record.
 		expr := buildThresholdExpression(&spec, asset)
-		compiled, err := eng.Compile(expr)
-		if err != nil {
-			return nil, fmt.Errorf("compile per-asset expression for %s: %w", asset, err)
-		}
-		evalOut, err := eng.Evaluate(ctx, compiled, in)
-		if err != nil {
-			return nil, fmt.Errorf("evaluate per-asset expression for %s: %w", asset, err)
-		}
-		if evalOut.Passed != passed {
-			return nil, fmt.Errorf(
-				"kernel/template disagreement on %s: kernel=%v, direct=%v (balance=%s bounds=%+v)",
-				asset, evalOut.Passed, passed, val.String(), bounds,
-			)
-		}
 
 		evidence := map[string]any{
 			"asset":       asset,
@@ -171,7 +161,7 @@ func (t *AccountThreshold) Evaluate(
 			Fingerprint:  fingerprintFor("asset", asset),
 			Passed:       passed,
 			Evidence:     evidence,
-			PitPerSource: evalOut.PitPerSource,
+			PitPerSource: map[string]time.Time{},
 		})
 	}
 	return outcomes, nil

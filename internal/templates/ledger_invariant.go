@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -125,22 +126,11 @@ func (t *LedgerInvariant) Evaluate(
 		driftAbs := new(big.Int).Abs(signedSum)
 		passed := driftAbs.Cmp(big.NewInt(tolerance)) <= 0
 
-		// Build + run the kernel expression for the same check.
+		// Canonical CEL form rendered into evidence for explainability; the direct
+		// big.Int math above is authoritative. Kernel/template equivalence is a
+		// golden-tested code property (TestCrossCheck_*), not a per-evaluation
+		// runtime check. All terms are ledger sources → no Tier-2 PIT to record.
 		expr := buildInvariantExpression(&spec, asset)
-		compiled, err := eng.Compile(expr)
-		if err != nil {
-			return nil, fmt.Errorf("compile per-asset expression for %s: %w", asset, err)
-		}
-		evalOut, err := eng.Evaluate(ctx, compiled, in)
-		if err != nil {
-			return nil, fmt.Errorf("evaluate per-asset expression for %s: %w", asset, err)
-		}
-		if evalOut.Passed != passed {
-			return nil, fmt.Errorf(
-				"kernel/template disagreement on %s: kernel=%v, direct=%v (sum=%s tolerance=%d)",
-				asset, evalOut.Passed, passed, signedSum.String(), tolerance,
-			)
-		}
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
@@ -153,7 +143,7 @@ func (t *LedgerInvariant) Evaluate(
 				"termValues":  termValues,
 				"compiledCEL": expr,
 			},
-			PitPerSource: evalOut.PitPerSource,
+			PitPerSource: map[string]time.Time{},
 		})
 	}
 	return outcomes, nil
@@ -161,7 +151,8 @@ func (t *LedgerInvariant) Evaluate(
 
 // buildInvariantExpression renders the per-asset CEL string. Negative-sign
 // terms are emitted as `-balance(...)` (CEL unary minus); the result is
-//   abs(t0 + t1 + ...) <= TOL
+//
+//	abs(t0 + t1 + ...) <= TOL
 func buildInvariantExpression(spec *InvariantSpec, asset string) string {
 	parts := make([]string, 0, len(spec.Terms))
 	for _, term := range spec.Terms {

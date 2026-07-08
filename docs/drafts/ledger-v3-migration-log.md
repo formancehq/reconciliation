@@ -801,6 +801,40 @@ after); no-flag boot clean. Conventional commit; not on `main`; no OpenAPI chang
 | — | LOW | Server is **add-only** (not add-or-update despite the proto comment): changing an existing sink's endpoint/filter needs a manual `RemoveEventsSink` first, which resets the per-sink cursor (re-delivery from the log head). Documented on the method; operator action. | ✅ documented |
 | — | LOW | A failed `AddEventsSink` at boot **fails startup** (consistent with the provisioner). Right for a genuine config error; a transient ledger blip would crash-loop → k8s restart self-heals. Soften to log-and-continue if flaky. | ⬜ noted |
 
+## Workstream: checkpoint alternative (live reads + `_recon` capture)
+
+Owner-steered pivot (2026-07-08, ADR-003): **drop query checkpoints entirely** in favour of live
+reads + an immutable audit-grade **capture transaction** in `_recon`. Rationale + option analysis in
+[ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md); the multi-ledger atomic-read gap is
+tracked upstream as **EN-1480** (batched read on one snapshot). Staged: (1) remove the runtime
+cross-check, (2) remove checkpoints + live reads, (3) capture-as-transaction, (4) docs.
+
+### Checkpoint alternative — Étape 1: remove the kernel/template cross-check (SDLC review, 2026-07-08)
+
+The three *aggregate* templates (`source_parity`, `ledger_invariant`, `account_threshold`) re-ran their
+check through the CEL kernel (`eng.Compile`+`eng.Evaluate` per asset) and asserted the kernel verdict
+matched the direct `big.Int` math (`kernel/template disagreement`). Under a checkpoint (or a single
+live snapshot) both paths read the **same** state, so the cross-check only re-verified arithmetic
+equivalence on identical inputs — a code property, at the cost of 2·N / T·N / N extra reads per eval.
+It is also the structural blocker to live reads (two live reads diverge under concurrent writes).
+
+**Change:** direct math is authoritative; the rendered CEL stays in `evidence.compiledCEL` (explain-
+ability) and `eng.Compile` stays at rule create (`service/rule.go`, validation, no reads). `eng.Evaluate`
+now has no runtime consumer for built-in templates (reserved for post-GA power-mode) — a documented
+narrowing of ADR-001 §11. The equivalence moved to a golden test `TestCrossCheck_DirectMathMatchesRenderedCEL`
+(direct verdict == rendered-CEL verdict over representative pass/fail specs incl. ledger↔pool). New
+helper `templates.poolPitPerSource` reproduces the Tier-2 `pit_per_source` the kernel used to populate
+(only `source_parity` can carry a pool source; invariant/threshold are ledger-only → empty).
+
+**Checks:** `go build ./...` ✅ · `go vet ./internal/templates/… ./internal/engine/…` ✅ · `go test -race
+./internal/...` green ✅ · gofmt clean (also normalised the pre-existing comment reflow in
+`ledger_invariant.go` since it's now edited) ✅ · `golangci-lint ./internal/templates/...` 0 issues ✅ ·
+not on `main` ✅ · no OpenAPI change ✅ · `engine`/checkpoint code untouched (Étape 2). No CRITICAL/HIGH.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| — | LOW | `eng` is now an unused param of `LedgerInvariant.Evaluate` (interface-required; lint skips interface methods). Kept for the `Evaluator` contract; still used by the other two templates' per_account paths. | ✅ acceptable |
+
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
 Closes a real leak in the state model: EPHEMERAL purges a marker only at **zero** balance, but

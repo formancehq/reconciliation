@@ -339,3 +339,133 @@ func TestThreshold_DeterministicFingerprintOrder(t *testing.T) {
 		}
 	}
 }
+
+// --- kernel/template equivalence (golden) -----------------------------------
+
+// TestCrossCheck_DirectMathMatchesRenderedCEL guards the property the runtime
+// cross-check used to assert: each aggregate template's direct big.Int verdict
+// equals the verdict of the CEL expression it renders into evidence. It was a
+// per-evaluation runtime check (two reads of the same state → always equal, so
+// pure cost); moved here as a code-property test. It reads the same fakes on
+// both paths — a break in the rendering (celTerm/build*Expression) or the direct
+// math makes them diverge and fails this test.
+func TestCrossCheck_DirectMathMatchesRenderedCEL(t *testing.T) {
+	in := engine.EvalInput{PIT: time.Now()}
+	lo, hi := int64(100), int64(1000)
+
+	cases := []struct {
+		name string
+		tmpl Evaluator
+		l    *fakeLedger
+		p    *fakePayments
+		spec any
+	}{
+		{
+			name: "invariant/pass",
+			tmpl: NewLedgerInvariant(),
+			l: &fakeLedger{balances: map[string]map[string]*big.Int{
+				`buildr|"held"`:       {"USD/2": big.NewInt(350)},
+				`buildr|"obligation"`: {"USD/2": big.NewInt(-350)},
+			}},
+			spec: InvariantSpec{
+				Terms: []InvariantTerm{
+					{Ledger: "buildr", Query: json.RawMessage(`"held"`), Sign: 1},
+					{Ledger: "buildr", Query: json.RawMessage(`"obligation"`), Sign: 1},
+				},
+				Tolerance: map[string]int64{"USD/2": 0},
+			},
+		},
+		{
+			name: "invariant/fail",
+			tmpl: NewLedgerInvariant(),
+			l: &fakeLedger{balances: map[string]map[string]*big.Int{
+				`l|"a"`: {"USD/2": big.NewInt(100)},
+				`l|"b"`: {"USD/2": big.NewInt(50)},
+			}},
+			spec: InvariantSpec{
+				Terms: []InvariantTerm{
+					{Ledger: "l", Query: json.RawMessage(`"a"`), Sign: 1},
+					{Ledger: "l", Query: json.RawMessage(`"b"`), Sign: 1},
+				},
+				Tolerance: map[string]int64{"USD/2": 100},
+			},
+		},
+		{
+			name: "threshold/mixed-assets",
+			tmpl: NewAccountThreshold(),
+			l: &fakeLedger{balances: map[string]map[string]*big.Int{
+				`l|"q"`: {"USD/2": big.NewInt(500), "EUR/2": big.NewInt(50)},
+			}},
+			spec: ThresholdSpec{
+				Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdAggregate,
+				Bounds: map[string]ThresholdBounds{
+					"USD/2": {Min: &lo, Max: &hi}, // 500 in [100,1000] → pass
+					"EUR/2": {Min: &lo},           // 50 < 100 → fail
+				},
+			},
+		},
+		{
+			name: "parity/ledger-ledger",
+			tmpl: NewSourceParity(),
+			l: &fakeLedger{balances: map[string]map[string]*big.Int{
+				`a|"x"`: {"USD/2": big.NewInt(1000)},
+				`b|"y"`: {"USD/2": big.NewInt(1000), "EUR/2": big.NewInt(5)}, // EUR mismatch → fail
+			}},
+			spec: ParitySpec{
+				Left:      SourceSpec{Kind: SourceLedger, Ledger: "a", Query: json.RawMessage(`"x"`)},
+				Right:     SourceSpec{Kind: SourceLedger, Ledger: "b", Query: json.RawMessage(`"y"`)},
+				Tolerance: map[string]int64{"USD/2": 0, "EUR/2": 0},
+			},
+		},
+		{
+			name: "parity/ledger-pool",
+			tmpl: NewSourceParity(),
+			l: &fakeLedger{balances: map[string]map[string]*big.Int{
+				`a|"x"`: {"USD/2": big.NewInt(1000)},
+			}},
+			p: &fakePayments{pools: map[string]map[string]*big.Int{
+				"pool1": {"USD/2": big.NewInt(1000)},
+			}},
+			spec: ParitySpec{
+				Left:      SourceSpec{Kind: SourceLedger, Ledger: "a", Query: json.RawMessage(`"x"`)},
+				Right:     SourceSpec{Kind: SourcePaymentsPool, PoolID: "pool1"},
+				Tolerance: map[string]int64{"USD/2": 0},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tc.p
+			if p == nil {
+				p = &fakePayments{}
+			}
+			eng, res := newTestEngine(t, tc.l, p)
+			out, err := tc.tmpl.Evaluate(context.Background(), mustJSON(t, tc.spec), eng, res, in)
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			if len(out) == 0 {
+				t.Fatalf("no outcomes produced")
+			}
+			for _, o := range out {
+				celExpr, _ := o.Evidence["compiledCEL"].(string)
+				if celExpr == "" {
+					t.Fatalf("outcome %s: missing compiledCEL in evidence", o.Fingerprint)
+				}
+				compiled, err := eng.Compile(celExpr)
+				if err != nil {
+					t.Fatalf("compile rendered CEL %q: %v", celExpr, err)
+				}
+				evalOut, err := eng.Evaluate(context.Background(), compiled, in)
+				if err != nil {
+					t.Fatalf("evaluate rendered CEL %q: %v", celExpr, err)
+				}
+				if evalOut.Passed != o.Passed {
+					t.Errorf("%s: rendered CEL %q verdict=%v, direct=%v",
+						o.Fingerprint, celExpr, evalOut.Passed, o.Passed)
+				}
+			}
+		})
+	}
+}
