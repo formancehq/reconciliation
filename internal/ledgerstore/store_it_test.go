@@ -57,7 +57,7 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it5"
+	const control = "recon-it6"
 
 	// Idempotent bootstrap in AUDIT so the chart is validated but not enforced.
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
@@ -129,7 +129,7 @@ func TestIntegration_OpenAlert(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it5"
+	const control = "recon-it6"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -232,7 +232,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it5"
+	const control = "recon-it6"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -361,7 +361,7 @@ func TestIntegration_Lists(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it5"
+	const control = "recon-it6"
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -455,7 +455,7 @@ func TestIntegration_RecordCapture(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it5"
+	const control = "recon-it6"
 	require.NoError(t, ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT).Provision(ctx), "provision control-ledger")
 
 	store := New(client, control)

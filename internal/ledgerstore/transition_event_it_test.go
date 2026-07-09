@@ -29,7 +29,7 @@ func TestIntegration_TransitionEventStamped(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it5"
+	const control = "recon-it6"
 	require.NoError(t, ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT).Provision(ctx))
 
 	store := New(client, control)

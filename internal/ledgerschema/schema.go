@@ -44,8 +44,6 @@ const (
 	MetaResolution       = "resolution" // JSON
 	MetaAck              = "ack"        // JSON
 	MetaSnooze           = "snooze"     // JSON
-	MetaReopenedAt       = "reopened_at"
-	MetaParentResolution = "parent_resolution"
 	// MetaLastTransition is a self-describing transition envelope (JSON) stamped
 	// on every alert transition so the ledger log event for that write carries
 	// "what happened" for event-sink consumers (RFC §4.4). Undeclared like the
@@ -161,7 +159,6 @@ func MetadataSchema() []*commonpb.SetMetadataFieldTypeCommand {
 		{MetaID, str}, {MetaStatus, str}, {MetaSeverity, str}, {MetaRuleID, str}, {MetaFingerprint, str},
 		{MetaPeriod, str}, {MetaFirstSeenAt, dt}, {MetaLastSeenAt, dt}, {MetaLastEvaluationID, str},
 		{MetaEvidence, str}, {MetaResolution, str}, {MetaAck, str}, {MetaSnooze, str},
-		{MetaReopenedAt, dt}, {MetaParentResolution, str},
 		// rule
 		{MetaName, str}, {MetaTemplateKind, str}, {MetaEnabled, b}, {MetaSchedule, str},
 		{MetaCadence, str}, {MetaSpec, str}, {MetaCompiledCEL, str}, {MetaNotifications, str},

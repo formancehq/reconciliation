@@ -75,13 +75,13 @@ snooze/unsnooze are `SAVED_METADATA`/`DELETED_METADATA` — the sink must cover 
 
 A dedicated PR off `main` should follow (rebase after PR #83).
 
-**Watch:** open findings F1/F8/F17/F22/F23/F25/F27/F31 (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b, F26 @ 6b-3; **F26 + F32 now without object** — checkpoints removed @ checkpoint-alternative step 2; F8 still open, it-ledger bumped `recon-it5` @ step 3). **Don't touch:**
+**Watch:** open findings F1/F8/F17/F22/F23/F25/F27/F31 (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b, F26 @ 6b-3, **F33** @ metadata-type-audit — `MetadataToMap` lossless; **F26 + F32 now without object** — checkpoints removed @ checkpoint-alternative step 2; F8 still open, it-ledger bumped `recon-it5`→`recon-it6` @ metadata-type-audit). Metadata schema **audited & correctly typed** (dead `reopened_at`/`parent_resolution` removed). **Don't touch:**
 `feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
 uncommitted `Justfile` change (orphaned `generate-ledger-proto`, leave unstaged); `ledger-local/`.
 **Build/test:** `export PATH=$PATH:$(go env GOPATH)/bin` then `GOROOT= go build ./...`,
 `GOROOT= go test -race ./internal/ledger{,store,schema}/...`, it-tests `GOROOT= go test -tags it
 -p 1 -run TestIntegration ./internal/ledgerstore/... ./internal/ledger/...` (**`-p 1`**: packages
-share one live ledger; F8: bump the it control-ledger name — now `recon-it4` — on any chart change). Conventions: `feat(ledger-v3):` commits, update this log
+share one live ledger; F8: bump the it control-ledger name — now `recon-it6` — on any chart change). Conventions: `feat(ledger-v3):` commits, update this log
 + SDLC review per sub-step, stamp commit refs.
 
 ---
@@ -909,6 +909,55 @@ Conventional commit; not on `main`; no OpenAPI change.
 | — | LOW | Continuous rules write one capture transaction per evaluation (the assumed cost of the transaction form). Throttling (on-change / heartbeat) is a documented follow-up if continuous volume bites. | ⬜ noted |
 | — | LOW | The capture stores the evaluation's (failing-outcome) evidence + verdict; full pass-side observed balances (all outcomes) and a ledger-signed read proof (EN-1480) are documented follow-ups. | ⬜ noted |
 | F8 | — | Chart evolution on an existing ledger is still unhandled: a fresh deploy gets the capture chart via CreateLedger; an existing one needs an idempotent add-types pass. it-ledger bumped to `recon-it5`. | ⬜ open |
+
+## Workstream: metadata type audit (typed schema round-trip)
+
+Audit of every metadata key recon declares/writes/reads against the ledger's 11 typed
+`MetadataType`s (STRING/INT64/UINT64/INT8/16/32/UINT8/16/32/BOOL/DATETIME), verifying the
+**declared type (`schema.MetadataSchema`) ⇔ value written (`ledgerstore` `strVal`/`boolVal`/`dtVal`)
+⇔ value read (`getStr`/`getBool`/`getTime`)** are coherent end-to-end for every field.
+
+**Conclusion: the control schema is already correctly typed** — no string↔int mismatch. UUIDs
+(`id`, `rule_id`, `last_evaluation_id`), enums (`status`, `severity`, `template_kind`, `cadence`),
+free text (`name`, `fingerprint`, `compiled_cel`), the `period` id (alnum+`-`, not an int), and all
+JSON blobs (`evidence`, `resolution`, `ack`, `snooze`, `schedule`, `spec`, `notifications`) are
+correctly **STRING** (the ledger has no UUID/enum/JSON metadata type). Timestamps are **DATETIME**
+(micros), `enabled` is **BOOL**. The one true counter — `occurrence-count` — is correctly modelled as
+the **OCC asset balance**, not metadata. Dynamic `label.*` / `last_transition` stay undeclared STRING
+by design. Capture-tx metadata is undeclared, transaction-level, audit-only and never read back, so
+its `captured_at` as an RFC3339Nano string (vs the alert-side DATETIME micros) is an intentional
+human-readable-envelope choice, not a mismatch — left as-is.
+
+**Two fixes landed:**
+- **Dead schema declarations removed** — `reopened_at` (DATETIME) and `parent_resolution` (STRING)
+  were declared in `MetadataSchema()` but **never written or read** (no `models.Alert` field, no
+  producer/consumer, no docs ref). `parent_resolution` also *contradicted* the reopen design
+  ("a reopen drops the prior closure — its audit lives in the event stream", `alert.go`). Removed
+  both the constants and the schema entries. A declared-but-unpopulated field is a coherence defect
+  (and reserves a forward-index encoding slot for nothing). If `reopened_at` is ever wanted, its
+  timestamp is already in `last_transition.occurredAt`; re-add via the F8 schema-bump discipline.
+- **`MetadataToMap` made lossless (F33)** — the flatten kept **only `StringValue`**, silently
+  dropping any INT64/UINT64/DATETIME/BOOL/NullValue key. It feeds the **data-ledger** read path
+  (`ledger.Reader` → `resolver.accountFromProto` → `engine.Account.Metadata`), where recon does not
+  control the (customer-declared) metadata types. Latent today (that field is not yet read by any CEL
+  builtin/template — the CEL env exposes only `ledgerSet`/`pool`/`balance`/`balances`/`sum`/`abs`),
+  but a landmine the moment account metadata is surfaced to CEL. Now stringifies every scalar
+  (int/uint → base-10, bool → `true`/`false`, datetime → RFC3339Nano UTC, null → its preserved raw
+  original); no key is dropped except a nil/unset value. New round-trip tests in
+  `internal/ledgerpb/commonpb/metadata_helpers_test.go`.
+
+**Schema change → it control-ledger bumped `recon-it5` → `recon-it6`** (F8): removing declared fields
+changes the `CreateLedger` schema, so a fresh control ledger is provisioned for the it-suite.
+
+**Checks:** build/vet(+`-tags it`)/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit green
+(incl. the new `MetadataToMap` lossless-flatten + round-trip tests); full it-suite (`-p 1 -count=1`,
+fresh `recon-it6`) green — schema provisions cleanly with the two fields gone. Not on `main`; no
+OpenAPI change.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F33 | LOW | `commonpb.MetadataToMap` silently dropped non-`StringValue` keys when flattening ledger metadata to `map[string]string` (data-ledger read path → `engine.Account.Metadata`), so a typed data-ledger field would vanish from a rule's view. Latent (the field is not yet read by CEL). **Fixed:** lossless stringify of every scalar type. Full typed metadata in the CEL object model (a typed `map[string]any`) stays a Phase 4 concern. | ✅ fixed |
+| F8 | — | Same schema-evolution gap as before: removing the two dead fields is only picked up by a fresh `CreateLedger`; an existing ledger keeps the orphan declarations until an idempotent reconcile pass (`SetMetadataFieldType`/`RemovedMetadataFieldType`) exists. it-ledger bumped to `recon-it6`. | ⬜ open |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
