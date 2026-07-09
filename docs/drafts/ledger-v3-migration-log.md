@@ -75,13 +75,13 @@ snooze/unsnooze are `SAVED_METADATA`/`DELETED_METADATA` — the sink must cover 
 
 A dedicated PR off `main` should follow (rebase after PR #83).
 
-**Watch:** open findings F1/F8/F17/F22/F23/F25/F27/F31 (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b, F26 @ 6b-3, **F33** @ metadata-type-audit — `MetadataToMap` lossless; **F26 + F32 now without object** — checkpoints removed @ checkpoint-alternative step 2; F8 still open, it-ledger bumped `recon-it5`→`recon-it6` @ metadata-type-audit). Metadata schema **audited & correctly typed** (dead `reopened_at`/`parent_resolution` removed). **Don't touch:**
+**Watch:** open findings F1/F17/F22/F23/F25/F27/F31 (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b, F26 @ 6b-3, **F33** @ metadata-type-audit — `MetadataToMap` lossless, **F8** @ idempotent-schema-provisioning — `Provision` reconciles account types + metadata fields additively on an existing ledger (delta-based to avoid a per-boot index rewrite — new upstream note **F34**), so additive chart changes no longer need an it-ledger rename; **F26 + F32 now without object** — checkpoints removed @ checkpoint-alternative step 2). Metadata schema **audited & correctly typed** (dead `reopened_at`/`parent_resolution` removed). **Don't touch:**
 `feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
 uncommitted `Justfile` change (orphaned `generate-ledger-proto`, leave unstaged); `ledger-local/`.
 **Build/test:** `export PATH=$PATH:$(go env GOPATH)/bin` then `GOROOT= go build ./...`,
 `GOROOT= go test -race ./internal/ledger{,store,schema}/...`, it-tests `GOROOT= go test -tags it
 -p 1 -run TestIntegration ./internal/ledgerstore/... ./internal/ledger/...` (**`-p 1`**: packages
-share one live ledger; F8: bump the it control-ledger name — now `recon-it6` — on any chart change). Conventions: `feat(ledger-v3):` commits, update this log
+share one live ledger; F8 **resolved** — `Provision` now reconciles additively, so an it-ledger rename is only needed for a **destructive** chart change (removing/retyping a field, or changing an account type with accounts); current control ledger `recon-it6`). Conventions: `feat(ledger-v3):` commits, update this log
 + SDLC review per sub-step, stamp commit refs.
 
 ---
@@ -180,7 +180,7 @@ Tracked follow-ups:
 
 | # | Sev | Finding | Status |
 |---|---|---|---|
-| F8 | MED | Schema **evolution** on an already-created ledger is not handled: `CreateLedger` applies the full schema only on first boot; adding a metadata field / account type later needs idempotent `SetMetadataFieldType` / `AddAccountType` passes in `Provision`. | ⬜ open (POC creates once) |
+| F8 | MED | Schema **evolution** on an already-created ledger is not handled: `CreateLedger` applies the full schema only on first boot; adding a metadata field / account type later needs idempotent `SetMetadataFieldType` / `AddAccountType` passes in `Provision`. | ✅ resolved @ idempotent-schema-provisioning (additive reconcile in `Provision`; destructive evolution still out of scope) |
 | F9 | LOW | Provisioner has no integration test against a real ledger (only gomock unit tests). | ✅ resolved — `store_it_test.go` provisions the control-ledger against a live ledger. |
 
 Step 2 SDLC review (2026-07-03) — coverage: `ledgerschema` 93.5%, provisioner 83–100% (the
@@ -957,7 +957,59 @@ OpenAPI change.
 | # | Sev | Finding | Status |
 |---|---|---|---|
 | F33 | LOW | `commonpb.MetadataToMap` silently dropped non-`StringValue` keys when flattening ledger metadata to `map[string]string` (data-ledger read path → `engine.Account.Metadata`), so a typed data-ledger field would vanish from a rule's view. Latent (the field is not yet read by CEL). **Fixed:** lossless stringify of every scalar type. Full typed metadata in the CEL object model (a typed `map[string]any`) stays a Phase 4 concern. | ✅ fixed |
-| F8 | — | Same schema-evolution gap as before: removing the two dead fields is only picked up by a fresh `CreateLedger`; an existing ledger keeps the orphan declarations until an idempotent reconcile pass (`SetMetadataFieldType`/`RemovedMetadataFieldType`) exists. it-ledger bumped to `recon-it6`. | ⬜ open |
+| F8 | — | Same schema-evolution gap as before: removing the two dead fields is only picked up by a fresh `CreateLedger`; an existing ledger keeps the orphan declarations until an idempotent reconcile pass (`SetMetadataFieldType`/`RemovedMetadataFieldType`) exists. it-ledger bumped to `recon-it6`. | ✅ superseded by idempotent-schema-provisioning (additive) |
+
+## Workstream: idempotent schema provisioning (F8 resolved)
+
+`Provision` runs on every boot but only ever called `CreateLedger`, which applies the full chart
+**atomically on first boot** and returns `AlreadyExists` (swallowed) forever after — so an
+already-created control ledger never received later **additive** chart changes (new account type /
+metadata key). The standing workaround was renaming the it-ledger (`recon-it4`→`it5`→`it6`) to force
+a fresh create, which is impossible in production. This closes the recurring F8.
+
+**Fix:** after `CreateLedger`, `Provision` reads the ledger's current chart (`GetLedgerInfo`) and runs
+two **delta-based** reconcile passes — applying only what is missing or mistyped:
+- **Account types** — `AddAccountType` for types the ledger does not have (sorted for a deterministic
+  apply order); the client still swallows `AlreadyExists` as a race/read-lag backstop.
+- **Metadata fields** — `SetMetadataFieldType` for a key only when it is absent OR its declared type
+  differs from the chart.
+
+**Why delta, not unconditional (F34):** the ledger FSM (`processSetMetadataFieldType`) has **no
+unchanged-type guard** — every `SetMetadataFieldType` on an *indexed* field bumps its
+`forward_encoding_version` and flips the index to BUILDING, i.e. schedules a forward-index **rewrite**.
+recon indexes 13 metadata fields, so a naive "re-declare every field on every boot" would rewrite all
+13 indexes on **every boot**. Reading the current schema and skipping already-correct fields keeps a
+steady-state boot free of schema mutations (proven: the full it-suite's per-test re-provisions on the
+shared `recon-it6` issue zero `AddAccountType`/`SetMetadataFieldType`).
+
+New client methods `Client.{GetLedgerInfo,AddAccountType,SetMetadataFieldType}` (mutations routed
+through the standard `Apply` batch; `GetLedgerInfo` maps `NotFound`→`(nil,nil)`) + `Client.DeleteLedger`
+(test-hygiene, swallows `NotFound`). `provisionAPI` + its mock extended.
+
+**Scope / residual:** the reconcile is **additive**. Destructive evolution stays out of scope and is
+the *only* case still needing an it-ledger rename: removing a declared field (needs
+`RemoveMetadataFieldType` — an orphan declaration is otherwise harmless, no writes), retyping a field
+on populated data, or changing an account type that already holds accounts
+(`ACCOUNT_TYPE_HAS_ACCOUNTS`). A genuine account-type redefinition surfaces its error rather than
+being silently applied.
+
+**Convention change:** an it-ledger rename is no longer required for an **additive** chart change —
+only for a destructive one (handoff + step-3c-4 note updated).
+
+**Checks:** build/vet(+`-tags it`)/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit green —
+`TestProvisioner_Provision` (bare ledger → full chart reconciled) + `TestProvisioner_UpToDateLedgerSkipsReconcile`
+(the churn guard: a fully-provisioned ledger issues **zero** `AddAccountType`/`SetMetadataFieldType`).
+Full it-suite (`-p 1 -count=1`, `recon-it6`) green with the reconcile active — the shared ledger's
+per-test re-provisions stay clean no-ops. New it-test `TestIntegration_ProvisionReconcilesExistingLedger`
+seeds a **stale** ledger (only the `rule` type, no schema), provisions, and asserts via `GetLedger` that
+every chart account type + metadata field is now present, then re-provisions idempotently (unique
+ledger, deleted on teardown). Not on `main`; no OpenAPI change.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| F8 | MED | Additive schema/chart evolution on an existing ledger — **resolved** via delta reconcile in `Provision`. | ✅ resolved |
+| F34 | LOW | Ledger `SetMetadataFieldType` has **no unchanged-type guard**: it bumps `forward_encoding_version` (an index rewrite) even when the declared type is identical. recon works around it by diffing against `GetLedgerInfo` and only declaring the delta. Upstream fix: the FSM could no-op an identical redeclaration. | 🟡 mitigated in-recon; upstream follow-up |
+| — | LOW | Destructive evolution (remove/retype a field, change a populated account type) is still unhandled and needs an it-ledger rename or a manual `RemoveMetadataFieldType`/type migration. Low frequency; documented. | ⬜ noted |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 

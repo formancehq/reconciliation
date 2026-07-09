@@ -3,6 +3,8 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
@@ -15,6 +17,9 @@ import (
 // is trivially mockable for unit tests. *Client satisfies it.
 type provisionAPI interface {
 	CreateLedger(ctx context.Context, name string, schema []*commonpb.SetMetadataFieldTypeCommand, accountTypes map[string]*commonpb.AccountType, enforcement commonpb.ChartEnforcementMode) error
+	GetLedgerInfo(ctx context.Context, name string) (*commonpb.LedgerInfo, error)
+	AddAccountType(ctx context.Context, ledger string, accountType *commonpb.AccountType) error
+	SetMetadataFieldType(ctx context.Context, ledger string, cmd *commonpb.SetMetadataFieldTypeCommand) error
 	CreateIndex(ctx context.Context, ledger string, index *servicepb.CreateIndexRequest) error
 	CreatePreparedQuery(ctx context.Context, ledger string, query *commonpb.PreparedQuery) error
 	SaveNumscript(ctx context.Context, ledger, name, content, version string) error
@@ -40,15 +45,65 @@ func NewProvisioner(client provisionAPI, ledgerName string, enforcement commonpb
 	return &Provisioner{client: client, ledger: ledgerName, enforcement: enforcement}
 }
 
-// Provision applies the control-ledger chart of accounts, typed metadata schema
-// and prepared queries. Idempotent (the client swallows AlreadyExists).
+// Provision applies the control-ledger chart of accounts, typed metadata schema,
+// indexes, prepared queries and numscripts. Idempotent and safe on every boot.
 //
-// NOTE: schema evolution on an already-created ledger (adding a metadata field or
-// account type after first boot) is a tracked follow-up — see the migration log.
-// On first boot the full schema is applied atomically via CreateLedger.
+// On first boot CreateLedger applies the full chart + schema atomically. On a
+// re-provision it is a no-op (AlreadyExists swallowed) and the account-type /
+// metadata-field reconcile passes below bring an already-created ledger up to the
+// current chart (F8) — so an *additive* chart change (a new account type or
+// metadata key) no longer requires recreating the ledger. Destructive evolution
+// (removing/retyping a field, or changing an account type that already holds
+// accounts) is out of scope: an orphaned declaration is harmless (no writes),
+// and a real redefinition surfaces its error rather than being silently applied.
+//
+// The reconcile is DELTA-based: it reads the ledger's current chart and only
+// declares what is missing or mistyped. This matters for metadata — the ledger
+// bumps a field's forward_encoding_version (a forward-index rewrite) on EVERY
+// SetMetadataFieldType, with no unchanged-type guard, so re-declaring an indexed
+// field it already has would rewrite that index on every boot.
 func (p *Provisioner) Provision(ctx context.Context) error {
-	if err := p.client.CreateLedger(ctx, p.ledger, schema.MetadataSchema(), schema.AccountTypes(), p.enforcement); err != nil {
+	accountTypes := schema.AccountTypes()
+	metaSchema := schema.MetadataSchema()
+
+	if err := p.client.CreateLedger(ctx, p.ledger, metaSchema, accountTypes, p.enforcement); err != nil {
 		return fmt.Errorf("create control-ledger %q: %w", p.ledger, err)
+	}
+
+	// Read the current chart so the reconcile applies only the delta. Nil-safe:
+	// getters on a nil LedgerInfo yield nil maps → everything is treated missing.
+	info, err := p.client.GetLedgerInfo(ctx, p.ledger)
+	if err != nil {
+		return fmt.Errorf("read control-ledger %q: %w", p.ledger, err)
+	}
+
+	existingTypes := info.GetAccountTypes()
+	existingFields := info.GetMetadataSchema().GetAccountFields()
+
+	// Reconcile account types: add only those the ledger is missing (additive).
+	// AddAccountType still swallows AlreadyExists as a race/read-lag backstop.
+	// Sorted for a deterministic apply order.
+	for _, name := range slices.Sorted(maps.Keys(accountTypes)) {
+		if _, ok := existingTypes[name]; ok {
+			continue
+		}
+
+		if err := p.client.AddAccountType(ctx, p.ledger, accountTypes[name]); err != nil {
+			return fmt.Errorf("add account type %q: %w", name, err)
+		}
+	}
+
+	// Reconcile the typed metadata schema: declare a field only when missing or
+	// its declared type differs (a genuine retype legitimately triggers the
+	// rewrite; re-declaring an unchanged field would needlessly rewrite it).
+	for _, cmd := range metaSchema {
+		if cur, ok := existingFields[cmd.GetKey()]; ok && cur.GetType() == cmd.GetType() {
+			continue
+		}
+
+		if err := p.client.SetMetadataFieldType(ctx, p.ledger, cmd); err != nil {
+			return fmt.Errorf("set metadata field type %q: %w", cmd.GetKey(), err)
+		}
 	}
 
 	for _, idx := range schema.MetadataIndexes() {

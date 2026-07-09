@@ -42,6 +42,20 @@ func (m *MockprovisionAPI) EXPECT() *MockprovisionAPIMockRecorder {
 	return m.recorder
 }
 
+// AddAccountType mocks base method.
+func (m *MockprovisionAPI) AddAccountType(ctx context.Context, ledger string, accountType *commonpb.AccountType) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AddAccountType", ctx, ledger, accountType)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AddAccountType indicates an expected call of AddAccountType.
+func (mr *MockprovisionAPIMockRecorder) AddAccountType(ctx, ledger, accountType any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddAccountType", reflect.TypeOf((*MockprovisionAPI)(nil).AddAccountType), ctx, ledger, accountType)
+}
+
 // CreateIndex mocks base method.
 func (m *MockprovisionAPI) CreateIndex(ctx context.Context, ledger string, index *servicepb.CreateIndexRequest) error {
 	m.ctrl.T.Helper()
@@ -84,6 +98,21 @@ func (mr *MockprovisionAPIMockRecorder) CreatePreparedQuery(ctx, ledger, query a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePreparedQuery", reflect.TypeOf((*MockprovisionAPI)(nil).CreatePreparedQuery), ctx, ledger, query)
 }
 
+// GetLedgerInfo mocks base method.
+func (m *MockprovisionAPI) GetLedgerInfo(ctx context.Context, name string) (*commonpb.LedgerInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetLedgerInfo", ctx, name)
+	ret0, _ := ret[0].(*commonpb.LedgerInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetLedgerInfo indicates an expected call of GetLedgerInfo.
+func (mr *MockprovisionAPIMockRecorder) GetLedgerInfo(ctx, name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLedgerInfo", reflect.TypeOf((*MockprovisionAPI)(nil).GetLedgerInfo), ctx, name)
+}
+
 // SaveNumscript mocks base method.
 func (m *MockprovisionAPI) SaveNumscript(ctx context.Context, ledger, name, content, version string) error {
 	m.ctrl.T.Helper()
@@ -96,4 +125,18 @@ func (m *MockprovisionAPI) SaveNumscript(ctx context.Context, ledger, name, cont
 func (mr *MockprovisionAPIMockRecorder) SaveNumscript(ctx, ledger, name, content, version any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveNumscript", reflect.TypeOf((*MockprovisionAPI)(nil).SaveNumscript), ctx, ledger, name, content, version)
+}
+
+// SetMetadataFieldType mocks base method.
+func (m *MockprovisionAPI) SetMetadataFieldType(ctx context.Context, ledger string, cmd *commonpb.SetMetadataFieldTypeCommand) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetMetadataFieldType", ctx, ledger, cmd)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetMetadataFieldType indicates an expected call of SetMetadataFieldType.
+func (mr *MockprovisionAPIMockRecorder) SetMetadataFieldType(ctx, ledger, cmd any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetMetadataFieldType", reflect.TypeOf((*MockprovisionAPI)(nil).SetMetadataFieldType), ctx, ledger, cmd)
 }

@@ -40,6 +40,37 @@ func TestProvisioner_Provision(t *testing.T) {
 			return nil
 		})
 
+	// Bare ledger (nothing declared yet) → the reconcile applies the full chart.
+	m.EXPECT().
+		GetLedgerInfo(gomock.Any(), testLedger).
+		Return(nil, nil)
+
+	// Reconcile pass (F8): every account type is added so a stale ledger picks up
+	// additive chart changes. Capture the names actually reconciled.
+	var addedTypes []string
+
+	m.EXPECT().
+		AddAccountType(gomock.Any(), testLedger, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, at *commonpb.AccountType) error {
+			addedTypes = append(addedTypes, at.GetName())
+
+			return nil
+		}).
+		Times(len(schema.AccountTypes()))
+
+	// Reconcile pass (F8): every typed metadata field is (re-)declared. Capture
+	// the keys actually reconciled.
+	var setFields []string
+
+	m.EXPECT().
+		SetMetadataFieldType(gomock.Any(), testLedger, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, cmd *commonpb.SetMetadataFieldTypeCommand) error {
+			setFields = append(setFields, cmd.GetKey())
+
+			return nil
+		}).
+		Times(len(schema.MetadataSchema()))
+
 	// The queryable metadata indexes are created (id at minimum, for id→address
 	// resolution).
 	m.EXPECT().
@@ -91,6 +122,59 @@ func TestProvisioner_Provision(t *testing.T) {
 		if !slices.Contains(scripts, want) {
 			t.Errorf("numscript %q not registered (got %v)", want, scripts)
 		}
+	}
+
+	// Every account type and metadata field in the chart is reconciled (F8).
+	for wantType := range schema.AccountTypes() {
+		if !slices.Contains(addedTypes, wantType) {
+			t.Errorf("account type %q not reconciled (got %v)", wantType, addedTypes)
+		}
+	}
+
+	for _, cmd := range schema.MetadataSchema() {
+		if !slices.Contains(setFields, cmd.GetKey()) {
+			t.Errorf("metadata field %q not reconciled (got %v)", cmd.GetKey(), setFields)
+		}
+	}
+}
+
+// TestProvisioner_UpToDateLedgerSkipsReconcile is the churn guard: on a ledger
+// that already carries the full chart, the reconcile must issue ZERO
+// AddAccountType / SetMetadataFieldType calls — re-declaring an indexed metadata
+// field would re-trigger a forward-index rewrite on every boot.
+func TestProvisioner_UpToDateLedgerSkipsReconcile(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	m := NewMockprovisionAPI(ctrl)
+
+	m.EXPECT().CreateLedger(gomock.Any(), testLedger, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+	// The ledger already has every account type and every metadata field with the
+	// declared type — a fully-provisioned ledger.
+	fields := map[string]*commonpb.MetadataFieldSchema{}
+	for _, cmd := range schema.MetadataSchema() {
+		fields[cmd.GetKey()] = &commonpb.MetadataFieldSchema{Type: cmd.GetType()}
+	}
+
+	m.EXPECT().
+		GetLedgerInfo(gomock.Any(), testLedger).
+		Return(&commonpb.LedgerInfo{
+			AccountTypes:   schema.AccountTypes(),
+			MetadataSchema: &commonpb.MetadataSchema{AccountFields: fields},
+		}, nil)
+
+	// The delta is empty → no schema-mutating reconcile calls. gomock fails the
+	// test if either is called (no EXPECT registered).
+
+	// The remaining passes still run (idempotent no-ops at the client layer).
+	m.EXPECT().CreateIndex(gomock.Any(), testLedger, gomock.Any()).Return(nil).Times(len(schema.MetadataIndexes()))
+	m.EXPECT().CreatePreparedQuery(gomock.Any(), testLedger, gomock.Any()).Return(nil).Times(len(schema.PreparedQueries()))
+	m.EXPECT().SaveNumscript(gomock.Any(), testLedger, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(len(schema.Numscripts()))
+
+	p := NewProvisioner(m, testLedger, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
+	if err := p.Provision(context.Background()); err != nil {
+		t.Fatalf("Provision: %v", err)
 	}
 }
 

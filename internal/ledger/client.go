@@ -128,6 +128,80 @@ func (c *Client) CreateLedger(ctx context.Context, name string, schema []*common
 	return err
 }
 
+// AddAccountType adds a single account type to an existing ledger's chart.
+// Ignores AlreadyExists so a re-provision is idempotent — this is the reconcile
+// path that brings a previously-created control ledger up to the current chart
+// (F8), so an *additive* chart change (a new account type) no longer requires
+// recreating the ledger. A conflicting redefinition (same name, different
+// pattern/persistence — or a type that already holds accounts) still surfaces
+// its error: changing an existing type is not an additive evolution.
+func (c *Client) AddAccountType(ctx context.Context, ledger string, accountType *commonpb.AccountType) error {
+	_, err := c.Apply(ctx, &servicepb.Request{
+		Type: &servicepb.Request_AddAccountType{
+			AddAccountType: &servicepb.AddAccountTypeLedgerRequest{Ledger: ledger, AccountType: accountType},
+		},
+	})
+	if status.Code(err) == codes.AlreadyExists {
+		return nil
+	}
+
+	return err
+}
+
+// SetMetadataFieldType declares (or re-affirms) the type of a single metadata
+// key on an existing ledger. Naturally idempotent: re-declaring the same type is
+// a no-op, declaring a new key adds it, and a changed type updates the
+// declaration (triggering a forward-index rewrite). The reconcile path for
+// metadata-schema evolution (F8).
+func (c *Client) SetMetadataFieldType(ctx context.Context, ledger string, cmd *commonpb.SetMetadataFieldTypeCommand) error {
+	_, err := c.Apply(ctx, &servicepb.Request{
+		Type: &servicepb.Request_SetMetadataFieldType{
+			SetMetadataFieldType: &servicepb.SetMetadataFieldTypeRequest{
+				Ledger:     ledger,
+				TargetType: cmd.GetTargetType(),
+				Key:        cmd.GetKey(),
+				Type:       cmd.GetType(),
+			},
+		},
+	})
+
+	return err
+}
+
+// GetLedgerInfo returns a ledger's current config (account types, typed metadata
+// schema, ...), or (nil, nil) when it does not exist. Provision uses it to
+// reconcile only the delta: a redundant SetMetadataFieldType on an indexed field
+// re-triggers a forward-index rewrite (the FSM bumps forward_encoding_version
+// unconditionally), so skipping already-correct fields keeps boot cheap.
+func (c *Client) GetLedgerInfo(ctx context.Context, name string) (*commonpb.LedgerInfo, error) {
+	info, err := c.service.GetLedger(ctx, &servicepb.GetLedgerRequest{Ledger: name})
+	if status.Code(err) == codes.NotFound {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return info, nil
+}
+
+// DeleteLedger removes a ledger. Ignores NotFound so cleanup is idempotent.
+// Primarily a test-hygiene helper — the reconciliation control ledger is never
+// deleted at runtime.
+func (c *Client) DeleteLedger(ctx context.Context, name string) error {
+	_, err := c.Apply(ctx, &servicepb.Request{
+		Type: &servicepb.Request_DeleteLedger{
+			DeleteLedger: &servicepb.DeleteLedgerRequest{Name: name},
+		},
+	})
+	if status.Code(err) == codes.NotFound {
+		return nil
+	}
+
+	return err
+}
+
 // CreateIndex creates an index on a ledger. Ignores AlreadyExists.
 func (c *Client) CreateIndex(ctx context.Context, ledger string, index *servicepb.CreateIndexRequest) error {
 	index.Ledger = ledger
