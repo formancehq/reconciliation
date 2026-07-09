@@ -396,7 +396,10 @@ components:
       enum: [info, low, medium, high, critical]
     TemplateKind:
       type: string
-      enum: [ledger_vs_pool_drift, ledger_invariant, account_threshold, source_parity]
+      description: |
+        The V1 GA template catalog. (`ledger_vs_pool_drift` was removed in 6a-2,
+        subsumed by `source_parity`.)
+      enum: [ledger_invariant, source_parity, account_threshold]
     Cadence:
       type: string
       description: |
