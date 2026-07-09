@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
-	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -115,7 +114,7 @@ func (t *AccountThreshold) Evaluate(
 		return nil, err
 	}
 
-	src := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.Query}
+	src := SourceSpec{Ledger: spec.Ledger, Query: spec.Query}
 
 	if spec.Mode == ThresholdPerAccount {
 		return t.evaluatePerAccount(ctx, &spec, src, eng, resolvers)
@@ -141,8 +140,7 @@ func (t *AccountThreshold) Evaluate(
 
 		// Canonical CEL rendered into evidence for explainability; the direct math
 		// above is authoritative. Kernel/template equivalence is golden-tested
-		// (TestCrossCheck_*), not a per-evaluation runtime check. Single ledger
-		// source → no Tier-2 PIT to record.
+		// (TestCrossCheck_*), not a per-evaluation runtime check.
 		expr := buildThresholdExpression(&spec, asset)
 
 		evidence := map[string]any{
@@ -158,10 +156,9 @@ func (t *AccountThreshold) Evaluate(
 		}
 
 		outcomes = append(outcomes, Outcome{
-			Fingerprint:  fingerprintFor("asset", asset),
-			Passed:       passed,
-			Evidence:     evidence,
-			PitPerSource: map[string]time.Time{},
+			Fingerprint: fingerprintFor("asset", asset),
+			Passed:      passed,
+			Evidence:    evidence,
 		})
 	}
 	return outcomes, nil
@@ -186,8 +183,6 @@ func (t *AccountThreshold) evaluatePerAccount(
 	if err != nil {
 		return nil, fmt.Errorf("scout accounts on %s: %w", src.label(), err)
 	}
-	// Ledger source read live; pitPerSource stays empty (ADR-003).
-	pitPerSource := map[string]time.Time{}
 	assets := sortedKeys(spec.Bounds)
 	outcomes := make([]Outcome, 0, len(accounts)*len(assets))
 	for _, acct := range accounts {
@@ -217,10 +212,9 @@ func (t *AccountThreshold) evaluatePerAccount(
 			}
 
 			outcomes = append(outcomes, Outcome{
-				Fingerprint:  fingerprintFor("asset", asset, "account", acct.Address),
-				Passed:       passed,
-				Evidence:     evidence,
-				PitPerSource: pitPerSource,
+				Fingerprint: fingerprintFor("asset", asset, "account", acct.Address),
+				Passed:      passed,
+				Evidence:    evidence,
 			})
 		}
 	}

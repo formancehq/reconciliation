@@ -50,13 +50,10 @@ func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
 		// event sink (RFC §4.4, Phase 3) — the ledger-native store does not
 		// publish to the message bus.
 		fx.Supply(serviceInfo),
-		fx.Provide(fx.Annotate(service.NewSDKFormance, fx.As(new(service.SDKFormance)))),
 
-		// V1 engine + templates wiring. Ledger reads go through the gRPC
-		// control-plane client live (ADR-003); Tier-2 (pool) reads use the SDK.
-		// The SDKFormance interface is a superset of
-		// engine.SDKClient, so it satisfies the engine's narrower pool contract
-		// via Go's structural subtyping.
+		// V1 engine + templates wiring. Reconciliation is strictly ledger↔ledger:
+		// balances are read from the data ledgers live through the gRPC
+		// control-plane client (ADR-003).
 		fx.Provide(provideResolvers),
 		fx.Provide(provideEngine),
 		fx.Provide(templates.DefaultRegistry),
@@ -79,15 +76,12 @@ func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
 }
 
 // provideResolvers builds the engine.Resolvers fan-out. The ledger resolver
-// reads data ledgers live via the gRPC control-plane client (ADR-003); the
-// Tier-2 payments resolver reads pool balances "latest" via the SDK. Kept here
-// (not in the engine package) because assembling the concrete transports is an
-// api-layer wiring concern.
-func provideResolvers(client service.SDKFormance, ledgerClient *ledger.Client) engine.Resolvers {
-	var sdkClient engine.SDKClient = client
+// reads data ledgers live via the gRPC control-plane client (ADR-003). Kept
+// here (not in the engine package) because assembling the concrete transport is
+// an api-layer wiring concern.
+func provideResolvers(ledgerClient *ledger.Client) engine.Resolvers {
 	return engine.Resolvers{
-		Ledger:   ledgerresolver.New(ledger.NewReader(ledgerClient)),
-		Payments: engine.NewSDKPaymentsResolver(sdkClient),
+		Ledger: ledgerresolver.New(ledger.NewReader(ledgerClient)),
 	}
 }
 

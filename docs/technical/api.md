@@ -72,31 +72,28 @@ accounts — there is no relational cascade.
 }
 ```
 
-`at` is optional (defaults to now) — the nominal instant used to derive the reconciliation period
-and as the Tier-2 (pool) audit timestamp. Ledger sources are read at a **query checkpoint** the
-service pins for the run, not at `at` (ADR-002); there is no `safetyMargin` (a checkpoint is an
-atomic cut). Returns `200` + the evaluation result (not persisted — see the status note):
+`at` is optional (defaults to now) — the nominal instant used to derive the reconciliation period.
+Reconciliation is strictly **ledger↔ledger**: each source is read **live** at evaluation time (a
+single aggregate is an internally consistent snapshot, ADR-003), and cross-ledger skew is absorbed by
+the template's `tolerance`. Returns `200` + the evaluation result (not persisted — see the status note):
 
 ```json
 {
-  "id":           "ev_…",
-  "ruleId":       "rul_…",
-  "startedAt":    "…",
-  "endedAt":      "…",
-  "result":       "PASS" | "FAIL" | "ERROR",
-  "pitPerSource": { "payments_pool:0": "…" },
-  "evidence":     [ { "fingerprint": "asset:USD/2", "passed": false, "evidence": {…} }, … ],
-  "costUnits":    0,
-  "error":        ""
+  "id":        "ev_…",
+  "ruleId":    "rul_…",
+  "startedAt": "…",
+  "endedAt":   "…",
+  "result":    "PASS" | "FAIL" | "ERROR",
+  "evidence":  [ { "fingerprint": "asset:USD/2", "passed": false, "evidence": {…} }, … ],
+  "costUnits": 0,
+  "error":     ""
 }
 ```
 
-`pitPerSource` records the audit PIT for **Tier-2 (pool) sources only** — a ledger↔ledger rule is
-anchored by the shared checkpoint, so its map is empty (ADR-002 §10.1). `evidence` records **only
-the failing fingerprints** (an all-`PASS` evaluation has `"evidence": []`); the durable copy of a
-break's evidence lives on the alert. The evaluation object itself is **not** a durable entity (a
-deterministic projection, RFC §4.4.2) — but each run's **capture** is (ADR-003), queryable via
-`GET /rules/{id}/captures` below.
+`evidence` records **only the failing fingerprints** (an all-`PASS` evaluation has `"evidence": []`);
+the durable copy of a break's evidence lives on the alert. The evaluation object itself is **not** a
+durable entity (a deterministic projection, RFC §4.4.2) — but each run's **capture** is (ADR-003),
+queryable via `GET /rules/{id}/captures` below.
 
 #### `GET /rules/{id}/captures` — evaluation history (captures)
 

@@ -27,8 +27,7 @@ internal/
 ├── ledgerstore/     LedgerStore — the sole service.Store, backed by the control-ledger `_recon`
 ├── ledgerresolver/  Adapter: ledger.Reader (live) → engine.LedgerResolver
 ├── engine/          Internal CEL kernel
-│   ├── types.go / source.go / resolvers.go / builtins.go / engine.go / budget.go / errors.go
-│   └── sdk_resolvers.go   SDKPaymentsResolver only (Tier-2 pool; the SDK ledger resolver is retired)
+│   └── types.go / source.go / resolvers.go / builtins.go / engine.go / budget.go / errors.go
 ├── templates/       V1 GA template catalog (source.go, ledger_invariant, account_threshold, source_parity)
 └── api/
     ├── service/     Rule / Evaluation / Alert orchestration; live reads + a capture per evaluation
@@ -53,10 +52,8 @@ flowchart TB
     Svc --> Store[LedgerStore]
     Reg --> Eng[engine.Engine]
     Eng --> LR["Ledger resolver<br/>live Reader adapter"]
-    Eng --> PR["Payments resolver (Tier-2)<br/>SDK latest"]
     Store --> Recon[("control-ledger _recon (gRPC)<br/>rules, alerts, captures")]
     LR --> Data[("data-ledgers A/B<br/>(live)")]
-    PR --> Payments[Formance Payments]
 ```
 
 | Layer | Responsibility | Key types |
@@ -65,32 +62,30 @@ flowchart TB
 | **Service** | Validation, evaluation orchestration, **capture recording**, alert dedup + lifecycle | `Service` (rule.go / evaluation.go / alert.go) |
 | **Templates** | Typed specs → direct `big.Int` math; per-fingerprint outcomes; rendered CEL for explainability | `Evaluator`, `Outcome`, `Registry` |
 | **Engine** | CEL type-check at rule-create + budget/resolver dispatch (live reads) | `Engine`, `Source`, `Resolvers`, `Limits` |
-| **Resolvers** | Ledger reads **live**; Tier-2 pool reads "latest" | `ledgerresolver.Resolver` (over `ledger.Reader`), `engine.SDKPaymentsResolver` |
+| **Resolvers** | Ledger reads **live** (strictly ledger↔ledger) | `ledgerresolver.Resolver` (over `ledger.Reader`) |
 | **Storage** | Rules + alert lifecycle + immutable evaluation **captures** as Numscript batches + typed metadata on `_recon` | `LedgerStore`, `ledger.Client`, `ledgerschema` |
 
 ---
 
 ## The kernel — CEL for validation + explainability
 
-A `Source` is an opaque CEL value naming a backend dataset (`ledgerSet(ledger, query)`,
-`pool(id)`) over builtins (`balance`, `balances`, `sum`, `abs`). At **rule-create** time the engine
+A `Source` is an opaque CEL value naming a backend dataset (`ledgerSet(ledger, query)`)
+over builtins (`balance`, `balances`, `sum`, `abs`). At **rule-create** time the engine
 type-checks the rule's CEL against a *declarations-only* env — no resolver is exercised. Built-in
 **templates evaluate in typed Go** over a single live read per source (ADR-003); they render the
 equivalent CEL into `evidence.compiledCEL` for explainability but do **not** run it (the golden test
 `TestCrossCheck_*` guards that the two agree). `engine.Evaluate` (the CEL runtime) is reserved for
 the post-GA raw-CEL power mode.
 
-Resolvers (ADR-003):
+Resolvers (ADR-003): reconciliation is strictly **ledger↔ledger**.
 - **Ledger sources** read **live** — a single `AggregateVolumes` is an internally consistent
   snapshot; cross-ledger skew is absorbed by the template's `tolerance`. Backed by
   `ledgerresolver.Resolver` over `ledger.Reader`.
-- **Payments pool (Tier-2)** reads "latest" via the SDK.
 
 ```mermaid
 flowchart LR
     Tmpl["Template: direct big.Int math"] --> Reads["resolve sources (live)"]
     Reads --> LR["ledger source → AggregateVolumes (live)"]
-    Reads --> PR["pool source → PoolBalancesLatest"]
     Tmpl --> Evidence["render compiledCEL into evidence"]
 ```
 
@@ -213,9 +208,10 @@ ledger — RFC §4.4). See [ledger/events_sink.go](../../internal/ledger/events_
 | `github.com/google/cel-go` | Kernel evaluator ([ADR-001](../prd/adr-001-cel-kernel.md) §6). |
 | `google.golang.org/grpc` + `internal/ledgerpb` | Ledger v3 gRPC transport (control-ledger + data-ledger reads). |
 | `github.com/go-jose/go-jose/v4` | Ed25519 request signing for the secure ledger transport (F2). |
-| `github.com/formancehq/formance-sdk-go/v3` | `V3.GetPoolBalancesLatest` — the Tier-2 payments-pool read. |
 
-`bun` and the migrations framework are **gone** with Postgres.
+`bun` and the migrations framework are **gone** with Postgres. The Formance SDK
+(`formance-sdk-go`) is **gone** with the Tier-2 payments-pool resolver — reconciliation is
+strictly ledger↔ledger and reads the data ledgers directly over gRPC.
 
 ---
 

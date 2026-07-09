@@ -70,18 +70,11 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	})
 	ended := time.Now().UTC()
 
-	pitPerSource, mergeErr := mergePitPerSource(outcomes)
-	if mergeErr != nil {
-		// Promote to a kernel error: a kernel/template disagreement is an
-		// engine-health problem, not a data alert.
-		evalErr = mergeErr
-	}
 	evaluation := &models.Evaluation{
-		ID:           uuid.New(),
-		RuleID:       rule.ID,
-		StartedAt:    started,
-		EndedAt:      ended,
-		PitPerSource: pitPerSource,
+		ID:        uuid.New(),
+		RuleID:    rule.ID,
+		StartedAt: started,
+		EndedAt:   ended,
 	}
 
 	if evalErr != nil {
@@ -264,30 +257,6 @@ func (s *Service) openEngineErrorAlert(ctx context.Context, rule *models.Rule, e
 		return nil, err
 	}
 	return res.Alert, nil
-}
-
-// mergePitPerSource collapses per-outcome PIT maps into a single evaluation-row
-// map. Per-outcome maps must be identical for the same Source key — every
-// template resolves a given Source at one PIT for the whole evaluation. A
-// disagreement is a kernel/template contract bug, not a "last write wins"
-// situation, so surface it as an error rather than silently picking one.
-func mergePitPerSource(outcomes []templates.Outcome) (map[string]time.Time, error) {
-	if len(outcomes) == 0 {
-		return map[string]time.Time{}, nil
-	}
-	out := map[string]time.Time{}
-	for _, o := range outcomes {
-		for k, v := range o.PitPerSource {
-			if existing, ok := out[k]; ok && !existing.Equal(v) {
-				return nil, fmt.Errorf(
-					"kernel/template contract violation: source %q reported PIT %s and %s in the same evaluation",
-					k, existing.Format(time.RFC3339Nano), v.Format(time.RFC3339Nano),
-				)
-			}
-			out[k] = v
-		}
-	}
-	return out, nil
 }
 
 // marshalOutcomes encodes the evidence persisted on the evaluation row.

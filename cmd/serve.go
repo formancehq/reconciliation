@@ -1,19 +1,12 @@
 package cmd
 
 import (
-	"context"
-	"fmt"
-	"net/http"
-	"time"
-
 	"github.com/formancehq/go-libs/aws/iam"
 
 	"github.com/formancehq/go-libs/licence"
 
-	sdk "github.com/formancehq/formance-sdk-go/v3"
 	sharedapi "github.com/formancehq/go-libs/api"
 	"github.com/formancehq/go-libs/auth"
-	"github.com/formancehq/go-libs/otlp"
 	"github.com/formancehq/go-libs/otlp/otlpmetrics"
 	"github.com/formancehq/go-libs/otlp/otlptraces"
 	"github.com/formancehq/go-libs/service"
@@ -24,37 +17,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/scheduler"
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/clientcredentials"
 )
-
-func stackClientModule(cmd *cobra.Command) fx.Option {
-	return fx.Options(
-		fx.Provide(func() *sdk.Formance {
-			stackClientID, _ := cmd.Flags().GetString(stackClientIDFlag)
-			stackClientSecret, _ := cmd.Flags().GetString(stackClientSecretFlag)
-			stackURL, _ := cmd.Flags().GetString(stackURLFlag)
-
-			oauthConfig := clientcredentials.Config{
-				ClientID:     stackClientID,
-				ClientSecret: stackClientSecret,
-				TokenURL:     fmt.Sprintf("%s/api/auth/oauth/token", stackURL),
-				Scopes:       []string{"openid", "ledger:read", "ledger:write", "payments:read", "payments:write"},
-			}
-			underlyingHTTPClient := &http.Client{
-				Transport: otlp.NewRoundTripper(http.DefaultTransport, service.IsDebug(cmd)),
-				Timeout:   24 * time.Hour,
-			}
-			return sdk.New(
-				sdk.WithClient(
-					oauthConfig.Client(context.WithValue(context.Background(),
-						oauth2.HTTPClient, underlyingHTTPClient)),
-				),
-				sdk.WithServerURL(stackURL),
-			)
-		}),
-	)
-}
 
 func newServeCommand(version string) *cobra.Command {
 	cmd := &cobra.Command{
@@ -62,9 +25,6 @@ func newServeCommand(version string) *cobra.Command {
 		RunE: runServer(version),
 	}
 	cmd.Flags().String(listenFlag, ":8080", "Listening address")
-	cmd.Flags().String(stackURLFlag, "", "Stack url")
-	cmd.Flags().String(stackClientIDFlag, "", "Stack client ID")
-	cmd.Flags().String(stackClientSecretFlag, "", "Stack client secret")
 	cmd.Flags().Bool(audit.AuditEnabledFlag, true, "Enable HTTP audit")
 
 	otlpmetrics.AddFlags(cmd.Flags())
@@ -94,7 +54,6 @@ func runServer(version string) func(cmd *cobra.Command, args []string) error {
 		auditEnabled, _ := cmd.Flags().GetBool(audit.AuditEnabledFlag)
 		options = append(options,
 			fx.Supply(audit.Config{Enabled: auditEnabled}),
-			stackClientModule(cmd),
 			api.HTTPModule(sharedapi.ServiceInfo{
 				Version: version,
 				Debug:   service.IsDebug(cmd),

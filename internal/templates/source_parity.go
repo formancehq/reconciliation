@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
-	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -16,16 +15,17 @@ import (
 //
 //	abs(balance(left) - balance(right)) <= tolerance
 //
-// Each side is a SourceSpec, so the same template expresses ledger↔ledger (sub-ledger vs control
-// account), ledger↔pool, and pool↔pool — without a bespoke template per pairing. This is the
-// "two independent records of the same money match" primitive.
+// Each side is a SourceSpec (a ledger account set), so the template expresses
+// any ledger↔ledger pairing — e.g. a sub-ledger reconciled against a control
+// account on another ledger — without a bespoke template per pairing. This is
+// the "two independent records of the same money match" primitive.
 type ParitySpec struct {
 	Left  SourceSpec `json:"left"`
 	Right SourceSpec `json:"right"`
 
 	// Scope is aggregate (default) or per_account. per_account compares the two
 	// sources account-by-account (aligned by address) and emits one Outcome per
-	// (account, asset); it requires both sides to be ledger sources.
+	// (account, asset).
 	Scope Scope `json:"scope,omitempty"`
 
 	// Tolerance is the per-asset acceptable absolute difference. Missing assets
@@ -54,9 +54,6 @@ func (t *SourceParity) Validate(raw json.RawMessage) error {
 	}
 	if !spec.Scope.Valid() {
 		return fmt.Errorf("%w: scope must be 'aggregate' or 'per_account' (got %q)", ErrInvalidSpec, spec.Scope)
-	}
-	if spec.Scope == ScopePerAccount && (!spec.Left.supportsPerAccount() || !spec.Right.supportsPerAccount()) {
-		return fmt.Errorf("%w: per_account scope requires both sources to be ledger sources (pools are aggregate-only)", ErrInvalidSpec)
 	}
 	for asset, tol := range spec.Tolerance {
 		if tol < 0 {
@@ -95,7 +92,7 @@ func (t *SourceParity) Evaluate(
 	if err := unmarshalSpec(raw, &spec); err != nil {
 		return nil, err
 	}
-	if err := requireResolvers(resolvers, spec.Left.resolverNeed(), spec.Right.resolverNeed()); err != nil {
+	if err := requireResolvers(resolvers, "ledger"); err != nil {
 		return nil, err
 	}
 
@@ -113,9 +110,6 @@ func (t *SourceParity) Evaluate(
 	}
 
 	assets := unionAssets(leftBalances, rightBalances)
-	// Ledger sources are read live; only pool sources record an audit PIT. Same
-	// for every asset in this evaluation, so compute it once.
-	pitPerSource := poolPitPerSource(in.PIT, spec.Left, spec.Right)
 	outcomes := make([]Outcome, 0, len(assets))
 	for _, asset := range assets {
 		tolerance := spec.Tolerance[asset] // 0 if absent
@@ -150,7 +144,6 @@ func (t *SourceParity) Evaluate(
 				"tolerance":    tolerance,
 				"compiledCEL":  expr,
 			},
-			PitPerSource: pitPerSource,
 		})
 	}
 	return outcomes, nil
@@ -179,9 +172,6 @@ func (t *SourceParity) evaluatePerAccount(
 	}
 	leftByAddr := accountsByAddress(leftAccts)
 	rightByAddr := accountsByAddress(rightAccts)
-	// Both sides are ledger sources (Validate enforces it) → read live, so
-	// pitPerSource stays empty (ADR-003).
-	pitPerSource := map[string]time.Time{}
 
 	outcomes := make([]Outcome, 0, len(leftByAddr))
 	for _, addr := range unionAssets(leftByAddr, rightByAddr) { // sorted union of addresses
@@ -211,7 +201,6 @@ func (t *SourceParity) evaluatePerAccount(
 						spec.Left.celTermForAccount(addr, celString(asset)),
 						spec.Right.celTermForAccount(addr, celString(asset)), tolerance),
 				},
-				PitPerSource: pitPerSource,
 			})
 		}
 	}

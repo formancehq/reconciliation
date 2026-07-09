@@ -1,10 +1,17 @@
 # RFC — Ledger-native storage for Reconciliation (drop Postgres)
 
-**Status:** Draft
+**Status:** Draft — **partially superseded.** The storage decision (drop Postgres → `_recon`) landed.
+Two later decisions overtook this doc's read model: (1) query checkpoints were **removed** in favour of
+live reads + an immutable `_recon` capture ([ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md)),
+and (2) reconciliation is now **strictly ledger↔ledger** — the Payments/Tier-2 pool `Source`,
+`pool()` builtin, `PaymentsResolver`, and the Formance SDK were removed (ledger-only increment,
+2026-07-09; see the migration log). References below to "pointing the pool side at a ledger", the
+`PaymentsResolver` interface, and checkpoint reads are historical planning context — the current-state
+surface is [architecture.md](../technical/architecture.md).
 **Owner:** Arnaud
 **Date:** 2026-07-02
 **Depends on:** Ledger v3 (`release/v3.0`), ledger-connect, PR #83 (Ledger Clarity V1)
-**Related:** [ADR-002 — PIT consistency](../prd/adr-002-pit-consistency.md), [architecture.md](../technical/architecture.md), upstream [ledger#1416](https://github.com/formancehq/ledger/issues/1416)
+**Related:** [ADR-002 — PIT consistency](../prd/adr-002-pit-consistency.md), [ADR-003 — live reads + capture](../prd/adr-003-checkpoint-anchor-and-crosscheck.md), [architecture.md](../technical/architecture.md), upstream [ledger#1416](https://github.com/formancehq/ledger/issues/1416)
 
 ---
 

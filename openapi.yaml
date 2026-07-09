@@ -543,9 +543,6 @@ components:
         ruleID: { type: string, format: uuid }
         startedAt: { type: string, format: date-time }
         endedAt: { type: string, format: date-time }
-        pitPerSource:
-          type: object
-          additionalProperties: { type: string, format: date-time }
         result: { type: string, enum: [PASS, FAIL, ERROR] }
         evidence:
           oneOf:

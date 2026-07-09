@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
-	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -129,7 +128,7 @@ func (t *LedgerInvariant) Evaluate(
 		// Canonical CEL form rendered into evidence for explainability; the direct
 		// big.Int math above is authoritative. Kernel/template equivalence is a
 		// golden-tested code property (TestCrossCheck_*), not a per-evaluation
-		// runtime check. All terms are ledger sources → no Tier-2 PIT to record.
+		// runtime check.
 		expr := buildInvariantExpression(&spec, asset)
 
 		outcomes = append(outcomes, Outcome{
@@ -143,7 +142,6 @@ func (t *LedgerInvariant) Evaluate(
 				"termValues":  termValues,
 				"compiledCEL": expr,
 			},
-			PitPerSource: map[string]time.Time{},
 		})
 	}
 	return outcomes, nil

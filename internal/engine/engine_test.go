@@ -36,33 +36,14 @@ func (f *fakeLedger) ListAccounts(_ context.Context, _ string, _ json.RawMessage
 	return nil, errors.New("ListAccounts not implemented in fake")
 }
 
-type fakePayments struct {
-	balances map[string]map[string]*big.Int // poolID → balances
-	err      error
-}
-
-func (f *fakePayments) PoolBalanceLatest(_ context.Context, poolID string) (map[string]*big.Int, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	b, ok := f.balances[poolID]
-	if !ok {
-		return map[string]*big.Int{}, nil
-	}
-	return b, nil
-}
-
 // --- helpers -----------------------------------------------------------------
 
-func newTestEngine(t *testing.T, l *fakeLedger, p *fakePayments) *Engine {
+func newTestEngine(t *testing.T, l *fakeLedger) *Engine {
 	t.Helper()
 	if l == nil {
 		l = &fakeLedger{}
 	}
-	if p == nil {
-		p = &fakePayments{}
-	}
-	eng, err := New(Resolvers{Ledger: l, Payments: p}, DefaultLimits)
+	eng, err := New(Resolvers{Ledger: l}, DefaultLimits)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
@@ -72,7 +53,7 @@ func newTestEngine(t *testing.T, l *fakeLedger, p *fakePayments) *Engine {
 // --- compile-time validation tests ------------------------------------------
 
 func TestCompile_InvalidSyntax(t *testing.T) {
-	eng := newTestEngine(t, nil, nil)
+	eng := newTestEngine(t, nil)
 	_, err := eng.Compile("this is not + valid &&")
 	if !errors.Is(err, ErrCompile) {
 		t.Fatalf("expected ErrCompile, got %v", err)
@@ -80,7 +61,7 @@ func TestCompile_InvalidSyntax(t *testing.T) {
 }
 
 func TestCompile_TypeMismatch(t *testing.T) {
-	eng := newTestEngine(t, nil, nil)
+	eng := newTestEngine(t, nil)
 	// ledgerSet expects (string, string); passing ints should fail type-check.
 	_, err := eng.Compile(`balance(ledgerSet(1, 2)) == 0`)
 	if !errors.Is(err, ErrCompile) {
@@ -89,7 +70,7 @@ func TestCompile_TypeMismatch(t *testing.T) {
 }
 
 func TestCompile_NonBooleanExpression(t *testing.T) {
-	eng := newTestEngine(t, nil, nil)
+	eng := newTestEngine(t, nil)
 	_, err := eng.Compile(`balance(ledgerSet("l", "q"))`) // int, not bool
 	if !errors.Is(err, ErrCompile) {
 		t.Fatalf("expected ErrCompile on non-bool, got %v", err)
@@ -97,7 +78,7 @@ func TestCompile_NonBooleanExpression(t *testing.T) {
 }
 
 func TestCompile_EmptyExpression(t *testing.T) {
-	eng := newTestEngine(t, nil, nil)
+	eng := newTestEngine(t, nil)
 	_, err := eng.Compile("")
 	if !errors.Is(err, ErrCompile) {
 		t.Fatalf("expected ErrCompile on empty, got %v", err)
@@ -105,9 +86,9 @@ func TestCompile_EmptyExpression(t *testing.T) {
 }
 
 func TestCompile_AcceptsValidExpressions(t *testing.T) {
-	eng := newTestEngine(t, nil, nil)
+	eng := newTestEngine(t, nil)
 	cases := []string{
-		`balance(ledgerSet("l", "q")) + balance(pool("p")) == 0`,
+		`balance(ledgerSet("l", "q")) + balance(ledgerSet("l2", "q2")) == 0`,
 		`balance(ledgerSet("l", "q"), "USD") >= 100`,
 		`balances(ledgerSet("l", "q"))["USD"] == 350`,
 		`abs(balance(ledgerSet("l","q"))) <= 50`,
@@ -125,15 +106,13 @@ func TestCompile_AcceptsValidExpressions(t *testing.T) {
 // --- evaluation tests -------------------------------------------------------
 
 func TestEvaluate_DriftZero_Pass(t *testing.T) {
-	// ledger USD=+350 against pool USD=-350 → drift 0 → PASS.
+	// ledger held USD=+350 against control obligation USD=-350 → drift 0 → PASS.
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
-		"buildr|metadata-trust": {"USD/2": big.NewInt(350)},
+		"buildr|held":        {"USD/2": big.NewInt(350)},
+		"control|obligation": {"USD/2": big.NewInt(-350)},
 	}}
-	p := &fakePayments{balances: map[string]map[string]*big.Int{
-		"pool_xyz": {"USD/2": big.NewInt(-350)},
-	}}
-	eng := newTestEngine(t, l, p)
-	c, err := eng.Compile(`balance(ledgerSet("buildr","metadata-trust"), "USD/2") + balance(pool("pool_xyz"), "USD/2") == 0`)
+	eng := newTestEngine(t, l)
+	c, err := eng.Compile(`balance(ledgerSet("buildr","held"), "USD/2") + balance(ledgerSet("control","obligation"), "USD/2") == 0`)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -148,13 +127,11 @@ func TestEvaluate_DriftZero_Pass(t *testing.T) {
 
 func TestEvaluate_DriftNonZero_Fail(t *testing.T) {
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
-		"buildr|q1": {"USD/2": big.NewInt(350)},
+		"buildr|q1":  {"USD/2": big.NewInt(350)},
+		"control|q2": {"USD/2": big.NewInt(-300)},
 	}}
-	p := &fakePayments{balances: map[string]map[string]*big.Int{
-		"pool": {"USD/2": big.NewInt(-300)},
-	}}
-	eng := newTestEngine(t, l, p)
-	c, err := eng.Compile(`balance(ledgerSet("buildr","q1"), "USD/2") + balance(pool("pool"), "USD/2") == 0`)
+	eng := newTestEngine(t, l)
+	c, err := eng.Compile(`balance(ledgerSet("buildr","q1"), "USD/2") + balance(ledgerSet("control","q2"), "USD/2") == 0`)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -167,52 +144,11 @@ func TestEvaluate_DriftNonZero_Fail(t *testing.T) {
 	}
 }
 
-// TestEvaluate_Tier2PIT_Recorded checks the audit split (ADR-003): a Tier-2 pool
-// source records its audit PIT in pitPerSource, while a ledger source does NOT
-// (it is read live, not at a per-source PIT).
-func TestEvaluate_Tier2PIT_Recorded(t *testing.T) {
-	pit := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
-	l := &fakeLedger{balances: map[string]map[string]*big.Int{
-		"l|q": {"USD/2": big.NewInt(100)},
-	}}
-	p := &fakePayments{balances: map[string]map[string]*big.Int{
-		"p": {"USD/2": big.NewInt(-100)},
-	}}
-	eng := newTestEngine(t, l, p)
-	c, err := eng.Compile(`balance(ledgerSet("l","q"), "USD/2") + balance(pool("p"), "USD/2") == 0`)
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-
-	out, err := eng.Evaluate(context.Background(), c, EvalInput{PIT: pit})
-	if err != nil {
-		t.Fatalf("Evaluate: %v", err)
-	}
-	if !out.Passed {
-		t.Fatalf("expected pass, got fail")
-	}
-
-	// Only the pool source (Tier-2) is recorded; the ledger source is read live,
-	// not at a per-source PIT.
-	if len(out.PitPerSource) != 1 {
-		t.Fatalf("expected 1 Tier-2 PIT entry, got %d: %v", len(out.PitPerSource), out.PitPerSource)
-	}
-	for key, gotPIT := range out.PitPerSource {
-		if key != "payments_pool:0" {
-			t.Errorf("expected the pool source key, got %q", key)
-		}
-		if !gotPIT.Equal(pit) {
-			t.Errorf("Tier-2 PIT for %s = %v, want %v (no safety-margin subtraction)", key, gotPIT, pit)
-		}
-	}
-}
-
 // --- error-path tests -------------------------------------------------------
 
 func TestEvaluate_ResolverError_Surfaces(t *testing.T) {
 	l := &fakeLedger{err: errors.New("ledger timeout")}
-	p := &fakePayments{}
-	eng := newTestEngine(t, l, p)
+	eng := newTestEngine(t, l)
 	c, err := eng.Compile(`balance(ledgerSet("l","q")) == 0`)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
@@ -229,7 +165,7 @@ func TestEvaluate_BalanceSingleAsset_MultiAssetSource_Errors(t *testing.T) {
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
 		"l|q": {"USD/2": big.NewInt(100), "EUR/2": big.NewInt(200)},
 	}}
-	eng := newTestEngine(t, l, nil)
+	eng := newTestEngine(t, l)
 	c, err := eng.Compile(`balance(ledgerSet("l","q")) == 100`)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
@@ -245,7 +181,7 @@ func TestEvaluate_BalanceSingleAsset_MultiAssetSource_Errors(t *testing.T) {
 // `if i < 0 { i = -i }` implementation has this bug. The builtin must
 // surface an evaluation error instead.
 func TestEvaluate_AbsMinInt64Overflow(t *testing.T) {
-	eng := newTestEngine(t, &fakeLedger{}, &fakePayments{})
+	eng := newTestEngine(t, &fakeLedger{})
 	c, err := eng.Compile(fmt.Sprintf(`abs(%d) >= 0`, int64(math.MinInt64)))
 	if err != nil {
 		t.Fatalf("compile: %v", err)

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"os"
 	"testing"
 	"time"
@@ -50,21 +49,21 @@ func TestIntegration_EvaluateLive(t *testing.T) {
 		require.NoError(t, client.CreateLedger(ctx, l, nil, nil, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT), "create %s", l)
 	}
 
-	// Wire the real V1 stack: control-ledger store + live Tier-1 reader + a stub
-	// Tier-2 (unused for ledger↔ledger).
+	// Wire the real V1 stack: control-ledger store + live ledger reader. Reads
+	// go straight to the data ledgers (ledger↔ledger, ADR-003).
 	reader := ledger.NewReader(client)
-	res := engine.Resolvers{Ledger: ledgerresolver.New(reader), Payments: nopPayments{}}
+	res := engine.Resolvers{Ledger: ledgerresolver.New(reader)}
 	eng, err := engine.New(res, engine.DefaultLimits)
 	require.NoError(t, err)
 	store := ledgerstore.New(client, control)
-	svc := NewService(store, nil, eng, templates.DefaultRegistry(), res)
+	svc := NewService(store, eng, templates.DefaultRegistry(), res)
 
 	const asset = "USD/2"
 	prefix := "acc:" + suffix + ":"
 	q := json.RawMessage(fmt.Sprintf(`{"$match":{"address":%q}}`, prefix+"*"))
 	specJSON, err := json.Marshal(templates.ParitySpec{
-		Left:      templates.SourceSpec{Kind: templates.SourceLedger, Ledger: ledgerA, Query: q},
-		Right:     templates.SourceSpec{Kind: templates.SourceLedger, Ledger: ledgerB, Query: q},
+		Left:      templates.SourceSpec{Ledger: ledgerA, Query: q},
+		Right:     templates.SourceSpec{Ledger: ledgerB, Query: q},
 		Tolerance: map[string]int64{asset: 0},
 	})
 	require.NoError(t, err)
@@ -105,14 +104,6 @@ func TestIntegration_EvaluateLive(t *testing.T) {
 		}
 		assert.NotEmpty(c, fps, "a failing evaluation opens an alert")
 	}, 5*time.Second, 25*time.Millisecond)
-}
-
-// nopPayments is a stand-in Tier-2 resolver: engine.New requires one, but a
-// ledger↔ledger parity rule never calls it.
-type nopPayments struct{}
-
-func (nopPayments) PoolBalanceLatest(context.Context, string) (map[string]*big.Int, error) {
-	return map[string]*big.Int{}, nil
 }
 
 func evalItAddr() string {

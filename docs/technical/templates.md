@@ -14,7 +14,7 @@ flowchart LR
     Spec --> Explain[Explain → representative CEL]
     Explain --> Persist[Saved to rule.compiled_cel]
     Spec --> Evaluate
-    Evaluate --> Scout["Scout via resolvers (ledger @ checkpoint, pool latest)"]
+    Evaluate --> Scout["Scout via resolvers (ledgers, live)"]
     Scout --> Universe["Determine fingerprint axis<br/>(asset universe)"]
     Universe --> Loop[For each axis value]
     Loop --> RenderCEL[Render per-axis CEL]
@@ -34,11 +34,11 @@ Every template:
 
 A **kernel/template consistency guard** in each template double-checks the kernel's verdict against direct big.Int math and errors loudly on divergence. Catches future kernel drift.
 
-Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` composes sources through it, so there is one code path for "read a balance source".
+Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a ledger account-set descriptor (`ledger` + `query`) that knows how to resolve to per-asset balances and render its `balance(ledgerSet…)` CEL term. `source_parity` composes sources through it, so there is one code path for "read a balance source".
 
 **Scope.** A ledger source can be read in one of two scopes, a native capability of the Source primitive:
 - **aggregate** (default): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
-- **per_account**: the source fans out — each matched account is evaluated individually, producing one Outcome per (account, asset) with the account address as the fingerprint axis. Available only where every source involved is a ledger source (a payments pool has no per-account breakdown, so it stays aggregate-only). The account address is the alignment key when two ledger sources are compared per account. Fan-out is bounded by the engine's `MaxAccountsScanned` budget.
+- **per_account**: the source fans out — each matched account is evaluated individually, producing one Outcome per (account, asset) with the account address as the fingerprint axis. The account address is the alignment key when two ledger sources are compared per account. Fan-out is bounded by the engine's `MaxAccountsScanned` budget.
 
 ---
 
@@ -159,38 +159,36 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 
 ### 3. `source_parity` (✅ shipped)
 
-"Two independent records of the same money agree, per asset, within tolerance." Each side is a **Source** — a ledger account set *or* a payments pool — so one template expresses ledger↔pool (the drift use case), **ledger↔ledger** (a sub-ledger reconciled against a control account on another ledger), and pool↔pool, without a bespoke template per pairing.
+"Two independent records of the same money agree, per asset, within tolerance." Each side is a **Source** — a ledger account set — so one template expresses any **ledger↔ledger** pairing (a sub-ledger reconciled against a control account on another ledger), without a bespoke template per pairing.
 
 **Spec**
 
 ```jsonc
 {
-  "left":      { "kind": "ledger",        "ledger": "main", "query": { "$match": { "address": "stripe-clearing" } } },
-  "right":     { "kind": "payments_pool", "poolID": "0eb4a31f-…" },
+  "left":      { "ledger": "main",    "query": { "$match": { "address": "stripe-clearing" } } },
+  "right":     { "ledger": "control", "query": { "$match": { "address": "stripe-settlement" } } },
   "scope":     "aggregate",                  // "aggregate" (default) | "per_account"
   "tolerance": { "USD/2": 0, "EUR/2": 50 }   // optional; defaults to 0 per asset
 }
 ```
 
-A `SourceSpec` is `{ "kind": "ledger" | "payments_pool", ... }`:
-- `ledger` → requires `ledger` + `query`. **Tier-1**: read at the evaluation's query checkpoint — a consistent cross-ledger cut (ADR-002), so two ledger sources compare skew-free.
-- `payments_pool` → requires `poolID`. **Tier-2**: always latest (payments has no checkpoint), so cross-system skew is absorbed by `tolerance`.
+A `SourceSpec` is a ledger account set — `{ "ledger": …, "query": … }`, both required — read **live** at the evaluation instant (a single aggregate is an internally consistent snapshot, ADR-003), so cross-ledger skew is absorbed by `tolerance`. A future heterogeneous source (e.g. an external GL, ADR-001 §7) reintroduces an optional `kind` discriminator defaulting to `"ledger"` — non-breaking.
 
-**Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B. It requires **both** sides to be ledger sources (a pool is aggregate-only); see [the scope model](#how-templates-work).
+**Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B; see [the scope model](#how-templates-work).
 
-**Validation** — each side: known `kind` with its required fields; `tolerance` values ≥ 0; `per_account` scope requires both sides to be ledger sources.
+**Validation** — each side: `ledger` + `query` present; `tolerance` values ≥ 0.
 
 **Asset universe** — `union(leftBalances, rightBalances)`; every asset on either side is checked, missing-side defaults to 0.
 
 **Per-asset CEL** (runtime form)
 
 ```cel
-abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(pool("0eb4a31f-…"), "USD/2")) <= 0
+abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(ledgerSet("control", "<query json>"), "USD/2")) <= 0
 ```
 
 **Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account)
 
-**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `pool:…`; per_account also carries `account`).
+**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `ledger:control`; per_account also carries `account`).
 
 **The equality primitive** — `source_parity` is the cross-source equality check (`abs(left − right) ≤ tol`), resolving and rendering both sides through the shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source". An external bank/PSP-account source kind is a natural next addition once it has a resolver + kernel builtin.
 

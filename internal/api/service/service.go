@@ -6,8 +6,6 @@ import (
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 
-	sdk "github.com/formancehq/formance-sdk-go/v3"
-	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/store"
@@ -63,7 +61,6 @@ type Store interface {
 // Service is the orchestrator for the V1 rule/evaluation/alert surface.
 type Service struct {
 	store     Store
-	client    SDKFormance
 	engine    *engine.Engine
 	templates *templates.Registry
 	resolvers engine.Resolvers
@@ -71,10 +68,9 @@ type Service struct {
 
 // NewService constructs the service with all collaborators. V1 work requires
 // non-nil engine + templates + resolvers.
-func NewService(store Store, client SDKFormance, eng *engine.Engine, reg *templates.Registry, res engine.Resolvers) *Service {
+func NewService(store Store, eng *engine.Engine, reg *templates.Registry, res engine.Resolvers) *Service {
 	return &Service{
 		store:     store,
-		client:    client,
 		engine:    eng,
 		templates: reg,
 		resolvers: res,
@@ -89,49 +85,3 @@ func NewService(store Store, client SDKFormance, eng *engine.Engine, reg *templa
 func (s *Service) inTx(ctx context.Context, fn func(ctx context.Context, store Store) error) error {
 	return fn(ctx, s.store)
 }
-
-// SDKFormance is the SDK surface the service layer + engine consume. It
-// intentionally covers BOTH the legacy /policies path (GetPoolBalances on the
-// payments v1 namespace) and the V1 engine resolvers (V2GetLedger,
-// V2GetBalancesAggregated, V3GetPoolBalancesLatest). Mocks in tests implement
-// only the subset they need.
-type SDKFormance interface {
-	// Legacy reconciliation /policies path
-	GetPoolBalances(ctx context.Context, req operations.GetPoolBalancesRequest) (*operations.GetPoolBalancesResponse, error)
-	V2GetBalancesAggregated(ctx context.Context, req operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error)
-
-	// V1 engine resolvers
-	V2GetLedger(ctx context.Context, req operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error)
-	V2ListAccounts(ctx context.Context, req operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error)
-	V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error)
-}
-
-type sdkFormanceClient struct {
-	client *sdk.Formance
-}
-
-func NewSDKFormance(client *sdk.Formance) *sdkFormanceClient {
-	return &sdkFormanceClient{client: client}
-}
-
-func (s *sdkFormanceClient) GetPoolBalances(ctx context.Context, req operations.GetPoolBalancesRequest) (*operations.GetPoolBalancesResponse, error) {
-	return s.client.Payments.V1.GetPoolBalances(ctx, req)
-}
-
-func (s *sdkFormanceClient) V2GetBalancesAggregated(ctx context.Context, req operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error) {
-	return s.client.Ledger.V2.GetBalancesAggregated(ctx, req)
-}
-
-func (s *sdkFormanceClient) V2GetLedger(ctx context.Context, req operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error) {
-	return s.client.Ledger.V2.GetLedger(ctx, req)
-}
-
-func (s *sdkFormanceClient) V2ListAccounts(ctx context.Context, req operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error) {
-	return s.client.Ledger.V2.ListAccounts(ctx, req)
-}
-
-func (s *sdkFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
-	return s.client.Payments.V3.GetPoolBalancesLatest(ctx, req)
-}
-
-var _ SDKFormance = (*sdkFormanceClient)(nil)

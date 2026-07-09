@@ -1053,6 +1053,45 @@ live, period filter). OpenAPI validated (`yq`). Not on `main`.
 | — | LOW | `ListCaptures` collects one rule's captures and offset-slices client-side (F23-class). Bounded per rule, but a long-lived continuous rule accumulates one capture per evaluation — a native `ListTransactions` cursor threaded to the HTTP layer is the follow-up. | ⬜ noted |
 | — | LOW | Capture reads are eventually-consistent on the transaction read index (F25/F27 class): a list right after `RecordCapture` may briefly lag; the it-test waits via `require.EventuallyWithT`. | ⬜ noted |
 
+## Workstream: ledger-only reconciliation (drop Payments/Tier-2)
+
+**Commit:** `feat(ledger-v3): make reconciliation strictly ledger-only` (`12496f9`, single reviewed
+increment, 2026-07-09). Not on `main`.
+
+Owner decision (2026-07-09): remove the **Payments / Tier-2 pool** resolver entirely — reconciliation
+becomes strictly **Ledger↔Ledger**. Rationale: the Formance SDK existed *only* for the pool read
+(`engine.SDKPaymentsResolver`); the Ledger-V2 SDK methods on `SDKFormance` were already dead in v3
+(ledger reads go through the internal gRPC client, ADR-003). Without a pool, `pitPerSource` was always
+empty and `mergePitPerSource` returned `{}` — dead weight. Two judgement calls tranchés:
+- **A — drop `pitPerSource` end-to-end** (the Tier-2 audit vestige): removed from `EvalOutput`,
+  `Outcome`, `models.Evaluation` (+ bun column tag), the API `evaluationResponse`, and the OpenAPI
+  `Evaluation` schema.
+- **B — simplify `SourceSpec` to `{ledger, query}`** (drop the `kind` discriminant + `poolID`).
+  Only one kind shipped; a future `external_gl` (ADR-001 §7) reintroduces an **optional** `kind`
+  defaulting to `"ledger"` → non-breaking.
+
+**Removed:** `engine.PaymentsResolver` + `Resolvers.Payments`; `internal/engine/sdk_resolvers.go`
+(SDKClient + SDKPaymentsResolver); the `pool()` builtin (declaration + binding + `makePool`) and the
+`SourcePaymentsPool` resolve branch; `evalCtx.pitPerSource`; the `if resolvers.Payments == nil` guard;
+`templates.poolPitPerSource` / `resolverNeed` / `supportsPerAccount`; `service.SDKFormance` +
+`NewSDKFormance` + `sdkFormanceClient` + `Service.client`; `mergePitPerSource`; `cmd` `stackClientModule`
++ `--stack-url/-client-id/-client-secret` flags. `go mod tidy` dropped `formance-sdk-go` (verified: no
+other consumer). **No chart/schema change** → control-ledger it stays `recon-it5`/`recon-it6` (unchanged).
+
+**`source_parity` is now ledger↔ledger only.** `SourceSpec.Validate` drops the kind switch; `resolve`/
+`resolveAccounts` call the ledger resolver directly; per_account no longer needs the "both sides ledger"
+guard (always true). `account_threshold` / `ledger_invariant` build ledger-only `SourceSpec`s.
+
+**Checks:** `go build`/`go vet`/`golangci-lint --build-tags it` (0 issues)/gofmt clean (only the
+pre-existing dirty `engine/{budget,types}.go` remain, untouched); `-race ./internal/...` green; it-suite
+(`-p 1 -count=1 -run TestIntegration` over `ledger`/`ledgerstore`/`api/service`) green against live
+Ledger v3; **DB-less boot smoke** — `serve --ledger-insecure` starts with **no `--stack-*` flag** (the
+fx graph wires without the SDK; passing `--stack-url` now errors `unknown flag`).
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| — | NOTE | `workflows.md` still describes reads at a "query checkpoint" (superseded by ADR-003 live reads) — pre-existing drift from the checkpoint-alternative workstream, out of scope here; flagged for a follow-up doc sync. | ⬜ noted |
+
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
 Closes a real leak in the state model: EPHEMERAL purges a marker only at **zero** balance, but

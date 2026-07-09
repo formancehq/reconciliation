@@ -41,24 +41,9 @@ func (f *fakeLedger) ListAccounts(_ context.Context, ledger string, query json.R
 	return accts, nil
 }
 
-type fakePayments struct {
-	pools map[string]map[string]*big.Int
-}
-
-func (f *fakePayments) PoolBalanceLatest(_ context.Context, id string) (map[string]*big.Int, error) {
-	if f.pools == nil {
-		return map[string]*big.Int{}, nil
-	}
-	b, ok := f.pools[id]
-	if !ok {
-		return map[string]*big.Int{}, nil
-	}
-	return b, nil
-}
-
-func newTestEngine(t *testing.T, l engine.LedgerResolver, p engine.PaymentsResolver) (*engine.Engine, engine.Resolvers) {
+func newTestEngine(t *testing.T, l engine.LedgerResolver) (*engine.Engine, engine.Resolvers) {
 	t.Helper()
-	r := engine.Resolvers{Ledger: l, Payments: p}
+	r := engine.Resolvers{Ledger: l}
 	eng, err := engine.New(r, engine.DefaultLimits)
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
@@ -132,7 +117,7 @@ func TestInvariant_Evaluate_SumsToZero(t *testing.T) {
 		`buildr|"held"`:       {"USD/2": big.NewInt(350)},
 		`buildr|"obligation"`: {"USD/2": big.NewInt(-350)},
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	spec := mustJSON(t, InvariantSpec{
 		Terms: []InvariantTerm{
 			{Ledger: "buildr", Query: json.RawMessage(`"held"`), Sign: 1},
@@ -157,7 +142,7 @@ func TestInvariant_Evaluate_NegativeSign(t *testing.T) {
 		`buildr|"held"`:    {"USD/2": big.NewInt(350)},
 		`buildr|"outflow"`: {"USD/2": big.NewInt(350)},
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	// held +1 + outflow -1 = 0 → pass
 	spec := mustJSON(t, InvariantSpec{
 		Terms: []InvariantTerm{
@@ -183,7 +168,7 @@ func TestInvariant_Evaluate_ExceedsTolerance_Fails(t *testing.T) {
 		`l|"a"`: {"USD/2": big.NewInt(100)},
 		`l|"b"`: {"USD/2": big.NewInt(50)},
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	spec := mustJSON(t, InvariantSpec{
 		Terms: []InvariantTerm{
 			{Ledger: "l", Query: json.RawMessage(`"a"`), Sign: 1},
@@ -249,7 +234,7 @@ func TestThreshold_Evaluate_InBounds(t *testing.T) {
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
 		`l|"q"`: {"USD/2": big.NewInt(500)},
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	lo, hi := int64(100), int64(1000)
 	spec := mustJSON(t, ThresholdSpec{
 		Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdAggregate,
@@ -271,7 +256,7 @@ func TestThreshold_Evaluate_BelowMin(t *testing.T) {
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
 		`l|"q"`: {"USD/2": big.NewInt(50)},
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	lo := int64(100)
 	spec := mustJSON(t, ThresholdSpec{
 		Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdAggregate,
@@ -293,7 +278,7 @@ func TestThreshold_Evaluate_AboveMax(t *testing.T) {
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
 		`l|"q"`: {"USD/2": big.NewInt(5000)},
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	hi := int64(1000)
 	spec := mustJSON(t, ThresholdSpec{
 		Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdAggregate,
@@ -317,7 +302,7 @@ func TestThreshold_DeterministicFingerprintOrder(t *testing.T) {
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
 		`l|"q"`: {"USD/2": big.NewInt(100), "EUR/2": big.NewInt(100), "GBP/2": big.NewInt(100)},
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	hi := int64(1000)
 	spec := mustJSON(t, ThresholdSpec{
 		Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdAggregate,
@@ -357,7 +342,6 @@ func TestCrossCheck_DirectMathMatchesRenderedCEL(t *testing.T) {
 		name string
 		tmpl Evaluator
 		l    *fakeLedger
-		p    *fakePayments
 		spec any
 	}{
 		{
@@ -412,35 +396,16 @@ func TestCrossCheck_DirectMathMatchesRenderedCEL(t *testing.T) {
 				`b|"y"`: {"USD/2": big.NewInt(1000), "EUR/2": big.NewInt(5)}, // EUR mismatch → fail
 			}},
 			spec: ParitySpec{
-				Left:      SourceSpec{Kind: SourceLedger, Ledger: "a", Query: json.RawMessage(`"x"`)},
-				Right:     SourceSpec{Kind: SourceLedger, Ledger: "b", Query: json.RawMessage(`"y"`)},
+				Left:      SourceSpec{Ledger: "a", Query: json.RawMessage(`"x"`)},
+				Right:     SourceSpec{Ledger: "b", Query: json.RawMessage(`"y"`)},
 				Tolerance: map[string]int64{"USD/2": 0, "EUR/2": 0},
-			},
-		},
-		{
-			name: "parity/ledger-pool",
-			tmpl: NewSourceParity(),
-			l: &fakeLedger{balances: map[string]map[string]*big.Int{
-				`a|"x"`: {"USD/2": big.NewInt(1000)},
-			}},
-			p: &fakePayments{pools: map[string]map[string]*big.Int{
-				"pool1": {"USD/2": big.NewInt(1000)},
-			}},
-			spec: ParitySpec{
-				Left:      SourceSpec{Kind: SourceLedger, Ledger: "a", Query: json.RawMessage(`"x"`)},
-				Right:     SourceSpec{Kind: SourcePaymentsPool, PoolID: "pool1"},
-				Tolerance: map[string]int64{"USD/2": 0},
 			},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := tc.p
-			if p == nil {
-				p = &fakePayments{}
-			}
-			eng, res := newTestEngine(t, tc.l, p)
+			eng, res := newTestEngine(t, tc.l)
 			out, err := tc.tmpl.Evaluate(context.Background(), mustJSON(t, tc.spec), eng, res, in)
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)

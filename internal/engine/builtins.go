@@ -21,12 +21,8 @@ type evalCtx struct {
 	pit       time.Time
 	resolvers Resolvers
 	budget    *budgetTracker
-	// pitPerSource records the audit PIT for each Tier-2 (pool) Source, keyed by
-	// Source.Key. Ledger sources read live (ADR-003), so a ledger↔ledger
-	// evaluation leaves this empty.
-	pitPerSource map[string]time.Time
-	// sourceCounter assigns stable keys (ledger_set:0, ledger_set:1, payments_pool:0, …)
-	// so the same expression always names its sources the same way across runs.
+	// sourceCounter assigns stable keys (ledger_set:0, ledger_set:1, …) so the
+	// same expression always names its sources the same way across runs.
 	sourceCounter map[SourceKind]int
 }
 
@@ -36,7 +32,6 @@ func newEvalCtx(ctx context.Context, pit time.Time, resolvers Resolvers, budget 
 		pit:           pit,
 		resolvers:     resolvers,
 		budget:        budget,
-		pitPerSource:  map[string]time.Time{},
 		sourceCounter: map[SourceKind]int{},
 	}
 }
@@ -59,12 +54,6 @@ func declarations() []cel.EnvOption {
 		cel.Function("ledgerSet",
 			cel.Overload("ledgerSet_string_string",
 				[]*cel.Type{cel.StringType, cel.StringType},
-				srcT,
-			),
-		),
-		cel.Function("pool",
-			cel.Overload("pool_string",
-				[]*cel.Type{cel.StringType},
 				srcT,
 			),
 		),
@@ -98,15 +87,6 @@ func bindings(e *evalCtx) []cel.EnvOption {
 				srcT,
 				cel.BinaryBinding(func(ledger, query ref.Val) ref.Val {
 					return e.makeLedgerSet(ledger, query)
-				}),
-			),
-		),
-		cel.Function("pool",
-			cel.Overload("pool_string",
-				[]*cel.Type{cel.StringType},
-				srcT,
-				cel.UnaryBinding(func(poolID ref.Val) ref.Val {
-					return e.makePool(poolID)
 				}),
 			),
 		),
@@ -180,30 +160,13 @@ func (e *evalCtx) makeLedgerSet(ledger, query ref.Val) ref.Val {
 	if !ok {
 		return types.NewErr("ledgerSet: query must be string, got %T", query.Value())
 	}
-	// Ledger source: read live (ADR-003), not recorded in pitPerSource. Key is
-	// still assigned for stable naming.
+	// Ledger source: read live (ADR-003). Key is assigned for stable naming.
 	return &Source{
 		Kind:   SourceLedgerSet,
 		Key:    e.keyFor(SourceLedgerSet),
 		Ledger: l,
 		Query:  json.RawMessage(q),
 	}
-}
-
-func (e *evalCtx) makePool(poolID ref.Val) ref.Val {
-	id, ok := poolID.Value().(string)
-	if !ok {
-		return types.NewErr("pool: id must be string, got %T", poolID.Value())
-	}
-	src := &Source{
-		Kind:   SourcePaymentsPool,
-		Key:    e.keyFor(SourcePaymentsPool),
-		PoolID: id,
-	}
-	// Tier-2: the payments resolver reads "latest"; record the nominal PIT as the
-	// source's audit timestamp (ADR-002 §10.1).
-	e.pitPerSource[src.Key] = e.pit
-	return src
 }
 
 func (e *evalCtx) resolveBalances(src *Source) (map[string]*big.Int, error) {
@@ -213,11 +176,6 @@ func (e *evalCtx) resolveBalances(src *Source) (map[string]*big.Int, error) {
 			return nil, fmt.Errorf("ledger resolver not configured")
 		}
 		return e.resolvers.Ledger.AggregateBalance(e.ctx, src.Ledger, src.Query)
-	case SourcePaymentsPool:
-		if e.resolvers.Payments == nil {
-			return nil, fmt.Errorf("payments resolver not configured")
-		}
-		return e.resolvers.Payments.PoolBalanceLatest(e.ctx, src.PoolID)
 	default:
 		return nil, fmt.Errorf("unsupported source kind: %s", src.Kind)
 	}

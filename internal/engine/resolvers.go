@@ -25,23 +25,10 @@ type LedgerResolver interface {
 	ListAccounts(ctx context.Context, ledger string, query json.RawMessage, limit int) ([]Account, error)
 }
 
-// PaymentsResolver is the kernel's contract for payments-pool-backed sources.
-//
-// V1 deliberately uses the v3 /balances/latest endpoint rather than the legacy
-// /api/payments/pools/{id}/balances?at= route — the legacy PIT endpoint silently
-// returns empty under payments v3 (see baseline findings). Latest is the
-// faithful read of the payments side; PIT semantics across heterogeneous
-// systems are handled by tolerances in the template, not by reaching for a
-// PIT endpoint that doesn't exist.
-type PaymentsResolver interface {
-	PoolBalanceLatest(ctx context.Context, poolID string) (map[string]*big.Int, error)
-}
-
 // Resolvers groups the resolver impls injected into Engine at construction.
-// Optional resolvers (e.g. future ExternalGL) can be added here without
-// breaking existing engines — they default to nil and the relevant builtin
-// rejects with a clear error.
+// Optional resolvers (e.g. a future ExternalGL for heterogeneous sources, see
+// ADR-001 §7) can be added here without breaking existing engines — they
+// default to nil and the relevant builtin rejects with a clear error.
 type Resolvers struct {
-	Ledger   LedgerResolver
-	Payments PaymentsResolver
+	Ledger LedgerResolver
 }

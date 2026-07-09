@@ -17,10 +17,12 @@ func TestEvaluateRule_RecordsCapture(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("pass with scheduled trigger", func(t *testing.T) {
-		l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
-		p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
-		svc, store := newOrchestrationService(t, l, p)
-		rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
+		l := &orchestrationLedger{balances: map[string]map[string]*big.Int{
+			"sub":     {"USD/2": big.NewInt(100)},
+			"control": {"USD/2": big.NewInt(100)},
+		}}
+		svc, store := newOrchestrationService(t, l)
+		rule := mustCreateRule(t, svc, paritySpec(t, "sub", "control", `"q"`, nil))
 
 		ev, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now(), Trigger: TriggerScheduled})
 		require.NoError(t, err)
@@ -36,10 +38,12 @@ func TestEvaluateRule_RecordsCapture(t *testing.T) {
 	})
 
 	t.Run("fail with default (manual) trigger", func(t *testing.T) {
-		l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
-		p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(300)}} // drift 50
-		svc, store := newOrchestrationService(t, l, p)
-		rule := mustCreateRule(t, svc, paritySpec(t, "buildr", `"q"`, "pool", nil))
+		l := &orchestrationLedger{balances: map[string]map[string]*big.Int{
+			"sub":     {"USD/2": big.NewInt(350)},
+			"control": {"USD/2": big.NewInt(300)}, // drift 50
+		}}
+		svc, store := newOrchestrationService(t, l)
+		rule := mustCreateRule(t, svc, paritySpec(t, "sub", "control", `"q"`, nil))
 
 		ev, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now()})
 		require.NoError(t, err)

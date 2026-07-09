@@ -3,7 +3,6 @@ package templates
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -26,7 +25,7 @@ func TestThreshold_PerAccount_FansOut(t *testing.T) {
 			acct("merchant:b", "USD/2", 50),  // < 100  → fail
 		},
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	spec := mustJSON(t, ThresholdSpec{
 		Ledger: "main", Query: json.RawMessage(q), Mode: ThresholdPerAccount,
 		Bounds: map[string]ThresholdBounds{"USD/2": {Min: &min}},
@@ -60,11 +59,11 @@ func TestThreshold_PerAccount_BudgetExceeded(t *testing.T) {
 	l := &fakeLedger{accounts: map[string][]engine.Account{
 		"main|" + q: {acct("a", "USD/2", 1), acct("b", "USD/2", 1)},
 	}}
-	eng, err := engine.New(engine.Resolvers{Ledger: l, Payments: &fakePayments{}}, engine.Limits{MaxAccountsScanned: 1})
+	eng, err := engine.New(engine.Resolvers{Ledger: l}, engine.Limits{MaxAccountsScanned: 1})
 	if err != nil {
 		t.Fatalf("engine.New: %v", err)
 	}
-	res := engine.Resolvers{Ledger: l, Payments: &fakePayments{}}
+	res := engine.Resolvers{Ledger: l}
 	spec := mustJSON(t, ThresholdSpec{
 		Ledger: "main", Query: json.RawMessage(q), Mode: ThresholdPerAccount,
 		Bounds: map[string]ThresholdBounds{"USD/2": {Min: &min}},
@@ -82,7 +81,7 @@ func TestSourceParity_PerAccount_LedgerVsLedger(t *testing.T) {
 		"a|" + q: {acct("m:1", "USD/2", 100), acct("m:2", "USD/2", 100)},
 		"b|" + q: {acct("m:1", "USD/2", 100), acct("m:2", "USD/2", 70)}, // m:2 differs by 30
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	spec := mustJSON(t, ParitySpec{
 		Left:  ledgerSource("a", q),
 		Right: ledgerSource("b", q),
@@ -101,18 +100,5 @@ func TestSourceParity_PerAccount_LedgerVsLedger(t *testing.T) {
 	}
 	if o := findOutcome(out, "asset:USD/2|account:m:2"); o == nil || o.Passed {
 		t.Errorf("m:2 should fail (30 gap, tol 0), got %+v", o)
-	}
-}
-
-// per_account requires both sources to be ledger — a pool side is rejected.
-func TestSourceParity_PerAccount_RejectsPool(t *testing.T) {
-	tmpl := NewSourceParity()
-	spec := mustJSON(t, ParitySpec{
-		Left:  ledgerSource("l", `{}`),
-		Right: poolSource("p"),
-		Scope: ScopePerAccount,
-	})
-	if err := tmpl.Validate(spec); !errors.Is(err, ErrInvalidSpec) {
-		t.Fatalf("expected ErrInvalidSpec (pool can't be per-account), got %v", err)
 	}
 }

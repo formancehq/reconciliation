@@ -125,6 +125,14 @@ Read them side by side. **C is the only option that's safe, typed, one-line, and
 
 CEL is only as good as the types it reasons about. The object model **is the actual product surface** — once customers write expressions against these types, renaming is a breaking change.
 
+> **Update (ledger-only, 2026-07-09).** Reconciliation shipped as strictly **ledger↔ledger**: the
+> `PaymentsPool` source, the `pool()` builtin, and the Tier-2 payments resolver were removed (the
+> only shape they served, ledger-vs-pool drift, is expressed as `source_parity` over two ledger
+> sources). The template-facing `SourceSpec` is now just `{ ledger, query }` — no `kind` discriminant.
+> The sketch below keeps the original design intent: a future heterogeneous source (`ExternalGL`,
+> §11) reintroduces `kind` as an **optional** field defaulting to `"ledger"`, so it stays
+> non-breaking. See [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md).
+
 ### V1 types
 
 ```ts
@@ -247,8 +255,8 @@ The kernel's Go code in the runtime path is ~200 lines. Everything else is templ
 For reviewers who want to feel the surface:
 
 ```cel
-# ledger_vs_pool_drift  (port of today)
-balance(ledgerSet("buildr","held=*")) + balance(pool("pool_xyz")) == 0
+# ledger_vs_pool_drift  (RETIRED — pool source removed; express as source_parity over two ledgers)
+# balance(ledgerSet("buildr","held=*")) + balance(pool("pool_xyz")) == 0
 
 # ledger_invariant (Buildr)
 balance(ledgerSet("buildr","trust.held=*")) + balance(ledgerSet("buildr","trust.obligation=*")) == 0

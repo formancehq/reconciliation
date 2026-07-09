@@ -21,7 +21,7 @@ type Engine struct {
 	limits    Limits
 }
 
-// New constructs an Engine. Both resolvers must be non-nil for V1.
+// New constructs an Engine. The LedgerResolver must be non-nil for V1.
 // Partial Limits are filled in from DefaultLimits — any zero-valued field
 // inherits its default rather than disabling the check, so a caller passing
 // only a custom MaxCELCost still gets the standard MaxAccountsScanned /
@@ -29,9 +29,6 @@ type Engine struct {
 func New(resolvers Resolvers, limits Limits) (*Engine, error) {
 	if resolvers.Ledger == nil {
 		return nil, errors.New("engine: LedgerResolver is required")
-	}
-	if resolvers.Payments == nil {
-		return nil, errors.New("engine: PaymentsResolver is required")
 	}
 	limits = mergeLimits(limits, DefaultLimits)
 
@@ -80,8 +77,7 @@ func (e *Engine) Compile(expression string) (*Compiled, error) {
 }
 
 // EvalInput carries the per-evaluation knobs.
-//   - PIT: the nominal evaluation instant. Pool (Tier-2) sources read "latest"
-//     and record this as their audit timestamp; the service also derives the
+//   - PIT: the nominal evaluation instant. The service derives the
 //     reconciliation period from it. Ledger sources read live — a single
 //     aggregate is an internally consistent snapshot (ADR-003).
 type EvalInput struct {
@@ -92,12 +88,11 @@ type EvalInput struct {
 // open or update incidents. Passed=false means a data-incident path; Error
 // being non-nil means an engine-error path (separate channel).
 type EvalOutput struct {
-	Passed       bool
-	Result       any                  // raw CEL eval result; useful for debugging templates
-	Evidence     map[string]any       // evaluator-supplied breakdown for incident.evidence
-	PitPerSource map[string]time.Time // Tier-2 (pool) audit PIT per Source; ledger sources read live (ADR-003)
-	CostUnits    int64                // accounts scanned this eval (see budget)
-	Error        error                // engine-side runtime error; rule may still be valid
+	Passed    bool
+	Result    any            // raw CEL eval result; useful for debugging templates
+	Evidence  map[string]any // evaluator-supplied breakdown for incident.evidence
+	CostUnits int64          // accounts scanned this eval (see budget)
+	Error     error          // engine-side runtime error; rule may still be valid
 }
 
 // Evaluate runs the compiled program once and returns the structured outcome.
@@ -144,10 +139,9 @@ func (e *Engine) Evaluate(ctx context.Context, c *Compiled, in EvalInput) (*Eval
 	}
 
 	return &EvalOutput{
-		Passed:       passed,
-		Result:       result.Value(),
-		Evidence:     nil, // templates layer attaches richer evidence in task #4/#5
-		PitPerSource: ec.pitPerSource,
-		CostUnits:    budget.AccountsScanned(),
+		Passed:    passed,
+		Result:    result.Value(),
+		Evidence:  nil, // templates layer attaches richer evidence in task #4/#5
+		CostUnits: budget.AccountsScanned(),
 	}, nil
 }

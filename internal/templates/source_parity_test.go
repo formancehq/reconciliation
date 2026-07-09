@@ -13,21 +13,17 @@ import (
 )
 
 func ledgerSource(ledger, query string) SourceSpec {
-	return SourceSpec{Kind: SourceLedger, Ledger: ledger, Query: json.RawMessage(query)}
-}
-func poolSource(id string) SourceSpec {
-	return SourceSpec{Kind: SourcePaymentsPool, PoolID: id}
+	return SourceSpec{Ledger: ledger, Query: json.RawMessage(query)}
 }
 
 func TestSourceParity_Validate(t *testing.T) {
 	tmpl := NewSourceParity()
 	cases := map[string]ParitySpec{
-		"missing left kind":     {Left: SourceSpec{}, Right: poolSource("p")},
-		"unknown left kind":     {Left: SourceSpec{Kind: "bank"}, Right: poolSource("p")},
-		"ledger missing ledger": {Left: SourceSpec{Kind: SourceLedger, Query: json.RawMessage(`{}`)}, Right: poolSource("p")},
-		"ledger missing query":  {Left: SourceSpec{Kind: SourceLedger, Ledger: "l"}, Right: poolSource("p")},
-		"pool missing id":       {Left: ledgerSource("l", `{}`), Right: SourceSpec{Kind: SourcePaymentsPool}},
-		"negative tolerance":    {Left: ledgerSource("l", `{}`), Right: poolSource("p"), Tolerance: map[string]int64{"USD/2": -1}},
+		"missing left ledger":  {Left: SourceSpec{Query: json.RawMessage(`{}`)}, Right: ledgerSource("r", `{}`)},
+		"missing left query":   {Left: SourceSpec{Ledger: "l"}, Right: ledgerSource("r", `{}`)},
+		"missing right ledger": {Left: ledgerSource("l", `{}`), Right: SourceSpec{Query: json.RawMessage(`{}`)}},
+		"missing right query":  {Left: ledgerSource("l", `{}`), Right: SourceSpec{Ledger: "r"}},
+		"negative tolerance":   {Left: ledgerSource("l", `{}`), Right: ledgerSource("r", `{}`), Tolerance: map[string]int64{"USD/2": -1}},
 	}
 	for name, spec := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -38,21 +34,19 @@ func TestSourceParity_Validate(t *testing.T) {
 	}
 }
 
-// TestSourceParity_LedgerVsPool — the drift use case expressed as parity:
-// ledger and pool balances should be equal within tolerance.
-func TestSourceParity_LedgerVsPool(t *testing.T) {
+// TestSourceParity_Drift — the drift use case expressed as parity: two ledgers'
+// records of the same money should be equal within tolerance.
+func TestSourceParity_Drift(t *testing.T) {
 	tmpl := NewSourceParity()
 	const q = `{"$match":{"address":"cash"}}`
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
-		"main|" + q: {"USD/2": big.NewInt(100)},
+		"main|" + q:    {"USD/2": big.NewInt(100)},
+		"control|" + q: {"USD/2": big.NewInt(130)}, // 30 above the sub-ledger
 	}}
-	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"acct": {"USD/2": big.NewInt(130)}, // 30 above the ledger
-	}}
-	eng, res := newTestEngine(t, l, p)
+	eng, res := newTestEngine(t, l)
 
 	// tolerance 0 → the 30 gap fails.
-	spec := mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: poolSource("acct")})
+	spec := mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: ledgerSource("control", q)})
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -66,7 +60,7 @@ func TestSourceParity_LedgerVsPool(t *testing.T) {
 	}
 
 	// tolerance 50 → within bound, passes.
-	spec = mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: poolSource("acct"), Tolerance: map[string]int64{"USD/2": 50}})
+	spec = mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: ledgerSource("control", q), Tolerance: map[string]int64{"USD/2": 50}})
 	out, err = tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
 		t.Fatalf("Evaluate (tol 50): %v", err)
@@ -76,8 +70,8 @@ func TestSourceParity_LedgerVsPool(t *testing.T) {
 	}
 }
 
-// TestSourceParity_LedgerVsLedger — the pairing the old templates couldn't
-// express: a sub-ledger reconciled against a control account on another ledger.
+// TestSourceParity_LedgerVsLedger — a sub-ledger reconciled against a control
+// account on another ledger.
 func TestSourceParity_LedgerVsLedger(t *testing.T) {
 	tmpl := NewSourceParity()
 	const q = `{"$match":{"address":"x"}}`
@@ -85,7 +79,7 @@ func TestSourceParity_LedgerVsLedger(t *testing.T) {
 		"sub|" + q:     {"USD/2": big.NewInt(100)},
 		"control|" + q: {"USD/2": big.NewInt(100)},
 	}}
-	eng, res := newTestEngine(t, l, &fakePayments{})
+	eng, res := newTestEngine(t, l)
 	spec := mustJSON(t, ParitySpec{Left: ledgerSource("sub", q), Right: ledgerSource("control", q)})
 
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
@@ -103,13 +97,11 @@ func TestSourceParity_AssetUnion(t *testing.T) {
 	tmpl := NewSourceParity()
 	const q = `{}`
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
-		"main|" + q: {"USD/2": big.NewInt(100), "EUR/2": big.NewInt(50)},
+		"main|" + q:    {"USD/2": big.NewInt(100), "EUR/2": big.NewInt(50)},
+		"control|" + q: {"USD/2": big.NewInt(100)}, // no EUR/2 → treated as 0
 	}}
-	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"acct": {"USD/2": big.NewInt(100)}, // no EUR/2 → treated as 0
-	}}
-	eng, res := newTestEngine(t, l, p)
-	spec := mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: poolSource("acct")})
+	eng, res := newTestEngine(t, l)
+	spec := mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: ledgerSource("control", q)})
 
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
@@ -130,21 +122,21 @@ func TestSourceParity_Explain(t *testing.T) {
 	tmpl := NewSourceParity()
 	spec := mustJSON(t, ParitySpec{
 		Left:      ledgerSource("main", `{"$match":{"address":"cash"}}`),
-		Right:     poolSource("acct"),
+		Right:     ledgerSource("control", `{"$match":{"address":"settlement"}}`),
 		Tolerance: map[string]int64{"USD/2": 50},
 	})
 	expr, err := tmpl.Explain(spec)
 	if err != nil {
 		t.Fatalf("Explain: %v", err)
 	}
-	for _, want := range []string{"abs(", "ledgerSet(", `pool("acct")`, " - ", "<= 50"} {
+	for _, want := range []string{"abs(", "ledgerSet(", " - ", "<= 50"} {
 		if !strings.Contains(expr, want) {
 			t.Errorf("Explain output %q missing %q", expr, want)
 		}
 	}
 	// The Explain output is persisted as rule.compiled_cel and CreateRule
 	// sanity-compiles it against the kernel. Guard that it actually parses.
-	eng, _ := newTestEngine(t, &fakeLedger{}, &fakePayments{})
+	eng, _ := newTestEngine(t, &fakeLedger{})
 	if _, err := eng.Compile(expr); err != nil {
 		t.Errorf("Explain output does not compile: %v\nexpr: %s", err, expr)
 	}

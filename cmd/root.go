@@ -13,10 +13,7 @@ var (
 )
 
 const (
-	stackURLFlag          = "stack-url"
-	stackClientIDFlag     = "stack-client-id"
-	stackClientSecretFlag = "stack-client-secret"
-	listenFlag            = "listen"
+	listenFlag = "listen"
 
 	// Control-ledger storage (ledger-native — replaces Postgres). The transport
 	// refuses an insecure connection unless --ledger-insecure is set (F2).

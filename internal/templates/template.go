@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -36,12 +35,6 @@ type Outcome struct {
 	// incident's `evidence` jsonb column — the actual balances, accounts,
 	// drift, etc. examined to produce this outcome.
 	Evidence map[string]any
-
-	// PitPerSource records which PIT each Source resolved at for this outcome,
-	// propagated up to the persisted Evaluation row. (Same Source can resolve
-	// at the same PIT across all outcomes in one evaluation; we still store
-	// per-outcome for audit clarity.)
-	PitPerSource map[string]time.Time
 }
 
 // Evaluator is the per-template contract.

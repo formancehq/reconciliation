@@ -17,23 +17,20 @@ type SourceKind string
 
 const (
 	SourceLedgerSet      SourceKind = "ledger_set"
-	SourcePaymentsPool   SourceKind = "payments_pool"
 	SourceLedgerPostings SourceKind = "ledger_postings" // V1.1+
 )
 
 // Source is the first-class kernel primitive (see ADR-001). It is an opaque
-// CEL value: built by source-constructor builtins (ledgerSet, pool, …) and
-// consumed by aggregator builtins (balance, balances, accounts, …).
+// CEL value: built by source-constructor builtins (ledgerSet, …) and consumed
+// by aggregator builtins (balance, balances, accounts, …).
 //
-// The read anchor is not carried per-Source: ledger sources read live (a single
-// aggregate is an internally consistent snapshot), and Tier-2 (pool) sources read
-// latest, recording their audit PIT in pitPerSource (ADR-003).
+// The read anchor is not carried per-Source: ledger sources read live — a single
+// aggregate is an internally consistent snapshot (ADR-003).
 type Source struct {
 	Kind   SourceKind
-	Key    string          // stable key used in pit_per_source map, e.g. "payments_pool:0"
+	Key    string          // stable key for deterministic source naming, e.g. "ledger_set:0"
 	Ledger string          // LedgerSet, LedgerPostings
 	Query  json.RawMessage // LedgerSet, LedgerPostings — the metadata-query JSON
-	PoolID string          // PaymentsPool
 	Window time.Duration   // LedgerPostings (V1.1+)
 }
 
@@ -62,14 +59,14 @@ func (s *Source) ConvertToType(typeVal ref.Type) ref.Val {
 }
 
 // Equal compares two sources structurally. Two sources are equal if their
-// kind, ledger, query (string-equal), pool id, and window match. PIT is not
-// part of identity — it's resolved per-evaluation.
+// kind, ledger, query (string-equal), and window match. PIT is not part of
+// identity — it's resolved per-evaluation.
 func (s *Source) Equal(other ref.Val) ref.Val {
 	o, ok := other.(*Source)
 	if !ok {
 		return types.False
 	}
-	if s.Kind != o.Kind || s.Ledger != o.Ledger || s.PoolID != o.PoolID || s.Window != o.Window {
+	if s.Kind != o.Kind || s.Ledger != o.Ledger || s.Window != o.Window {
 		return types.False
 	}
 	return types.Bool(string(s.Query) == string(o.Query))

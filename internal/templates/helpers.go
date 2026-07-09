@@ -23,9 +23,9 @@ func zeroIfNil(v *big.Int) *big.Int {
 }
 
 // ErrResolverUnavailable is returned when a template requires a resolver
-// (ledger / payments) the engine wasn't wired with. Distinct from
-// ErrInvalidSpec so callers can decide whether the operator's config is
-// wrong (404-class) vs the engine's wiring is wrong (500-class).
+// (ledger) the engine wasn't wired with. Distinct from ErrInvalidSpec so
+// callers can decide whether the operator's config is wrong (404-class) vs the
+// engine's wiring is wrong (500-class).
 var ErrResolverUnavailable = errors.New("required resolver is not configured")
 
 // hasMeaningfulJSON returns true iff the RawMessage holds a non-null, non-empty
@@ -108,10 +108,6 @@ func requireResolvers(r engine.Resolvers, needs ...string) error {
 		case "ledger":
 			if r.Ledger == nil {
 				return fmt.Errorf("%w: ledger", ErrResolverUnavailable)
-			}
-		case "payments":
-			if r.Payments == nil {
-				return fmt.Errorf("%w: payments", ErrResolverUnavailable)
 			}
 		default:
 			return fmt.Errorf("%w: unknown resolver %q", ErrResolverUnavailable, name)
