@@ -109,6 +109,20 @@ func (mr *MockledgerClientMockRecorder) GetAccount(ctx, ledgerName, address any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAccount", reflect.TypeOf((*MockledgerClient)(nil).GetAccount), ctx, ledgerName, address)
 }
 
+// ListTransactionsFunc mocks base method.
+func (m *MockledgerClient) ListTransactionsFunc(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, fn func(*commonpb.Transaction) error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListTransactionsFunc", ctx, ledgerName, filter, fn)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ListTransactionsFunc indicates an expected call of ListTransactionsFunc.
+func (mr *MockledgerClientMockRecorder) ListTransactionsFunc(ctx, ledgerName, filter, fn any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTransactionsFunc", reflect.TypeOf((*MockledgerClient)(nil).ListTransactionsFunc), ctx, ledgerName, filter, fn)
+}
+
 // QueryAccounts mocks base method.
 func (m *MockledgerClient) QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter) ([]*commonpb.Account, error) {
 	m.ctrl.T.Helper()

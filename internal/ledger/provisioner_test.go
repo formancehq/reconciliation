@@ -76,7 +76,7 @@ func TestProvisioner_Provision(t *testing.T) {
 	m.EXPECT().
 		CreateIndex(gomock.Any(), testLedger, gomock.Any()).
 		Return(nil).
-		Times(len(schema.MetadataIndexes()))
+		Times(len(schema.MetadataIndexes()) + len(schema.TransactionIndexes()))
 
 	// Capture the prepared queries actually registered.
 	var registered []string
@@ -168,7 +168,7 @@ func TestProvisioner_UpToDateLedgerSkipsReconcile(t *testing.T) {
 	// test if either is called (no EXPECT registered).
 
 	// The remaining passes still run (idempotent no-ops at the client layer).
-	m.EXPECT().CreateIndex(gomock.Any(), testLedger, gomock.Any()).Return(nil).Times(len(schema.MetadataIndexes()))
+	m.EXPECT().CreateIndex(gomock.Any(), testLedger, gomock.Any()).Return(nil).Times(len(schema.MetadataIndexes()) + len(schema.TransactionIndexes()))
 	m.EXPECT().CreatePreparedQuery(gomock.Any(), testLedger, gomock.Any()).Return(nil).Times(len(schema.PreparedQueries()))
 	m.EXPECT().SaveNumscript(gomock.Any(), testLedger, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(len(schema.Numscripts()))
 

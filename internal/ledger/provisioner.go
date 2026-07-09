@@ -106,7 +106,10 @@ func (p *Provisioner) Provision(ctx context.Context) error {
 		}
 	}
 
-	for _, idx := range schema.MetadataIndexes() {
+	// Account metadata indexes (list/filter + id resolution) and the transaction
+	// address index (capture-history listing). CreateIndex swallows AlreadyExists,
+	// so a new index added here reconciles onto an existing ledger on next boot.
+	for _, idx := range slices.Concat(schema.MetadataIndexes(), schema.TransactionIndexes()) {
 		if err := p.client.CreateIndex(ctx, p.ledger, &servicepb.CreateIndexRequest{Id: idx}); err != nil {
 			return fmt.Errorf("create index %v: %w", idx, err)
 		}

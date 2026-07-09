@@ -20,6 +20,7 @@ type Service interface {
 	PatchRule(ctx context.Context, id uuid.UUID, patch store.RulePatch) error
 	DeleteRule(ctx context.Context, id uuid.UUID) error
 	EvaluateRule(ctx context.Context, id uuid.UUID, req service.EvaluateRuleRequest) (*models.Evaluation, error)
+	ListCaptures(ctx context.Context, ruleID uuid.UUID, q store.GetCapturesQuery) (*bunpaginate.Cursor[models.Capture], error)
 
 	// V1 — Alert
 	GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error)

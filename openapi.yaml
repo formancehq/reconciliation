@@ -93,6 +93,34 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
+  /rules/{ruleID}/captures:
+    parameters: [{ $ref: '#/components/parameters/RuleID' }]
+    get:
+      summary: List a rule's evaluation history (captures)
+      operationId: listRuleCaptures
+      description: |
+        Returns a page of the immutable capture records for this rule — one per
+        evaluation, recorded independently of the alert lifecycle: positive
+        assurance on a pass, break evidence on a fail. Each capture carries the
+        observed snapshot (verdict, trigger, evidence) and is an append-only
+        ledger transaction, so the history is queryable live. Ordered
+        most-recent-first and cursor-paginated. Optional `period` scopes to one
+        reconciliation period.
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+        - name: period
+          in: query
+          required: false
+          description: Scope the history to a single reconciliation period (e.g. "2026-03", "continuous").
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Captures' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
   /alerts:
     get:
       summary: List alerts
@@ -320,6 +348,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/AlertEventsCursorResponse' }
+    Captures:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/CapturesCursorResponse' }
   requestBodies:
     Rule:
       required: true
@@ -624,6 +657,44 @@ components:
             data:
               type: array
               items: { $ref: '#/components/schemas/AlertEvent' }
+
+    Capture:
+      type: object
+      description: |
+        One immutable evaluation record (ADR-003). Every rule evaluation mints a
+        capture transaction carrying this self-describing snapshot — positive
+        assurance on a pass, break evidence on a fail — recorded independently of
+        the alert lifecycle. `transactionID` is the ledger-local id of the
+        underlying capture transaction.
+      required: [transactionID, ruleID, periodID, evaluationID, verdict, trigger, capturedAt]
+      properties:
+        transactionID: { type: integer, format: int64 }
+        ruleID: { type: string, format: uuid }
+        periodID: { type: string, example: "2026-03" }
+        evaluationID: { type: string, format: uuid }
+        templateKind: { type: string }
+        verdict: { type: string, enum: [pass, fail] }
+        trigger: { type: string, enum: [scheduled, manual] }
+        capturedAt: { type: string, format: date-time }
+        evidence:
+          description: The evaluation's outcome evidence (present on a fail; bounded).
+          type: object
+          additionalProperties: true
+    CapturesCursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Capture' }
 
     AckAlertRequest:
       type: object

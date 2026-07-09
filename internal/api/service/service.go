@@ -41,6 +41,11 @@ type Store interface {
 	// recorded independently of the alert lifecycle.
 	RecordCapture(ctx context.Context, in store.CaptureInput) error
 
+	// ListCaptures returns a rule's evaluation history — the captures recorded by
+	// RecordCapture, read back live from the control ledger (they are ledger
+	// transactions, so no event sink is needed), newest first.
+	ListCaptures(ctx context.Context, ruleID uuid.UUID, q store.GetCapturesQuery) (*bunpaginate.Cursor[models.Capture], error)
+
 	// V1 — Alert
 	OpenOrUpdateAlert(ctx context.Context, in store.OpenAlertInput) (*store.OpenAlertResult, error)
 	AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fingerprint, periodID string, evaluationID uuid.UUID, at time.Time) (*models.Alert, error)

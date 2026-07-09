@@ -94,8 +94,43 @@ atomic cut). Returns `200` + the evaluation result (not persisted — see the st
 `pitPerSource` records the audit PIT for **Tier-2 (pool) sources only** — a ledger↔ledger rule is
 anchored by the shared checkpoint, so its map is empty (ADR-002 §10.1). `evidence` records **only
 the failing fingerprints** (an all-`PASS` evaluation has `"evidence": []`); the durable copy of a
-break's evidence lives on the alert. There is **no evaluations history endpoint** — an evaluation
-is a deterministic projection, not a durable entity (RFC §4.4.2).
+break's evidence lives on the alert. The evaluation object itself is **not** a durable entity (a
+deterministic projection, RFC §4.4.2) — but each run's **capture** is (ADR-003), queryable via
+`GET /rules/{id}/captures` below.
+
+#### `GET /rules/{id}/captures` — evaluation history (captures)
+
+The immutable capture recorded per evaluation (ADR-003): positive assurance on a pass, break evidence
+on a fail — recorded independently of the alert lifecycle. Unlike the alert-transition timeline
+(`/alerts/{id}/events`, sink-gated), **captures are first-class ledger transactions**, so this is
+queryable **live** today — no event sink required. Cursor-paginated, most-recent-first. Optional
+`?period=` scopes to one reconciliation period.
+
+```json
+{
+  "cursor": {
+    "pageSize": 15, "hasMore": false, "previous": "", "next": "",
+    "data": [
+      {
+        "transactionID": 4213,
+        "ruleID":        "rul_…",
+        "periodID":      "2026-03",
+        "evaluationID":  "ev_…",
+        "templateKind":  "source_parity",
+        "verdict":       "fail",
+        "trigger":       "scheduled",
+        "capturedAt":    "2026-03-01T00:00:00Z",
+        "evidence":      { "delta": "5" }
+      }
+    ]
+  }
+}
+```
+
+`transactionID` is the ledger-local id of the underlying capture transaction. Read path: the store
+lists transactions on the rule's capture bucket address (`capture:rule:{ruleId}:per:*`) — which is why
+provisioning declares the transaction address index. Bounded to one rule's captures; a native
+`ListTransactions` cursor is the follow-up for very high-volume continuous rules (F23-class).
 
 ### Alerts
 

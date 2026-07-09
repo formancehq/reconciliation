@@ -490,6 +490,77 @@ func TestIntegration_RecordCapture(t *testing.T) {
 	require.Equal(t, "2", balance(ctx, t, client, control, captureAddr, schema.AssetCapture), "a new evaluation records a new capture")
 }
 
+// TestIntegration_ListCaptures proves the capture history read path (the API
+// surface for the "reconciliation history" view): captures recorded across
+// periods are read back live via ListTransactions, newest-first, with a working
+// period filter — no event sink needed, because captures are ledger transactions.
+//
+//	go test -tags it -run TestIntegration_ListCaptures ./internal/ledgerstore/...
+func TestIntegration_ListCaptures(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, err := ledger.NewClient(itLedgerAddr(), nil)
+	require.NoError(t, err)
+
+	defer func() { _ = client.Close() }()
+
+	const control = "recon-it6"
+	require.NoError(t, ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT).Provision(ctx), "provision control-ledger")
+
+	store := New(client, control)
+
+	ruleID := uuid.New() // fresh rule → capture buckets unique to this run
+	t0 := time.Now().Truncate(time.Microsecond).UTC()
+
+	// Three captures: two in 2026-03 (oldest, newest), one in 2026-04 (middle).
+	oldest := recstore.CaptureInput{RuleID: ruleID, TemplateKind: string(models.TemplateSourceParity), PeriodID: "2026-03", EvaluationID: uuid.New(), CapturedAt: t0, Verdict: "pass", Trigger: "scheduled", Evidence: json.RawMessage(`[]`)}
+	middle := recstore.CaptureInput{RuleID: ruleID, TemplateKind: string(models.TemplateSourceParity), PeriodID: "2026-04", EvaluationID: uuid.New(), CapturedAt: t0.Add(time.Second), Verdict: "pass", Trigger: "scheduled", Evidence: json.RawMessage(`[]`)}
+	newest := recstore.CaptureInput{RuleID: ruleID, TemplateKind: string(models.TemplateSourceParity), PeriodID: "2026-03", EvaluationID: uuid.New(), CapturedAt: t0.Add(2 * time.Second), Verdict: "fail", Trigger: "manual", Evidence: json.RawMessage(`{"delta":"5"}`)}
+
+	for _, in := range []recstore.CaptureInput{oldest, middle, newest} {
+		require.NoError(t, store.RecordCapture(ctx, in))
+	}
+
+	// All periods, newest-first (ListTransactions read index is eventually
+	// consistent with the writes — F25/F27 — so retry until all three land).
+	eventuallyConsistent(t, func(c *assert.CollectT) {
+		cur, lerr := store.ListCaptures(ctx, ruleID, recstore.NewGetCapturesQuery(recstore.NewPaginatedQueryOptions(recstore.CapturesFilters{})))
+		if !assert.NoError(c, lerr) {
+			return
+		}
+
+		if !assert.Len(c, cur.Data, 3) {
+			return
+		}
+
+		assert.Equal(c, newest.EvaluationID, cur.Data[0].EvaluationID, "newest first")
+		assert.Equal(c, middle.EvaluationID, cur.Data[1].EvaluationID)
+		assert.Equal(c, oldest.EvaluationID, cur.Data[2].EvaluationID)
+
+		// Fields round-trip on the newest (a failing capture with evidence).
+		assert.Equal(c, "fail", cur.Data[0].Verdict)
+		assert.Equal(c, "manual", cur.Data[0].Trigger)
+		assert.Equal(c, ruleID, cur.Data[0].RuleID)
+		assert.JSONEq(c, `{"delta":"5"}`, string(cur.Data[0].Evidence))
+	})
+
+	// Period filter: only the two 2026-03 captures.
+	eventuallyConsistent(t, func(c *assert.CollectT) {
+		cur, lerr := store.ListCaptures(ctx, ruleID, recstore.NewGetCapturesQuery(recstore.NewPaginatedQueryOptions(recstore.CapturesFilters{Period: "2026-03"})))
+		if !assert.NoError(c, lerr) {
+			return
+		}
+
+		if !assert.Len(c, cur.Data, 2) {
+			return
+		}
+
+		assert.Equal(c, newest.EvaluationID, cur.Data[0].EvaluationID)
+		assert.Equal(c, oldest.EvaluationID, cur.Data[1].EvaluationID)
+	})
+}
+
 func balance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, addr, asset string) string {
 	t.Helper()
 

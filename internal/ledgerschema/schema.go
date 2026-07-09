@@ -201,6 +201,18 @@ func MetadataIndexes() []*commonpb.IndexID {
 	return idxs
 }
 
+// TransactionIndexes returns the transaction built-in indexes to create at
+// provisioning. Listing transactions by address — ListCaptures scans a rule's
+// capture bucket (`capture:rule:{ruleId}:per:*`) to read its evaluation history —
+// requires the account→transaction address index (any role). Without it the
+// ledger rejects an address-filtered transaction query with FailedPrecondition
+// ("index not found: address").
+func TransactionIndexes() []*commonpb.IndexID {
+	return []*commonpb.IndexID{
+		commonpb.TxBuiltinIndexID(commonpb.TransactionBuiltinIndex_TX_BUILTIN_INDEX_ADDRESS),
+	}
+}
+
 // Prepared query names. Only fixed-shape hot queries are prepared; per-rule /
 // per-status / label-filtered lists are built ad-hoc by the filter translator (step 4).
 const (

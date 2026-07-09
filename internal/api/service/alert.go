@@ -156,6 +156,14 @@ func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q stor
 	return s.store.ListAlertEvents(ctx, alertID, q)
 }
 
+// ListCaptures returns a rule's evaluation history — the immutable capture
+// records (ADR-003), most-recent-first. This is the API surface for the
+// "reconciliation history" view: every run of a rule with its verdict, trigger
+// and observed evidence, read live from the control ledger.
+func (s *Service) ListCaptures(ctx context.Context, ruleID uuid.UUID, q store.GetCapturesQuery) (*bunpaginate.Cursor[models.Capture], error) {
+	return s.store.ListCaptures(ctx, ruleID, q)
+}
+
 // engineErrorFingerprint is the synthetic fingerprint used by the evaluation
 // orchestrator when a kernel/resolver failure raises a meta-alert (see
 // openEngineErrorAlert in evaluation.go). Promoted to a package-level

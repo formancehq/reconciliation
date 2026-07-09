@@ -108,6 +108,14 @@ func CapturePool(ruleID string) string {
 	return "capture:pool:rule:" + ruleID
 }
 
+// CaptureRulePrefix matches all capture buckets of a rule across every period
+// (`capture:rule:{ruleID}:per:*`). Used to list a rule's full capture history as
+// transactions. It excludes the rule's capture pool (`capture:pool:rule:*`), so a
+// prefix match returns only the per-period buckets, not the mint source.
+func CaptureRulePrefix(ruleID string) string {
+	return "capture:rule:" + ruleID + ":per:"
+}
+
 // --- Aggregation prefixes (for AGGREGATE_VOLUMES) ---
 
 // OpenPrefix aggregates ALERT markers across all open alerts (all rules).

@@ -68,10 +68,13 @@ snooze/unsnooze are `SAVED_METADATA`/`DELETED_METADATA` — the sink must cover 
   `--events-sink-secret` optional), replacing the publisher dropped at 6a-5a. Server is add-only (swallow
   AlreadyExists for boot; config change = manual remove+re-add, which resets the cursor). Verified via
   it-test + a boot smoke (`ledgerctl events list` confirms the sink + live delivery attempts).
-- **Deferred (Phase 4):** `ListAlertEvents` paginated history needs a **queryable sink** (ClickHouse/
-  Databricks — the ledger log has no account filter, so per-request replay is O(all _recon writes));
-  semantic event types + replay API; checkpoint **anchor persistence** (needs retained/scheduled
-  checkpoints, §7 — not needed while break evidence is the durable audit, §8).
+- **Deferred (Phase 4):** `ListAlertEvents` (the *alert-transition* timeline) needs a **queryable sink**
+  (ClickHouse/Databricks — the ledger log has no account filter, so per-request replay is O(all _recon
+  writes)); semantic event types + replay API; checkpoint **anchor persistence** (needs retained/
+  scheduled checkpoints, §7 — not needed while break evidence is the durable audit, §8).
+- **Live now (not the sink):** the *evaluation* history — `GET /rules/{id}/captures` — reads the
+  per-eval capture **transactions** via `ListTransactions` (captures are first-class txns, unlike the
+  metadata-log alert timeline), so it needs no sink. See the "capture history endpoint" workstream.
 
 A dedicated PR off `main` should follow (rebase after PR #83).
 
@@ -1010,6 +1013,45 @@ ledger, deleted on teardown). Not on `main`; no OpenAPI change.
 | F8 | MED | Additive schema/chart evolution on an existing ledger — **resolved** via delta reconcile in `Provision`. | ✅ resolved |
 | F34 | LOW | Ledger `SetMetadataFieldType` has **no unchanged-type guard**: it bumps `forward_encoding_version` (an index rewrite) even when the declared type is identical. recon works around it by diffing against `GetLedgerInfo` and only declaring the delta. Upstream fix: the FSM could no-op an identical redeclaration. | 🟡 mitigated in-recon; upstream follow-up |
 | — | LOW | Destructive evolution (remove/retype a field, change a populated account type) is still unhandled and needs an it-ledger rename or a manual `RemoveMetadataFieldType`/type migration. Low frequency; documented. | ⬜ noted |
+
+## Workstream: capture history endpoint (`GET /rules/{id}/captures`)
+
+Exposes a rule's **evaluation history** — the immutable captures recorded per evaluation (ADR-003) —
+as a read API. Key insight (owner): captures are **transactions**, not the alert-transition log, so
+they are queryable **live** via `ListTransactions` on the capture bucket address — no ClickHouse/
+Databricks sink needed (that gate, `ListAlertEvents`, remains for the *alert-transition* timeline,
+which is a different axis: a capture is per-`(rule, period)` and covers the whole evaluation, pass or
+fail; an alert timeline is per-break). This unblocks the strongest demo-UI view — "every reconciliation
+run, verdict + observed evidence" — without waiting on Phase 4.
+
+**Vertical slice:**
+- `Client.ListTransactionsFunc` — streaming transaction reader (mirrors `QueryAccountsFunc`, cursor via
+  trailer). `models.Capture` — typed record. `store.GetCapturesQuery`/`CapturesFilters{Period}`.
+- `LedgerStore.ListCaptures(ruleID, q)` filters transactions on `CaptureRulePrefix` (all periods) or
+  `CaptureAccount(rule, period)` (scoped), maps each tx's self-describing metadata via
+  `captureFromTransaction` (all-string round-trip), sorts newest-first, offset-slices (F23-class,
+  bounded to one rule).
+- Service passthrough + `backend.Service` + handler `GET /rules/{ruleID}/captures?period=` + DTO +
+  OpenAPI (`Capture`/`CapturesCursorResponse`). Mocks regenerated (`ledgerClient`, `backend.Service`);
+  `fakeV1Store` extended.
+
+**Provisioning (F34-adjacent, additive):** address-filtering transactions needs the ledger's
+**transaction address index** (`TX_BUILTIN_INDEX_ADDRESS`) — without it the query fails
+`FailedPrecondition: index not found: address`. Added `schema.TransactionIndexes()`; the provisioner
+now creates account-metadata **and** transaction indexes. **No it-ledger rename** — F8's additive
+reconcile created the index on the existing `recon-it6` on next `Provision` (`CreateIndex` swallows
+`AlreadyExists`). A live validation of the F8 workstream.
+
+**Checks:** build/vet(+`-tags it`)/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` unit green
+(`captureFromTransaction` round-trip + not-a-capture; `ListCaptures` filter-prefix/order + period scope
+via mock; handler `TestListRuleCaptures_Nominal` — DTO + `?period=` threading). it-suite (`-p 1`,
+`recon-it6`) green incl. new `TestIntegration_ListCaptures` (record across periods → list newest-first
+live, period filter). OpenAPI validated (`yq`). Not on `main`.
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| — | LOW | `ListCaptures` collects one rule's captures and offset-slices client-side (F23-class). Bounded per rule, but a long-lived continuous rule accumulates one capture per evaluation — a native `ListTransactions` cursor threaded to the HTTP layer is the follow-up. | ⬜ noted |
+| — | LOW | Capture reads are eventually-consistent on the transaction read index (F25/F27 class): a list right after `RecordCapture` may briefly lag; the it-test waits via `require.EventuallyWithT`. | ⬜ noted |
 
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 

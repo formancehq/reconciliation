@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
+	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -346,6 +348,40 @@ func TestListRules_Nominal(t *testing.T) {
 	var got sharedapi.BaseResponse[models.Rule]
 	sharedapi.Decode(t, rec.Body, &got)
 	require.Len(t, got.Cursor.Data, 2)
+}
+
+// TestListRuleCaptures_Nominal — the capture-history endpoint: DTO rendering plus
+// the optional ?period= filter threaded into the query.
+func TestListRuleCaptures_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	ruleID := uuid.New()
+	cursor := &bunpaginate.Cursor[models.Capture]{
+		Data: []models.Capture{
+			{TransactionID: 3, RuleID: ruleID, PeriodID: "2026-03", EvaluationID: uuid.New(), Verdict: "fail", Trigger: "manual", CapturedAt: time.Now().UTC()},
+		},
+	}
+
+	mockSvc.EXPECT().
+		ListCaptures(gomock.Any(), ruleID, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ uuid.UUID, q store.GetCapturesQuery) (*bunpaginate.Cursor[models.Capture], error) {
+			require.Equal(t, "2026-03", q.Options.Options.Period, "period query param is threaded into the filter")
+			return cursor, nil
+		})
+
+	r := httptest.NewRequest(http.MethodGet, "/rules/"+ruleID.String()+"/captures?period=2026-03", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got sharedapi.BaseResponse[captureResponse]
+	sharedapi.Decode(t, rec.Body, &got)
+	require.Len(t, got.Cursor.Data, 1)
+	require.Equal(t, uint64(3), got.Cursor.Data[0].TransactionID)
+	require.Equal(t, "fail", got.Cursor.Data[0].Verdict)
+	require.Equal(t, ruleID.String(), got.Cursor.Data[0].RuleID)
 }
 
 // TestListRules_InvalidPageSize the pageSize param must reject non-integer

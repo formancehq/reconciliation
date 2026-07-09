@@ -61,3 +61,15 @@ func getPaginatedQueryOptionsAlertEvents(r *http.Request) (*store.PaginatedQuery
 	return pointer.For(store.NewPaginatedQueryOptions(store.AlertEventsFilters{}).
 		WithPageSize(pageSize)), nil
 }
+
+func getPaginatedQueryOptionsCaptures(r *http.Request) (*store.PaginatedQueryOptions[store.CapturesFilters], error) {
+	pageSize, err := getPageSize(r)
+	if err != nil {
+		return nil, err
+	}
+	// The rule id comes from the path; `period` is the one optional filter
+	// (scope to a single reconciliation period).
+	return pointer.For(store.NewPaginatedQueryOptions(store.CapturesFilters{
+		Period: r.URL.Query().Get("period"),
+	}).WithPageSize(pageSize)), nil
+}

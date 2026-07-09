@@ -464,6 +464,49 @@ func (c *Client) QueryAccountsFunc(ctx context.Context, ledgerName string, filte
 	}
 }
 
+// ListTransactionsFunc streams every transaction matching filter (address order)
+// and invokes fn for each, paging internally via the stream's next-cursor
+// trailer — the transaction-side mirror of QueryAccountsFunc. Used to read a
+// rule's capture history from the `_recon` control ledger: captures are
+// first-class transactions, so they are queryable live (no event sink needed).
+func (c *Client) ListTransactionsFunc(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, fn func(*commonpb.Transaction) error) error {
+	var cursor string
+
+	for {
+		stream, err := c.service.ListTransactions(ctx, &servicepb.ListTransactionsRequest{
+			Ledger: ledgerName,
+			Options: &commonpb.ListOptions{
+				Filter:   filter,
+				PageSize: queryPageSize,
+				Cursor:   cursor,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("list transactions on %s: %w", ledgerName, err)
+		}
+
+		for {
+			tx, rerr := stream.Recv()
+			if errors.Is(rerr, io.EOF) {
+				break
+			}
+
+			if rerr != nil {
+				return fmt.Errorf("recv transaction on %s: %w", ledgerName, rerr)
+			}
+
+			if ferr := fn(tx); ferr != nil {
+				return ferr
+			}
+		}
+
+		cursor = nextCursorFromTrailer(stream.Trailer())
+		if cursor == "" {
+			return nil
+		}
+	}
+}
+
 // QueryAccounts streams every account matching filter and collects them. The
 // server-side filter keeps the collected set to the matches only, so this is
 // bounded by the query's selectivity (id lookup → ≤1; a rule/period sweep → its

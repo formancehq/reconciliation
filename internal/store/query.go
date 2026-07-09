@@ -65,3 +65,19 @@ func NewGetAlertEventsQuery(opts PaginatedQueryOptions[AlertEventsFilters]) GetA
 		Options:  opts,
 	}
 }
+
+// CapturesFilters scopes a rule's capture history. Period is optional: empty
+// lists every period of the rule; set, it scopes to that (rule, period) bucket.
+type CapturesFilters struct {
+	Period string `json:"period"`
+}
+
+type GetCapturesQuery bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[CapturesFilters]]
+
+func NewGetCapturesQuery(opts PaginatedQueryOptions[CapturesFilters]) GetCapturesQuery {
+	return GetCapturesQuery{
+		PageSize: opts.PageSize,
+		Order:    bunpaginate.OrderAsc,
+		Options:  opts,
+	}
+}

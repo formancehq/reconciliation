@@ -128,6 +128,29 @@ func (f *fakeV1Store) RecordCapture(_ context.Context, in store.CaptureInput) er
 	return nil
 }
 
+func (f *fakeV1Store) ListCaptures(_ context.Context, ruleID uuid.UUID, q store.GetCapturesQuery) (*bunpaginate.Cursor[models.Capture], error) {
+	var out []models.Capture
+	for _, in := range f.captures {
+		if in.RuleID != ruleID {
+			continue
+		}
+		if p := q.Options.Options.Period; p != "" && in.PeriodID != p {
+			continue
+		}
+		out = append(out, models.Capture{
+			RuleID:       in.RuleID,
+			PeriodID:     in.PeriodID,
+			EvaluationID: in.EvaluationID,
+			TemplateKind: in.TemplateKind,
+			Verdict:      in.Verdict,
+			Trigger:      in.Trigger,
+			CapturedAt:   in.CapturedAt,
+			Evidence:     in.Evidence,
+		})
+	}
+	return &bunpaginate.Cursor[models.Capture]{Data: out}, nil
+}
+
 // recordEvent is the fake's mirror of store.appendAlertEvent. Centralised so
 // every transition writes the same shape and the test surface for events stays
 // honest.
