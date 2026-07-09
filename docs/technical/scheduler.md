@@ -8,8 +8,9 @@
 A rule can declare a **cron schedule** (`schedule.kind = "cron"`, with a cron
 `expr` and optional `tz`). When the scheduler is enabled, it fires `EvaluateRule`
 for each such rule at its scheduled times — the same code path a manual
-evaluation takes (each pins its own query checkpoint), so detection, the period
-model, the alert lifecycle, and event delivery all behave identically.
+evaluation takes (each reads its data ledgers live and records its own `_recon`
+capture — ADR-003), so detection, the period model, the alert lifecycle, and
+event delivery all behave identically.
 
 The cron expression is **validated at rule-create time** (`POST /rules`) — a bad
 expression is rejected up front, not discovered silently at run time.

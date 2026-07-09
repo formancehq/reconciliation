@@ -5,13 +5,15 @@ The V1 product surface is a **business lifecycle**, not a rules engine. This doc
 > **Observe → Detect → Alert → Evidence → Resolve or Accept**
 
 Each diagram shows one flow. Since the ledger-native migration, all state lives on the
-control-ledger `_recon` and the ledgers being reconciled are read at **query checkpoints**
-(see [architecture.md](./architecture.md) and [ADR-002](../prd/adr-002-pit-consistency.md)).
+control-ledger `_recon`; the ledgers being reconciled are read **live** (no query checkpoints) and
+each evaluation is recorded as an immutable `_recon` **capture** transaction
+(see [architecture.md](./architecture.md) and [ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md),
+which supersedes the checkpoint model of [ADR-002](../prd/adr-002-pit-consistency.md)).
 
 > **Canonical reference test.** The evaluate→alert flows are exercised end-to-end in
 > [`v1_orchestration_test.go`](../../internal/api/service/v1_orchestration_test.go) (unit, fakes)
 > and [`evaluation_it_test.go`](../../internal/api/service/evaluation_it_test.go) (against a live
-> ledger, at a real checkpoint). If the diagrams and the tests diverge, the tests win.
+> ledger). If the diagrams and the tests diverge, the tests win.
 
 ---
 
@@ -54,42 +56,44 @@ sequenceDiagram
     autonumber
     participant Trig as Trigger (cron / POST evaluate)
     participant Svc  as Service.EvaluateRule
-    participant CP   as Checkpointer (ledger)
     participant Reg  as templates.Registry
-    participant Eng  as engine.Engine
     participant Data as data-ledgers A/B
     participant L    as Ledger (_recon)
 
     Trig->>Svc: evaluate(rule)
-    Svc->>CP: AcquireCheckpoint()  (pins one cross-ledger cut)
-    CP-->>Svc: checkpointID
-    Svc->>Reg: Evaluate(spec, eng, resolvers, {checkpointID, PIT})
-    Reg->>Data: AggregateVolumes(query, checkpointID)  (Tier-1, per source)
+    Svc->>Reg: Evaluate(spec, resolvers, {PIT})
+    Reg->>Data: AggregateVolumes(query)  (live, per source)
     Data-->>Reg: balances (per asset)
-    Reg->>Eng: Compile + Evaluate(per-asset CEL, checkpointID)
-    Eng->>Data: balance(source) via builtin @ checkpointID
-    Eng-->>Reg: pass/fail
+    Note over Reg: direct big.Int math per asset;<br/>render compiledCEL into evidence
     Reg-->>Svc: []Outcome  (one per fingerprint axis)
+    Svc->>L: RecordCapture — mint 1 CAPTURE (snapshot in tx metadata)
     loop For each failing outcome
         Svc->>L: OpenOrUpdateAlert — Numscript batch (marker + metadata + last_transition)
     end
     loop For each passing / disappeared fingerprint
         Svc->>L: AutoResolveAlert — guarded burn (marker → pool)
     end
-    Svc->>CP: Release(checkpointID)  (cancellation-surviving ctx)
     Svc-->>Trig: evaluation { result, outcomes }
 ```
 
 **Notes**
 
-- The service pins **one checkpoint per evaluation**; every Tier-1 ledger source (and the kernel
-  cross-check) reads at it, so ledgers A and B are compared at one consistent cut. Tier-2 pool
-  sources read "latest". Released on a cancellation-surviving context (**F26**).
+- **Live reads, no checkpoint** (ADR-003). Each `ledgerSet` source is one `AggregateVolumes` — an
+  internally consistent server-side snapshot, so a **single-ledger** universe is skew-free for free.
+  **Cross-ledger** rules read each side separately; the transient skew is absorbed by the template's
+  `tolerance`. Built-ins evaluate in **typed `big.Int` math** — the CEL kernel is not run at
+  evaluation time (it renders `compiledCEL` into `evidence` for explainability only).
+- **A capture per evaluation** (ADR-003). `RecordCapture` mints one `CAPTURE` into
+  `capture:rule:{id}:per:{p}`; the observed snapshot (`verdict`, `trigger`, `evidence`, …) rides the
+  `COMMITTED_TRANSACTION` metadata — the durable, receipt-signed "what reconciled and when", covering
+  passes as well as breaks. It is written **before** the alert transitions.
 - The `Outcome` list covers every asset the template touched — passing included — so the service
   can **auto-resolve** prior alerts whose fingerprint isn't in the failing set.
-- **No durable evaluation row.** The result is returned; the break `evidence` is durable on
-  `alert:item`; there is no `/evaluations` read surface (RFC §4.4.2). Correctness rests on
-  idempotent, guarded per-alert batches — there is no cross-store transaction to roll back.
+- **The capture is the durable evaluation record** (ADR-003, revising RFC §4.4.2) — an immutable
+  `_recon` transaction, not a queryable Postgres evaluation table (`CreateEvaluation` is a no-op).
+  The run result is also returned; the break `evidence` is additionally durable on `alert:item`. The
+  capture and every alert write run sequentially and each is individually idempotent per (rule,
+  period, evaluation) — there is no cross-store transaction to roll back.
 - Resolver / kernel errors short-circuit and raise an `engine.error` meta-alert (§6).
 
 ---
@@ -207,22 +211,29 @@ evaluation returns `ERROR` (non-durable). Translation lives in
 
 ---
 
-## 7. Checkpoint consistency
+## 7. Read consistency — live reads + tolerance
 
 ```mermaid
 flowchart LR
-    Tick[Evaluate @ T] --> Acq[AcquireCheckpoint → checkpointID C]
-    Acq --> Read["Tier-1 sources read A, B @ C<br/>(one consistent cross-ledger cut)"]
-    Read --> Eval[Engine.Evaluate]
-    Eval --> Rel[Release C]
+    Tick[Evaluate @ T] --> Read["Each ledgerSet source →<br/>AggregateVolumes (live, per source)"]
+    Read --> Math[Template direct big.Int math]
+    Math --> Cap["Record capture on _recon<br/>(immutable snapshot in tx metadata)"]
 ```
 
-There is **no arbitrary PIT** in Ledger v3 — the anchor is a **query checkpoint** (ADR-002). One
-checkpoint pinned per evaluation freezes ledgers A, B and `_recon` at the same log sequence, so a
-cross-ledger rule reads a skew-free snapshot. `PIT` survives only as the nominal instant used to
-derive the reconciliation period and as the audit timestamp for Tier-2 (pool) sources. While a
-checkpoint is retained, the read is re-derivable; the durable break `evidence` on `alert:item`
-survives regardless (ADR-002 §8).
+Reconciliation reads its data ledgers **live** — there are **no query checkpoints** (ADR-003,
+superseding the ADR-002 checkpoint anchor). Each `ledgerSet` source is one `AggregateVolumes`, an
+internally consistent server-side snapshot, so a **single-ledger** universe is skew-free for free.
+**Cross-ledger** rules read each side separately; the transient skew between the two reads is
+absorbed by the template's `tolerance` — a period close reconciles settled state (stable regardless
+of read instant), and continuous monitoring self-corrects on the next tick. `PIT` survives only as
+the nominal instant that buckets the reconciliation period and timestamps the capture;
+`min_log_sequence` (a live-read freshness floor) is available but unused.
+
+The durable audit substrate is the per-evaluation **capture** transaction (§2) — an immutable,
+receipt-signed `_recon` record of the observed numbers; the durable break `evidence` on `alert:item`
+survives regardless. Provable simultaneous multi-ledger atomicity — the one thing a checkpoint
+uniquely offered, and discarded anyway — is deferred to a future ledger primitive
+([EN-1480](https://formance-team.atlassian.net/browse/EN-1480)).
 
 ---
 

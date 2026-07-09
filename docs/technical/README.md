@@ -8,7 +8,7 @@ Engineering reference for the V1 reconciliation work. Start with the architectur
 |---|---|
 | [architecture.md](./architecture.md) | How the CEL kernel, templates, the ledger-native store (`_recon`), and the service layer fit together — plus the account model + transition workflow. |
 | [api.md](./api.md) | The V1 `/rules` / `/alerts` API + the events sink (evaluations are non-durable). |
-| [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate (at a checkpoint) → alert → resolve / accept, plus reopen, engine-error, and event delivery. |
+| [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate (live reads + capture) → alert → resolve / accept, plus reopen, engine-error, and event delivery. |
 | [templates.md](./templates.md) | The V1 GA template catalog — spec shapes, validation rules, what each compiles to, evidence format. |
 | [alert-period-model.md](./alert-period-model.md) | Why alerts are scoped by reconciliation period (cadence), and how it's implemented. |
 | [scheduler.md](./scheduler.md) | The in-process cron scheduler — how rules fire automatically, and the single-instance caveat. |
