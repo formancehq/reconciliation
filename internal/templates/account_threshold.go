@@ -84,6 +84,17 @@ func (t *AccountThreshold) Validate(raw json.RawMessage) error {
 	return nil
 }
 
+// Queries returns the single (ledger, query) source for create-time query
+// validation.
+func (t *AccountThreshold) Queries(raw json.RawMessage) ([]SourceSpec, error) {
+	var spec ThresholdSpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+
+	return []SourceSpec{{Ledger: spec.Ledger, Query: spec.Query}}, nil
+}
+
 func (t *AccountThreshold) Explain(raw json.RawMessage) (string, error) {
 	var spec ThresholdSpec
 	if err := unmarshalSpec(raw, &spec); err != nil {

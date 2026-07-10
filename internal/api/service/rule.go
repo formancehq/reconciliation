@@ -8,12 +8,53 @@ import (
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/engine"
+	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 )
+
+// queryValidator is the optional capability the production ledger resolver
+// (internal/ledgerresolver) carries to validate a data-ledger query against its
+// target ledger before a rule is persisted. It is deliberately not on
+// engine.LedgerResolver (the kernel's read contract) and is detected by type
+// assertion, so in-memory test resolvers can omit it — validation is then skipped,
+// not failed.
+type queryValidator interface {
+	ValidateQuery(ctx context.Context, ledger string, query json.RawMessage) error
+}
+
+// validateQueries probes every (ledger, query) source the template reads from so a
+// query that is untranslatable or references an unindexed / type-incompatible
+// metadata key is rejected at create time (400 VALIDATION) rather than left to
+// ERROR at evaluation. It is a no-op when the resolver cannot validate (tests) or
+// is unset. A transient transport error is returned unwrapped so the caller
+// surfaces it as 500, not 400. Call after Validate — the spec is well-formed by then.
+func (s *Service) validateQueries(ctx context.Context, ev templates.Evaluator, spec json.RawMessage) error {
+	v, ok := s.resolvers.Ledger.(queryValidator)
+	if !ok {
+		return nil
+	}
+
+	sources, err := ev.Queries(spec)
+	if err != nil {
+		return err
+	}
+
+	for _, src := range sources {
+		if err := v.ValidateQuery(ctx, src.Ledger, src.Query); err != nil {
+			if errors.Is(err, ledger.ErrQueryUnsupported) || errors.Is(err, ledger.ErrQueryIndex) {
+				return fmt.Errorf("%w: %v", templates.ErrInvalidSpec, err)
+			}
+
+			return err
+		}
+	}
+
+	return nil
+}
 
 // CreateRuleRequest is what the API hands to the service. The service validates,
 // derives compiled_cel via the template's Explain, and persists.
@@ -81,6 +122,9 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 		return nil, err
 	}
 	if err := ev.Validate(req.TemplateSpec); err != nil {
+		return nil, err
+	}
+	if err := s.validateQueries(ctx, ev, req.TemplateSpec); err != nil {
 		return nil, err
 	}
 	compiled, err := ev.Explain(req.TemplateSpec)
@@ -164,6 +208,9 @@ func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch store.RuleP
 			return err
 		}
 		if err := ev.Validate(spec); err != nil {
+			return err
+		}
+		if err := s.validateQueries(ctx, ev, spec); err != nil {
 			return err
 		}
 		compiled, err := ev.Explain(spec)

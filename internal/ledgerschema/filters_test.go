@@ -29,6 +29,27 @@ func TestFilterMetadataBool(t *testing.T) {
 	}
 }
 
+func TestFilterMetadataExists(t *testing.T) {
+	t.Parallel()
+
+	f := schema.FilterMetadataExists("counterparty", false)
+	if got := f.GetField().GetField().GetMetadata(); got != "counterparty" {
+		t.Errorf("field key: got %q", got)
+	}
+
+	if f.GetField().GetExistsCond() == nil {
+		t.Fatal("exists cond: want non-nil")
+	}
+
+	if f.GetField().GetExistsCond().GetIncludeNull() {
+		t.Error("includeNull: want false")
+	}
+
+	if schema.FilterMetadataExists("k", true).GetField().GetExistsCond().GetIncludeNull() != true {
+		t.Error("includeNull: want true")
+	}
+}
+
 func TestFilterAll(t *testing.T) {
 	t.Parallel()
 

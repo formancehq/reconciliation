@@ -67,6 +67,22 @@ func (t *LedgerInvariant) Validate(raw json.RawMessage) error {
 	return nil
 }
 
+// Queries returns one (ledger, query) source per term for create-time query
+// validation; terms may span ledgers.
+func (t *LedgerInvariant) Queries(raw json.RawMessage) ([]SourceSpec, error) {
+	var spec InvariantSpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+
+	out := make([]SourceSpec, 0, len(spec.Terms))
+	for _, term := range spec.Terms {
+		out = append(out, SourceSpec{Ledger: term.Ledger, Query: term.Query})
+	}
+
+	return out, nil
+}
+
 func (t *LedgerInvariant) Explain(raw json.RawMessage) (string, error) {
 	var spec InvariantSpec
 	if err := unmarshalSpec(raw, &spec); err != nil {

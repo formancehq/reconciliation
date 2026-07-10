@@ -46,6 +46,14 @@ type Evaluator interface {
 	// (wrapped) on failure; the API layer surfaces these as 400 VALIDATION.
 	Validate(spec json.RawMessage) error
 
+	// Queries returns the (ledger, query) sources the spec reads from, so the
+	// service can validate each against its target ledger at rule-create time —
+	// that the query is translatable and every metadata[k] it references has a
+	// ready, type-compatible accounts index — rather than letting a bad query
+	// ERROR at evaluation. Returns ErrInvalidSpec (wrapped) if the spec does not
+	// unmarshal. Called after Validate, so the spec is otherwise well-formed.
+	Queries(spec json.RawMessage) ([]SourceSpec, error)
+
 	// Explain returns a representative CEL string for the rule.compiled_cel
 	// column. This is NOT necessarily the exact expression run at evaluation
 	// time — for templates that fan out per asset/account, Explain returns

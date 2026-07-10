@@ -40,11 +40,14 @@ func TestIntegration_LiveReads(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const (
-		ledgerA = "recon-it-src-a"
-		ledgerB = "recon-it-src-b"
-		asset   = "USD/2"
-	)
+	const asset = "USD/2"
+	// Unique per run so the test is isolated on the shared dev ledgers — a fixed
+	// name that was soft-deleted by an earlier run stays deleted (CreateLedger
+	// returns FailedPrecondition, not AlreadyExists).
+	ledgerA := "recon-it-src-a-" + uuid.NewString()
+	ledgerB := "recon-it-src-b-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(ctx, ledgerA) }()
+	defer func() { _ = client.DeleteLedger(ctx, ledgerB) }()
 
 	for _, l := range []string{ledgerA, ledgerB} {
 		require.NoError(t, client.CreateLedger(ctx, l, nil, nil, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT), "create %s", l)
@@ -81,10 +84,11 @@ func TestIntegration_LiveListAccounts(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const (
-		ledgerName = "recon-it-src-la"
-		asset      = "USD/2"
-	)
+	const asset = "USD/2"
+	// Unique per run so a soft-deleted fixed name can't wedge the test (see
+	// TestIntegration_LiveReads).
+	ledgerName := "recon-it-src-la-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(ctx, ledgerName) }()
 	require.NoError(t, client.CreateLedger(ctx, ledgerName, nil, nil, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT))
 
 	// Fresh per-run prefix so the test is isolated on the shared dev ledger.
@@ -124,6 +128,88 @@ func TestIntegration_LiveListAccounts(t *testing.T) {
 		}
 		assert.Equal(c, "150", live[acctA].Balances[asset].String())
 	}, 5*time.Second, 25*time.Millisecond)
+}
+
+// TestIntegration_MetadataOperators proves the extended query DSL end-to-end
+// against a typed, indexed metadata field: a numeric comparison ($gt) and
+// existence ($exists) select the right account set (AC#1), and ValidateQuery
+// rejects a query on an unindexed key while accepting the indexed one (AC#2).
+//
+//	go test -tags it -run TestIntegration_MetadataOperators ./internal/ledger/...
+func TestIntegration_MetadataOperators(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	client, err := NewClient(itAddr(), nil)
+	require.NoError(t, err)
+
+	defer func() { _ = client.Close() }()
+
+	ledgerName := "recon-it-md-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(ctx, ledgerName) }()
+
+	// Declare `tier` as INT64 so the query engine interprets it numerically, and
+	// build its accounts index (a metadata filter needs both — declaring a type
+	// does not by itself make the field queryable).
+	require.NoError(t, client.CreateLedger(ctx, ledgerName,
+		[]*commonpb.SetMetadataFieldTypeCommand{{
+			TargetType: commonpb.TargetType_TARGET_TYPE_ACCOUNT,
+			Key:        "tier",
+			Type:       commonpb.MetadataType_METADATA_TYPE_INT64,
+		}},
+		nil, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT))
+	require.NoError(t, client.CreateIndex(ctx, ledgerName,
+		&servicepb.CreateIndexRequest{Id: commonpb.AccountMetadataIndexID("tier")}))
+
+	const asset = "USD/2"
+	prefix := "md:" + uuid.NewString() + ":"
+	acctLow, acctHigh, acctNone := prefix+"low", prefix+"high", prefix+"none"
+	reader := NewReader(client)
+
+	// Three accounts: two carry a typed `tier`, one carries none.
+	for addr, amount := range map[string]uint64{acctLow: 100, acctHigh: 200, acctNone: 300} {
+		writeBalance(ctx, t, client, ledgerName, addr, asset, amount)
+	}
+	require.NoError(t, client.SaveAccountMetadataValues(ctx, ledgerName, acctLow,
+		map[string]*commonpb.MetadataValue{"tier": {Type: &commonpb.MetadataValue_IntValue{IntValue: 1}}}))
+	require.NoError(t, client.SaveAccountMetadataValues(ctx, ledgerName, acctHigh,
+		map[string]*commonpb.MetadataValue{"tier": {Type: &commonpb.MetadataValue_IntValue{IntValue: 5}}}))
+
+	// $gt: only tier=5 (200) is above 3; scoped to this run's prefix. Retried
+	// until the index has absorbed the writes (eventually consistent).
+	gtQuery := json.RawMessage(fmt.Sprintf(
+		`{"$and":[{"$match":{"address":%q}},{"$gt":{"metadata[tier]":3}}]}`, prefix+"*"))
+	requireEventualBalance(ctx, t, reader, ledgerName, gtQuery, asset, "200")
+
+	// $exists: the two tier-bearing accounts, not acctNone.
+	existsQuery := json.RawMessage(fmt.Sprintf(
+		`{"$and":[{"$match":{"address":%q}},{"$exists":{"metadata[tier]":true}}]}`, prefix+"*"))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		byAddr := map[string]Account{}
+		accts, lerr := reader.ListAccounts(ctx, ledgerName, existsQuery, 10)
+		if !assert.NoError(c, lerr) {
+			return
+		}
+		for _, a := range accts {
+			byAddr[a.Address] = a
+		}
+		assert.Len(c, byAddr, 2)
+		assert.Contains(c, byAddr, acctLow)
+		assert.Contains(c, byAddr, acctHigh)
+		assert.NotContains(c, byAddr, acctNone)
+	}, 10*time.Second, 50*time.Millisecond)
+
+	// ValidateQuery: the indexed key + an address-only query are accepted; an
+	// unindexed metadata key is rejected as ErrQueryIndex (the create-time guard).
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, reader.ValidateQuery(ctx, ledgerName, gtQuery), "indexed key accepted")
+	}, 10*time.Second, 50*time.Millisecond)
+	require.NoError(t, reader.ValidateQuery(ctx, ledgerName,
+		json.RawMessage(fmt.Sprintf(`{"$match":{"address":%q}}`, prefix+"*"))), "address-only needs no index")
+
+	unindexed := json.RawMessage(`{"$match":{"metadata[recon-it-unindexed]":"x"}}`)
+	require.ErrorIs(t, reader.ValidateQuery(ctx, ledgerName, unindexed), ErrQueryIndex,
+		"a query on an unindexed metadata key must be rejected at create time")
 }
 
 // listByAddress reads the matched accounts live and indexes them by address.

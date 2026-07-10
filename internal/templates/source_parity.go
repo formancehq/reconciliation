@@ -63,6 +63,17 @@ func (t *SourceParity) Validate(raw json.RawMessage) error {
 	return nil
 }
 
+// Queries returns both sides as (ledger, query) sources for create-time query
+// validation. Both are ledger sources at V1 (SourceSpec is ledger-only).
+func (t *SourceParity) Queries(raw json.RawMessage) ([]SourceSpec, error) {
+	var spec ParitySpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+
+	return []SourceSpec{spec.Left, spec.Right}, nil
+}
+
 // Explain returns the canonical per-asset CEL form with `<asset>` as a literal
 // placeholder.
 func (t *SourceParity) Explain(raw json.RawMessage) (string, error) {

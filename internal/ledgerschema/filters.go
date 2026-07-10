@@ -89,6 +89,23 @@ func FilterMetadataInt64Range(key string, min, max *int64, minExclusive, maxExcl
 	}
 }
 
+// FilterMetadataExists matches accounts that carry `metadata[key]` at all
+// (filterexpr: `metadata[key] exists`), regardless of value. includeNull keeps
+// keys explicitly set to a null value in the match set; false requires a
+// non-null value. Needs the key's accounts index like any other metadata filter.
+func FilterMetadataExists(key string, includeNull bool) *commonpb.QueryFilter {
+	return &commonpb.QueryFilter{
+		Filter: &commonpb.QueryFilter_Field{
+			Field: &commonpb.FieldCondition{
+				Field: &commonpb.FieldRef{Metadata: key},
+				Condition: &commonpb.FieldCondition_ExistsCond{
+					ExistsCond: &commonpb.ExistsCondition{IncludeNull: includeNull},
+				},
+			},
+		},
+	}
+}
+
 // FilterAll ANDs the given filters (filterexpr: `a and b and ...`).
 func FilterAll(filters ...*commonpb.QueryFilter) *commonpb.QueryFilter {
 	return &commonpb.QueryFilter{

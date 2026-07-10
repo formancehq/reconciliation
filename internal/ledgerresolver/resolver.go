@@ -42,6 +42,14 @@ func (r *Resolver) ListAccounts(ctx context.Context, ledgerName string, query js
 	return toEngineAccounts(accts), nil
 }
 
+// ValidateQuery passes through to the reader's create-time query guard. It is
+// deliberately outside engine.LedgerResolver (the kernel's read contract) — the
+// service type-asserts for it, so only the production resolver carries it and
+// in-memory test fakes stay minimal.
+func (r *Resolver) ValidateQuery(ctx context.Context, ledgerName string, query json.RawMessage) error {
+	return r.reader.ValidateQuery(ctx, ledgerName, query)
+}
+
 // toEngineAccounts maps the engine-free ledger.Account view onto engine.Account.
 func toEngineAccounts(accts []ledger.Account) []engine.Account {
 	out := make([]engine.Account, len(accts))

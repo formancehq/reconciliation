@@ -12,6 +12,59 @@ import (
 	"github.com/formancehq/reconciliation/internal/models"
 )
 
+// TestQueries_AllTemplates checks each template surfaces its (ledger, query)
+// sources for create-time query validation, in a stable order.
+func TestQueries_AllTemplates(t *testing.T) {
+	t.Parallel()
+
+	t.Run("source_parity returns left then right", func(t *testing.T) {
+		spec := mustJSON(t, ParitySpec{
+			Left:  ledgerSource("l", `{"$match":{"address":"a:*"}}`),
+			Right: ledgerSource("r", `{"$match":{"address":"b"}}`),
+		})
+		qs, err := NewSourceParity().Queries(spec)
+		if err != nil {
+			t.Fatalf("Queries: %v", err)
+		}
+		if len(qs) != 2 || qs[0].Ledger != "l" || qs[1].Ledger != "r" {
+			t.Fatalf("got %+v", qs)
+		}
+	})
+
+	t.Run("account_threshold returns a single source", func(t *testing.T) {
+		min := int64(1)
+		spec := mustJSON(t, ThresholdSpec{
+			Ledger: "t",
+			Query:  json.RawMessage(`{"$match":{"address":"x:*"}}`),
+			Bounds: map[string]ThresholdBounds{"USD/2": {Min: &min}},
+		})
+		qs, err := NewAccountThreshold().Queries(spec)
+		if err != nil {
+			t.Fatalf("Queries: %v", err)
+		}
+		if len(qs) != 1 || qs[0].Ledger != "t" {
+			t.Fatalf("got %+v", qs)
+		}
+	})
+
+	t.Run("ledger_invariant returns one per term", func(t *testing.T) {
+		spec := mustJSON(t, InvariantSpec{
+			Terms: []InvariantTerm{
+				{Ledger: "a", Query: json.RawMessage(`{}`), Sign: 1},
+				{Ledger: "b", Query: json.RawMessage(`{}`), Sign: -1},
+			},
+			Tolerance: map[string]int64{"USD/2": 0},
+		})
+		qs, err := NewLedgerInvariant().Queries(spec)
+		if err != nil {
+			t.Fatalf("Queries: %v", err)
+		}
+		if len(qs) != 2 || qs[0].Ledger != "a" || qs[1].Ledger != "b" {
+			t.Fatalf("got %+v", qs)
+		}
+	})
+}
+
 // --- helpers -----------------------------------------------------------------
 
 type fakeLedger struct {
