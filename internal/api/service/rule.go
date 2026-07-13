@@ -46,17 +46,33 @@ func (r *CreateRuleRequest) Validate() error {
 	if r.Cadence != "" && !r.Cadence.Valid() {
 		return fmt.Errorf("cadence must be one of continuous, daily, weekly, monthly (got %q)", r.Cadence)
 	}
-	// Fail fast on a bad cron schedule at create time rather than letting the
-	// scheduler discover it (and skip the rule) at run time.
-	if r.Schedule != nil && r.Schedule.Kind == models.ScheduleCron {
-		if r.Schedule.Expr == "" {
+	if r.Severity != "" && !r.Severity.Valid() {
+		return fmt.Errorf("severity must be one of info, low, medium, high, critical (got %q)", r.Severity)
+	}
+	return validateSchedule(r.Schedule)
+}
+
+// validateSchedule checks a schedule's kind is a known enum value and, for a
+// cron schedule, that the expression is present and parses. A nil schedule is
+// valid (no schedule ⇒ on-demand). Shared by create validation and PatchRule so
+// a malformed schedule is rejected on BOTH paths rather than persisted and then
+// silently skipped by the scheduler every tick.
+func validateSchedule(s *models.Schedule) error {
+	if s == nil {
+		return nil
+	}
+	if !s.Kind.Valid() {
+		return fmt.Errorf("schedule.kind must be one of on_demand, cron (got %q)", s.Kind)
+	}
+	if s.Kind == models.ScheduleCron {
+		if s.Expr == "" {
 			return errors.New("schedule.expr is required for a cron schedule")
 		}
-		tz := r.Schedule.TZ
+		tz := s.TZ
 		if tz == "" {
 			tz = "UTC"
 		}
-		if _, err := cron.ParseStandard(fmt.Sprintf("CRON_TZ=%s %s", tz, r.Schedule.Expr)); err != nil {
+		if _, err := cron.ParseStandard(fmt.Sprintf("CRON_TZ=%s %s", tz, s.Expr)); err != nil {
 			return fmt.Errorf("schedule.expr is not a valid cron expression: %v", err)
 		}
 	}
@@ -141,6 +157,19 @@ func (s *Service) ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunp
 // PatchRule applies a partial update. If templateKind or templateSpec changes,
 // the new spec is validated and the compiled_cel is rederived.
 func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch storage.RulePatch) error {
+	// Validate the mutable enum/schedule fields with the same rules as create,
+	// so a patch can't slip past an invalid severity (→ DB CHECK → 500) or a
+	// malformed/empty schedule (→ silently skipped by the scheduler). Wrap in
+	// ErrValidation so handleServiceErrors maps them to 400.
+	if patch.Severity != nil && !patch.Severity.Valid() {
+		return fmt.Errorf("%w: severity must be one of info, low, medium, high, critical (got %q)", ErrValidation, *patch.Severity)
+	}
+	if patch.Schedule != nil {
+		if err := validateSchedule(patch.Schedule); err != nil {
+			return fmt.Errorf("%w: %v", ErrValidation, err)
+		}
+	}
+
 	// If the caller is changing the template surface, re-validate against the
 	// registry and rederive compiled_cel so explanations stay accurate.
 	if patch.TemplateKind != nil || patch.TemplateSpec != nil {

@@ -20,6 +20,7 @@ type alertResponse struct {
 	ID               string             `json:"id"`
 	RuleID           string             `json:"ruleID"`
 	Fingerprint      string             `json:"fingerprint"`
+	PeriodID         string             `json:"periodID"`
 	Status           string             `json:"status"`
 	Severity         string             `json:"severity"`
 	FirstSeenAt      time.Time          `json:"firstSeenAt"`
@@ -40,6 +41,7 @@ func renderAlert(a *models.Alert) *alertResponse {
 		ID:               a.ID.String(),
 		RuleID:           a.RuleID.String(),
 		Fingerprint:      a.Fingerprint,
+		PeriodID:         a.PeriodID,
 		Status:           string(a.Status),
 		Severity:         string(a.Severity),
 		FirstSeenAt:      a.FirstSeenAt,

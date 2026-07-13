@@ -45,6 +45,18 @@ const (
 	SeverityCritical Severity = "critical"
 )
 
+// Valid reports whether s is a recognised severity. The CHECK constraint in the
+// migration mirrors this set, so validating at the API boundary turns a would-be
+// 500 (DB constraint violation on bad input) into a 400.
+func (s Severity) Valid() bool {
+	switch s {
+	case SeverityInfo, SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical:
+		return true
+	default:
+		return false
+	}
+}
+
 // Cadence is the reconciliation rhythm of a rule — it decides how a failing
 // fingerprint is scoped into a period. A fresh alert is opened per period, so a
 // March break and an April break of the same fingerprint are distinct,
@@ -109,6 +121,19 @@ const (
 	ScheduleOnDemand ScheduleKind = "on_demand"
 	ScheduleCron     ScheduleKind = "cron"
 )
+
+// Valid reports whether k is a recognised schedule kind. The public schema only
+// allows on_demand or cron; anything else (a typo, or a not-yet-shipped kind) is
+// rejected at the boundary rather than persisted and silently ignored by the
+// scheduler.
+func (k ScheduleKind) Valid() bool {
+	switch k {
+	case ScheduleOnDemand, ScheduleCron:
+		return true
+	default:
+		return false
+	}
+}
 
 // Schedule controls when a rule is evaluated. Cron-specific fields are zero
 // for on_demand schedules; consumers should branch on Kind.

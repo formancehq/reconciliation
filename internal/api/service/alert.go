@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
@@ -56,7 +56,7 @@ type UnsnoozeAlertRequest struct {
 // original metadata and does NOT append a new event.
 func (s *Service) AckAlert(ctx context.Context, id uuid.UUID, req *AckAlertRequest) (*models.Alert, error) {
 	if req == nil || req.By == "" {
-		return nil, errors.New("ack: 'by' is required")
+		return nil, fmt.Errorf("%w: ack: 'by' is required", ErrValidation)
 	}
 	ack := &models.Ack{
 		By:   req.By,
@@ -71,7 +71,7 @@ func (s *Service) AckAlert(ctx context.Context, id uuid.UUID, req *AckAlertReque
 // evaluation loop on PASS.
 func (s *Service) ResolveAlert(ctx context.Context, id uuid.UUID, req *ResolveAlertRequest) (*models.Alert, error) {
 	if req == nil || req.By == "" {
-		return nil, errors.New("resolve: 'by' is required")
+		return nil, fmt.Errorf("%w: resolve: 'by' is required", ErrValidation)
 	}
 	resolution := &models.Resolution{
 		Kind:            models.ResolutionFixedByBooking,
@@ -88,10 +88,10 @@ func (s *Service) ResolveAlert(ctx context.Context, id uuid.UUID, req *ResolveAl
 // reproducible even after the underlying balances change.
 func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAlertRequest) (*models.Alert, error) {
 	if req == nil || req.By == "" {
-		return nil, errors.New("accept: 'by' is required")
+		return nil, fmt.Errorf("%w: accept: 'by' is required", ErrValidation)
 	}
 	if req.Note == "" {
-		return nil, errors.New("accept: 'note' is required for business acceptance")
+		return nil, fmt.Errorf("%w: accept: 'note' is required for business acceptance", ErrValidation)
 	}
 
 	current, err := s.store.GetAlert(ctx, id)
@@ -118,13 +118,13 @@ func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAler
 // failing and stays counted against period-green; only its webhooks go quiet.
 func (s *Service) SnoozeAlert(ctx context.Context, id uuid.UUID, req *SnoozeAlertRequest) (*models.Alert, error) {
 	if req == nil || req.By == "" {
-		return nil, errors.New("snooze: 'by' is required")
+		return nil, fmt.Errorf("%w: snooze: 'by' is required", ErrValidation)
 	}
 	if req.Until.IsZero() {
-		return nil, errors.New("snooze: 'until' is required")
+		return nil, fmt.Errorf("%w: snooze: 'until' is required", ErrValidation)
 	}
 	if !req.Until.After(time.Now().UTC()) {
-		return nil, errors.New("snooze: 'until' must be in the future")
+		return nil, fmt.Errorf("%w: snooze: 'until' must be in the future", ErrValidation)
 	}
 	return s.store.SnoozeAlert(ctx, id, req.Until, req.By, req.Note)
 }
@@ -133,7 +133,7 @@ func (s *Service) SnoozeAlert(ctx context.Context, id uuid.UUID, req *SnoozeAler
 // not snoozed returns it unchanged.
 func (s *Service) UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *UnsnoozeAlertRequest) (*models.Alert, error) {
 	if req == nil || req.By == "" {
-		return nil, errors.New("unsnooze: 'by' is required")
+		return nil, fmt.Errorf("%w: unsnooze: 'by' is required", ErrValidation)
 	}
 	return s.store.UnsnoozeAlert(ctx, id, req.By)
 }
