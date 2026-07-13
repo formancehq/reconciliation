@@ -162,6 +162,12 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 		if reopened {
 			// Clear the prior resolution — its audit lives in alert_event.
 			q = q.Set("resolution = NULL").Set("ack = NULL")
+		} else if prev == models.AlertAcknowledged {
+			// Resurfacing an acknowledged alert (ACK → OPEN): the prior ack no
+			// longer reflects the current, still-failing state. Clear it so the
+			// row doesn't report an OPEN alert as still acknowledged; the
+			// historical ack remains in alert_event.
+			q = q.Set("ack = NULL")
 		}
 		if snoozeExpired {
 			// The mute has lapsed — drop it so the alert pages normally again.
@@ -176,6 +182,8 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 		// can rely on alert.Resolution / alert.Snooze == nil.
 		if reopened {
 			current.Resolution = nil
+			current.Ack = nil
+		} else if prev == models.AlertAcknowledged {
 			current.Ack = nil
 		}
 		if snoozeExpired {
@@ -394,6 +402,18 @@ func (s *Storage) applyResolution(ctx context.Context, id uuid.UUID, resolution 
 			return e("resolve alert", err)
 		}
 		prev := alert.Status
+		// Freeze the accepted evidence from the row we just locked FOR UPDATE, so
+		// the snapshot is atomic with the transition — a concurrent evaluation
+		// updating the alert's evidence between a read and this write can't slip a
+		// stale snapshot in. Only business acceptance snapshots; other kinds leave
+		// it unset.
+		if resolution.Kind == models.ResolutionAcceptedByBusiness && len(resolution.EvidenceSnapshot) == 0 {
+			if len(alert.Evidence) > 0 {
+				resolution.EvidenceSnapshot = alert.Evidence
+			} else {
+				resolution.EvidenceSnapshot = json.RawMessage("null")
+			}
+		}
 		if _, err := tx.NewUpdate().
 			Model(&alert).
 			Set("status = ?", string(models.AlertResolved)).

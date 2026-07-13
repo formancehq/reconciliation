@@ -34,9 +34,7 @@ const (
 	ResolutionFixedByBooking ResolutionKind = "fixed_by_booking"
 	// ResolutionAcceptedByBusiness is set when an operator formally
 	// acknowledges the discrepancy as acceptable. Note is required;
-	// EvidenceSnapshot freezes the breaking evidence at decision time;
-	// ExpiresAt optionally re-raises the alert if it's still failing
-	// after the acceptance window.
+	// EvidenceSnapshot freezes the breaking evidence at decision time.
 	//
 	// The literal matches the OpenAPI enum, the storage.AcceptAlert
 	// docstring, and the user-facing docs — all use the same
@@ -75,7 +73,6 @@ type Snooze struct {
 // Some fields apply to only certain kinds:
 //   - TransactionRefs:  fixed_by_booking only
 //   - EvidenceSnapshot: accepted only (frozen at decision time)
-//   - ExpiresAt:        accepted only, optional
 type Resolution struct {
 	Kind             ResolutionKind  `json:"kind"`
 	By               string          `json:"by"`
@@ -83,7 +80,6 @@ type Resolution struct {
 	Note             string          `json:"note,omitempty"`
 	TransactionRefs  []string        `json:"transactionRefs,omitempty"`
 	EvidenceSnapshot json.RawMessage `json:"evidenceSnapshot,omitempty"`
-	ExpiresAt        *time.Time      `json:"expiresAt,omitempty"`
 }
 
 // Alert is the stable, dedup'd record of a failing fingerprint within a

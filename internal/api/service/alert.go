@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -31,9 +30,8 @@ type ResolveAlertRequest struct {
 // AcceptAlertRequest is the body of POST /alerts/{id}/accept. The note field
 // is required by spec — see PRD §6.4 (Resolution model).
 type AcceptAlertRequest struct {
-	By        string     `json:"by"`
-	Note      string     `json:"note"`
-	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	By   string `json:"by"`
+	Note string `json:"note"`
 }
 
 // SnoozeAlertRequest is the body of POST /alerts/{id}/snooze. `until` is the
@@ -83,9 +81,11 @@ func (s *Service) ResolveAlert(ctx context.Context, id uuid.UUID, req *ResolveAl
 	return s.store.ResolveAlertManual(ctx, id, resolution)
 }
 
-// AcceptAlert applies the `accepted_by_business` resolution. Snapshots the
-// alert's current evidence onto the resolution so the audit trail is
-// reproducible even after the underlying balances change.
+// AcceptAlert applies the `accepted_by_business` resolution. The alert's current
+// evidence is frozen onto the resolution so the audit trail is reproducible even
+// after the underlying balances change — the snapshot is captured inside
+// AcceptAlert's locked transaction (see storage.applyResolution), so it reflects
+// exactly the state being accepted even under a concurrent evaluation.
 func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAlertRequest) (*models.Alert, error) {
 	if req == nil || req.By == "" {
 		return nil, fmt.Errorf("%w: accept: 'by' is required", ErrValidation)
@@ -93,23 +93,11 @@ func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAler
 	if req.Note == "" {
 		return nil, fmt.Errorf("%w: accept: 'note' is required for business acceptance", ErrValidation)
 	}
-
-	current, err := s.store.GetAlert(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	snapshot := current.Evidence
-	if len(snapshot) == 0 {
-		snapshot = json.RawMessage("null")
-	}
-
 	resolution := &models.Resolution{
-		Kind:             models.ResolutionAcceptedByBusiness,
-		By:               req.By,
-		At:               time.Now().UTC(),
-		Note:             req.Note,
-		EvidenceSnapshot: snapshot,
-		ExpiresAt:        req.ExpiresAt,
+		Kind: models.ResolutionAcceptedByBusiness,
+		By:   req.By,
+		At:   time.Now().UTC(),
+		Note: req.Note,
 	}
 	return s.store.AcceptAlert(ctx, id, resolution)
 }

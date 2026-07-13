@@ -152,7 +152,7 @@ Three closure paths on `Alert`, persisted in the `resolution` jsonb column (curr
 |---|---|---|
 | `auto` | Next evaluation passes for the same fingerprint | None — system-attributed |
 | `fixed_by_booking` | Operator marks resolved, optionally referencing corrective transactions | Author, timestamp, transactionRefs (optional), note (optional) |
-| `accepted_by_business` | Operator declares the discrepancy acceptable | Author, timestamp, **note (required)**, evidence snapshot frozen at acceptance, optional `expiresAt` |
+| `accepted_by_business` | Operator declares the discrepancy acceptable | Author, timestamp, **note (required)**, evidence snapshot frozen at acceptance |
 
 Re-opens after RESOLVED create a *new* row with `—` pointing at the prior one — flapping is visible, MTTR is clean. See [workflows.md](./workflows.md) for the lifecycle diagram.
 

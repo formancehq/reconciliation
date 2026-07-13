@@ -136,11 +136,14 @@ func (s *Service) runEvaluation(ctx context.Context, rule *models.Rule, ev templ
 	}
 	evaluation.Evidence = evidence
 
-	// The period this evaluation reconciles, derived from the rule's cadence
-	// and the evaluation PIT. Every alert this evaluation opens/resolves is
-	// scoped to it, so a new period's run never rewrites a prior period's
-	// cases (see models.Cadence.PeriodID).
-	periodID := rule.Cadence.PeriodID(req.PIT)
+	// The period this evaluation reconciles. Bucketed from the SAME effective
+	// instant the resolvers read at — req.PIT minus the safety margin — not the
+	// raw PIT: an evaluation just after a period boundary with a positive margin
+	// reads the previous period's data, and its alert must be scoped to that
+	// period so a later rerun of the real period touches the same case. Every
+	// alert this evaluation opens/resolves is scoped to it, so a new period's run
+	// never rewrites a prior period's cases (see models.Cadence.PeriodID).
+	periodID := rule.Cadence.PeriodID(req.PIT.Add(-req.SafetyMargin))
 
 	// Atomicity: persist the evaluation row AND drive every alert transition
 	// under a single transaction. A mid-loop failure would otherwise leave a
@@ -153,7 +156,18 @@ func (s *Service) runEvaluation(ctx context.Context, rule *models.Rule, ev templ
 		if err := store.CreateEvaluation(ctx, evaluation); err != nil {
 			return err
 		}
-		return driveAlerts(ctx, store, rule, evaluation, outcomes, periodID, ended)
+		if err := driveAlerts(ctx, store, rule, evaluation, outcomes, periodID, ended); err != nil {
+			return err
+		}
+		// A successful evaluation means the engine ran cleanly — clear any open
+		// engine.error meta-alert. It lives in the continuous period (engine
+		// health is not a per-period reconciliation fact), so the period-scoped
+		// sweep in driveAlerts never reaches it for daily/weekly/monthly rules;
+		// resolve it explicitly. No-op when no engine.error alert is active.
+		if _, err := store.AutoResolveAlert(ctx, rule.ID, engineErrorFingerprint, models.ContinuousPeriod, evaluation.ID, ended); err != nil {
+			return fmt.Errorf("auto-resolve engine.error: %w", err)
+		}
+		return nil
 	}); err != nil {
 		return nil, err
 	}

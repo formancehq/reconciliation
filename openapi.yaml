@@ -814,7 +814,6 @@ components:
         evidenceSnapshot:
           type: object
           additionalProperties: true
-        expiresAt: { type: string, format: date-time }
     Snooze:
       type: object
       description: |
@@ -1080,7 +1079,6 @@ components:
       properties:
         by: { type: string }
         note: { type: string, minLength: 1 }
-        expiresAt: { type: string, format: date-time }
     SnoozeAlertRequest:
       type: object
       required: [by, until]

@@ -226,13 +226,12 @@ Status transitions to `RESOLVED` with `resolution.kind = "fixed_by_booking"` (or
 
 ```json
 {
-  "by":        "treasurer@buildr.com",
-  "note":      "Settlement lag on GBP corridor — confirmed by treasury.",
-  "expiresAt": "2026-07-17T00:00:00Z"
+  "by":   "treasurer@buildr.com",
+  "note": "Settlement lag on GBP corridor — confirmed by treasury."
 }
 ```
 
-Note is **required**. Evidence at acceptance time is frozen onto `resolution.evidenceSnapshot`. If `expiresAt` is set and the rule still fails at expiry, the alert reopens in place (same id) — the prior resolution is preserved as an `alert_event` row, the alert row's current `resolution` is cleared.
+Note is **required**. Evidence at acceptance time is frozen onto `resolution.evidenceSnapshot`. A subsequent failing evaluation reopens the alert in place (same id) — the prior resolution is preserved as an `alert_event` row, the alert row's current `resolution` is cleared.
 
 #### `POST /alerts/{id}/snooze` — mute notifications until a future instant
 

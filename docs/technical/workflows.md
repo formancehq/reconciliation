@@ -132,7 +132,7 @@ flowchart LR
     subgraph "Closure paths"
         A[Auto-resolved<br/>next eval passes] --> R(RESOLVED on the alert row<br/>+ pass event)
         F[Fixed by booking<br/>POST /resolve + tx refs] --> R2(RESOLVED on the alert row<br/>+ resolve event)
-        B[Accepted by business<br/>POST /accept + note + evidence snapshot<br/>+ optional expiresAt] --> R3(RESOLVED on the alert row<br/>+ accept event)
+        B[Accepted by business<br/>POST /accept + note + evidence snapshot] --> R3(RESOLVED on the alert row<br/>+ accept event)
     end
     R -.fingerprint fails again.-> Reopen(Same alert row<br/>status → OPEN<br/>+ fail event with prev=RESOLVED)
     R2 -.fingerprint fails again.-> Reopen
@@ -141,11 +141,11 @@ flowchart LR
 
 **Required artefacts per path**
 
-| Path | Author | Timestamp | Note | Transaction refs | Evidence snapshot | Expires |
-|---|---|---|---|---|---|---|
-| `auto`               | system | now | — | — | — | — |
-| `fixed_by_booking`   | operator | now | optional | optional | — | — |
-| `accepted_by_business` | operator | now | **required** | — | frozen at acceptance | optional |
+| Path | Author | Timestamp | Note | Transaction refs | Evidence snapshot |
+|---|---|---|---|---|---|
+| `auto`               | system | now | — | — | — |
+| `fixed_by_booking`   | operator | now | optional | optional | — |
+| `accepted_by_business` | operator | now | **required** | — | frozen at acceptance |
 
 Stored on the alert row as `resolution` (JSONB) for the *current* closure, and in `alert_event.payload` for the historical record of every prior resolution across reopen cycles.
 
@@ -155,8 +155,7 @@ Stored on the alert row as `resolution` (JSONB) for the *current* closure, and i
   "by":   "treasurer@buildr.com",
   "at":   "2026-06-17T12:34:56Z",
   "note": "Settlement lag on GBP corridor, confirmed by treasury.",
-  "evidenceSnapshot": { "asset": "GBP/2", "drift": "50000", "tolerance": 0, … },
-  "expiresAt": "2026-07-17T00:00:00Z"
+  "evidenceSnapshot": { "asset": "GBP/2", "drift": "50000", "tolerance": 0, … }
 }
 ```
 

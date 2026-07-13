@@ -198,6 +198,8 @@ func (f *fakeV1Store) OpenOrUpdateAlert(_ context.Context, in storage.OpenAlertI
 		if reopened {
 			alert.Resolution = nil
 			alert.Ack = nil
+		} else if prev == models.AlertAcknowledged {
+			alert.Ack = nil
 		}
 		event := f.recordEvent(alert.ID, models.AlertEventFail, &prev, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt)
 		copy := *alert
@@ -290,6 +292,15 @@ func (f *fakeV1Store) applyFakeResolution(id uuid.UUID, res *models.Resolution, 
 		return nil, storage.ErrNotFound
 	}
 	prev := alert.Status
+	// Mirror storage.applyResolution: business acceptance freezes the evidence
+	// from the locked row atomically with the transition.
+	if res.Kind == models.ResolutionAcceptedByBusiness && len(res.EvidenceSnapshot) == 0 {
+		if len(alert.Evidence) > 0 {
+			res.EvidenceSnapshot = alert.Evidence
+		} else {
+			res.EvidenceSnapshot = json.RawMessage("null")
+		}
+	}
 	alert.Status = models.AlertResolved
 	alert.Resolution = res
 	alert.UpdatedAt = time.Now().UTC()
@@ -824,11 +835,9 @@ func TestAccept_FreezesEvidence(t *testing.T) {
 	}
 	alert := store.activeFor(rule.ID, "asset:USD/2")
 
-	when := time.Now().Add(48 * time.Hour)
 	out, err := svc.AcceptAlert(context.Background(), alert.ID, &AcceptAlertRequest{
-		By:        "treasurer",
-		Note:      "settlement lag",
-		ExpiresAt: &when,
+		By:   "treasurer",
+		Note: "settlement lag",
 	})
 	if err != nil {
 		t.Fatalf("AcceptAlert: %v", err)
@@ -836,11 +845,10 @@ func TestAccept_FreezesEvidence(t *testing.T) {
 	if out.Resolution == nil || out.Resolution.Kind != models.ResolutionAcceptedByBusiness {
 		t.Fatalf("expected accepted_by_business, got %v", out.Resolution)
 	}
+	// The evidence snapshot is captured inside AcceptAlert's transaction from the
+	// locked alert row — it must equal the alert's evidence at acceptance time.
 	if len(out.Resolution.EvidenceSnapshot) == 0 {
 		t.Errorf("expected non-empty evidence snapshot")
-	}
-	if out.Resolution.ExpiresAt == nil || !out.Resolution.ExpiresAt.Equal(when) {
-		t.Errorf("expiresAt not propagated, got %v", out.Resolution.ExpiresAt)
 	}
 }
 
