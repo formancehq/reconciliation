@@ -101,6 +101,22 @@ func (s *Service) inTx(ctx context.Context, fn func(ctx context.Context, store S
 	return fn(ctx, s.store)
 }
 
+// withRuleLock serialises the read+persist window of an evaluation against
+// other evaluations of the same rule when the store supports it (the real
+// *storage.Storage takes a Postgres advisory lock keyed on the rule id). Test
+// fakes that don't implement it run fn directly — their in-memory state and the
+// test's own goroutine discipline stand in for the lock. Kept as an inline type
+// assertion, like inTx, so the Store interface stays purely about data shapes.
+func (s *Service) withRuleLock(ctx context.Context, ruleID uuid.UUID, fn func(ctx context.Context) error) error {
+	type locker interface {
+		WithRuleLock(ctx context.Context, ruleID uuid.UUID, fn func(ctx context.Context) error) error
+	}
+	if l, ok := s.store.(locker); ok {
+		return l.WithRuleLock(ctx, ruleID, fn)
+	}
+	return fn(ctx)
+}
+
 // SDKFormance is the SDK surface the service layer + engine consume. It
 // intentionally covers BOTH the legacy /policies path (GetPoolBalances on the
 // payments v1 namespace) and the V1 engine resolvers (V2GetLedger,

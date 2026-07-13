@@ -53,6 +53,33 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		return nil, err
 	}
 
+	// Serialise the whole read+persist window against other evaluations of the
+	// same rule. Two evaluations read their sources at different instants and
+	// then commit separately; without this an older evaluation could commit
+	// after a newer one and reopen an alert the newer evaluation just resolved,
+	// with stale evidence (plus a spurious reopen webhook). Holding the lock
+	// across both steps makes same-rule evaluations fully serial — the one that
+	// commits last is the one that read last. Different rules never contend.
+	// (PR #83 review — stale-evaluation ordering.)
+	var evaluation *models.Evaluation
+	if err := s.withRuleLock(ctx, rule.ID, func(ctx context.Context) error {
+		var runErr error
+		evaluation, runErr = s.runEvaluation(ctx, rule, ev, req)
+		return runErr
+	}); err != nil {
+		return nil, err
+	}
+	return evaluation, nil
+}
+
+// runEvaluation executes one evaluation of rule against ev and persists it,
+// opening/updating/auto-resolving alerts per fingerprint. It is always called
+// under s.withRuleLock, so the default PIT is stamped HERE (not at request
+// entry): a trigger that waited on the lock reads its sources — and scopes its
+// period — as of the instant it actually runs, keeping the read order and the
+// commit order identical. An explicitly supplied PIT is honoured unchanged (the
+// demo runner / integration tests reconcile as of a fixed instant).
+func (s *Service) runEvaluation(ctx context.Context, rule *models.Rule, ev templates.Evaluator, req EvaluateRuleRequest) (*models.Evaluation, error) {
 	if req.PIT.IsZero() {
 		req.PIT = time.Now().UTC()
 	}
@@ -122,13 +149,12 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	//
 	// Each call into driveAlerts also appends rows to alert_event, so the
 	// audit log stays consistent with the alert table by construction.
-	err = s.inTx(ctx, func(ctx context.Context, store Store) error {
+	if err := s.inTx(ctx, func(ctx context.Context, store Store) error {
 		if err := store.CreateEvaluation(ctx, evaluation); err != nil {
 			return err
 		}
 		return driveAlerts(ctx, store, rule, evaluation, outcomes, periodID, ended)
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
