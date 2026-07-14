@@ -21,6 +21,7 @@ import (
 	"github.com/formancehq/go-libs/v5/pkg/audit"
 	"github.com/formancehq/go-libs/v5/pkg/fx/messagingfx"
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
+	v5logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/api"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/spf13/cobra"
@@ -85,35 +86,55 @@ func newServeCommand(version string) *cobra.Command {
 
 func runServer(version string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		databaseOptions, err := prepareDatabaseOptions(cmd)
+		options, err := serverOptions(cmd, version)
 		if err != nil {
 			return err
 		}
 
-		options := make([]fx.Option, 0)
-		options = append(options, databaseOptions)
-
-		options = append(options,
-			otlptraces.FXModuleFromFlags(cmd),
-			otlpmetrics.FXModuleFromFlags(cmd),
-			auth.FXModuleFromFlags(cmd),
-		)
-
-		listen, _ := cmd.Flags().GetString(listenFlag)
-		auditEnabled, _ := cmd.Flags().GetBool(audit.AuditEnabledFlag)
-		options = append(options,
-			fx.Supply(audit.Config{Enabled: auditEnabled}),
-			stackClientModule(cmd),
-			api.HTTPModule(sharedapi.ServiceInfo{
-				Version: version,
-				Debug:   service.IsDebug(cmd),
-			}, listen),
-			messagingfx.PublishModuleFromFlags(cmd, service.IsDebug(cmd)),
-			licence.FXModuleFromFlags(cmd, ServiceName),
-		)
-
 		return service.New(cmd.OutOrStdout(), options...).Run(cmd)
 	}
+}
+
+func serverOptions(cmd *cobra.Command, version string) ([]fx.Option, error) {
+	databaseOptions, err := prepareDatabaseOptions(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	options := make([]fx.Option, 0)
+	options = append(options, databaseOptions)
+
+	options = append(options,
+		otlptraces.FXModuleFromFlags(cmd),
+		otlpmetrics.FXModuleFromFlags(cmd),
+		auth.FXModuleFromFlags(cmd),
+		messagingLoggingModule(cmd),
+	)
+
+	listen, _ := cmd.Flags().GetString(listenFlag)
+	auditEnabled, _ := cmd.Flags().GetBool(audit.AuditEnabledFlag)
+	options = append(options,
+		fx.Supply(audit.Config{Enabled: auditEnabled}),
+		stackClientModule(cmd),
+		api.HTTPModule(sharedapi.ServiceInfo{
+			Version: version,
+			Debug:   service.IsDebug(cmd),
+		}, listen),
+		messagingfx.PublishModuleFromFlags(cmd, service.IsDebug(cmd)),
+		licence.FXModuleFromFlags(cmd, ServiceName),
+	)
+
+	return options, nil
+}
+
+func messagingLoggingModule(cmd *cobra.Command) fx.Option {
+	jsonFormatting, _ := cmd.Flags().GetBool(v5logging.JsonFormattingLoggerFlag)
+	otelTraces, _ := cmd.Flags().GetBool(otlptraces.OtelTracesFlag)
+
+	return fx.Supply(fx.Annotate(
+		v5logging.NewDefaultLogger(cmd.OutOrStdout(), service.IsDebug(cmd), jsonFormatting, otelTraces),
+		fx.As(new(v5logging.Logger)),
+	))
 }
 
 func prepareDatabaseOptions(cmd *cobra.Command) (fx.Option, error) {
