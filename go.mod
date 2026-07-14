@@ -1,13 +1,13 @@
 module github.com/formancehq/reconciliation
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/ThreeDotsLabs/watermill v1.5.1
 	github.com/formancehq/formance-sdk-go/v3 v3.2.0
 	github.com/formancehq/go-libs v1.7.2
 	github.com/formancehq/go-libs/v3 v3.3.0
-	github.com/formancehq/go-libs/v5 v5.1.1-0.20260522083443-d2a60ed2e0dd
+	github.com/formancehq/go-libs/v5 v5.6.1
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/golang/mock v1.7.0-rc.1
 	github.com/google/uuid v1.6.0
@@ -151,7 +151,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.28.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
-	github.com/opencontainers/runc v1.2.8 // indirect
+	github.com/opencontainers/runc v1.3.6 // indirect
 	github.com/ory/dockertest/v3 v3.12.0 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect

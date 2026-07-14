@@ -84,41 +84,21 @@ func (s *Service) Reconciliation(ctx context.Context, policyID string, req *Reco
 		DriftBalances:        make(map[string]*big.Int),
 	}
 
-	var reconciliationError bool
-	if len(paymentsBalances) != len(ledgerBalances) {
-		res.Status = models.ReconciliationNotOK
-		res.Error = "different number of assets"
-		return res, nil
-	}
-
-	if !reconciliationError {
-		for asset, ledgerBalance := range ledgerBalances {
-			err := s.computeDrift(res, asset, ledgerBalance, paymentsBalances[asset])
-			if err != nil {
-				res.Status = models.ReconciliationNotOK
-				if res.Error == "" {
-					res.Error = err.Error()
-				} else {
-					res.Error = res.Error + "; " + err.Error()
-				}
-			}
-		}
-
-		for asset, paymentBalance := range paymentsBalances {
-			if _, ok := res.DriftBalances[asset]; ok {
-				// Already computed
-				continue
-			}
-
-			err := s.computeDrift(res, asset, ledgerBalances[asset], paymentBalance)
-			if err != nil {
-				res.Status = models.ReconciliationNotOK
+	// harmonizeBalances guarantees both maps share the same key set, so a
+	// single pass over ledgerBalances covers every asset.
+	for asset, ledgerBalance := range ledgerBalances {
+		err := s.computeDrift(res, asset, ledgerBalance, paymentsBalances[asset])
+		if err != nil {
+			res.Status = models.ReconciliationNotOK
+			if res.Error == "" {
+				res.Error = err.Error()
+			} else {
 				res.Error = res.Error + "; " + err.Error()
 			}
 		}
 	}
 
-	if err := s.store.CreateReconciation(ctx, res); err != nil {
+	if err := s.store.CreateReconciliation(ctx, res); err != nil {
 		return nil, newStorageError(err, "failed to create reconciliation")
 	}
 
@@ -149,10 +129,10 @@ func (s *Service) computeDrift(
 		var drift big.Int
 		drift.Set(paymentBalance).Add(&drift, ledgerBalance)
 
+		// A discrepancy in either direction is a reconciliation failure:
+		// the ledger and the payments side must cancel each other out.
 		var err error
-		switch drift.Cmp(big.NewInt(0)) {
-		case 0, 1:
-		default:
+		if drift.Sign() != 0 {
 			err = fmt.Errorf("balance drift for asset %s", asset)
 		}
 

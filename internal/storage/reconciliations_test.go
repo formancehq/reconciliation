@@ -61,7 +61,7 @@ var (
 
 func insertReconciliations(t *testing.T, store *Storage, reconciliations ...*models.Reconciliation) {
 	for _, reconciliation := range reconciliations {
-		err := store.CreateReconciation(context.Background(), reconciliation)
+		err := store.CreateReconciliation(context.Background(), reconciliation)
 		require.NoError(t, err)
 	}
 }
@@ -157,6 +157,16 @@ func TestReconciliationList(t *testing.T) {
 		require.Len(t, reconciliations.Data, 2)
 		require.Equal(t, reconciliations.Data[0].ID, r2.ID)
 		require.Equal(t, reconciliations.Data[1].ID, r3.ID)
+	})
+
+	t.Run("with unsupported operator on createdAt", func(t *testing.T) {
+		_, err := store.ListReconciliations(context.Background(), GetReconciliationsQuery{
+			Options: PaginatedQueryOptions[ReconciliationsFilters]{
+				QueryBuilder: query.Exists("createdAt", true),
+			},
+		})
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrInvalidQuery)
 	})
 
 }

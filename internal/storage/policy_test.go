@@ -127,4 +127,14 @@ func TestPolicyList(t *testing.T) {
 		require.Equal(t, policies.Data[0].ID, p2.ID)
 		require.Equal(t, policies.Data[1].ID, p3.ID)
 	})
+
+	t.Run("with unsupported operator on createdAt", func(t *testing.T) {
+		_, err := store.ListPolicies(context.Background(), GetPoliciesQuery{
+			Options: PaginatedQueryOptions[PoliciesFilters]{
+				QueryBuilder: query.Exists("createdAt", true),
+			},
+		})
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrInvalidQuery)
+	})
 }

@@ -26,6 +26,13 @@ func healthCheckModule() fx.Option {
 	return fx.Options(
 		health.Module(),
 		health.ProvideHealthCheck(func() health.NamedCheck {
+			// Intentionally a process-only liveness check: it must NOT ping the
+			// database or any dependency. The operator wires /_healthcheck to
+			// BOTH the liveness and readiness probes, and the liveness probe
+			// restarts the pod after ~40s of failures. Checking the DB here
+			// would turn a transient DB outage into a restart storm across all
+			// replicas. DB reachability and migration state are verified once at
+			// startup (storage OnStart hook), which fails fast instead.
 			return health.NewNamedCheck("default", health.CheckFn(func(ctx context.Context) error {
 				return nil
 			}))

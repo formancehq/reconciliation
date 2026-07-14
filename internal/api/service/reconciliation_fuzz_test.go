@@ -63,14 +63,16 @@ func FuzzComputeDrift(f *testing.F) {
 			}
 		}
 
-		// Property: if both non-nil and equal in magnitude but opposite sign, drift should be 0
+		// Property: if both non-nil, an error is expected exactly when the
+		// sides do not cancel each other out (non-zero drift in either
+		// direction is a discrepancy).
 		if !ledgerNil && !paymentNil {
 			sum := new(big.Int).Add(big.NewInt(ledgerVal), big.NewInt(paymentVal))
-			if sum.Sign() >= 0 {
-				// No error expected
-				if err != nil {
-					t.Errorf("non-negative sum %s: expected no error, got %v", sum.String(), err)
-				}
+			if sum.Sign() == 0 && err != nil {
+				t.Errorf("zero sum: expected no error, got %v", err)
+			}
+			if sum.Sign() != 0 && err == nil {
+				t.Errorf("non-zero sum %s: expected an error, got nil", sum.String())
 			}
 		}
 	})

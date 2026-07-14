@@ -16,6 +16,7 @@ import (
 	sharedapi "github.com/formancehq/go-libs/api"
 	"github.com/formancehq/go-libs/auth"
 	"github.com/formancehq/go-libs/bun/bunpaginate"
+	"github.com/formancehq/go-libs/v5/pkg/audit"
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -326,7 +327,7 @@ func TestReconciliation(t *testing.T) {
 
 			router := newRouter(backend, sharedapi.ServiceInfo{
 				Debug: testing.Verbose(),
-			}, auth.NewNoAuth(), nil, publish.InMemory())
+			}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{Enabled: true})
 
 			var body []byte
 			if testCase.invalidBody {
@@ -453,7 +454,7 @@ func TestGetReconciliation(t *testing.T) {
 
 			router := newRouter(backend, sharedapi.ServiceInfo{
 				Debug: testing.Verbose(),
-			}, auth.NewNoAuth(), nil, publish.InMemory())
+			}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{Enabled: true})
 
 			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/reconciliations/%s", testCase.id.String()), nil)
 			rec := httptest.NewRecorder()

@@ -94,7 +94,7 @@ func newMockStore() *mockStore {
 	return &mockStore{}
 }
 
-func (s *mockStore) Ping() error {
+func (s *mockStore) Ping(ctx context.Context) error {
 	return nil
 }
 
@@ -121,7 +121,7 @@ func (s *mockStore) ListPolicies(ctx context.Context, q storage.GetPoliciesQuery
 	return nil, nil
 }
 
-func (s *mockStore) CreateReconciation(ctx context.Context, reco *models.Reconciliation) error {
+func (s *mockStore) CreateReconciliation(ctx context.Context, reco *models.Reconciliation) error {
 	return nil
 }
 
