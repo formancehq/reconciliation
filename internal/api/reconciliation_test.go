@@ -475,34 +475,57 @@ func TestGetReconciliation(t *testing.T) {
 	}
 }
 
-func TestListReconciliationsWithFilteredCursor(t *testing.T) {
-	backend, mockService := newTestingBackend(t)
+func TestListReconciliationsWithCursor(t *testing.T) {
+	testCases := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "with query",
+			query: `{"$gte":{"createdAt":"2026-07-09T09:28:24.461Z"}}`,
+		},
+		{
+			name: "without query",
+		},
+	}
 
-	params := url.Values{}
-	params.Set("pageSize", "1")
-	params.Set("query", `{"$gte":{"createdAt":"2026-07-09T09:28:24.461Z"}}`)
-	firstRequest := httptest.NewRequest(http.MethodGet, "/reconciliations?"+params.Encode(), nil)
-	options, err := getPaginatedQueryOptionsReconciliations(firstRequest)
-	require.NoError(t, err)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			backend, mockService := newTestingBackend(t)
 
-	query := storage.NewGetReconciliationsQuery(*options)
-	query.Offset = 1
-	cursor := (*bunpaginate.OffsetPaginatedQuery[storage.PaginatedQueryOptions[storage.ReconciliationsFilters]])(&query).EncodeAsCursor()
-
-	mockService.EXPECT().
-		ListReconciliations(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, actual storage.GetReconciliationsQuery) (*bunpaginate.Cursor[models.Reconciliation], error) {
-			require.Equal(t, uint64(1), actual.Offset)
-			require.Equal(t, uint64(1), actual.PageSize)
-			actualQuery, err := json.Marshal(actual.Options.QueryBuilder)
+			params := url.Values{}
+			params.Set("pageSize", "1")
+			if testCase.query != "" {
+				params.Set("query", testCase.query)
+			}
+			firstRequest := httptest.NewRequest(http.MethodGet, "/reconciliations?"+params.Encode(), nil)
+			options, err := getPaginatedQueryOptionsReconciliations(firstRequest)
 			require.NoError(t, err)
-			require.JSONEq(t, `{"$gte":{"createdAt":"2026-07-09T09:28:24.461Z"}}`, string(actualQuery))
-			return &bunpaginate.Cursor[models.Reconciliation]{}, nil
+
+			query := storage.NewGetReconciliationsQuery(*options)
+			query.Offset = 1
+			cursor := (*bunpaginate.OffsetPaginatedQuery[storage.PaginatedQueryOptions[storage.ReconciliationsFilters]])(&query).EncodeAsCursor()
+
+			mockService.EXPECT().
+				ListReconciliations(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, actual storage.GetReconciliationsQuery) (*bunpaginate.Cursor[models.Reconciliation], error) {
+					require.Equal(t, uint64(1), actual.Offset)
+					require.Equal(t, uint64(1), actual.PageSize)
+					actualQuery, err := json.Marshal(actual.Options.QueryBuilder)
+					require.NoError(t, err)
+					if testCase.query == "" {
+						require.Equal(t, "null", string(actualQuery))
+					} else {
+						require.JSONEq(t, testCase.query, string(actualQuery))
+					}
+					return &bunpaginate.Cursor[models.Reconciliation]{}, nil
+				})
+
+			secondRequest := httptest.NewRequest(http.MethodGet, "/reconciliations?cursor="+url.QueryEscape(cursor), nil)
+			recorder := httptest.NewRecorder()
+			listReconciliationsHandler(backend).ServeHTTP(recorder, secondRequest)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
 		})
-
-	secondRequest := httptest.NewRequest(http.MethodGet, "/reconciliations?cursor="+url.QueryEscape(cursor), nil)
-	recorder := httptest.NewRecorder()
-	listReconciliationsHandler(backend).ServeHTTP(recorder, secondRequest)
-
-	require.Equal(t, http.StatusOK, recorder.Code)
+	}
 }

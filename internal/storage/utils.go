@@ -28,8 +28,9 @@ type PaginatedQueryOptions[T any] struct {
 
 func (opts *PaginatedQueryOptions[T]) UnmarshalJSON(data []byte) error {
 	type base struct {
-		PageSize uint64 `json:"pageSize"`
-		Options  T      `json:"options"`
+		PageSize uint64          `json:"pageSize"`
+		Options  T               `json:"options"`
+		RawQB    json.RawMessage `json:"qb"`
 	}
 
 	var value base
@@ -40,12 +41,12 @@ func (opts *PaginatedQueryOptions[T]) UnmarshalJSON(data []byte) error {
 	opts.PageSize = value.PageSize
 	opts.Options = value.Options
 
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
+	if len(value.RawQB) == 0 || string(value.RawQB) == "null" {
+		opts.QueryBuilder = nil
+		return nil
 	}
 
-	queryBuilder, err := query.ParseJSON(string(raw["qb"]))
+	queryBuilder, err := query.ParseJSON(string(value.RawQB))
 	if err != nil {
 		return err
 	}
