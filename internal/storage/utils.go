@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/query"
@@ -23,6 +24,34 @@ type PaginatedQueryOptions[T any] struct {
 	QueryBuilder query.Builder `json:"qb"`
 	PageSize     uint64        `json:"pageSize"`
 	Options      T             `json:"options"`
+}
+
+func (opts *PaginatedQueryOptions[T]) UnmarshalJSON(data []byte) error {
+	type base struct {
+		PageSize uint64 `json:"pageSize"`
+		Options  T      `json:"options"`
+	}
+
+	var value base
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+
+	opts.PageSize = value.PageSize
+	opts.Options = value.Options
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	queryBuilder, err := query.ParseJSON(string(raw["qb"]))
+	if err != nil {
+		return err
+	}
+	opts.QueryBuilder = queryBuilder
+
+	return nil
 }
 
 func (opts PaginatedQueryOptions[T]) WithQueryBuilder(qb query.Builder) PaginatedQueryOptions[T] {
