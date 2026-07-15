@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 
+	logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
 )
@@ -196,13 +197,23 @@ func (t *LedgerVsPoolDrift) Evaluate(
 		if err != nil {
 			return nil, fmt.Errorf("evaluate per-asset expression for %s: %w", asset, err)
 		}
-		// Defensive: kernel result must agree with our direct math. Any
-		// divergence is a kernel/template contract bug.
+		// Cross-check against the kernel to capture the exact CEL run in the
+		// audit trail. A disagreement is almost always benign pool timing, NOT a
+		// contract bug: the payments pool has no point-in-time read, so the
+		// kernel's live re-resolve can differ from the scout read by whatever
+		// settled in between (a TOCTOU on `latest`). The ledger side is
+		// PIT-deterministic and never diverges. Trust the scout-based direct math
+		// — which also backs the evidence — and log the divergence rather than
+		// raising a spurious engine.error meta-alert; a genuine kernel/template
+		// semantic bug would show up as a persistent divergence in the logs.
 		if evalOut.Passed != passed {
-			return nil, fmt.Errorf(
-				"kernel/template disagreement on %s: kernel=%v, direct=%v (drift=%s tolerance=%d)",
-				asset, evalOut.Passed, passed, driftAbs.String(), tolerance,
-			)
+			logging.FromContext(ctx).WithFields(map[string]any{
+				"asset":     asset,
+				"kernel":    evalOut.Passed,
+				"direct":    passed,
+				"drift":     driftAbs.String(),
+				"tolerance": tolerance,
+			}).Infof("ledger_vs_pool_drift: kernel/direct divergence on %s (likely pool-latest timing); using direct math", asset)
 		}
 
 		outcomes = append(outcomes, Outcome{

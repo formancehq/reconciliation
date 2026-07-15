@@ -54,6 +54,12 @@ func New(resolvers Resolvers, limits Limits) (*Engine, error) {
 // enforces internally.
 func (e *Engine) MaxAccountsScanned() int { return e.limits.MaxAccountsScanned }
 
+// MaxWallClock is the per-evaluation wall-clock budget the engine enforces on
+// resolver calls inside Evaluate. Exposed so the service can bound the WHOLE
+// template evaluation — the asset-discovery "scout" reads templates do before
+// entering the kernel included — not just each kernel Evaluate call.
+func (e *Engine) MaxWallClock() time.Duration { return e.limits.MaxWallClock }
+
 // Compiled is a validated rule expression. Stored on the Rule row as
 // `compiled_cel` for explainability. Compiled is intentionally a value type
 // holding only the source string — re-parsing per evaluation is cheap and

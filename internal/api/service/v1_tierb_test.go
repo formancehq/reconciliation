@@ -85,3 +85,30 @@ func TestEvaluate_PeriodIDUsesMarginAdjustedPIT(t *testing.T) {
 		t.Fatalf("expected alert scoped to margin-adjusted period 2026-03-14, got %q", alert.PeriodID)
 	}
 }
+
+// A pool balance that moves between the scout read and the kernel's live
+// re-read makes the direct math and the kernel cross-check disagree. That is
+// benign pool-`latest` timing, not a contract bug: it must NOT raise a spurious
+// engine.error — the direct math (which backs the evidence) wins.
+func TestEvaluate_PoolTOCTOU_NoSpuriousEngineError(t *testing.T) {
+	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
+	// Scout sees pool -100 → direct drift 0 → PASS; the kernel's later re-read
+	// sees -50 → drift 50 → kernel FAIL. Pre-fix this disagreement errored.
+	p := &orchestrationPayments{
+		current:    map[string]*big.Int{"USD/2": big.NewInt(-100)},
+		afterFirst: map[string]*big.Int{"USD/2": big.NewInt(-50)},
+	}
+	svc, store := newOrchestrationService(t, l, p)
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+
+	ev, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
+	if err != nil {
+		t.Fatalf("EvaluateRule: %v", err)
+	}
+	if ev.Result != models.EvaluationPass {
+		t.Fatalf("expected PASS from the scout-based direct math, got %v (error=%q)", ev.Result, ev.Error)
+	}
+	if store.alertFor(rule.ID, engineErrorFingerprint) != nil {
+		t.Fatalf("a benign pool-timing divergence must not open an engine.error alert")
+	}
+}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -148,6 +149,32 @@ func TestEvaluateRule_Nominal(t *testing.T) {
 	var got sharedapi.BaseResponse[evaluationResponse]
 	sharedapi.Decode(t, rec.Body, &got)
 	require.Equal(t, string(models.EvaluationPass), got.Data.Result)
+}
+
+// A chunked request body (ContentLength == -1) must still be decoded — the
+// caller's at/safetyMargin must reach the service, not be silently dropped.
+func TestEvaluateRule_ChunkedBodyHonored(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	var got service.EvaluateRuleRequest
+	mockSvc.EXPECT().EvaluateRule(gomock.Any(), id, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ uuid.UUID, req service.EvaluateRuleRequest) (*models.Evaluation, error) {
+			got = req
+			return &models.Evaluation{ID: uuid.New(), RuleID: id, Result: models.EvaluationPass}, nil
+		})
+
+	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate",
+		bytes.NewReader([]byte(`{"safetyMargin":"60s"}`)))
+	r.ContentLength = -1 // simulate Transfer-Encoding: chunked
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 60*time.Second, got.SafetyMargin,
+		"chunked body must be decoded; safetyMargin must not fall back to the 30s default")
 }
 
 func TestEvaluateRule_InvalidSafetyMargin(t *testing.T) {

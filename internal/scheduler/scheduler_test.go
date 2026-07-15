@@ -61,8 +61,21 @@ type fakeRuleSvc struct {
 	hasMore   bool
 }
 
-func (f *fakeRuleSvc) ListRules(_ context.Context, _ storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
-	return &bunpaginate.Cursor[models.Rule]{Data: f.rules, HasMore: f.hasMore}, nil
+func (f *fakeRuleSvc) ListRules(_ context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+	// Faithfully apply the same filters the real storage query does, so the
+	// scheduler's reliance on SQL-side filtering is exercised here too.
+	filters := q.Options.Options
+	out := make([]models.Rule, 0, len(f.rules))
+	for _, r := range f.rules {
+		if filters.EnabledOnly && !r.Enabled {
+			continue
+		}
+		if filters.ScheduleKind != "" && (r.Schedule == nil || r.Schedule.Kind != filters.ScheduleKind) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return &bunpaginate.Cursor[models.Rule]{Data: out, HasMore: f.hasMore}, nil
 }
 func (f *fakeRuleSvc) EvaluateRule(_ context.Context, id uuid.UUID, _ service.EvaluateRuleRequest) (*models.Evaluation, error) {
 	f.mu.Lock()

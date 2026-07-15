@@ -107,22 +107,31 @@ func (s *Scheduler) fire(ctx context.Context, r models.Rule) {
 	}
 }
 
-// listCronRules returns enabled rules with a cron schedule. One page, capped at
-// maxRulesPerTick; logs a warning if the deployment has more (rather than
-// silently dropping the overflow).
+// listCronRules returns enabled rules with a cron schedule. The enabled + cron
+// filter is pushed into the query (RulesFilters), so the single page — capped at
+// maxRulesPerTick — is populated with rules the scheduler can actually fire,
+// rather than being consumed by unrelated rules with cron ones paged out of
+// reach. Logs a warning if even the filtered set overflows one page.
 func (s *Scheduler) listCronRules(ctx context.Context) ([]models.Rule, error) {
-	q := storage.NewGetRulesQuery(storage.NewPaginatedQueryOptions(storage.RulesFilters{}).WithPageSize(maxRulesPerTick))
+	q := storage.NewGetRulesQuery(
+		storage.NewPaginatedQueryOptions(storage.RulesFilters{
+			EnabledOnly:  true,
+			ScheduleKind: models.ScheduleCron,
+		}).WithPageSize(maxRulesPerTick),
+	)
 	cursor, err := s.svc.ListRules(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	if cursor.HasMore {
-		s.logger.Errorf("scheduler: more than %d rules — only the first page is scheduled this tick", maxRulesPerTick)
+		s.logger.Errorf("scheduler: more than %d enabled cron rules — only the first page is scheduled this tick", maxRulesPerTick)
 	}
 	out := make([]models.Rule, 0, len(cursor.Data))
 	for i := range cursor.Data {
 		r := cursor.Data[i]
-		if r.Enabled && r.Schedule != nil && r.Schedule.Kind == models.ScheduleCron && r.Schedule.Expr != "" {
+		// enabled + cron kind are already filtered in SQL; guard defensively on a
+		// present expression (a cron rule with an empty expr can never fire).
+		if r.Schedule != nil && r.Schedule.Expr != "" {
 			out = append(out, r)
 		}
 	}

@@ -85,8 +85,21 @@ func (s *Service) runEvaluation(ctx context.Context, rule *models.Rule, ev templ
 	}
 	// SafetyMargin is intentionally NOT defaulted here — see the type comment.
 
+	// Bound the WHOLE template evaluation — the asset-discovery scout reads
+	// included — by the engine's wall-clock budget. The kernel deadlines its own
+	// resolver calls inside Evaluate, but templates scout on the bare ctx before
+	// entering the kernel; without this a hung ledger/payments call during
+	// discovery would run unbounded (the SDK client timeout is 24h) and, under
+	// the per-rule lock, pin a connection and block the rule. (PR #83 review.)
+	evalCtx := ctx
+	if mw := s.engine.MaxWallClock(); mw > 0 {
+		var cancel context.CancelFunc
+		evalCtx, cancel = context.WithTimeout(ctx, mw)
+		defer cancel()
+	}
+
 	started := time.Now().UTC()
-	outcomes, evalErr := ev.Evaluate(ctx, rule.TemplateSpec, s.engine, s.resolvers, engine.EvalInput{
+	outcomes, evalErr := ev.Evaluate(evalCtx, rule.TemplateSpec, s.engine, s.resolvers, engine.EvalInput{
 		PIT:          req.PIT,
 		SafetyMargin: req.SafetyMargin,
 	})

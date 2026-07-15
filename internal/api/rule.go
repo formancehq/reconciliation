@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -197,11 +198,13 @@ func evaluateRuleHandler(b backend.Backend) http.HandlerFunc {
 			return
 		}
 		var req evaluateRuleRequest
-		if r.ContentLength > 0 {
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				api.BadRequest(w, ErrMissingOrInvalidBody, err)
-				return
-			}
+		// Decode whenever a body is present — do NOT gate on ContentLength, which
+		// is -1 under chunked transfer-encoding and would silently drop the
+		// caller's `at`/`safetyMargin`. An empty body yields io.EOF, which we
+		// treat as "no parameters supplied" so the defaults apply.
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			api.BadRequest(w, ErrMissingOrInvalidBody, err)
+			return
 		}
 		svcReq := service.EvaluateRuleRequest{SafetyMargin: defaultEvaluateSafetyMargin}
 		if req.At != nil {

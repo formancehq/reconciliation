@@ -136,10 +136,21 @@ func (s *Storage) PatchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 	return nil
 }
 
-func (s *Storage) buildRuleListQuery(selectQuery *bun.SelectQuery, where string, args []any) *bun.SelectQuery {
+func (s *Storage) buildRuleListQuery(selectQuery *bun.SelectQuery, where string, args []any, filters RulesFilters) *bun.SelectQuery {
 	selectQuery = selectQuery.Order("created_at DESC")
 	if where != "" {
-		return selectQuery.Where(where, args...)
+		selectQuery = selectQuery.Where(where, args...)
+	}
+	if filters.EnabledOnly {
+		selectQuery = selectQuery.Where("enabled = ?", true)
+	}
+	if filters.ScheduleKind != "" {
+		// `schedule` is jsonb; on_demand rules — and rules with no schedule at
+		// all — have a NULL `->>'kind'` and are excluded, which is exactly what
+		// filtering to cron wants. Pushing this into SQL means the scheduler's
+		// page budget is spent on rules it can actually fire, instead of being
+		// consumed by unrelated rules with the relevant ones paged out of reach.
+		selectQuery = selectQuery.Where("schedule->>'kind' = ?", string(filters.ScheduleKind))
 	}
 	return selectQuery
 }
@@ -161,7 +172,7 @@ func (s *Storage) ListRules(ctx context.Context, q GetRulesQuery) (*bunpaginate.
 	return paginateWithOffset[PaginatedQueryOptions[RulesFilters], models.Rule](s, ctx,
 		(*bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[RulesFilters]])(&q),
 		func(query *bun.SelectQuery) *bun.SelectQuery {
-			return s.buildRuleListQuery(query, where, args)
+			return s.buildRuleListQuery(query, where, args, q.Options.Options)
 		},
 	)
 }
@@ -196,7 +207,14 @@ func (s *Storage) ruleQueryContext(qb query.Builder) (string, []any, error) {
 	}))
 }
 
-type RulesFilters struct{}
+// RulesFilters narrows a rule list. The zero value applies no filter (the API
+// default). The scheduler sets EnabledOnly + ScheduleKind so the database
+// returns only the rules it can fire. json tags keep the filter stable across
+// cursor pagination.
+type RulesFilters struct {
+	EnabledOnly  bool                `json:"enabledOnly,omitempty"`
+	ScheduleKind models.ScheduleKind `json:"scheduleKind,omitempty"`
+}
 
 type GetRulesQuery bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[RulesFilters]]
 

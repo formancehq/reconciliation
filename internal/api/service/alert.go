@@ -17,10 +17,12 @@ type AckAlertRequest struct {
 	Note string `json:"note,omitempty"`
 }
 
-// ResolveAlertRequest is the body of POST /alerts/{id}/resolve. When
-// TransactionRefs is non-empty the resolution kind is `fixed_by_booking`;
-// otherwise the caller is recording a system-attributed auto-resolution. The
-// `accepted_by_business` path is a separate endpoint (AcceptAlert).
+// ResolveAlertRequest is the body of POST /alerts/{id}/resolve. This endpoint
+// always records a manual `fixed_by_booking` resolution; TransactionRefs is
+// optional audit metadata (the corrective bookings), not a mode switch. System
+// auto-resolution is driven by the evaluation loop on PASS
+// (storage.AutoResolveAlert), and `accepted_by_business` is a separate endpoint
+// (AcceptAlert).
 type ResolveAlertRequest struct {
 	By              string   `json:"by"`
 	Note            string   `json:"note,omitempty"`
