@@ -14,6 +14,12 @@ lifecycle, and webhooks all behave identically.
 The cron expression is **validated at rule-create time** (`POST /rules`) — a bad
 expression is rejected up front, not discovered silently at run time.
 
+**Safety margin.** A scheduled evaluation reads at `tick − safetyMargin`. When the
+schedule omits `safetyMargin` it defaults to **30s** (same default the manual
+`POST /rules/{id}/evaluate` applies), so scheduled runs stay off in-flight ledger
+writes near a period boundary rather than reading exactly at the tick instant. An
+explicit positive value on the schedule is honoured as-is.
+
 ## How it works (V1 — in-process)
 
 A single goroutine ([internal/scheduler/](../../internal/scheduler/)) ticks once a

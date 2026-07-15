@@ -17,10 +17,10 @@ flowchart LR
     Evaluate --> Scout[Scout via SDK resolvers]
     Scout --> Universe[Determine fingerprint axis\n(asset universe)]
     Universe --> Loop[For each axis value]
-    Loop --> RenderCEL[Render per-axis CEL]
-    RenderCEL --> Compile[engine.Compile]
-    Compile --> Run[engine.Evaluate]
-    Run --> Outcome[Outcome: fingerprint + passed + evidence]
+    Loop --> Direct[Verdict = direct big.Int math on scouted balances]
+    Loop --> RenderCEL[Render per-axis CEL → evidence.compiledCEL]
+    Direct --> Outcome[Outcome: fingerprint + passed + evidence]
+    RenderCEL --> Outcome
     Loop --> Outcomes[List of Outcome]
 ```
 
@@ -29,10 +29,10 @@ Every template:
 1. **Validates** the spec at rule-create time. Failures return `ErrInvalidSpec` (→ HTTP 400).
 2. **Explains** itself — produces a representative CEL string for `rule.compiled_cel`. Not executed at runtime.
 3. **Scouts** the asset universe at evaluation time (queries resolvers).
-4. **Evaluates** per asset by rendering a fresh CEL string, compiling it via the kernel, and running it.
+4. **Evaluates** per asset directly from the scouted balances (big.Int math) for the pass/fail verdict, and renders the per-asset CEL string into `evidence.compiledCEL` for explainability — the CEL is *not* run at evaluation time.
 5. **Returns `[]Outcome`** — one per asset, with fingerprint, pass/fail, and evidence.
 
-A **kernel/template consistency guard** in each template double-checks the kernel's verdict against direct big.Int math and errors loudly on divergence. Catches future kernel drift.
+The template's direct math and its rendered CEL are two expressions of the same invariant. Their equivalence is guaranteed by a unit test (`TestKernelParity_Aggregate`, [kernel_parity_test.go](../../internal/templates/kernel_parity_test.go)) that runs each template's rendered CEL through the kernel against fixed fakes and asserts it matches the direct verdict — rather than by a per-asset kernel re-resolve at evaluation time. That runtime cross-check was dropped: it cost a resolver round-trip per asset and, for a payments pool's `latest` read (no point-in-time), could diverge from the scout read on benign timing. The renderer↔grammar contract is still checked once per rule at create time (`engine.Compile` on the `Explain` output).
 
 Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` and `ledger_vs_pool_drift` both compose sources through it, so there is one code path for "read a balance source".
 
@@ -71,7 +71,7 @@ Port of today's legacy reconciliation. Compares a dynamic ledger account set aga
 
 Discovered at eval time = `union(ledgerBalances, poolBalances)`. **Every** asset present on either side is checked — including assets absent from `tolerance` (which then default to strict 0).
 
-**Per-asset CEL** (the runtime form). With `ledgerSign: -1` the ledger term carries a leading minus:
+**Per-asset CEL** (rendered into `evidence.compiledCEL`; not executed at eval time). With `ledgerSign: -1` the ledger term carries a leading minus:
 
 ```cel
 abs(-balance(ledgerSet("buildr", "<query json>"), "USD/2")
@@ -187,7 +187,7 @@ Per-asset min/max bounds on a ledger account set, either aggregated or per accou
 
 **Scope (`mode`)** — see [the scope model](#how-templates-work):
 - `aggregate`: bounds are checked against the summed balance of the matched set (one query matching one account is the degenerate single-account case). One Outcome per asset.
-- `per_account`: bounds are checked against **each** matched account individually — one Outcome per (account, asset). Accounts are read via `ListAccounts` (volumes), bounded by the engine's `MaxAccountsScanned` budget (the resolver errors rather than truncating). No kernel cross-check in this mode (the value comes from `ListAccounts`, not a `balance(ledgerSet)` CEL call); the per-account CEL is still rendered into evidence.
+- `per_account`: bounds are checked against **each** matched account individually — one Outcome per (account, asset). Accounts are read via `ListAccounts` (volumes), bounded by the engine's `MaxAccountsScanned` budget (the resolver errors rather than truncating). As on the aggregate path, the verdict is direct math and the per-account CEL is rendered into evidence for explainability.
 
 **Asset universe**
 
@@ -245,7 +245,7 @@ A `SourceSpec` is `{ "kind": "ledger" | "payments_pool", ... }`:
 
 **Asset universe** — `union(leftBalances, rightBalances)`; every asset on either side is checked, missing-side defaults to 0.
 
-**Per-asset CEL** (runtime form)
+**Per-asset CEL** (rendered into `evidence.compiledCEL`; not executed at eval time)
 
 ```cel
 abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(pool("0eb4a31f-…"), "USD/2")) <= 0
@@ -294,13 +294,13 @@ func (*MyTemplate) Explain(spec json.RawMessage) (string, error) {
 }
 
 func (*MyTemplate) Evaluate(ctx, spec, eng, resolvers, in) ([]Outcome, error) {
-    // 1. Scout asset/account universe via resolvers.
+    // 1. Scout the asset/account universe via resolvers.
     // 2. For each fingerprint axis value:
-    //    a. Render per-axis CEL string.
-    //    b. eng.Compile(expr).
-    //    c. eng.Evaluate(compiled, in).
-    //    d. (Optional) cross-check direct math vs kernel result.
+    //    a. Compute the pass/fail verdict directly (big.Int math on the scouted balances).
+    //    b. Render the per-axis CEL string into evidence.compiledCEL (explainability; not run here).
+    //    c. Build PitPerSource from the source labels (see pitForSources in helpers.go).
     // 3. Return one Outcome per axis value.
+    // The direct-math == rendered-CEL equivalence is covered by the kernel-parity unit test.
 }
 ```
 

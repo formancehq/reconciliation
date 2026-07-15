@@ -94,7 +94,7 @@ sequenceDiagram
 
 ## 3. Alert lifecycle
 
-An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint)` pair. There is exactly one Alert per pair for the lifetime of the rule — re-opens flip `status` back to `OPEN` **in place**, they do not create new rows. The full transition history lives in the `alert_event` log.
+An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one row per triple. Within a period, re-opens flip `status` back to `OPEN` **in place**, they do not create new rows; the same fingerprint failing in a *new* period is a fresh case. A `continuous`-cadence rule has one unbounded period, so it behaves as one immortal case per `(rule, fingerprint)`. The full transition history lives in the `alert_event` log.
 
 ```mermaid
 stateDiagram-v2
@@ -112,7 +112,7 @@ stateDiagram-v2
 
 **Invariants**
 
-- Exactly **one** alert row per `(rule_id, fingerprint)` — enforced by the UNIQUE constraint on the `alert` table (see [migration #6](../../internal/storage/migrations/migrations.go)).
+- Exactly **one** alert row per `(rule_id, fingerprint, period_id)` — enforced by the `alert_unique_scope` UNIQUE constraint on the `alert` table (`period_id` is `'continuous'` for live-monitoring rules; see [migrations.go](../../internal/storage/migrations/migrations.go)).
 - Reopen after `RESOLVED` flips status back to `OPEN` on the **same row**. The lifetime `occurrence_count` keeps incrementing. The prior `resolution` and `ack` are cleared on the alert row but **preserved** as `alert_event` rows.
 - Every transition (fail, pass, ack, resolve, accept, snooze, unsnooze) appends one row to `alert_event`. That log is append-only by convention — code paths never UPDATE or DELETE.
 - **Snooze is status-neutral**: a snoozed `OPEN` alert stays `OPEN` and still counts against period-green — only its notifications are muted (see §5).
@@ -236,7 +236,7 @@ flowchart LR
     Sub --> PIT["PIT = T - 30s"]
     PIT --> Sources["Each Source.PIT = T - 30s"]
     Sources --> Eng[Engine.Evaluate]
-    Eng --> Persist["INSERT evaluation<br/>pit_per_source = { 'ledger_set:0': T-30s, … }"]
+    Eng --> Persist["INSERT evaluation<br/>pit_per_source = { 'ledger:<name>': T-30s, 'pool:<id>': T-30s, … }"]
     Persist --> Audit[Replayable at the same PIT]
 ```
 

@@ -86,7 +86,7 @@ One reconciliation = one pass/fail. Asset count mismatch short-circuits.
 
 - Each template discovers the asset universe at eval time (union of both sides for drift; spec keys for invariant/threshold).
 - Per-asset `Outcome { Fingerprint: "asset:USD/2", Passed: bool, Evidence: {...} }`.
-- One `Alert` row exists per `(rule, fingerprint)` pair (e.g. `asset:USD/2`). USD breaking is a separate alert from EUR breaking, so they resolve independently.
+- One `Alert` row exists per `(rule, fingerprint, period)` triple (e.g. `asset:USD/2`). USD breaking is a separate alert from EUR breaking, so they resolve independently; and the same break in a new period is a fresh case (`period` is `continuous` for live-monitoring rules).
 
 ---
 

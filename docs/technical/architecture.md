@@ -62,7 +62,7 @@ flowchart TB
 | **Templates** ✅ | Typed specs → CEL; per-fingerprint outcomes | `Evaluator`, `Outcome`, `Registry` |
 | **Engine** ✅ | CEL evaluation, budget, PIT propagation, resolver dispatch | `Engine`, `Source`, `Resolvers`, `Limits` |
 | **Resolvers** ✅ | SDK calls; feature-flag cache; data shaping | `SDKLedgerResolver`, `SDKPaymentsResolver` |
-| **Storage** ✅ | bun CRUD; unique constraint per (rule, fingerprint); append-only `alert_event` log; cascade deletes | `Storage`, models |
+| **Storage** ✅ | bun CRUD; unique constraint per (rule, fingerprint, period); append-only `alert_event` log; cascade deletes | `Storage`, models |
 
 ---
 
@@ -87,20 +87,21 @@ See [engine/engine.go](../../internal/engine/engine.go) for the Compile/Evaluate
 
 ## Templates layer — one-paragraph view
 
-A template owns its own end-to-end evaluation. It scouts the asset universe by calling resolvers directly (e.g. union of ledger + pool balances for `ledger_vs_pool_drift`), then for each asset it renders a fresh CEL string, compiles + evaluates via the kernel, and emits an `Outcome` with a stable fingerprint. The service layer collects outcomes and opens/updates one alert per failing fingerprint (appending one `alert_event` row per outcome).
+A template owns its own end-to-end evaluation. It scouts the asset universe by calling resolvers directly (e.g. union of ledger + pool balances for `ledger_vs_pool_drift`), then for each asset it computes the pass/fail verdict directly (big.Int math on the scouted balances) and renders the per-asset CEL string into `evidence.compiledCEL` for explainability, emitting an `Outcome` with a stable fingerprint. The service layer collects outcomes and opens/updates one alert per failing fingerprint (appending one `alert_event` row per outcome).
 
 ```mermaid
 flowchart LR
     Spec[templateSpec] --> Scout[resolver.AggregateBalance / PoolBalanceLatest]
     Scout --> Universe[Union of assets]
     Universe --> ForEach[For each asset]
-    ForEach --> CEL[Render asset-specific CEL]
-    CEL --> Engine[engine.Compile + Evaluate]
-    Engine --> Outcome[Outcome { fingerprint, passed, evidence }]
+    ForEach --> Direct[Direct big.Int math → passed]
+    ForEach --> CEL[Render asset CEL → evidence.compiledCEL]
+    Direct --> Outcome[Outcome { fingerprint, passed, evidence }]
+    CEL --> Outcome
     ForEach --> Outcomes[List of Outcome]
 ```
 
-Each template also performs a **kernel/template consistency check** — it runs the same per-asset comparison twice (direct big.Int math + via the kernel) and errors loudly on divergence. Catches kernel drift early.
+The template's direct math and its rendered CEL express the same invariant; their equivalence is guaranteed by a kernel-parity unit test ([kernel_parity_test.go](../../internal/templates/kernel_parity_test.go)) rather than by a per-asset kernel re-resolve at evaluation time. The kernel itself is still exercised at rule-create (the `Explain` output is `engine.Compile`d so the renderer↔grammar contract fails fast at `POST /rules`, not at 3 AM).
 
 ---
 
@@ -123,6 +124,7 @@ erDiagram
         text compiled_cel
         bool enabled
         text severity
+        text cadence "continuous|daily|weekly|monthly"
         jsonb schedule
         jsonb notifications
         jsonb labels
@@ -144,25 +146,28 @@ erDiagram
         uuid id PK
         uuid rule_id FK
         text fingerprint
+        text period_id "continuous|2026-03|2026-W12|…"
         text status
         text severity
         ts first_seen_at
         ts last_seen_at
-        bigint occurrence_count "lifetime"
+        bigint occurrence_count "lifetime within period"
         uuid last_evaluation_id FK
         jsonb evidence "current"
         jsonb ack "current"
         jsonb resolution "current"
+        jsonb snooze "current"
         jsonb labels
     }
     ALERT_EVENT {
         uuid id PK
         uuid alert_id FK
         uuid evaluation_id FK "nullable"
-        text type "fail|pass|ack|resolve|accept"
+        text type "fail|pass|ack|resolve|accept|snooze|unsnooze"
         text prev_status "nullable"
         text new_status
         jsonb payload
+        bool notify "false = suppressed repeat"
         ts at
         ts created_at
     }
@@ -188,8 +193,8 @@ erDiagram
 
 ### Key invariants
 
-- **`alert_unique_pair`** — UNIQUE constraint on `(rule_id, fingerprint)` in the `alert` table. Exactly one alert row per pair for the lifetime of the rule; concurrent failing evaluations either update or (on a true first-open race) retry as update.
-- **`alert.occurrence_count`** is the **lifetime** count of FAIL events on the alert — it survives reopen cycles. Per-episode counts are derived by filtering `alert_event` between status transitions.
+- **`alert_unique_scope`** — UNIQUE constraint on `(rule_id, fingerprint, period_id)` in the `alert` table. Exactly one alert row per (rule, fingerprint, period); the same fingerprint failing in a new period is a fresh case, not a reopen. `period_id` is `'continuous'` for live-monitoring rules, which reproduces the original per-pair dedup. Concurrent failing evaluations either update or (on a true first-open race) retry as update.
+- **`alert.occurrence_count`** is the count of FAIL events on the alert within its period — it survives reopen cycles (for a `continuous` rule, the lifetime count). Per-episode counts are derived by filtering `alert_event` between status transitions.
 - **`alert_event` is append-only by convention** — no code path issues UPDATE or DELETE against it. A future migration can layer a per-alert `seq` + `prev_hash`/`hash` chain on top without breaking readers (mirrors the Ledger transaction log shape).
 - **`ON DELETE CASCADE`** — deleting a `Rule` cleans up its evaluations, alerts, and alert events.
 - **`touch_updated_at` trigger** — `updated_at` advances on every UPDATE for `rule` and `alert`. Verified in [migrations.go](../../internal/storage/migrations/migrations.go) and exercised in storage tests.
@@ -202,7 +207,7 @@ erDiagram
 - **Per-eval CEL env** is built fresh per `Engine.Evaluate` call — no shared state between concurrent evaluations.
 - **Budget tracker** uses `atomic.Int64` for `accountsScanned`.
 - **Resolvers** cache feature flags but are otherwise stateless per call.
-- **Alert dedup** relies on the UNIQUE constraint on `(rule_id, fingerprint)`, not application-level locking. Concurrent failing evaluations attempting to insert the same fingerprint will race; one succeeds, the loser retries and falls into the update path. See [storage/alert.go](../../internal/storage/alert.go) and the concurrency regression test in [alert_test.go](../../internal/storage/alert_test.go).
+- **Alert dedup** relies on the UNIQUE constraint on `(rule_id, fingerprint, period_id)`, not application-level locking. Concurrent failing evaluations attempting to insert the same triple will race; one succeeds, the loser retries and falls into the update path. Separately, same-rule evaluations serialize their whole read+persist window via a Postgres advisory lock (`storage.WithRuleLock`) so a slower older evaluation can't commit after a newer one. See [storage/alert.go](../../internal/storage/alert.go), [storage/rule_lock.go](../../internal/storage/rule_lock.go), and the concurrency regression tests.
 - **Alert event appends** happen in the same transaction as the alert UPDATE/INSERT — the log can never reflect a state the alert table doesn't.
 
 ---
@@ -221,9 +226,9 @@ erDiagram
 ## What's not in this diagram (yet)
 
 - **Scheduler** (in-process cron loop) — ✅ shipped, single-instance MVP ([scheduler.md](./scheduler.md)); advisory-lock / Temporal multi-replica leasing ⏳.
-- **Webhook event publisher** — ⏳ task #8.
-- **Email digest** — ⏳ task #8.
-- **fctl wiring** — ⏳ task #8.
-- **EE gating + usage metering** — ⏳ task #8.
+- **Webhook event publisher** — ✅ shipped ([internal/events/](../../internal/events/), [api.md §Events](./api.md)); alert transitions publish to the bus after commit. A durable transactional outbox for cross-replica delivery recovery is the tracked follow-up.
+- **Email digest** — ⏳ (owned in-module, ships separately at V1 GA).
+- **fctl wiring** — ⏳.
+- **EE gating + usage metering** — ⏳.
 
 The kernel + templates + storage are designed so each of these slot in without touching what's already shipped.

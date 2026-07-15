@@ -18,10 +18,10 @@ row has two failure modes for reconciliation:
    duration of an audit and fall off again afterwards (cf. Wirecard). The
    discrepancy, and the adjustment that justified it, must stay on the record
    for *their* period.
-2. **It conflates distinct incidents.** A USD/2 break in March and an unrelated
+2. **It conflates distinct cases.** A USD/2 break in March and an unrelated
    USD/2 break in November are different business events with different root
    causes — not "the same problem recurring." One immortal timeline fuses them,
-   muddying per-incident metrics and ownership.
+   muddying per-case metrics and ownership.
 
 ## The decision
 

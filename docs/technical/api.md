@@ -7,8 +7,8 @@ Reconciliation exposes two API surfaces:
 
 Both share the same auth scopes (`reconciliation:read`, `reconciliation:write`) and the same `ErrorResponse` shape.
 
-> Status: both legacy and V1 endpoints are ✅ shipped. Event publication remains ⏳ (task #8).
-> OpenAPI lives in [openapi.yaml](../../openapi.yaml) — 16 paths, ~30 schemas.
+> Status: both legacy and V1 endpoints are ✅ shipped, and alert-event publication is ✅ shipped (see the **Events** section below).
+> OpenAPI lives in [openapi.yaml](../../openapi.yaml).
 
 ---
 
@@ -115,21 +115,23 @@ Drops the rule and (via FK) all its evaluations, alerts, and alert events.
 
 ```json
 {
-  "reconciledAt":  "2026-06-17T15:00:00Z",
+  "at":           "2026-06-17T15:00:00Z",
   "safetyMargin": "30s"
 }
 ```
+
+Both fields are optional: `at` defaults to now, and `safetyMargin` defaults to `30s` (send `"0s"` to read exactly at `at` — e.g. deterministic tests / demos). A negative `safetyMargin` is rejected with `400`.
 
 Returns `200` + the evaluation record:
 
 ```json
 {
   "id":           "ev_…",
-  "ruleId":       "rul_…",
+  "ruleID":       "rul_…",
   "startedAt":    "…",
   "endedAt":      "…",
   "result":       "PASS" | "FAIL" | "ERROR",
-  "pitPerSource": { "ledger_set:0": "…", "payments_pool:0": "…" },
+  "pitPerSource": { "ledger:buildr": "…", "pool:0eb4a31f-…": "…" },
   "evidence":     [ { "fingerprint": "asset:USD/2", "passed": false, "evidence": {…} }, … ],
   "costUnits":    0,
   "error":        ""
@@ -155,7 +157,7 @@ Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?periodID=2026-03`
 ```json
 {
   "id":               "alr_…",
-  "ruleId":           "rul_…",
+  "ruleID":           "rul_…",
   "fingerprint":      "asset:USD/2",
   "periodID":         "2026-03",
   "status":           "OPEN" | "ACKNOWLEDGED" | "RESOLVED",
@@ -201,7 +203,7 @@ Returns a page of the events recorded for this alert: every evaluation that touc
 }
 ```
 
-`type` is one of `fail` / `pass` / `ack` / `resolve` / `accept`. `prevStatus` is `null` only for the alert's inaugural event. `isReopen` is a derived boolean — true when a `fail` lands on a previously-RESOLVED alert.
+`type` is one of `fail` / `pass` / `ack` / `resolve` / `accept` / `snooze` / `unsnooze`. `prevStatus` is `null` only for the alert's inaugural event. `isReopen` is a derived boolean — true when a `fail` lands on a previously-RESOLVED alert.
 
 #### `POST /alerts/{id}/ack`
 
