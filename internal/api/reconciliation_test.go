@@ -2,17 +2,20 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
 	sharedapi "github.com/formancehq/go-libs/api"
 	"github.com/formancehq/go-libs/auth"
+	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/v5/pkg/audit"
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/formancehq/reconciliation/internal/api/service"
@@ -468,6 +471,61 @@ func TestGetReconciliation(t *testing.T) {
 				sharedapi.Decode(t, rec.Body, &err)
 				require.EqualValues(t, testCase.expectedErrorCode, err.ErrorCode)
 			}
+		})
+	}
+}
+
+func TestListReconciliationsWithCursor(t *testing.T) {
+	testCases := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "with query",
+			query: `{"$gte":{"createdAt":"2026-07-09T09:28:24.461Z"}}`,
+		},
+		{
+			name: "without query",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			backend, mockService := newTestingBackend(t)
+
+			params := url.Values{}
+			params.Set("pageSize", "1")
+			if testCase.query != "" {
+				params.Set("query", testCase.query)
+			}
+			firstRequest := httptest.NewRequest(http.MethodGet, "/reconciliations?"+params.Encode(), nil)
+			options, err := getPaginatedQueryOptionsReconciliations(firstRequest)
+			require.NoError(t, err)
+
+			query := storage.NewGetReconciliationsQuery(*options)
+			query.Offset = 1
+			cursor := (*bunpaginate.OffsetPaginatedQuery[storage.PaginatedQueryOptions[storage.ReconciliationsFilters]])(&query).EncodeAsCursor()
+
+			mockService.EXPECT().
+				ListReconciliations(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, actual storage.GetReconciliationsQuery) (*bunpaginate.Cursor[models.Reconciliation], error) {
+					require.Equal(t, uint64(1), actual.Offset)
+					require.Equal(t, uint64(1), actual.PageSize)
+					actualQuery, err := json.Marshal(actual.Options.QueryBuilder)
+					require.NoError(t, err)
+					if testCase.query == "" {
+						require.Equal(t, "null", string(actualQuery))
+					} else {
+						require.JSONEq(t, testCase.query, string(actualQuery))
+					}
+					return &bunpaginate.Cursor[models.Reconciliation]{}, nil
+				})
+
+			secondRequest := httptest.NewRequest(http.MethodGet, "/reconciliations?cursor="+url.QueryEscape(cursor), nil)
+			recorder := httptest.NewRecorder()
+			listReconciliationsHandler(backend).ServeHTTP(recorder, secondRequest)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
 		})
 	}
 }

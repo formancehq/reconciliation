@@ -14,6 +14,13 @@ func Migrate(ctx context.Context, db *bun.DB) error {
 	return migrator.Up(ctx, db)
 }
 
+func IsUpToDate(ctx context.Context, db *bun.DB) (bool, error) {
+	migrator := migrations.NewMigrator()
+	registerMigrations(migrator)
+
+	return migrator.IsUpToDate(ctx, db)
+}
+
 func registerMigrations(migrator *migrations.Migrator) {
 	migrator.RegisterMigrations(
 		migrations.Migration{

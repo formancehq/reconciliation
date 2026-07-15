@@ -411,7 +411,7 @@ components:
         type: integer
         format: int64
         minimum: 1
-        maximum: 1000
+        maximum: 100
     Cursor:
       name: cursor
       in: query
@@ -574,7 +574,7 @@ components:
               type: integer
               format: int64
               minimum: 1
-              maximum: 1000
+              maximum: 100
               example: 15
             hasMore:
               type: boolean
@@ -605,7 +605,7 @@ components:
               type: integer
               format: int64
               minimum: 1
-              maximum: 1000
+              maximum: 100
               example: 15
             hasMore:
               type: boolean

@@ -2,11 +2,11 @@ package storage
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/formancehq/go-libs/bun/bunconnect"
 	"github.com/formancehq/go-libs/logging"
 	"github.com/formancehq/reconciliation/internal/storage/migrations"
+	"github.com/pkg/errors"
 	"github.com/uptrace/bun"
 	"go.uber.org/fx"
 )
@@ -31,18 +31,25 @@ func Module(connectionOptions bunconnect.ConnectionOptions, debug bool) fx.Optio
 		}),
 		fx.Invoke(func(lc fx.Lifecycle, repo *Storage, db *bun.DB) {
 			lc.Append(fx.Hook{
-				// Apply pending migrations at startup. Mirrors the pattern
-				// every other Formance service uses (--auto-migrate on the
-				// serve binary): no dedicated one-shot migrate container,
-				// no operational drift between local dev and prod. The
-				// migration registry uses CREATE … IF NOT EXISTS, so this
-				// is safe to re-run on an already-migrated database.
+				// Verify DB reachability and that migrations are applied — but do
+				// NOT run them here. Migrations are applied out-of-band (the
+				// `migrate` one-shot command) so a rollout across replicas never
+				// races the migrator. Startup fails fast if the schema is behind.
 				OnStart: func(ctx context.Context) error {
-					logging.FromContext(ctx).Debug("Applying database migrations...")
-					if err := migrations.Migrate(ctx, db); err != nil {
-						return fmt.Errorf("auto-migrate: %w", err)
+					logging.FromContext(ctx).Debug("Ping database...")
+					if err := repo.Ping(ctx); err != nil {
+						return errors.Wrap(err, "failed to ping database")
 					}
-					logging.FromContext(ctx).Debug("Migrations up to date.")
+
+					logging.FromContext(ctx).Debug("Checking migrations state...")
+					upToDate, err := migrations.IsUpToDate(ctx, db)
+					if err != nil {
+						return errors.Wrap(err, "failed to check migrations state")
+					}
+					if !upToDate {
+						return errors.New("database is not up to date, please run migrations")
+					}
+
 					return nil
 				},
 			})

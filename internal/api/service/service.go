@@ -19,14 +19,14 @@ import (
 // /policies methods and the V1 Rule/Evaluation/Alert methods live here so
 // there's one mockable boundary for tests.
 type Store interface {
-	Ping() error
+	Ping(ctx context.Context) error
 
 	// Legacy /policies path
 	CreatePolicy(ctx context.Context, policy *models.Policy) error
 	DeletePolicy(ctx context.Context, id uuid.UUID) error
 	GetPolicy(ctx context.Context, id uuid.UUID) (*models.Policy, error)
 	ListPolicies(ctx context.Context, q storage.GetPoliciesQuery) (*bunpaginate.Cursor[models.Policy], error)
-	CreateReconciation(ctx context.Context, reco *models.Reconciliation) error
+	CreateReconciliation(ctx context.Context, reco *models.Reconciliation) error
 	GetReconciliation(ctx context.Context, id uuid.UUID) (*models.Reconciliation, error)
 	ListReconciliations(ctx context.Context, q storage.GetReconciliationsQuery) (*bunpaginate.Cursor[models.Reconciliation], error)
 

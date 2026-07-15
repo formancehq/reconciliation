@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,7 +59,7 @@ func TestReconciliation(t *testing.T) {
 			},
 		},
 		{
-			name:            "nominal with drift >= 0",
+			name:            "nominal with drift > 0",
 			ledgerVersion:   "v2.0.0-beta.1",
 			paymentsVersion: "v1.0.0-rc.4",
 			ledgerBalances: map[string]*big.Int{
@@ -72,7 +73,7 @@ func TestReconciliation(t *testing.T) {
 			expectedReco: &models.Reconciliation{
 				ReconciledAtLedger:   time.Time{},
 				ReconciledAtPayments: time.Time{},
-				Status:               models.ReconciliationOK,
+				Status:               models.ReconciliationNotOK,
 				LedgerBalances: map[string]*big.Int{
 					"USD": big.NewInt(200),
 					"EUR": big.NewInt(300),
@@ -85,7 +86,7 @@ func TestReconciliation(t *testing.T) {
 					"USD": big.NewInt(100),
 					"EUR": big.NewInt(100),
 				},
-				Error: "",
+				Error: "balance drift for asset USD; balance drift for asset EUR",
 			},
 		},
 		{
@@ -180,7 +181,7 @@ func TestReconciliation(t *testing.T) {
 					"EUR": big.NewInt(200),
 					"DKK": big.NewInt(200),
 				},
-				Error: "balance drift for asset DKK",
+				Error: "balance drift for asset EUR; balance drift for asset DKK",
 			},
 		},
 		{
@@ -275,9 +276,18 @@ func TestReconciliation(t *testing.T) {
 			compareBalancesMap(t, tc.expectedReco.LedgerBalances, reco.LedgerBalances)
 			compareBalancesMap(t, tc.expectedReco.PaymentsBalances, reco.PaymentsBalances)
 			compareBalancesMap(t, tc.expectedReco.DriftBalances, reco.DriftBalances)
-			require.Equal(t, tc.expectedReco.Error, reco.Error)
+			// Per-asset errors are accumulated in map iteration order, which
+			// is not deterministic: compare them as a set.
+			require.ElementsMatch(t, splitErrors(tc.expectedReco.Error), splitErrors(reco.Error))
 		})
 	}
+}
+
+func splitErrors(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "; ")
 }
 
 func compareBalancesMap(t *testing.T, expected, actual map[string]*big.Int) {

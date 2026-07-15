@@ -49,7 +49,7 @@ func fpKey(ruleID uuid.UUID, fp, periodID string) string {
 	return ruleID.String() + "|" + fp + "|" + periodID
 }
 
-func (f *fakeV1Store) Ping() error { return nil }
+func (f *fakeV1Store) Ping(context.Context) error { return nil }
 
 // Legacy /policies methods — not exercised here.
 func (f *fakeV1Store) CreatePolicy(context.Context, *models.Policy) error { return nil }
@@ -60,7 +60,7 @@ func (f *fakeV1Store) GetPolicy(context.Context, uuid.UUID) (*models.Policy, err
 func (f *fakeV1Store) ListPolicies(context.Context, storage.GetPoliciesQuery) (*bunpaginate.Cursor[models.Policy], error) {
 	return nil, nil
 }
-func (f *fakeV1Store) CreateReconciation(context.Context, *models.Reconciliation) error {
+func (f *fakeV1Store) CreateReconciliation(context.Context, *models.Reconciliation) error {
 	return nil
 }
 func (f *fakeV1Store) GetReconciliation(context.Context, uuid.UUID) (*models.Reconciliation, error) {

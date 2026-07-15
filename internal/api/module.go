@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/go-chi/chi/v5"
@@ -12,7 +11,6 @@ import (
 	"github.com/formancehq/go-libs/api"
 	"github.com/formancehq/go-libs/health"
 	"github.com/formancehq/go-libs/httpserver"
-	v5log "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/api/backend"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/engine"
@@ -32,6 +30,13 @@ func healthCheckModule() fx.Option {
 	return fx.Options(
 		health.Module(),
 		health.ProvideHealthCheck(func() health.NamedCheck {
+			// Intentionally a process-only liveness check: it must NOT ping the
+			// database or any dependency. The operator wires /_healthcheck to
+			// BOTH the liveness and readiness probes, and the liveness probe
+			// restarts the pod after ~40s of failures. Checking the DB here
+			// would turn a transient DB outage into a restart storm across all
+			// replicas. DB reachability and migration state are verified once at
+			// startup (storage OnStart hook), which fails fast instead.
 			return health.NewNamedCheck("default", health.CheckFn(func(ctx context.Context) error {
 				return nil
 			}))
@@ -65,16 +70,9 @@ func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
 		fx.Provide(provideEngine),
 		fx.Provide(templates.DefaultRegistry),
 
-		// Bridge: the repo mixes go-libs (v3, used by service.New) and
-		// go-libs/v5 (used by messagingfx + the new SDK paths). v3's
-		// service.New supplies a v3 logging.Logger, but v5's messagingfx
-		// consumes v5's observe/log.Logger — a different type at the same
-		// nominal path. Provide a v5 logger explicitly so the fx graph
-		// has both. NB: legacy /policies still uses the v3 logger from
-		// service.New; only V1-touching v5 modules read this one.
-		fx.Provide(func(info api.ServiceInfo) v5log.Logger {
-			return v5log.NewDefaultLogger(os.Stdout, info.Debug, false, false)
-		}),
+		// NB: the v5 observe/log.Logger the messaging + scheduler modules consume
+		// is supplied at the serve level (cmd.messagingLoggingModule), not here —
+		// providing it in both places makes fx reject a duplicate provider.
 
 		fx.Provide(fx.Annotate(service.NewService, fx.As(new(backend.Service)))),
 		fx.Provide(backend.NewDefaultBackend),

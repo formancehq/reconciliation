@@ -1,5 +1,7 @@
 package storage
 
-func (s *Storage) Ping() error {
-	return s.pool.Ping()
+import "context"
+
+func (s *Storage) Ping(ctx context.Context) error {
+	return s.pool.PingContext(ctx)
 }
