@@ -76,8 +76,13 @@ buckets to April).
 ### 2. Evaluation derives and threads the period
 
 [`EvaluateRule`](../../internal/api/service/evaluation.go) computes
-`periodID = rule.Cadence.PeriodID(req.PIT)` once and threads it through
-`driveAlerts` into every alert write:
+`periodID = rule.Cadence.PeriodID(req.PIT − req.SafetyMargin)` once and threads
+it through `driveAlerts` into every alert write. The period is bucketed from the
+**margin-adjusted** instant — the *same* one the resolvers read at — not the raw
+PIT: an evaluation just after a period boundary with a positive margin (the 30s
+default) reads the *previous* period's data, so its alert must be scoped to that
+previous period, and a later rerun of the real period continues the same case.
+The writes it threads through:
 
 - **Open / update** — `OpenOrUpdateAlert` dedups on `(rule_id, fingerprint,
   period_id)`. First fail in a period → `opened`; subsequent → `updated`; after
