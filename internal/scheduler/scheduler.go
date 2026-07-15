@@ -96,12 +96,26 @@ func (s *Scheduler) tick(ctx context.Context, last, now time.Time) {
 	}
 }
 
+// defaultScheduleSafetyMargin is applied when a cron rule's schedule omits
+// safetyMargin (it unmarshals to 0). Scheduled evaluations then read at T-30s —
+// the same default manual evaluations get at the API boundary
+// (api.defaultEvaluateSafetyMargin) — instead of at the tick instant, keeping
+// them off in-flight ledger writes near a period boundary. Matches PRD §11: the
+// schedule's safetyMargin defaults to 30s.
+const defaultScheduleSafetyMargin = 30 * time.Second
+
 // fire runs one rule's evaluation. Errors are logged, not propagated — a single
 // rule's failure must not stop the scheduler (and EvaluateRule already raises an
 // engine.error meta-alert on engine-side failures).
 func (s *Scheduler) fire(ctx context.Context, r models.Rule) {
+	// A schedule that didn't set a margin defaults to 30s (see above); an
+	// explicit positive value is honoured as-is.
+	margin := defaultScheduleSafetyMargin
+	if r.Schedule != nil && r.Schedule.SafetyMargin > 0 {
+		margin = r.Schedule.SafetyMargin
+	}
 	if _, err := s.svc.EvaluateRule(ctx, r.ID, service.EvaluateRuleRequest{
-		SafetyMargin: r.Schedule.SafetyMargin,
+		SafetyMargin: margin,
 	}); err != nil {
 		s.logger.Errorf("scheduler: evaluate rule %s: %s", r.ID, err)
 	}

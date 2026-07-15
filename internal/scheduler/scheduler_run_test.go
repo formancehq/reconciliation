@@ -75,6 +75,34 @@ func TestFire_EvaluateError_Swallowed(t *testing.T) {
 	require.True(t, svc.fired(rule.ID), "EvaluateRule was still invoked despite the injected error")
 }
 
+// TestFire_DefaultsSafetyMarginWhenScheduleOmitsIt — a cron rule whose schedule
+// leaves safetyMargin unset (unmarshals to 0) must still evaluate at the
+// documented T-30s default, matching manual evaluations — not at the tick
+// instant, which would read in-flight ledger writes. (NumaryBot/codex finding.)
+func TestFire_DefaultsSafetyMarginWhenScheduleOmitsIt(t *testing.T) {
+	t.Parallel()
+	rule := enabledCronRule("* * * * *") // no SafetyMargin set → 0
+	svc := &fakeRuleSvc{rules: []models.Rule{rule}}
+	s := New(svc, time.Minute, testLogger())
+
+	s.fire(context.Background(), rule)
+	require.Equal(t, defaultScheduleSafetyMargin, svc.marginFor(rule.ID),
+		"an omitted schedule safetyMargin must default to 30s at fire time")
+}
+
+// TestFire_HonorsExplicitSafetyMargin — an explicit positive margin on the
+// schedule is passed through unchanged (only the unset/zero case is defaulted).
+func TestFire_HonorsExplicitSafetyMargin(t *testing.T) {
+	t.Parallel()
+	rule := enabledCronRule("* * * * *")
+	rule.Schedule.SafetyMargin = 5 * time.Second
+	svc := &fakeRuleSvc{rules: []models.Rule{rule}}
+	s := New(svc, time.Minute, testLogger())
+
+	s.fire(context.Background(), rule)
+	require.Equal(t, 5*time.Second, svc.marginFor(rule.ID))
+}
+
 // TestTick_ListError_Swallowed — a failing ListRules is logged and the tick
 // returns without firing anything.
 func TestTick_ListError_Swallowed(t *testing.T) {

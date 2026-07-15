@@ -58,6 +58,7 @@ type fakeRuleSvc struct {
 	rules     []models.Rule
 	mu        sync.Mutex
 	evaluated []uuid.UUID
+	margins   map[uuid.UUID]time.Duration // SafetyMargin the scheduler passed per rule
 	hasMore   bool
 	listErr   error // injected: ListRules fails
 	evalErr   error // injected: EvaluateRule fails (id is still recorded)
@@ -82,14 +83,23 @@ func (f *fakeRuleSvc) ListRules(_ context.Context, q storage.GetRulesQuery) (*bu
 	}
 	return &bunpaginate.Cursor[models.Rule]{Data: out, HasMore: f.hasMore}, nil
 }
-func (f *fakeRuleSvc) EvaluateRule(_ context.Context, id uuid.UUID, _ service.EvaluateRuleRequest) (*models.Evaluation, error) {
+func (f *fakeRuleSvc) EvaluateRule(_ context.Context, id uuid.UUID, req service.EvaluateRuleRequest) (*models.Evaluation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.evaluated = append(f.evaluated, id)
+	if f.margins == nil {
+		f.margins = map[uuid.UUID]time.Duration{}
+	}
+	f.margins[id] = req.SafetyMargin
 	if f.evalErr != nil {
 		return nil, f.evalErr
 	}
 	return &models.Evaluation{ID: uuid.New(), RuleID: id}, nil
+}
+func (f *fakeRuleSvc) marginFor(id uuid.UUID) time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.margins[id]
 }
 func (f *fakeRuleSvc) fired(id uuid.UUID) bool {
 	f.mu.Lock()
