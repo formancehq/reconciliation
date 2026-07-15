@@ -200,7 +200,11 @@ func (s *Storage) ruleQueryContext(qb query.Builder) (string, []any, error) {
 			if key == "updatedAt" {
 				col = "updated_at"
 			}
-			return fmt.Sprintf("%s %s ?", col, query.DefaultComparisonOperatorsMapping[operator]), []any{value}, nil
+			sqlOperator, ok := query.DefaultComparisonOperatorsMapping[operator]
+			if !ok {
+				return "", nil, errors.Wrapf(ErrInvalidQuery, "operator '%s' is not supported for '%s'", operator, key)
+			}
+			return fmt.Sprintf("%s %s ?", col, sqlOperator), []any{value}, nil
 		default:
 			return "", nil, errors.Wrapf(ErrInvalidQuery, "unknown key '%s' when building rule query", key)
 		}

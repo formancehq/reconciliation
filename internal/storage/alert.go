@@ -708,7 +708,11 @@ func (s *Storage) alertQueryContext(qb query.Builder) (string, []any, error) {
 			return "period_id = ?", []any{value}, nil
 		case "firstSeenAt", "lastSeenAt":
 			col := map[string]string{"firstSeenAt": "first_seen_at", "lastSeenAt": "last_seen_at"}[key]
-			return fmt.Sprintf("%s %s ?", col, query.DefaultComparisonOperatorsMapping[operator]), []any{value}, nil
+			sqlOperator, ok := query.DefaultComparisonOperatorsMapping[operator]
+			if !ok {
+				return "", nil, pkgErrors.Wrapf(ErrInvalidQuery, "operator '%s' is not supported for '%s'", operator, key)
+			}
+			return fmt.Sprintf("%s %s ?", col, sqlOperator), []any{value}, nil
 		default:
 			return "", nil, pkgErrors.Wrapf(ErrInvalidQuery, "unknown key '%s' when building alert query", key)
 		}

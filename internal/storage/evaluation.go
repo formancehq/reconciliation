@@ -78,7 +78,11 @@ func (s *Storage) evaluationQueryContext(qb query.Builder) (string, []any, error
 			return "rule_id = ?", []any{value}, nil
 		case "createdAt", "startedAt", "endedAt":
 			col := map[string]string{"createdAt": "created_at", "startedAt": "started_at", "endedAt": "ended_at"}[key]
-			return fmt.Sprintf("%s %s ?", col, query.DefaultComparisonOperatorsMapping[operator]), []any{value}, nil
+			sqlOperator, ok := query.DefaultComparisonOperatorsMapping[operator]
+			if !ok {
+				return "", nil, errors.Wrapf(ErrInvalidQuery, "operator '%s' is not supported for '%s'", operator, key)
+			}
+			return fmt.Sprintf("%s %s ?", col, sqlOperator), []any{value}, nil
 		default:
 			return "", nil, errors.Wrapf(ErrInvalidQuery, "unknown key '%s' when building evaluation query", key)
 		}
