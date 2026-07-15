@@ -59,9 +59,14 @@ type fakeRuleSvc struct {
 	mu        sync.Mutex
 	evaluated []uuid.UUID
 	hasMore   bool
+	listErr   error // injected: ListRules fails
+	evalErr   error // injected: EvaluateRule fails (id is still recorded)
 }
 
 func (f *fakeRuleSvc) ListRules(_ context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	// Faithfully apply the same filters the real storage query does, so the
 	// scheduler's reliance on SQL-side filtering is exercised here too.
 	filters := q.Options.Options
@@ -81,6 +86,9 @@ func (f *fakeRuleSvc) EvaluateRule(_ context.Context, id uuid.UUID, _ service.Ev
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.evaluated = append(f.evaluated, id)
+	if f.evalErr != nil {
+		return nil, f.evalErr
+	}
 	return &models.Evaluation{ID: uuid.New(), RuleID: id}, nil
 }
 func (f *fakeRuleSvc) fired(id uuid.UUID) bool {
