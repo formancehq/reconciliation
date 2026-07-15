@@ -113,6 +113,12 @@ func (t *LedgerInvariant) Evaluate(
 		termBalances[i] = b
 	}
 
+	termLabels := make([]string, 0, len(spec.Terms))
+	for _, term := range spec.Terms {
+		termLabels = append(termLabels, SourceSpec{Kind: SourceLedger, Ledger: term.Ledger}.label())
+	}
+	pitPerSource := pitForSources(pit, termLabels...)
+
 	outcomes := make([]Outcome, 0, len(spec.Tolerance))
 	for _, asset := range sortedKeys(spec.Tolerance) {
 		tolerance := spec.Tolerance[asset]
@@ -129,22 +135,11 @@ func (t *LedgerInvariant) Evaluate(
 		driftAbs := new(big.Int).Abs(signedSum)
 		passed := driftAbs.Cmp(big.NewInt(tolerance)) <= 0
 
-		// Build + run the kernel expression for the same check.
+		// compiledCEL is rendered for evidence/explainability only, not run: the
+		// verdict is the direct signed-sum above. Direct-math ≡ CEL is proven by
+		// TestKernelParity_Aggregate; the renderer↔grammar contract is checked once
+		// at rule-create time by the service's engine.Compile guard.
 		expr := buildInvariantExpression(&spec, asset)
-		compiled, err := eng.Compile(expr)
-		if err != nil {
-			return nil, fmt.Errorf("compile per-asset expression for %s: %w", asset, err)
-		}
-		evalOut, err := eng.Evaluate(ctx, compiled, in)
-		if err != nil {
-			return nil, fmt.Errorf("evaluate per-asset expression for %s: %w", asset, err)
-		}
-		if evalOut.Passed != passed {
-			return nil, fmt.Errorf(
-				"kernel/template disagreement on %s: kernel=%v, direct=%v (sum=%s tolerance=%d)",
-				asset, evalOut.Passed, passed, signedSum.String(), tolerance,
-			)
-		}
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
@@ -157,7 +152,7 @@ func (t *LedgerInvariant) Evaluate(
 				"termValues":  termValues,
 				"compiledCEL": expr,
 			},
-			PitPerSource: evalOut.PitPerSource,
+			PitPerSource: pitPerSource,
 		})
 	}
 	return outcomes, nil

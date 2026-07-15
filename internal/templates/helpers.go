@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 )
@@ -83,6 +84,23 @@ func sortedKeys[V any](m map[string]V) []string {
 		out = append(out, k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// pitForSources builds the PitPerSource map recorded on each Outcome. Every
+// source in a single evaluation resolves at the same margin-adjusted instant
+// (the engine pins one PIT per evaluation), so this maps each source's stable
+// label to that shared pit. Aggregate template paths call it directly instead
+// of routing a throwaway kernel Evaluate just to read the PIT back out; it also
+// keeps aggregate outcomes keyed the same way as the per-account paths (by
+// source label, not the kernel's positional ledgerSet:N keys). Labels dedupe
+// naturally — two terms on the same source collapse to one entry, all at the
+// same pit.
+func pitForSources(pit time.Time, labels ...string) map[string]time.Time {
+	out := make(map[string]time.Time, len(labels))
+	for _, l := range labels {
+		out[l] = pit
+	}
 	return out
 }
 

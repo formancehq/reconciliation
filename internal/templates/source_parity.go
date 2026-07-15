@@ -120,6 +120,7 @@ func (t *SourceParity) Evaluate(
 
 	assets := unionAssets(leftBalances, rightBalances)
 	outcomes := make([]Outcome, 0, len(assets))
+	pitPerSource := pitForSources(pit, spec.Left.label(), spec.Right.label())
 	for _, asset := range assets {
 		tolerance := spec.Tolerance[asset] // 0 if absent
 
@@ -129,26 +130,17 @@ func (t *SourceParity) Evaluate(
 		diffAbs := new(big.Int).Abs(diff)
 		passed := diffAbs.Cmp(big.NewInt(tolerance)) <= 0
 
-		// Cross-check against the kernel so the audit trail captures the exact
-		// CEL run and any template/kernel divergence surfaces immediately.
+		// compiledCEL is rendered for evidence/explainability only, not run: the
+		// verdict is the direct math above. A pool source has no point-in-time
+		// read, so re-resolving it through the kernel could diverge on benign
+		// `latest` timing (the same TOCTOU ledger_vs_pool_drift documents) — and
+		// a source_parity can compare against a pool. Direct-math ≡ CEL is proven
+		// by TestKernelParity_Aggregate; the renderer↔grammar contract is checked
+		// once at rule-create time by the service's engine.Compile guard.
 		expr := fmt.Sprintf(
 			`abs(%s - %s) <= %d`,
 			spec.Left.celTerm(celString(asset)), spec.Right.celTerm(celString(asset)), tolerance,
 		)
-		compiled, err := eng.Compile(expr)
-		if err != nil {
-			return nil, fmt.Errorf("compile per-asset expression for %s: %w", asset, err)
-		}
-		evalOut, err := eng.Evaluate(ctx, compiled, in)
-		if err != nil {
-			return nil, fmt.Errorf("evaluate per-asset expression for %s: %w", asset, err)
-		}
-		if evalOut.Passed != passed {
-			return nil, fmt.Errorf(
-				"kernel/template disagreement on %s: kernel=%v, direct=%v (diff=%s tolerance=%d)",
-				asset, evalOut.Passed, passed, diffAbs.String(), tolerance,
-			)
-		}
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
@@ -164,7 +156,7 @@ func (t *SourceParity) Evaluate(
 				"tolerance":    tolerance,
 				"compiledCEL":  expr,
 			},
-			PitPerSource: evalOut.PitPerSource,
+			PitPerSource: pitPerSource,
 		})
 	}
 	return outcomes, nil

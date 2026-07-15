@@ -130,6 +130,7 @@ func (t *AccountThreshold) Evaluate(
 		return nil, fmt.Errorf("scout ledger balances: %w", err)
 	}
 
+	pitPerSource := pitForSources(pit, src.label())
 	outcomes := make([]Outcome, 0, len(spec.Bounds))
 	for _, asset := range sortedKeys(spec.Bounds) {
 		bounds := spec.Bounds[asset]
@@ -143,21 +144,11 @@ func (t *AccountThreshold) Evaluate(
 			passed = false
 		}
 
+		// compiledCEL is rendered for evidence/explainability only, not run: the
+		// verdict is the direct bounds check above. Direct-math ≡ CEL is proven by
+		// TestKernelParity_Aggregate; the renderer↔grammar contract is checked once
+		// at rule-create time by the service's engine.Compile guard.
 		expr := buildThresholdExpression(&spec, asset)
-		compiled, err := eng.Compile(expr)
-		if err != nil {
-			return nil, fmt.Errorf("compile per-asset expression for %s: %w", asset, err)
-		}
-		evalOut, err := eng.Evaluate(ctx, compiled, in)
-		if err != nil {
-			return nil, fmt.Errorf("evaluate per-asset expression for %s: %w", asset, err)
-		}
-		if evalOut.Passed != passed {
-			return nil, fmt.Errorf(
-				"kernel/template disagreement on %s: kernel=%v, direct=%v (balance=%s bounds=%+v)",
-				asset, evalOut.Passed, passed, val.String(), bounds,
-			)
-		}
 
 		evidence := map[string]any{
 			"asset":       asset,
@@ -175,7 +166,7 @@ func (t *AccountThreshold) Evaluate(
 			Fingerprint:  fingerprintFor("asset", asset),
 			Passed:       passed,
 			Evidence:     evidence,
-			PitPerSource: evalOut.PitPerSource,
+			PitPerSource: pitPerSource,
 		})
 	}
 	return outcomes, nil

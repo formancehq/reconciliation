@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 
-	logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
 )
@@ -169,6 +168,7 @@ func (t *LedgerVsPoolDrift) Evaluate(
 
 	assets := unionAssets(ledgerBalances, poolBalances)
 	outcomes := make([]Outcome, 0, len(assets))
+	pitPerSource := pitForSources(pit, ledgerSrc.label(), poolSrc.label())
 
 	sign := spec.effectiveLedgerSign()
 	for _, asset := range assets {
@@ -181,40 +181,20 @@ func (t *LedgerVsPoolDrift) Evaluate(
 		driftAbs := new(big.Int).Abs(drift)
 		passed := driftAbs.Cmp(big.NewInt(tolerance)) <= 0
 
-		// Also evaluate via the kernel so the audit trail captures the exact
-		// CEL run, and so any future divergence between this template and
-		// raw-CEL semantics surfaces immediately.
+		// compiledCEL renders the exact per-asset invariant this outcome checked,
+		// in kernel grammar, for evidence/explainability. It is NOT run here: the
+		// verdict is the direct math above, and a live kernel re-resolve of the
+		// pool would read `latest` again — with no point-in-time read on the
+		// payments side, that can differ from the scout read by whatever settled
+		// in between (a benign TOCTOU) and would spuriously "disagree". The direct
+		// math and this CEL are proven equivalent by TestKernelParity_Aggregate,
+		// and the renderer↔grammar contract is checked once at rule-create time by
+		// the service's engine.Compile guard.
 		expr := fmt.Sprintf(
 			`abs(%s + %s) <= %d`,
 			signedLedgerTerm(sign, spec.Ledger, spec.LedgerQuery, celString(asset)),
 			poolSrc.celTerm(celString(asset)), tolerance,
 		)
-		compiled, err := eng.Compile(expr)
-		if err != nil {
-			return nil, fmt.Errorf("compile per-asset expression for %s: %w", asset, err)
-		}
-		evalOut, err := eng.Evaluate(ctx, compiled, in)
-		if err != nil {
-			return nil, fmt.Errorf("evaluate per-asset expression for %s: %w", asset, err)
-		}
-		// Cross-check against the kernel to capture the exact CEL run in the
-		// audit trail. A disagreement is almost always benign pool timing, NOT a
-		// contract bug: the payments pool has no point-in-time read, so the
-		// kernel's live re-resolve can differ from the scout read by whatever
-		// settled in between (a TOCTOU on `latest`). The ledger side is
-		// PIT-deterministic and never diverges. Trust the scout-based direct math
-		// — which also backs the evidence — and log the divergence rather than
-		// raising a spurious engine.error meta-alert; a genuine kernel/template
-		// semantic bug would show up as a persistent divergence in the logs.
-		if evalOut.Passed != passed {
-			logging.FromContext(ctx).WithFields(map[string]any{
-				"asset":     asset,
-				"kernel":    evalOut.Passed,
-				"direct":    passed,
-				"drift":     driftAbs.String(),
-				"tolerance": tolerance,
-			}).Infof("ledger_vs_pool_drift: kernel/direct divergence on %s (likely pool-latest timing); using direct math", asset)
-		}
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
@@ -233,7 +213,7 @@ func (t *LedgerVsPoolDrift) Evaluate(
 				"signedDrift":   drift.String(),
 				"compiledCEL":   expr,
 			},
-			PitPerSource: evalOut.PitPerSource,
+			PitPerSource: pitPerSource,
 		})
 	}
 	return outcomes, nil
