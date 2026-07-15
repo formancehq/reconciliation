@@ -16,6 +16,8 @@ import (
 type fakeLedger struct {
 	// keyed by ledger + canonical(query) → balances
 	balances map[string]map[string]*big.Int
+	// keyed by ledger + canonical(query) → accounts (for ListAccounts)
+	accounts map[string][]Account
 	// optional error to inject
 	err error
 }
@@ -32,8 +34,11 @@ func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query js
 	return b, nil
 }
 
-func (f *fakeLedger) ListAccounts(_ context.Context, _ string, _ json.RawMessage, _ int) ([]Account, error) {
-	return nil, errors.New("ListAccounts not implemented in fake")
+func (f *fakeLedger) ListAccounts(_ context.Context, ledger string, query json.RawMessage, _ int) ([]Account, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.accounts[ledger+"|"+string(query)], nil
 }
 
 // --- helpers -----------------------------------------------------------------

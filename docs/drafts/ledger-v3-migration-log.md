@@ -1092,6 +1092,43 @@ fx graph wires without the SDK; passing `--stack-url` now errors `unknown flag`)
 |---|---|---|---|
 | — | NOTE | `workflows.md` still describes reads at a "query checkpoint" (superseded by ADR-003 live reads) — pre-existing drift from the checkpoint-alternative workstream, out of scope here; flagged for a follow-up doc sync. | ⬜ noted |
 
+## Workstream: account_metadata source (reconcile a synced-into-metadata balance)
+
+**Commit:** `feat(ledger-v3): account_metadata source — reconcile a balance synced into account metadata`
+(`f0711ae`, 2026-07-09). Not on `main`.
+
+Use case (owner): an external balance is synced into a Formance ledger account as a **metadata value**
+(a "mirror" account) rather than materialised as postings; reconcile that synced number against a real
+ledger balance. First occupant of the optional `kind` seam ADR-001 §7 reserved (and the ledger-only
+refactor kept non-breaking): `SourceSpec` gains optional `kind` (default `"ledger"`) + `metadataKey` +
+`asset`; `kind: "account_metadata"` reads `metadataKey` off the matched accounts (via `ListAccounts`,
+bounded by `MaxAccountsScanned`), sums it as a base-10 integer in minor units, and keys it by the
+declared asset. It **composes into the existing `source_parity`** (and could into `ledger_invariant`) —
+no new template.
+
+**Kernel.** New `metadataInt(source, key) -> int` builtin (declaration + binding) so a metadata rule's
+rendered `compiled_cel` type-checks at create (`CreateRule` compiles Explain output). A shared
+`engine.SumAccountMetadataInt` is used by both the builtin and the templates' Go path, so the two agree
+by construction. A matched account missing the key / holding a non-integer → error (a synced value that
+didn't populate is surfaced, not read as zero).
+
+**Templates.** `source.go`: kind-aware `Validate`/`resolve`(now takes the accounts budget)/`celTerm`
+(renders `metadataInt(...)` for the metadata kind)/`label` (`metadata:ledger[key]`). `source_parity`
+threads the budget into `resolve` and rejects an `account_metadata` source in `per_account` scope
+(aggregate-only — no per-account breakdown). `account_threshold` updated for the `resolve` signature.
+
+**Not full Tier-2:** still a ledger *read* (no external transport) — a snapshot-in-metadata whose clock
+is the connector's last sync. Deferred: `synced_at`/staleness surfacing + max-staleness bound;
+multi-asset metadata (asset-suffixed keys / JSON-map value); `ledger_invariant` metadata terms;
+missing-key-as-zero opt-in (currently ERROR). openapi unchanged (`templateSpec` is opaque).
+
+**Checks:** `go build`/`go vet`/`golangci-lint --build-tags it` (0 issues)/gofmt clean; `-race
+./internal/...` green (new engine `metadataInt`/`SumAccountMetadataInt` tests; templates
+ledger↔metadata PASS→drift→FAIL + Validate + Explain-compiles + per_account-rejection). **Proven live**
+against Ledger v3 via `serve`: created a `source_parity` rule (ledger `cash:stripe` vs metadata
+`mirror:stripe[ext_balance]`), PASS at 35000==35000, then drifted the synced value to 34000 → FAIL
+(Δ1000, evidence labels the metadata side).
+
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
 Closes a real leak in the state model: EPHEMERAL purges a marker only at **zero** balance, but

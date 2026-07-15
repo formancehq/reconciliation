@@ -32,23 +32,53 @@ func (s Scope) Valid() bool {
 	}
 }
 
+// SourceKind discriminates how a source produces its per-asset amount. It is an
+// optional discriminator on SourceSpec, defaulting to "ledger" so existing specs
+// (which omit it) stay valid — the non-breaking seam ADR-001 §7 reserved.
+type SourceKind string
+
+const (
+	// SourceLedger (default) reads the posting-derived aggregate balance of a
+	// ledger account set (ledger + query).
+	SourceLedger SourceKind = "ledger"
+	// SourceAccountMetadata reads a scalar synced into account metadata (a
+	// "mirror" account whose balance an external connector writes as a metadata
+	// value, not as postings). The value of metadataKey — a base-10 integer in
+	// the asset's minor units — is summed across the matched accounts and keyed
+	// by the declared asset. Reconciles the *sync* against a ledger balance.
+	SourceAccountMetadata SourceKind = "account_metadata"
+)
+
 // SourceSpec is a reusable, typed descriptor of "where to read a per-asset
-// balance from". It is the shared primitive under source_parity: a template
+// amount from". It is the shared primitive under source_parity: a template
 // composes one or more sources and expresses its invariant over their resolved
 // balances.
 //
-// V1 reads a ledger account set only (ledger + query). A future heterogeneous
-// source (e.g. an external GL, ADR-001 §7) reintroduces a `kind` discriminator
-// here, defaulting to "ledger" so it stays non-breaking.
+// Kind selects the read shape (default "ledger"). For "account_metadata",
+// MetadataKey + Asset are required and the amount comes from metadata rather
+// than postings.
 type SourceSpec struct {
+	Kind   SourceKind      `json:"kind,omitempty"`
 	Ledger string          `json:"ledger,omitempty"`
 	Query  json.RawMessage `json:"query,omitempty"`
+
+	// account_metadata only:
+	MetadataKey string `json:"metadataKey,omitempty"`
+	Asset       string `json:"asset,omitempty"`
 }
 
-// Validate checks the source has its required fields present. Returns
-// ErrInvalidSpec-wrapped errors so the API surfaces them as 400 VALIDATION.
-// `field` prefixes messages so a caller with multiple sources (left/right) can
-// point at the offending one.
+// kind returns the effective kind, defaulting an empty discriminator to ledger.
+func (s SourceSpec) kind() SourceKind {
+	if s.Kind == "" {
+		return SourceLedger
+	}
+	return s.Kind
+}
+
+// Validate checks the source has its required fields present for its kind.
+// Returns ErrInvalidSpec-wrapped errors so the API surfaces them as 400
+// VALIDATION. `field` prefixes messages so a caller with multiple sources
+// (left/right) can point at the offending one.
 func (s SourceSpec) Validate(field string) error {
 	if s.Ledger == "" {
 		return fmt.Errorf("%w: %s.ledger is required", ErrInvalidSpec, field)
@@ -56,20 +86,51 @@ func (s SourceSpec) Validate(field string) error {
 	if !hasMeaningfulJSON(s.Query) {
 		return fmt.Errorf("%w: %s.query is required", ErrInvalidSpec, field)
 	}
+	switch s.kind() {
+	case SourceLedger:
+		// ledger + query suffice.
+	case SourceAccountMetadata:
+		if s.MetadataKey == "" {
+			return fmt.Errorf("%w: %s.metadataKey is required for kind %q", ErrInvalidSpec, field, SourceAccountMetadata)
+		}
+		if s.Asset == "" {
+			return fmt.Errorf("%w: %s.asset is required for kind %q", ErrInvalidSpec, field, SourceAccountMetadata)
+		}
+	default:
+		return fmt.Errorf("%w: %s.kind %q must be one of %q, %q", ErrInvalidSpec, field, s.Kind, SourceLedger, SourceAccountMetadata)
+	}
 	return nil
 }
 
-// resolve reads the per-asset balance map for this source. A ledger source is
-// read live — a single aggregate is an internally consistent snapshot (ADR-003).
-func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers) (map[string]*big.Int, error) {
+// resolve reads the per-asset amount map for this source, live (ADR-003). A
+// ledger source aggregates postings (one internally-consistent snapshot); an
+// account_metadata source sums metadataKey across the matched accounts, keyed by
+// the declared asset. limit is the accounts budget for the metadata read.
+func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, limit int) (map[string]*big.Int, error) {
+	if s.kind() == SourceAccountMetadata {
+		accts, err := resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, limit)
+		if err != nil {
+			return nil, err
+		}
+		total, err := engine.SumAccountMetadataInt(accts, s.MetadataKey)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]*big.Int{s.Asset: total}, nil
+	}
 	return resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query)
 }
 
-// celTerm renders the kernel expression that reads this source's balance for
-// assetExpr (already a CEL expression, e.g. `"USD/2"` or `<asset>`). Mirrors
-// the ledgerSet builtin the kernel exposes, so a template can compile + run the
-// rendered expression to cross-check its direct computation.
+// celTerm renders the kernel expression that reads this source's amount for
+// assetExpr (already a CEL expression, e.g. `"USD/2"` or `<asset>`). Mirrors the
+// kernel builtins (ledgerSet/balance, metadataInt) so the rendered form
+// type-checks against the kernel and cross-checks the direct computation. A
+// metadata source's amount is asset-agnostic (the declared asset labels it), so
+// assetExpr is unused for that kind.
 func (s SourceSpec) celTerm(assetExpr string) string {
+	if s.kind() == SourceAccountMetadata {
+		return fmt.Sprintf("metadataInt(ledgerSet(%s, %s), %s)", celString(s.Ledger), celJSON(s.Query), celString(s.MetadataKey))
+	}
 	return fmt.Sprintf("balance(ledgerSet(%s, %s), %s)", celString(s.Ledger), celJSON(s.Query), assetExpr)
 }
 
@@ -107,5 +168,8 @@ func accountsByAddress(accts []engine.Account) map[string]map[string]*big.Int {
 // label is a short, human-readable identifier for this source, used in evidence
 // so an operator can tell which side of a comparison a balance came from.
 func (s SourceSpec) label() string {
+	if s.kind() == SourceAccountMetadata {
+		return fmt.Sprintf("metadata:%s[%s]", s.Ledger, s.MetadataKey)
+	}
 	return "ledger:" + s.Ledger
 }

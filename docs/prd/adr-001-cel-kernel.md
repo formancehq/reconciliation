@@ -132,6 +132,14 @@ CEL is only as good as the types it reasons about. The object model **is the act
 > The sketch below keeps the original design intent: a future heterogeneous source (`ExternalGL`,
 > §11) reintroduces `kind` as an **optional** field defaulting to `"ledger"`, so it stays
 > non-breaking. See [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md).
+>
+> **Update (account_metadata, 2026-07-09).** That optional `kind` now has its first non-ledger
+> occupant: `account_metadata` reads a balance an external connector **syncs into account metadata**
+> (a "mirror" account) rather than posts, via a new `metadataInt(source, key)` kernel builtin, and
+> composes into `source_parity` to reconcile the synced value against a ledger balance. It is still a
+> ledger *read* (no external transport) — a snapshot-in-metadata, not a live external system — so it
+> is not full Tier-2; freshness/staleness of the sync remains a follow-up. See
+> [templates.md](../technical/templates.md) → source_parity.
 
 ### V1 types
 

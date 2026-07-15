@@ -55,6 +55,13 @@ func (t *SourceParity) Validate(raw json.RawMessage) error {
 	if !spec.Scope.Valid() {
 		return fmt.Errorf("%w: scope must be 'aggregate' or 'per_account' (got %q)", ErrInvalidSpec, spec.Scope)
 	}
+	// per_account aligns two sources by account address on their per-account
+	// balances; an account_metadata source is an aggregate scalar with no
+	// per-account breakdown, so it is aggregate-only.
+	if spec.Scope == ScopePerAccount &&
+		(spec.Left.kind() == SourceAccountMetadata || spec.Right.kind() == SourceAccountMetadata) {
+		return fmt.Errorf("%w: per_account scope does not support an account_metadata source (aggregate only)", ErrInvalidSpec)
+	}
 	for asset, tol := range spec.Tolerance {
 		if tol < 0 {
 			return fmt.Errorf("%w: tolerance for %s must be >= 0, got %d", ErrInvalidSpec, asset, tol)
@@ -111,11 +118,12 @@ func (t *SourceParity) Evaluate(
 		return t.evaluatePerAccount(ctx, &spec, eng, resolvers)
 	}
 
-	leftBalances, err := spec.Left.resolve(ctx, resolvers)
+	limit := eng.MaxAccountsScanned()
+	leftBalances, err := spec.Left.resolve(ctx, resolvers, limit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s: %w", spec.Left.label(), err)
 	}
-	rightBalances, err := spec.Right.resolve(ctx, resolvers)
+	rightBalances, err := spec.Right.resolve(ctx, resolvers, limit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s: %w", spec.Right.label(), err)
 	}

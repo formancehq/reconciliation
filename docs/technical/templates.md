@@ -165,7 +165,7 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 
 ### 3. `source_parity` (✅ shipped)
 
-"Two independent records of the same money agree, per asset, within tolerance." Each side is a **Source** — a ledger account set — so one template expresses any **ledger↔ledger** pairing (a sub-ledger reconciled against a control account on another ledger), without a bespoke template per pairing.
+"Two independent records of the same money agree, per asset, within tolerance." Each side is a **Source** (a ledger account set, or a value synced into account metadata — see Source kinds below), so one template expresses any **ledger↔ledger** pairing (a sub-ledger reconciled against a control account on another ledger) or **ledger↔synced-metadata**, without a bespoke template per pairing.
 
 **Spec**
 
@@ -178,25 +178,39 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 }
 ```
 
-A `SourceSpec` is a ledger account set — `{ "ledger": …, "query": … }`, both required — read **live** at the evaluation instant (a single aggregate is an internally consistent snapshot, ADR-003), so cross-ledger skew is absorbed by `tolerance`. A future heterogeneous source (e.g. an external GL, ADR-001 §7) reintroduces an optional `kind` discriminator defaulting to `"ledger"` — non-breaking.
+**Source kinds.** A `SourceSpec` carries an optional `kind` discriminator (default `"ledger"`, the non-breaking seam ADR-001 §7 reserved):
 
-**Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B; see [the scope model](#how-templates-work).
+- **`ledger`** (default) — `{ "ledger", "query" }`. The posting-derived aggregate balance of the matched account set, read **live** at the evaluation instant (a single aggregate is an internally consistent snapshot, ADR-003); cross-ledger skew is absorbed by `tolerance`.
+- **`account_metadata`** — `{ "kind": "account_metadata", "ledger", "query", "metadataKey", "asset" }`. Reads a scalar **synced into account metadata** rather than posted — a "mirror" account whose balance an external connector writes as a metadata value (a base-10 integer in the asset's minor units). `metadataKey` is summed across the matched accounts (via `ListAccounts`, bounded by `MaxAccountsScanned`) and keyed by the declared `asset`. This reconciles the **sync** against a ledger balance — it catches connector drift / missed events, and is the right tool when the external side gives a *number*, not a movement stream (if you get movements, post them and do ledger↔ledger). A matched account missing the key, or holding a non-integer value, is an ERROR (a synced value that didn't populate is surfaced, not read as zero). Note: reading a metadata *value* needs no index; only a metadata *filter* in `query` does.
 
-**Validation** — each side: `ledger` + `query` present; `tolerance` values ≥ 0.
+```jsonc
+{
+  "left":      { "ledger": "book",   "query": { "$match": { "address": "cash:stripe" } } },
+  "right":     { "kind": "account_metadata", "ledger": "book",
+                 "query": { "$match": { "address": "mirror:stripe" } },
+                 "metadataKey": "ext_balance", "asset": "USD/2" },
+  "tolerance": { "USD/2": 0 }
+}
+```
+
+**Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B; see [the scope model](#how-templates-work). An `account_metadata` source is aggregate-only (it has no per-account breakdown).
+
+**Validation** — each side: `ledger` + `query` present, plus `metadataKey` + `asset` for an `account_metadata` source; `tolerance` values ≥ 0; `per_account` scope rejects an `account_metadata` source.
 
 **Asset universe** — `union(leftBalances, rightBalances)`; every asset on either side is checked, missing-side defaults to 0.
 
-**Per-asset CEL** (runtime form)
+**Per-asset CEL** (runtime form) — a ledger side renders `balance(ledgerSet(…), asset)`; an `account_metadata` side renders `metadataInt(ledgerSet(…), "key")`:
 
 ```cel
 abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(ledgerSet("control", "<query json>"), "USD/2")) <= 0
+abs(balance(ledgerSet("book", "<query json>"), "USD/2") - metadataInt(ledgerSet("book", "<query json>"), "ext_balance")) <= 0
 ```
 
 **Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account)
 
-**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `ledger:control`; per_account also carries `account`).
+**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` or `metadata:book[ext_balance]`; per_account also carries `account`).
 
-**The equality primitive** — `source_parity` is the cross-source equality check (`abs(left − right) ≤ tol`), resolving and rendering both sides through the shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source". An external bank/PSP-account source kind is a natural next addition once it has a resolver + kernel builtin.
+**The equality primitive** — `source_parity` is the cross-source equality check (`abs(left − right) ≤ tol`), resolving and rendering both sides through the shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source". `account_metadata` is the first non-ledger source kind; an external bank/PSP-account kind slots in the same way once it has a resolver + kernel builtin.
 
 **Code**: [internal/templates/source_parity.go](../../internal/templates/source_parity.go), [internal/templates/source.go](../../internal/templates/source.go)
 

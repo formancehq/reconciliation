@@ -131,7 +131,7 @@ func (t *AccountThreshold) Evaluate(
 		return t.evaluatePerAccount(ctx, &spec, src, eng, resolvers)
 	}
 
-	ledgerBalances, err := src.resolve(ctx, resolvers)
+	ledgerBalances, err := src.resolve(ctx, resolvers, eng.MaxAccountsScanned())
 	if err != nil {
 		return nil, fmt.Errorf("scout ledger balances: %w", err)
 	}

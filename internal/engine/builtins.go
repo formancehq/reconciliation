@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/google/cel-go/cel"
@@ -64,6 +65,9 @@ func declarations() []cel.EnvOption {
 		cel.Function("balances",
 			cel.Overload("balances_source", []*cel.Type{srcT}, intMap),
 		),
+		cel.Function("metadataInt",
+			cel.Overload("metadataInt_source_string", []*cel.Type{srcT, cel.StringType}, cel.IntType),
+		),
 		cel.Function("sum",
 			cel.Overload("sum_list_int", []*cel.Type{intList}, cel.IntType),
 		),
@@ -112,6 +116,15 @@ func bindings(e *evalCtx) []cel.EnvOption {
 				intMap,
 				cel.UnaryBinding(func(src ref.Val) ref.Val {
 					return e.balancesAll(src)
+				}),
+			),
+		),
+		cel.Function("metadataInt",
+			cel.Overload("metadataInt_source_string",
+				[]*cel.Type{srcT, cel.StringType},
+				cel.IntType,
+				cel.BinaryBinding(func(src, key ref.Val) ref.Val {
+					return e.metadataIntSum(src, key)
 				}),
 			),
 		),
@@ -239,6 +252,57 @@ func (e *evalCtx) balancesAll(src ref.Val) ref.Val {
 		out[types.String(asset)] = bigIntToInt(amount)
 	}
 	return types.DefaultTypeAdapter.NativeToValue(out)
+}
+
+// metadataIntSum is the metadataInt(source, key) builtin: it reads the integer
+// metadata field `key` off every account in the source's matched set and returns
+// their sum. This is the read primitive for an externally-synced balance stored
+// in account metadata rather than posted (a "mirror" account) — see the
+// account_metadata source. The Go template path shares SumAccountMetadataInt, so
+// the two agree by construction.
+func (e *evalCtx) metadataIntSum(src, key ref.Val) ref.Val {
+	s, ok := src.Value().(*Source)
+	if !ok {
+		return types.NewErr("metadataInt: expected Source, got %T", src.Value())
+	}
+	k, ok := key.Value().(string)
+	if !ok {
+		return types.NewErr("metadataInt: key must be string, got %T", key.Value())
+	}
+	if e.resolvers.Ledger == nil {
+		return types.NewErr("metadataInt: ledger resolver not configured")
+	}
+	accts, err := e.resolvers.Ledger.ListAccounts(e.ctx, s.Ledger, s.Query, e.budget.limits.MaxAccountsScanned)
+	if err != nil {
+		return types.NewErr("metadataInt(%s): %v", k, err)
+	}
+	total, err := SumAccountMetadataInt(accts, k)
+	if err != nil {
+		return types.NewErr("metadataInt(%s): %v", k, err)
+	}
+	return bigIntToInt(total)
+}
+
+// SumAccountMetadataInt sums the base-10 integer metadata field `key` across the
+// given accounts (minor units, matching ledger amount conventions). Shared by
+// the kernel's metadataInt builtin and the templates' Go evaluation path so both
+// compute the same value. A matched account missing the key, or holding a
+// non-integer value, is an error — a synced balance that didn't populate is a
+// real problem, surfaced rather than silently read as zero.
+func SumAccountMetadataInt(accts []Account, key string) (*big.Int, error) {
+	total := new(big.Int)
+	for _, a := range accts {
+		raw, present := a.Metadata[key]
+		if !present {
+			return nil, fmt.Errorf("account %q has no metadata[%s]", a.Address, key)
+		}
+		n, ok := new(big.Int).SetString(strings.TrimSpace(raw), 10)
+		if !ok {
+			return nil, fmt.Errorf("account %q metadata[%s]=%q is not a base-10 integer", a.Address, key, raw)
+		}
+		total.Add(total, n)
+	}
+	return total, nil
 }
 
 func sumList(list ref.Val) ref.Val {
