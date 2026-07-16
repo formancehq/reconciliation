@@ -178,10 +178,15 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 // evaluateRuleRequest is the API-shaped equivalent of service.EvaluateRuleRequest.
 // `at` defaults to "now". `safetyMargin` is honoured exactly (including "0s")
 // when supplied; defaultEvaluateSafetyMargin applies when the field is absent
-// from the JSON body.
+// from the JSON body. `sourcePITs` optionally overrides the PIT of individual
+// sources, keyed by the template's stable source key ("<label>#<idx>", as
+// echoed in evaluation.pitPerSource) — the two-independent-timestamps contract
+// (e.g. ledger at one instant, payments pool at another). Every timestamp,
+// global or per-source, must be in the past.
 type evaluateRuleRequest struct {
-	At           *time.Time `json:"at,omitempty"`
-	SafetyMargin string     `json:"safetyMargin,omitempty"` // Go duration string ("30s", "1m", "0s")
+	At           *time.Time           `json:"at,omitempty"`
+	SafetyMargin string               `json:"safetyMargin,omitempty"` // Go duration string ("30s", "1m", "0s")
+	SourcePITs   map[string]time.Time `json:"sourcePITs,omitempty"`
 }
 
 // defaultEvaluateSafetyMargin is the value the API hands to the service when
@@ -206,7 +211,21 @@ func evaluateRuleHandler(b backend.Backend) http.HandlerFunc {
 			api.BadRequest(w, ErrMissingOrInvalidBody, err)
 			return
 		}
-		svcReq := service.EvaluateRuleRequest{SafetyMargin: defaultEvaluateSafetyMargin}
+		// Every requested instant must be in the past — reconciliation reads
+		// history, never projections (matches the legacy reconciledAt* contract).
+		now := time.Now()
+		if req.At != nil && req.At.After(now) {
+			api.BadRequest(w, ErrValidation, errors.New("at must be in the past"))
+			return
+		}
+		for key, pit := range req.SourcePITs {
+			if pit.After(now) {
+				api.BadRequest(w, ErrValidation, errors.New("sourcePITs["+key+"] must be in the past"))
+				return
+			}
+		}
+
+		svcReq := service.EvaluateRuleRequest{SafetyMargin: defaultEvaluateSafetyMargin, SourcePITs: req.SourcePITs}
 		if req.At != nil {
 			svcReq.PIT = *req.At
 		}

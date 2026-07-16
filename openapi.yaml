@@ -911,8 +911,20 @@ components:
     EvaluateRuleRequest:
       type: object
       properties:
-        at: { type: string, format: date-time, description: "PIT for the evaluation. Defaults to now." }
-        safetyMargin: { type: string, example: "30s", description: "Go duration string subtracted from `at`. Defaults to 30s." }
+        at: { type: string, format: date-time, description: "Default PIT for every source. Defaults to now. Must be in the past. A supplied `at` is read point-in-time on the payments pool; the default (now) reads the pool's latest snapshot." }
+        safetyMargin: { type: string, example: "30s", description: "Go duration string subtracted from every PIT (default and per-source). Defaults to 30s." }
+        sourcePITs:
+          type: object
+          description: >-
+            Optional per-source PIT overrides, keyed by the template's stable
+            source key ("<label>#<idx>", as echoed back in
+            Evaluation.pitPerSource — e.g. "ledger:main#0", "pool:acct#0"). A
+            source with an override reads at that instant instead of `at`; this
+            expresses the two-independent-timestamps contract (ledger at one
+            instant, payments pool at another, to absorb inter-system settlement
+            lag). Every value must be in the past.
+          additionalProperties: { type: string, format: date-time }
+          example: { "ledger:main#0": "2026-06-30T23:59:59Z", "pool:acct#0": "2026-06-30T23:00:00Z" }
     Evaluation:
       type: object
       required: [id, ruleID, startedAt, endedAt, result, createdAt]

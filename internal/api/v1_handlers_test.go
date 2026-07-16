@@ -210,6 +210,63 @@ func TestEvaluateRule_NegativeSafetyMargin(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "safetyMargin must be")
 }
 
+// Per-source PIT overrides must reach the service, keyed as sent.
+func TestEvaluateRule_SourcePITsThreaded(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	poolAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	var got service.EvaluateRuleRequest
+	mockSvc.EXPECT().EvaluateRule(gomock.Any(), id, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ uuid.UUID, req service.EvaluateRuleRequest) (*models.Evaluation, error) {
+			got = req
+			return &models.Evaluation{ID: uuid.New(), RuleID: id, Result: models.EvaluationPass}, nil
+		})
+
+	body := []byte(`{"sourcePITs":{"pool:acct#0":"` + poolAt.Format(time.RFC3339) + `"}}`)
+	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, got.SourcePITs["pool:acct#0"].Equal(poolAt),
+		"per-source override must reach the service unchanged, got %v", got.SourcePITs)
+}
+
+// A future `at` is meaningless for reconciliation (always reads history) — 400.
+func TestEvaluateRule_FutureAtRejected(t *testing.T) {
+	t.Parallel()
+	b, _ := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	body := []byte(`{"at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}`)
+	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "at must be in the past")
+}
+
+// A future per-source override is rejected with 400, naming the offending key.
+func TestEvaluateRule_FutureSourcePITRejected(t *testing.T) {
+	t.Parallel()
+	b, _ := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	body := []byte(`{"sourcePITs":{"ledger:main#0":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}}`)
+	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "ledger:main#0")
+}
+
 // --- Alert handler tests -----------------------------------------------------
 
 func TestAckAlert_Nominal(t *testing.T) {

@@ -25,6 +25,11 @@ import (
 type EvaluateRuleRequest struct {
 	PIT          time.Time
 	SafetyMargin time.Duration
+	// SourcePITs holds optional per-source PIT overrides, keyed by the template's
+	// stable source key ("<label>#<idx>", as recorded in Evaluation.PitPerSource).
+	// A source with an override reads at that instant instead of the default PIT;
+	// this is the reconciledAtLedger-vs-reconciledAtPayments contract, generalised.
+	SourcePITs map[string]time.Time
 }
 
 // EvaluateRule runs the template for the rule, persists an Evaluation row, and
@@ -80,6 +85,11 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 // commit order identical. An explicitly supplied PIT is honoured unchanged (the
 // demo runner / integration tests reconcile as of a fixed instant).
 func (s *Service) runEvaluation(ctx context.Context, rule *models.Rule, ev templates.Evaluator, req EvaluateRuleRequest) (*models.Evaluation, error) {
+	// A caller-supplied PIT is an explicit historical read; a zero PIT (the
+	// scheduler, and on-demand "reconcile now") defaults to now and is NOT
+	// explicit. The flag gates the payments-pool read (point-in-time vs latest)
+	// for sources without their own override — see engine.EvalInput.
+	pitExplicit := !req.PIT.IsZero()
 	if req.PIT.IsZero() {
 		req.PIT = time.Now().UTC()
 	}
@@ -101,6 +111,8 @@ func (s *Service) runEvaluation(ctx context.Context, rule *models.Rule, ev templ
 	started := time.Now().UTC()
 	outcomes, evalErr := ev.Evaluate(evalCtx, rule.TemplateSpec, s.engine, s.resolvers, engine.EvalInput{
 		PIT:          req.PIT,
+		PITExplicit:  pitExplicit,
+		SourcePITs:   req.SourcePITs,
 		SafetyMargin: req.SafetyMargin,
 	})
 	ended := time.Now().UTC()
