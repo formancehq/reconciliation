@@ -17,8 +17,8 @@ import (
 // Each Engine.Evaluate call builds a fresh evalCtx, then constructs a CEL env
 // whose function bindings reference it.
 type evalCtx struct {
-	ctx       context.Context
-	pit       time.Time
+	ctx context.Context
+	pit time.Time
 	// pitExplicit gates the pool read: an explicit past PIT is read
 	// point-in-time; the "as of now" default reads latest (see EvalInput).
 	pitExplicit bool
