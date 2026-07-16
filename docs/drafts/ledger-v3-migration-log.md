@@ -1129,6 +1129,26 @@ against Ledger v3 via `serve`: created a `source_parity` rule (ledger `cash:stri
 `mirror:stripe[ext_balance]`), PASS at 35000==35000, then drifted the synced value to 34000 → FAIL
 (Δ1000, evidence labels the metadata side).
 
+### account_metadata — per-asset (multi-currency) mode (`92c504f`, 2026-07-09)
+
+Extends the source with a **per-asset** mode alongside the single-asset one: `metadataKeyPrefix`
+(e.g. `reported_balance.`) reads keys of the form `<prefix><asset>` (`reported_balance.USDC`,
+`reported_balance.EURC`, …) into a per-asset map, so **one mirror account carries a synced reported
+balance per currency**. Composes into `source_parity` for free — its per-asset union checks each
+currency independently (one Outcome per asset). Modes are mutually exclusive; assets are discovered
+from the keys present (bare-`prefix` empty suffix skipped, non-integer value → ERROR). **No kernel
+change**: the per-asset `compiled_cel` renders `metadataInt(ledgerSet(…), "<prefix>" + asset)` — CEL
+string-concat evaluates to the concrete `<prefix><asset>` key before the existing `metadataInt`
+builtin runs. New engine `SumAccountMetadataByPrefix` (shares the int-parse with
+`SumAccountMetadataInt`).
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` green (engine
+`SumAccountMetadataByPrefix` + non-integer; templates ledger↔metadata-prefix multi-asset
+PASS→per-asset-drift→FAIL(EURC only) + mode-exclusivity Validate + Explain-compiles). **Proven live**
+via `serve`: `cash:custody` (real USDC 1_000_000 + EURC 500_000) vs `mirror:custody`
+`reported_balance.{USDC,EURC}` — PASS both, then drifted `reported_balance.EURC`→400_000 → FAIL on
+`asset:EURC` only (Δ100_000), USDC still reconciles.
+
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
 Closes a real leak in the state model: EPHEMERAL purges a marker only at **zero** balance, but

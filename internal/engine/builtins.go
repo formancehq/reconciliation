@@ -296,13 +296,53 @@ func SumAccountMetadataInt(accts []Account, key string) (*big.Int, error) {
 		if !present {
 			return nil, fmt.Errorf("account %q has no metadata[%s]", a.Address, key)
 		}
-		n, ok := new(big.Int).SetString(strings.TrimSpace(raw), 10)
-		if !ok {
-			return nil, fmt.Errorf("account %q metadata[%s]=%q is not a base-10 integer", a.Address, key, raw)
+		n, err := parseMetadataInt(a.Address, key, raw)
+		if err != nil {
+			return nil, err
 		}
 		total.Add(total, n)
 	}
 	return total, nil
+}
+
+// SumAccountMetadataByPrefix builds a per-asset sum from metadata keys of the
+// form `<prefix><asset>` across accts (e.g. prefix "reported_balance." →
+// reported_balance.USDC / reported_balance.EURC). The suffix after the prefix is
+// the asset code; the value is a base-10 integer in the asset's minor units.
+// Keys without the prefix — and a bare `prefix` key with an empty suffix — are
+// ignored; a matching key with a non-integer value is an error. This is the
+// per-asset (multi-currency) mode of the account_metadata source: one mirror
+// account can carry a synced reported balance per currency, discovered from the
+// keys present (the asset universe is the union across matched accounts).
+func SumAccountMetadataByPrefix(accts []Account, prefix string) (map[string]*big.Int, error) {
+	out := map[string]*big.Int{}
+	for _, a := range accts {
+		for k, raw := range a.Metadata {
+			asset, ok := strings.CutPrefix(k, prefix)
+			if !ok || asset == "" {
+				continue
+			}
+			n, err := parseMetadataInt(a.Address, k, raw)
+			if err != nil {
+				return nil, err
+			}
+			if out[asset] == nil {
+				out[asset] = new(big.Int)
+			}
+			out[asset].Add(out[asset], n)
+		}
+	}
+	return out, nil
+}
+
+// parseMetadataInt parses a base-10 integer metadata value (minor units),
+// tolerating surrounding whitespace.
+func parseMetadataInt(address, key, raw string) (*big.Int, error) {
+	n, ok := new(big.Int).SetString(strings.TrimSpace(raw), 10)
+	if !ok {
+		return nil, fmt.Errorf("account %q metadata[%s]=%q is not a base-10 integer", address, key, raw)
+	}
+	return n, nil
 }
 
 func sumList(list ref.Val) ref.Val {

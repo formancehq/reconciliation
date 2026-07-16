@@ -35,6 +35,40 @@ func TestSumAccountMetadataInt_NonInteger(t *testing.T) {
 	}
 }
 
+func TestSumAccountMetadataByPrefix(t *testing.T) {
+	accts := []Account{
+		{Address: "mirror:a", Metadata: map[string]string{
+			"reported_balance.USDC": "1000",
+			"reported_balance.EURC": "500",
+			"reported_balance.":     "9", // empty suffix → skipped
+			"unrelated":             "7", // no prefix → ignored
+		}},
+		{Address: "mirror:b", Metadata: map[string]string{
+			"reported_balance.USDC": "250", // aggregates with mirror:a
+		}},
+	}
+	got, err := SumAccountMetadataByPrefix(accts, "reported_balance.")
+	if err != nil {
+		t.Fatalf("SumAccountMetadataByPrefix: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 assets (USDC, EURC), got %d: %v", len(got), got)
+	}
+	if got["USDC"].String() != "1250" {
+		t.Errorf("USDC = %s, want 1250 (1000+250)", got["USDC"])
+	}
+	if got["EURC"].String() != "500" {
+		t.Errorf("EURC = %s, want 500", got["EURC"])
+	}
+}
+
+func TestSumAccountMetadataByPrefix_NonInteger(t *testing.T) {
+	accts := []Account{{Address: "mirror:a", Metadata: map[string]string{"reported_balance.USDC": "1.5"}}}
+	if _, err := SumAccountMetadataByPrefix(accts, "reported_balance."); err == nil {
+		t.Fatal("expected error on non-integer value, got nil")
+	}
+}
+
 // TestEvaluate_MetadataInt exercises the metadataInt builtin end-to-end through
 // the kernel: it reads an integer metadata field off the matched accounts and
 // sums it, so a mirror account carrying a synced balance reconciles against a

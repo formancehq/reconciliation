@@ -181,9 +181,12 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 **Source kinds.** A `SourceSpec` carries an optional `kind` discriminator (default `"ledger"`, the non-breaking seam ADR-001 §7 reserved):
 
 - **`ledger`** (default) — `{ "ledger", "query" }`. The posting-derived aggregate balance of the matched account set, read **live** at the evaluation instant (a single aggregate is an internally consistent snapshot, ADR-003); cross-ledger skew is absorbed by `tolerance`.
-- **`account_metadata`** — `{ "kind": "account_metadata", "ledger", "query", "metadataKey", "asset" }`. Reads a scalar **synced into account metadata** rather than posted — a "mirror" account whose balance an external connector writes as a metadata value (a base-10 integer in the asset's minor units). `metadataKey` is summed across the matched accounts (via `ListAccounts`, bounded by `MaxAccountsScanned`) and keyed by the declared `asset`. This reconciles the **sync** against a ledger balance — it catches connector drift / missed events, and is the right tool when the external side gives a *number*, not a movement stream (if you get movements, post them and do ledger↔ledger). A matched account missing the key, or holding a non-integer value, is an ERROR (a synced value that didn't populate is surfaced, not read as zero). Note: reading a metadata *value* needs no index; only a metadata *filter* in `query` does.
+- **`account_metadata`** — reads a balance **synced into account metadata** rather than posted (a "mirror" account whose balance an external connector writes as a metadata value, a base-10 integer in the asset's minor units), summed across the matched accounts (via `ListAccounts`, bounded by `MaxAccountsScanned`). This reconciles the **sync** against a ledger balance — it catches connector drift / missed events, and is the right tool when the external side gives a *number*, not a movement stream (if you get movements, post them and do ledger↔ledger). Note: reading a metadata *value* needs no index; only a metadata *filter* in `query` does. Two modes:
+  - **single-asset** — `{ "kind": "account_metadata", "ledger", "query", "metadataKey", "asset" }`. The integer at `metadataKey` is keyed by the declared `asset`. A matched account missing the key, or holding a non-integer value, is an ERROR (a synced value that didn't populate is surfaced, not read as zero).
+  - **per-asset** — `{ "kind": "account_metadata", "ledger", "query", "metadataKeyPrefix" }`. Keys of the form `<prefix><asset>` (e.g. `reported_balance.USDC`, `reported_balance.EURC`) become a **per-asset** map — one mirror account carries a reported balance per currency, and `source_parity`'s per-asset union checks each independently. Assets are discovered from the keys present; a bare `prefix` key (empty suffix) is skipped, a non-integer value is an ERROR. `metadataKey`/`asset` and `metadataKeyPrefix` are mutually exclusive.
 
 ```jsonc
+// single-asset: reconcile one synced value against a ledger balance
 {
   "left":      { "ledger": "book",   "query": { "$match": { "address": "cash:stripe" } } },
   "right":     { "kind": "account_metadata", "ledger": "book",
@@ -191,19 +194,28 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
                  "metadataKey": "ext_balance", "asset": "USD/2" },
   "tolerance": { "USD/2": 0 }
 }
+// per-asset: reconcile a mirror account's per-currency reported balances
+{
+  "left":      { "ledger": "book",   "query": { "$match": { "address": "cash:custody" } } },
+  "right":     { "kind": "account_metadata", "ledger": "book",
+                 "query": { "$match": { "address": "mirror:custody" } },
+                 "metadataKeyPrefix": "reported_balance." },   // reads reported_balance.USDC, reported_balance.EURC, …
+  "tolerance": { "USDC": 0, "EURC": 0 }
+}
 ```
 
 **Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B; see [the scope model](#how-templates-work). An `account_metadata` source is aggregate-only (it has no per-account breakdown).
 
-**Validation** — each side: `ledger` + `query` present, plus `metadataKey` + `asset` for an `account_metadata` source; `tolerance` values ≥ 0; `per_account` scope rejects an `account_metadata` source.
+**Validation** — each side: `ledger` + `query` present, plus (for an `account_metadata` source) exactly one of `metadataKey`+`asset` or `metadataKeyPrefix`; `tolerance` values ≥ 0; `per_account` scope rejects an `account_metadata` source.
 
 **Asset universe** — `union(leftBalances, rightBalances)`; every asset on either side is checked, missing-side defaults to 0.
 
-**Per-asset CEL** (runtime form) — a ledger side renders `balance(ledgerSet(…), asset)`; an `account_metadata` side renders `metadataInt(ledgerSet(…), "key")`:
+**Per-asset CEL** (runtime form) — a ledger side renders `balance(ledgerSet(…), asset)`; an `account_metadata` side renders `metadataInt(ledgerSet(…), key)` (single-asset: a fixed key; per-asset: `"<prefix>" + asset`):
 
 ```cel
 abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(ledgerSet("control", "<query json>"), "USD/2")) <= 0
 abs(balance(ledgerSet("book", "<query json>"), "USD/2") - metadataInt(ledgerSet("book", "<query json>"), "ext_balance")) <= 0
+abs(balance(ledgerSet("book", "<query json>"), "USDC") - metadataInt(ledgerSet("book", "<query json>"), "reported_balance." + "USDC")) <= 0
 ```
 
 **Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account)
