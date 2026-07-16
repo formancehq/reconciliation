@@ -589,6 +589,30 @@ func TestEvaluate_PassNoAlerts(t *testing.T) {
 	}
 }
 
+// TestEvaluate_DisabledRuleIsValidationError locks the fix for NumaryBot
+// r3593989719: evaluating a disabled rule is a predictable client-side
+// invalid-state, so EvaluateRule must return an ErrValidation-wrapped error
+// (→ HTTP 400 via handleServiceErrors), not a bare error (→ HTTP 500).
+func TestEvaluate_DisabledRuleIsValidationError(t *testing.T) {
+	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-100)}}
+	svc, store := newOrchestrationService(t, l, p)
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+
+	disabled := false
+	if err := store.PatchRule(context.Background(), rule.ID, storage.RulePatch{Enabled: &disabled}); err != nil {
+		t.Fatalf("disable rule: %v", err)
+	}
+
+	_, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
+	if err == nil {
+		t.Fatal("expected an error evaluating a disabled rule")
+	}
+	if !errors.Is(err, ErrValidation) {
+		t.Errorf("disabled-rule error must wrap ErrValidation (→ 400), got: %v", err)
+	}
+}
+
 // TestEvaluate_LifecycleInPlace — the headline test for the new model: through
 // one rule we exercise open → update → auto-resolve → REOPEN-IN-PLACE in
 // sequence. The same alert id stays valid across the entire lifecycle; the

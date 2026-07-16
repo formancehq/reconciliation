@@ -16,16 +16,31 @@ import (
 type fakeSDKClient struct {
 	pages []shared.V2AccountsCursorResponseCursor
 	calls int
+	// Pool-balance stubs: both reads return poolData; the fake records which
+	// branch ran and the `at` it received so PoolBalance's routing can be pinned.
+	poolData    []shared.V3PoolBalance
+	atCalls     int
+	latestCalls int
+	lastAt      *time.Time
 }
 
 func (f *fakeSDKClient) V2GetBalancesAggregated(context.Context, operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error) {
 	return nil, nil
 }
-func (f *fakeSDKClient) V3GetPoolBalances(context.Context, operations.V3GetPoolBalancesRequest) (*operations.V3GetPoolBalancesResponse, error) {
-	return nil, nil
+func (f *fakeSDKClient) V3GetPoolBalances(_ context.Context, req operations.V3GetPoolBalancesRequest) (*operations.V3GetPoolBalancesResponse, error) {
+	f.atCalls++
+	f.lastAt = req.At
+	return &operations.V3GetPoolBalancesResponse{
+		StatusCode:             200,
+		V3PoolBalancesResponse: &shared.V3PoolBalancesResponse{Data: f.poolData},
+	}, nil
 }
 func (f *fakeSDKClient) V3GetPoolBalancesLatest(context.Context, operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
-	return nil, nil
+	f.latestCalls++
+	return &operations.V3GetPoolBalancesLatestResponse{
+		StatusCode:             200,
+		V3PoolBalancesResponse: &shared.V3PoolBalancesResponse{Data: f.poolData},
+	}, nil
 }
 func (f *fakeSDKClient) V2ListAccounts(_ context.Context, _ operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error) {
 	cur := f.pages[f.calls]
@@ -83,4 +98,32 @@ func TestSDKLedgerResolver_ListAccounts_BudgetExceeded(t *testing.T) {
 	_, err := r.ListAccounts(context.Background(), "main", nil, time.Now(), 1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "budget")
+}
+
+// TestSDKPaymentsResolver_PoolBalance pins the routing: a nil pit reads the
+// current snapshot (V3GetPoolBalancesLatest), a non-nil pit reads point-in-time
+// (V3GetPoolBalances) with the instant forwarded as `at`.
+func TestSDKPaymentsResolver_PoolBalance(t *testing.T) {
+	data := []shared.V3PoolBalance{{Asset: "USD/2", Amount: big.NewInt(500)}}
+
+	t.Run("nil pit reads latest", func(t *testing.T) {
+		c := &fakeSDKClient{poolData: data}
+		got, err := NewSDKPaymentsResolver(c).PoolBalance(context.Background(), "pool", nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, c.latestCalls)
+		require.Equal(t, 0, c.atCalls)
+		require.Equal(t, big.NewInt(500), got["USD/2"])
+	})
+
+	t.Run("non-nil pit reads point-in-time with at", func(t *testing.T) {
+		c := &fakeSDKClient{poolData: data}
+		at := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
+		got, err := NewSDKPaymentsResolver(c).PoolBalance(context.Background(), "pool", &at)
+		require.NoError(t, err)
+		require.Equal(t, 1, c.atCalls)
+		require.Equal(t, 0, c.latestCalls)
+		require.NotNil(t, c.lastAt)
+		require.True(t, c.lastAt.Equal(at), "at must be forwarded to V3GetPoolBalances")
+		require.Equal(t, big.NewInt(500), got["USD/2"])
+	})
 }

@@ -50,7 +50,10 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		return nil, err
 	}
 	if !rule.Enabled {
-		return nil, fmt.Errorf("rule %s is disabled", rule.ID)
+		// A disabled rule is a predictable client-side invalid-state, not a
+		// server fault: wrap with ErrValidation so handleServiceErrors maps it
+		// to 400 rather than falling through to 500.
+		return nil, fmt.Errorf("%w: rule %s is disabled", ErrValidation, rule.ID)
 	}
 
 	ev, err := s.templates.Get(rule.TemplateKind)
