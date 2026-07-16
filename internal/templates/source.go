@@ -102,14 +102,21 @@ func (s SourceSpec) resolverNeed() string {
 	return "ledger"
 }
 
-// resolve reads the per-asset balance map for this source. The ledger source
-// honours pit; the pool source is always latest (see SourcePaymentsPool).
-func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, pit time.Time) (map[string]*big.Int, error) {
+// resolve reads the per-asset balance map for this source at pit. The ledger
+// source always reads point-in-time at pit. The pool source reads point-in-time
+// at pit when explicit is true (an explicitly requested past instant), else
+// latest — a PIT read at ~now falls past the pool's last balance movement and
+// returns empty (the balance-window tail; see engine.PaymentsResolver).
+func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, pit time.Time, explicit bool) (map[string]*big.Int, error) {
 	switch s.Kind {
 	case SourceLedger:
 		return resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query, pit)
 	case SourcePaymentsPool:
-		return resolvers.Payments.PoolBalance(ctx, s.PoolID, nil)
+		var poolPIT *time.Time
+		if explicit {
+			poolPIT = &pit
+		}
+		return resolvers.Payments.PoolBalance(ctx, s.PoolID, poolPIT)
 	default:
 		return nil, fmt.Errorf("%w: cannot resolve source kind %q", ErrInvalidSpec, s.Kind)
 	}

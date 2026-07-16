@@ -18,13 +18,21 @@ import (
 type fakeLedger struct {
 	balances map[string]map[string]*big.Int // (ledger|query) → asset → amount
 	accounts map[string][]engine.Account    // (ledger|query) → accounts (for per_account)
+	// gotPITs records the pit each AggregateBalance call read at, keyed by
+	// (ledger|query) so per-source-PIT tests can assert two terms on the same
+	// ledger were read at different instants.
+	gotPITs map[string]time.Time
 }
 
-func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query json.RawMessage, _ time.Time) (map[string]*big.Int, error) {
+func (f *fakeLedger) AggregateBalance(_ context.Context, ledger string, query json.RawMessage, pit time.Time) (map[string]*big.Int, error) {
+	key := ledger + "|" + string(query)
+	if f.gotPITs == nil {
+		f.gotPITs = map[string]time.Time{}
+	}
+	f.gotPITs[key] = pit
 	if f.balances == nil {
 		return map[string]*big.Int{}, nil
 	}
-	key := ledger + "|" + string(query)
 	b, ok := f.balances[key]
 	if !ok {
 		return map[string]*big.Int{}, nil

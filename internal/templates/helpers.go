@@ -87,21 +87,43 @@ func sortedKeys[V any](m map[string]V) []string {
 	return out
 }
 
-// pitForSources builds the PitPerSource map recorded on each Outcome. Every
-// source in a single evaluation resolves at the same margin-adjusted instant
-// (the engine pins one PIT per evaluation), so this maps each source's stable
-// label to that shared pit. Aggregate template paths call it directly instead
-// of routing a throwaway kernel Evaluate just to read the PIT back out; it also
-// keeps aggregate outcomes keyed the same way as the per-account paths (by
-// source label, not the kernel's positional ledgerSet:N keys). Labels dedupe
-// naturally — two terms on the same source collapse to one entry, all at the
-// same pit.
-func pitForSources(pit time.Time, labels ...string) map[string]time.Time {
-	out := make(map[string]time.Time, len(labels))
-	for _, l := range labels {
-		out[l] = pit
+// sourceKeyer assigns each source in a template a stable, unique key of the
+// form "<label>#<idx>", where idx counts prior sources sharing that label — so
+// two terms on the same ledger get "ledger:x#0" and "ledger:x#1" rather than
+// colliding on one label. Keys are handed out in the order the template
+// presents its sources, and they key BOTH the EvalInput.SourcePITs override
+// lookup (input) and the per-Outcome PitPerSource map (output), so an auditor
+// can round-trip a prior evaluation's per-source instants back into a request.
+type sourceKeyer struct{ seen map[string]int }
+
+func newSourceKeyer() *sourceKeyer { return &sourceKeyer{seen: map[string]int{}} }
+
+func (k *sourceKeyer) key(label string) string {
+	i := k.seen[label]
+	k.seen[label]++
+	return fmt.Sprintf("%s#%d", label, i)
+}
+
+// effectiveSourcePIT resolves the margin-adjusted instant a source reads at, and
+// whether that instant is an explicit historical PIT (vs the "as of now"
+// default). Precedence: a per-source override in EvalInput.SourcePITs wins over
+// the evaluation's default PIT. An override always counts as explicit; the
+// default is explicit only when the caller supplied `at` (EvalInput.PITExplicit).
+// The safety margin is subtracted from whichever PIT applies. The explicit bit
+// gates the payments-pool read (point-in-time vs latest — see SourceSpec.resolve
+// and engine.EvalInput); it is irrelevant to ledger sources, which always read
+// at the returned instant.
+func effectiveSourcePIT(in engine.EvalInput, key string) (time.Time, bool) {
+	pit := in.PIT
+	explicit := in.PITExplicit
+	if p, ok := in.SourcePITs[key]; ok {
+		pit = p
+		explicit = true
 	}
-	return out
+	if in.SafetyMargin > 0 {
+		pit = pit.Add(-in.SafetyMargin)
+	}
+	return pit, explicit
 }
 
 // unionAssets returns the lex-sorted union of asset codes across the input maps.

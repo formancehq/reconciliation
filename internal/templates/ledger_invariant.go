@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -96,28 +97,24 @@ func (t *LedgerInvariant) Evaluate(
 		return nil, err
 	}
 
-	pit := in.PIT
-	if in.SafetyMargin > 0 {
-		pit = pit.Add(-in.SafetyMargin)
-	}
-
-	// Scout each term's balances at the chosen PIT. Done up-front so we can
-	// build the direct-math check AND a deterministic Outcome list keyed by
-	// spec.Tolerance asset order.
+	// Scout each term's balances at its own PIT. Terms are all ledger sources,
+	// so each reads point-in-time; two terms on the same ledger get distinct keys
+	// ("ledger:x#0", "ledger:x#1") so they can be overridden — and audited —
+	// independently. Done up-front so we can build the direct-math check AND a
+	// deterministic Outcome list keyed by spec.Tolerance asset order.
+	keyer := newSourceKeyer()
+	pitPerSource := make(map[string]time.Time, len(spec.Terms))
 	termBalances := make([]map[string]*big.Int, len(spec.Terms))
 	for i, term := range spec.Terms {
+		key := keyer.key(SourceSpec{Kind: SourceLedger, Ledger: term.Ledger}.label())
+		pit, _ := effectiveSourcePIT(in, key)
 		b, err := resolvers.Ledger.AggregateBalance(ctx, term.Ledger, term.Query, pit)
 		if err != nil {
 			return nil, fmt.Errorf("scout terms[%d] (%s): %w", i, term.Ledger, err)
 		}
 		termBalances[i] = b
+		pitPerSource[key] = pit
 	}
-
-	termLabels := make([]string, 0, len(spec.Terms))
-	for _, term := range spec.Terms {
-		termLabels = append(termLabels, SourceSpec{Kind: SourceLedger, Ledger: term.Ledger}.label())
-	}
-	pitPerSource := pitForSources(pit, termLabels...)
 
 	outcomes := make([]Outcome, 0, len(spec.Tolerance))
 	for _, asset := range sortedKeys(spec.Tolerance) {

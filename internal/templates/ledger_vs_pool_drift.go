@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -150,25 +151,31 @@ func (t *LedgerVsPoolDrift) Evaluate(
 	ledgerSrc := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.LedgerQuery}
 	poolSrc := SourceSpec{Kind: SourcePaymentsPool, PoolID: spec.PaymentsPoolID}
 
+	// Each side resolves at its own PIT: the ledger at reconciledAtLedger, the
+	// pool at reconciledAtPayments (generalised — see effectiveSourcePIT). Keys
+	// are assigned ledger-then-pool so an override in EvalInput.SourcePITs and the
+	// recorded pit_per_source line up.
+	keyer := newSourceKeyer()
+	ledgerKey := keyer.key(ledgerSrc.label())
+	poolKey := keyer.key(poolSrc.label())
+	ledgerPIT, _ := effectiveSourcePIT(in, ledgerKey)
+	poolPIT, poolExplicit := effectiveSourcePIT(in, poolKey)
+
 	// Discover the asset universe by querying both sides. This is the V1
 	// ledger_vs_pool_drift contract — check every asset present on either
 	// side, not just those mentioned in spec.Tolerance.
-	pit := in.PIT
-	if in.SafetyMargin > 0 {
-		pit = pit.Add(-in.SafetyMargin)
-	}
-	ledgerBalances, err := ledgerSrc.resolve(ctx, resolvers, pit)
+	ledgerBalances, err := ledgerSrc.resolve(ctx, resolvers, ledgerPIT, false)
 	if err != nil {
 		return nil, fmt.Errorf("scout ledger balances: %w", err)
 	}
-	poolBalances, err := poolSrc.resolve(ctx, resolvers, pit)
+	poolBalances, err := poolSrc.resolve(ctx, resolvers, poolPIT, poolExplicit)
 	if err != nil {
 		return nil, fmt.Errorf("scout pool balances: %w", err)
 	}
 
 	assets := unionAssets(ledgerBalances, poolBalances)
 	outcomes := make([]Outcome, 0, len(assets))
-	pitPerSource := pitForSources(pit, ledgerSrc.label(), poolSrc.label())
+	pitPerSource := map[string]time.Time{ledgerKey: ledgerPIT, poolKey: poolPIT}
 
 	sign := spec.effectiveLedgerSign()
 	for _, asset := range assets {

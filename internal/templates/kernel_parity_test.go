@@ -182,9 +182,9 @@ func TestKernelParity_Aggregate(t *testing.T) {
 }
 
 // TestKernelParity_PitPerSource guards the other half of what the inline kernel
-// call used to supply: the PitPerSource map. It must be keyed by stable source
-// label (matching the per-account paths) and record the margin-adjusted PIT for
-// every source the template read.
+// call used to supply: the PitPerSource map. It must be keyed by stable, unique
+// source key ("<label>#<idx>") and record the margin-adjusted PIT for every
+// source the template read.
 func TestKernelParity_PitPerSource(t *testing.T) {
 	t.Parallel()
 	tmpl := NewSourceParity()
@@ -208,7 +208,7 @@ func TestKernelParity_PitPerSource(t *testing.T) {
 	}
 	pps := out[0].PitPerSource
 	want := pit.Add(-margin)
-	for _, key := range []string{"ledger:main", "pool:acct"} {
+	for _, key := range []string{"ledger:main#0", "pool:acct#0"} {
 		got, ok := pps[key]
 		if !ok {
 			t.Fatalf("PitPerSource missing key %q: %v", key, pps)

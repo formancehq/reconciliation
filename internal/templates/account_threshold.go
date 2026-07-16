@@ -115,22 +115,22 @@ func (t *AccountThreshold) Evaluate(
 		return nil, err
 	}
 
-	pit := in.PIT
-	if in.SafetyMargin > 0 {
-		pit = pit.Add(-in.SafetyMargin)
-	}
 	src := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.Query}
+	// Single ledger source — one key, one PIT (explicit is irrelevant to a
+	// ledger source, which always reads point-in-time at pit).
+	srcKey := newSourceKeyer().key(src.label())
+	pit, _ := effectiveSourcePIT(in, srcKey)
 
 	if spec.Mode == ThresholdPerAccount {
-		return t.evaluatePerAccount(ctx, &spec, src, eng, resolvers, pit)
+		return t.evaluatePerAccount(ctx, &spec, src, eng, resolvers, srcKey, pit)
 	}
 
-	ledgerBalances, err := src.resolve(ctx, resolvers, pit)
+	ledgerBalances, err := src.resolve(ctx, resolvers, pit, false)
 	if err != nil {
 		return nil, fmt.Errorf("scout ledger balances: %w", err)
 	}
 
-	pitPerSource := pitForSources(pit, src.label())
+	pitPerSource := map[string]time.Time{srcKey: pit}
 	outcomes := make([]Outcome, 0, len(spec.Bounds))
 	for _, asset := range sortedKeys(spec.Bounds) {
 		bounds := spec.Bounds[asset]
@@ -186,13 +186,14 @@ func (t *AccountThreshold) evaluatePerAccount(
 	src SourceSpec,
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
+	srcKey string,
 	pit time.Time,
 ) ([]Outcome, error) {
 	accounts, err := src.resolveAccounts(ctx, resolvers, pit, eng.MaxAccountsScanned())
 	if err != nil {
 		return nil, fmt.Errorf("scout accounts on %s: %w", src.label(), err)
 	}
-	pitPerSource := map[string]time.Time{src.label(): pit}
+	pitPerSource := map[string]time.Time{srcKey: pit}
 	assets := sortedKeys(spec.Bounds)
 	outcomes := make([]Outcome, 0, len(accounts)*len(assets))
 	for _, acct := range accounts {

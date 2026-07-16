@@ -100,27 +100,32 @@ func (t *SourceParity) Evaluate(
 		return nil, err
 	}
 
-	pit := in.PIT
-	if in.SafetyMargin > 0 {
-		pit = pit.Add(-in.SafetyMargin)
-	}
+	// Each side resolves at its own PIT — the two-independent-timestamps contract
+	// (left vs right, e.g. sub-ledger vs control account read a settlement cycle
+	// apart). Keys are assigned left-then-right; two sources sharing a label
+	// (same ledger) get "#0" and "#1".
+	keyer := newSourceKeyer()
+	leftKey := keyer.key(spec.Left.label())
+	rightKey := keyer.key(spec.Right.label())
+	leftPIT, leftExplicit := effectiveSourcePIT(in, leftKey)
+	rightPIT, rightExplicit := effectiveSourcePIT(in, rightKey)
 
 	if spec.Scope == ScopePerAccount {
-		return t.evaluatePerAccount(ctx, &spec, eng, resolvers, pit)
+		return t.evaluatePerAccount(ctx, &spec, eng, resolvers, leftKey, leftPIT, rightKey, rightPIT)
 	}
 
-	leftBalances, err := spec.Left.resolve(ctx, resolvers, pit)
+	leftBalances, err := spec.Left.resolve(ctx, resolvers, leftPIT, leftExplicit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s: %w", spec.Left.label(), err)
 	}
-	rightBalances, err := spec.Right.resolve(ctx, resolvers, pit)
+	rightBalances, err := spec.Right.resolve(ctx, resolvers, rightPIT, rightExplicit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s: %w", spec.Right.label(), err)
 	}
 
 	assets := unionAssets(leftBalances, rightBalances)
 	outcomes := make([]Outcome, 0, len(assets))
-	pitPerSource := pitForSources(pit, spec.Left.label(), spec.Right.label())
+	pitPerSource := map[string]time.Time{leftKey: leftPIT, rightKey: rightPIT}
 	for _, asset := range assets {
 		tolerance := spec.Tolerance[asset] // 0 if absent
 
@@ -173,20 +178,25 @@ func (t *SourceParity) evaluatePerAccount(
 	spec *ParitySpec,
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
-	pit time.Time,
+	leftKey string,
+	leftPIT time.Time,
+	rightKey string,
+	rightPIT time.Time,
 ) ([]Outcome, error) {
+	// Both sides are ledger sources here (Validate enforces it), so each reads
+	// point-in-time at its own PIT; the pool latest/PIT gate does not apply.
 	limit := eng.MaxAccountsScanned()
-	leftAccts, err := spec.Left.resolveAccounts(ctx, resolvers, pit, limit)
+	leftAccts, err := spec.Left.resolveAccounts(ctx, resolvers, leftPIT, limit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s accounts: %w", spec.Left.label(), err)
 	}
-	rightAccts, err := spec.Right.resolveAccounts(ctx, resolvers, pit, limit)
+	rightAccts, err := spec.Right.resolveAccounts(ctx, resolvers, rightPIT, limit)
 	if err != nil {
 		return nil, fmt.Errorf("scout %s accounts: %w", spec.Right.label(), err)
 	}
 	leftByAddr := accountsByAddress(leftAccts)
 	rightByAddr := accountsByAddress(rightAccts)
-	pitPerSource := map[string]time.Time{spec.Left.label(): pit, spec.Right.label(): pit}
+	pitPerSource := map[string]time.Time{leftKey: leftPIT, rightKey: rightPIT}
 
 	outcomes := make([]Outcome, 0, len(leftByAddr))
 	for _, addr := range unionAssets(leftByAddr, rightByAddr) { // sorted union of addresses
