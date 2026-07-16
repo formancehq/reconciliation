@@ -84,11 +84,7 @@ func (s *mockSDKFormanceClient) V2ListAccounts(_ context.Context, _ operations.V
 	return &operations.V2ListAccountsResponse{StatusCode: http.StatusOK}, nil
 }
 
-func (s *mockSDKFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
-	// Both the legacy /policies path and the V1 ledger_vs_pool_drift template
-	// route through this method since the legacy GetPoolBalances PIT endpoint
-	// returns empty under payments v3. Mirror the V1 mock's behaviour so tests
-	// reach the same balances regardless of which surface they exercise.
+func (s *mockSDKFormanceClient) v3PoolBalances() []shared.V3PoolBalance {
 	balances := make([]shared.V3PoolBalance, 0, len(s.paymentsBalances))
 	for assetCode, balance := range s.paymentsBalances {
 		balances = append(balances, shared.V3PoolBalance{
@@ -96,10 +92,29 @@ func (s *mockSDKFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req
 			Asset:  assetCode,
 		})
 	}
+	return balances
+}
+
+func (s *mockSDKFormanceClient) V3GetPoolBalances(ctx context.Context, req operations.V3GetPoolBalancesRequest) (*operations.V3GetPoolBalancesResponse, error) {
+	// The legacy /policies path reads point-in-time via this method. The mock
+	// ignores `req.At` and returns the configured balances — the /policies tests
+	// assert the drift logic, not payments-side PIT windowing.
+	return &operations.V3GetPoolBalancesResponse{
+		StatusCode: http.StatusOK,
+		V3PoolBalancesResponse: &shared.V3PoolBalancesResponse{
+			Data: s.v3PoolBalances(),
+		},
+	}, nil
+}
+
+func (s *mockSDKFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
+	// The V1 ledger_vs_pool_drift template resolves the pool via latest when the
+	// evaluation is "as of now"; mirror the same balances so tests reach them
+	// regardless of which surface they exercise.
 	return &operations.V3GetPoolBalancesLatestResponse{
 		StatusCode: http.StatusOK,
 		V3PoolBalancesResponse: &shared.V3PoolBalancesResponse{
-			Data: balances,
+			Data: s.v3PoolBalances(),
 		},
 	}, nil
 }

@@ -42,23 +42,22 @@ func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName s
 	return balanceMap, nil
 }
 
-func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID string, _ time.Time) (map[string]*big.Int, error) {
-	// Why not the V1 GetPoolBalances(at) endpoint:
-	// V1.GetPoolBalances takes a PIT but returns an empty payload under
-	// payments v3 — same root cause that drove the V1 SDKPaymentsResolver
-	// to V3GetPoolBalancesLatest. Calling it here used to mask real drift
-	// as a zero-balance result (every asset compared against 0 → "OK"),
-	// which is worse than failing loudly.
+func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID string, at time.Time) (map[string]*big.Int, error) {
+	// Read the pool balance point-in-time at `at` (the request's
+	// reconciledAtPayments, which ReconciliationRequest.Validate guarantees is a
+	// non-zero past instant). Payments v3 GET /v3/pools/{id}/balances?at= returns
+	// the balance valid at that instant — verified against payments v3.3.1.
 	//
-	// Trade-off: V3GetPoolBalancesLatest doesn't accept a PIT, so the
-	// legacy /policies path now reads *current* pool balances even when
-	// the caller supplied an `at` time. Acceptable because (a) the
-	// previous PIT behaviour didn't actually work and (b) cross-source
-	// PIT consistency for pools was never tighter than seconds anyway.
-	// V1 rules express this trade-off explicitly via per-source tolerances.
-	balances, err := s.client.V3GetPoolBalancesLatest(
+	// This corrects a prior workaround that read V3GetPoolBalancesLatest and
+	// discarded `at`: it rested on the belief that no payments-v3 PIT read
+	// existed, which is not true. The one real caveat is the balance-window tail
+	// (a read strictly after the pool's last balance movement is empty on the PIT
+	// route) — but the legacy contract requires `at` in the past precisely to
+	// reconcile against a settled historical instant, so PIT is the faithful read
+	// here. See ADR-002.
+	balances, err := s.client.V3GetPoolBalances(
 		ctx,
-		operations.V3GetPoolBalancesLatestRequest{PoolID: paymentPoolID},
+		operations.V3GetPoolBalancesRequest{PoolID: paymentPoolID, At: &at},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pool balances: %w", err)

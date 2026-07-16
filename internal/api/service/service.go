@@ -120,7 +120,7 @@ func (s *Service) withRuleLock(ctx context.Context, ruleID uuid.UUID, fn func(ct
 // SDKFormance is the SDK surface the service layer + engine consume. It
 // intentionally covers BOTH the legacy /policies path (GetPoolBalances on the
 // payments v1 namespace) and the V1 engine resolvers (V2GetLedger,
-// V2GetBalancesAggregated, V3GetPoolBalancesLatest). Mocks in tests implement
+// V2GetBalancesAggregated, V3GetPoolBalances{,Latest}). Mocks in tests implement
 // only the subset they need.
 type SDKFormance interface {
 	// Legacy reconciliation /policies path
@@ -130,6 +130,13 @@ type SDKFormance interface {
 	// V1 engine resolvers
 	V2GetLedger(ctx context.Context, req operations.V2GetLedgerRequest) (*operations.V2GetLedgerResponse, error)
 	V2ListAccounts(ctx context.Context, req operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error)
+	// V3GetPoolBalances is the payments v3 point-in-time pool read
+	// (GET /v3/pools/{id}/balances?at=). V3GetPoolBalancesLatest is the
+	// current-snapshot read (…/balances/latest). Both are genuine: `at` returns
+	// the pool balance valid at that instant; the difference is that a read past
+	// the pool's last balance movement is empty on the PIT route but non-empty on
+	// latest (see ADR-002).
+	V3GetPoolBalances(ctx context.Context, req operations.V3GetPoolBalancesRequest) (*operations.V3GetPoolBalancesResponse, error)
 	V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error)
 }
 
@@ -155,6 +162,10 @@ func (s *sdkFormanceClient) V2GetLedger(ctx context.Context, req operations.V2Ge
 
 func (s *sdkFormanceClient) V2ListAccounts(ctx context.Context, req operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error) {
 	return s.client.Ledger.V2.ListAccounts(ctx, req)
+}
+
+func (s *sdkFormanceClient) V3GetPoolBalances(ctx context.Context, req operations.V3GetPoolBalancesRequest) (*operations.V3GetPoolBalancesResponse, error) {
+	return s.client.Payments.V3.GetPoolBalances(ctx, req)
 }
 
 func (s *sdkFormanceClient) V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
