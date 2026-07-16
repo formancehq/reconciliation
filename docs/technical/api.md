@@ -46,7 +46,7 @@ Run a reconciliation **now** against the supplied PITs.
 }
 ```
 
-Returns `200` + the `Reconciliation` row (`status: "OK" | "NOT_OK"`, balances, drift). Caller picks both PITs; both must be in the past.
+Returns `200` + the `Reconciliation` row (`status: "OK" | "NOT_OK"`, balances, drift). Caller picks both PITs; both must be in the past. Each side is read point-in-time at its own timestamp — ledger via `/aggregate/balances?pit=`, payments pool via `/v3/pools/{id}/balances?at=` — so the two sides can be read a settlement cycle apart.
 
 ### `GET /reconciliations` · `GET /reconciliations/{id}`
 
@@ -55,7 +55,7 @@ History of previous runs.
 ### Known legacy quirks
 
 - `status` is `OK` even when drift is positive (legacy convention — only negative drift flags). Tracked in [v1-vs-legacy.md §4](./v1-vs-legacy.md#4-drift-status-logic-the-legacy-bug).
-- Payments-side PIT silently returns empty under payments v3. Tracked in [v1-vs-legacy.md §5](./v1-vs-legacy.md#5-payments-side-read).
+- `reconciledAtPayments` reads the pool point-in-time (`/v3/pools/{id}/balances?at=`). The one caveat: a read strictly *after* the pool's last balance movement returns empty (the balance-window tail) — supply a timestamp within the settled history, not a bleeding-edge instant. Details in [v1-vs-legacy.md §5](./v1-vs-legacy.md#5-payments-side-read).
 - Ledger-side PIT + metadata filter silently returns empty when `ACCOUNT_METADATA_HISTORY: DISABLED` ([ledger#1416](https://github.com/formancehq/ledger/issues/1416)).
 
 ---
@@ -116,11 +116,17 @@ Drops the rule and (via FK) all its evaluations, alerts, and alert events.
 ```json
 {
   "at":           "2026-06-17T15:00:00Z",
-  "safetyMargin": "30s"
+  "safetyMargin": "30s",
+  "sourcePITs": {
+    "ledger:buildr#0": "2026-06-17T15:00:00Z",
+    "pool:0eb4a31f-…#0": "2026-06-17T14:30:00Z"
+  }
 }
 ```
 
-Both fields are optional: `at` defaults to now, and `safetyMargin` defaults to `30s` (send `"0s"` to read exactly at `at` — e.g. deterministic tests / demos). A negative `safetyMargin` is rejected with `400`.
+All fields are optional: `at` defaults to now, and `safetyMargin` defaults to `30s` (send `"0s"` to read exactly at `at` — e.g. deterministic tests / demos). A negative `safetyMargin` is rejected with `400`; every timestamp (`at` and each `sourcePITs` value) must be in the past.
+
+`sourcePITs` overrides the PIT of individual sources, keyed by the stable source key echoed back in `pitPerSource` (`"<label>#<idx>"`). This is the two-independent-timestamps contract — read the ledger at one instant and the payments pool at another to absorb inter-system settlement lag — generalised to any multi-source template (including two terms on the same ledger, addressed by their distinct `#idx`). A supplied `at` (or a per-source override) reads the payments pool point-in-time; the as-of-now default reads its latest snapshot (a PIT read at ~now hits the empty balance-window tail).
 
 Returns `200` + the evaluation record:
 
@@ -131,7 +137,7 @@ Returns `200` + the evaluation record:
   "startedAt":    "…",
   "endedAt":      "…",
   "result":       "PASS" | "FAIL" | "ERROR",
-  "pitPerSource": { "ledger:buildr": "…", "pool:0eb4a31f-…": "…" },
+  "pitPerSource": { "ledger:buildr#0": "…", "pool:0eb4a31f-…#0": "…" },
   "evidence":     [ { "fingerprint": "asset:USD/2", "passed": false, "evidence": {…} }, … ],
   "costUnits":    0,
   "error":        ""

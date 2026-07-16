@@ -19,7 +19,7 @@ internal/
 │   ├── engine.go           Compile + Evaluate
 │   ├── budget.go           Limits + budgetTracker
 │   ├── errors.go           ErrCompile / ErrEvaluate translation
-│   └── sdk_resolvers.go    SDK-backed resolver impls (V2.GetLedger, V2.GetBalancesAggregated, V3.GetPoolBalancesLatest)
+│   └── sdk_resolvers.go    SDK-backed resolver impls (V2.GetLedger, V2.GetBalancesAggregated, V3.GetPoolBalances{,Latest})
 ├── templates/              ✅ V1 GA template catalog
 │   ├── template.go         Evaluator interface, Outcome, Registry
 │   ├── helpers.go          CEL string rendering, fingerprint, sorted-keys, zeroIfNil
@@ -78,7 +78,7 @@ flowchart LR
     Bindings --> Run[program.ContextEval]
     Run --> Resolvers[Resolver calls via builtins]
     Resolvers -.-> SDKLedger[V2.GetBalancesAggregated]
-    Resolvers -.-> SDKPayments[V3.GetPoolBalancesLatest]
+    Resolvers -.-> SDKPayments[V3.GetPoolBalances / …Latest]
 ```
 
 See [engine/engine.go](../../internal/engine/engine.go) for the Compile/Evaluate flow, [engine/builtins.go](../../internal/engine/builtins.go) for the CEL function set, and [engine/sdk_resolvers.go](../../internal/engine/sdk_resolvers.go) for the SDK wiring.
@@ -217,7 +217,7 @@ erDiagram
 | Library | Pinned at | Why |
 |---|---|---|
 | `github.com/google/cel-go` | v0.28.1 | Kernel evaluator. See [ADR-001](../prd/adr-001-cel-kernel.md) §6. |
-| `github.com/formancehq/formance-sdk-go/v3` | v3.7.2 | Has `V3.GetPoolBalancesLatest` — required to avoid the legacy PIT empty path. |
+| `github.com/formancehq/formance-sdk-go/v3` | v3.7.2 | Pool reads: `V3.GetPoolBalances` (point-in-time, `?at=`) + `V3.GetPoolBalancesLatest` (current snapshot). |
 | `github.com/uptrace/bun` | (inherited via go-libs) | ORM; existing project convention. |
 | `github.com/formancehq/go-libs/migrations` | inherited | Migration framework. |
 

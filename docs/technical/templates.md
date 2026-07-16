@@ -32,7 +32,7 @@ Every template:
 4. **Evaluates** per asset directly from the scouted balances (big.Int math) for the pass/fail verdict, and renders the per-asset CEL string into `evidence.compiledCEL` for explainability — the CEL is *not* run at evaluation time.
 5. **Returns `[]Outcome`** — one per asset, with fingerprint, pass/fail, and evidence.
 
-The template's direct math and its rendered CEL are two expressions of the same invariant. Their equivalence is guaranteed by a unit test (`TestKernelParity_Aggregate`, [kernel_parity_test.go](../../internal/templates/kernel_parity_test.go)) that runs each template's rendered CEL through the kernel against fixed fakes and asserts it matches the direct verdict — rather than by a per-asset kernel re-resolve at evaluation time. That runtime cross-check was dropped: it cost a resolver round-trip per asset and, for a payments pool's `latest` read (no point-in-time), could diverge from the scout read on benign timing. The renderer↔grammar contract is still checked once per rule at create time (`engine.Compile` on the `Explain` output).
+The template's direct math and its rendered CEL are two expressions of the same invariant. Their equivalence is guaranteed by a unit test (`TestKernelParity_Aggregate`, [kernel_parity_test.go](../../internal/templates/kernel_parity_test.go)) that runs each template's rendered CEL through the kernel against fixed fakes and asserts it matches the direct verdict — rather than by a per-asset kernel re-resolve at evaluation time. That runtime cross-check was dropped primarily on cost — a resolver round-trip per asset. (It was also prone to a benign TOCTOU when the pool was re-read `latest` between the scout and the cross-check; per-source point-in-time reads have since narrowed that window, but the cost argument stands on its own and the cross-check stays out.) The renderer↔grammar contract is still checked once per rule at create time (`engine.Compile` on the `Explain` output).
 
 Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` and `ledger_vs_pool_drift` both compose sources through it, so there is one code path for "read a balance source".
 
@@ -236,8 +236,10 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 ```
 
 A `SourceSpec` is `{ "kind": "ledger" | "payments_pool", ... }`:
-- `ledger` → requires `ledger` + `query` (read at the eval PIT)
-- `payments_pool` → requires `poolID` (always latest; payments v3 has no faithful PIT read, so cross-system skew is absorbed by `tolerance`)
+- `ledger` → requires `ledger` + `query` (read point-in-time at the source's PIT)
+- `payments_pool` → requires `poolID` (read point-in-time via `/v3/pools/{id}/balances?at=` when an explicit past PIT is requested; latest for the as-of-now default, since a PIT read at ~now hits the empty balance-window tail)
+
+Each source resolves at its own PIT: the evaluation's default `at`, or a per-source override supplied in `sourcePITs` (keyed by the source's stable `"<label>#<idx>"` key). This is the two-independent-timestamps contract — e.g. ledger and pool read a settlement cycle apart — and it applies to every multi-source template. Residual cross-system skew is still absorbed by `tolerance`.
 
 **Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B. It requires **both** sides to be ledger sources (a pool is aggregate-only); see [the scope model](#how-templates-work).
 
@@ -253,7 +255,7 @@ abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(pool("0eb4a31f
 
 **Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account)
 
-**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `pool:…`; per_account also carries `account`).
+**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `pool:…`; the matching `pit_per_source` keys carry the `#idx` suffix, e.g. `ledger:main#0`; per_account also carries `account`).
 
 **Relation to `ledger_vs_pool_drift`** — `source_parity` is the equality primitive (`abs(left − right) ≤ tol`). `ledger_vs_pool_drift` is a sum-to-zero relation with a configurable `ledgerSign`; it now resolves and renders both sides through the same shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source" — and layers only its sign arithmetic on top. (Collapsing drift's signed sum and `ledger_invariant`'s N-term sum into a single signed-combination template is a possible future consolidation.) An external bank/PSP-account source kind is a natural next addition once it has a resolver + kernel builtin.
 

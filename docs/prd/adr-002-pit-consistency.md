@@ -2,7 +2,15 @@
 
 **Status:** Accepted (implemented in [`internal/engine/engine.go`](../../internal/engine/engine.go) and [`internal/templates/`](../../internal/templates/))
 **Linked from:** [PRD §9](./README.md), [v1-vs-legacy.md §6](../technical/v1-vs-legacy.md)
-**Last updated:** 2026-06-17
+**Last updated:** 2026-07-16
+
+> **Revision 2026-07-16.** §3 and §8.A originally stated payments v3 had no
+> faithful point-in-time pool read. That was a misdiagnosis (a read at ~now hits
+> the empty balance-window tail — see §3). Re-verified against payments v3.3.1:
+> `GET /v3/pools/{id}/balances?at=` is a genuine PIT read. The decision below is
+> **unchanged** — per-source PIT, no global snapshot — but the payments side now
+> honours PIT per source instead of always reading latest. Sections updated
+> accordingly.
 
 ---
 
@@ -37,9 +45,14 @@ V1 keeps this contract but makes it **explicit**, **uniform**, and **auditable**
 
 ### Payments v3
 
-The legacy SDK call to `/api/payments/pools/{id}/balances?at=…` silently returns `[]` under payments v3 — the PIT-aware route was not implemented. The endpoint that works is `/v3/pools/{id}/balances/latest`, which is the **current** snapshot — not historically queryable.
+Payments v3 exposes **two** pool-balance reads, both genuine (verified against v3.3.1):
 
-This means the payments side is effectively **"as of now, eventually consistent with the upstream provider"**. We can't ask "what was the pool balance an hour ago"; only "what is it right now."
+- `/v3/pools/{id}/balances/latest` — the current snapshot, always populated.
+- `/v3/pools/{id}/balances?at=…` — the balance **valid at `at`**. Historically queryable: distinct values at distinct past instants, empty before the pool existed, and `at` is required + must not be in the future.
+
+So the payments side **is** point-in-time queryable — we *can* ask "what was the pool balance an hour ago." The one caveat is a **balance-window tail**: a pool balance carries a validity window `[createdAt, lastUpdatedAt]`, and the *current* balance sits as a point at the last movement until a new movement supersedes it. A read strictly after the last movement matches no window and returns `[]`, whereas `latest` returns the current balance unconditionally. A read at ~now is always past the last movement, so **"as of now" must use `latest`, while an explicitly historical instant uses `?at=`.**
+
+(The earlier claim that the `?at=` path "silently returns `[]` / was not implemented" was a misdiagnosis: it was almost certainly observed by reading at ~now — the tail case above — not by exercising a genuine past instant within the pool's active history.)
 
 ### External GL (V2+)
 
@@ -68,7 +81,7 @@ flowchart LR
     Adjust --> Bind["Bind ledgerSet.PIT,\npool.PIT in evalCtx"]
     Bind --> Eval[Run CEL]
     Eval --> Ledger["ledgerSet resolver:\nV2.GetBalancesAggregated(pit=T-30s)"]
-    Eval --> Pool["pool resolver:\nV3.GetPoolBalancesLatest()\n(latest, not PIT)"]
+    Eval --> Pool["pool resolver:\nV3.GetPoolBalances(at=T-30s) if explicit PIT\nelse V3.GetPoolBalancesLatest()"]
     Ledger --> Record[Record pit_per_source: { ledger_set:0 → T-30s }]
     Pool --> Record2[Record pit_per_source: { payments_pool:0 → T-30s }]
     Record --> Persist[INSERT evaluation]
@@ -77,9 +90,9 @@ flowchart LR
 
 **Key implementation details**
 
-- Engine reads `EvalInput.PIT` and `EvalInput.SafetyMargin` from the caller (the service layer; templates also subtract margin before any scout calls so the math matches).
-- The `Source` Go struct carries a `PIT` field set by the source-constructor builtin at eval time.
-- Each resolver's signature takes `pit time.Time` even when the underlying API doesn't honour it — the value is **recorded for audit** even if the resolver internally falls back to "latest" (payments case). The recorded PIT then appears in `evaluation.pit_per_source`.
+- Engine reads `EvalInput.PIT`, `EvalInput.SafetyMargin`, and optional per-source overrides `EvalInput.SourcePITs` from the caller (the service layer; templates also subtract margin before any scout calls so the math matches). A source with no override resolves at the default PIT; each source's *effective* instant is recorded in `evaluation.pit_per_source`, keyed by its stable `"<label>#<idx>"` key — so an override can be round-tripped back into a later request.
+- `EvalInput.PITExplicit` marks a caller-supplied PIT (vs the service defaulting to now). It gates the payments-pool read: an explicit past instant reads `V3.GetPoolBalances(?at=)`; the "as of now" default reads `V3.GetPoolBalancesLatest` (a PIT read at ~now hits the empty balance-window tail from §3). An override always counts as explicit for its source.
+- The ledger resolver always reads point-in-time at its source's PIT. The recorded PIT is therefore the instant each side was **actually** read at, not a nominal value.
 
 ---
 
@@ -111,9 +124,9 @@ Documentation guidance (will land alongside the public template docs):
 
 Two real implementation gotchas captured during the V1 baseline check:
 
-### A. Payments v3 PIT regression
+### A. Payments-pool balance-window tail (not a PIT regression)
 
-The SDK's `GetPoolBalances` (legacy path) returns `[]` under payments v3 even with valid PIT. V1's `SDKPaymentsResolver` uses `V3.GetPoolBalancesLatest` instead — accepting that the payments side reads "current" and pushing PIT semantics out to the persisted `pit_per_source` audit record. Documented inline in [`internal/engine/sdk_resolvers.go`](../../internal/engine/sdk_resolvers.go).
+Originally recorded here as "payments v3 has no PIT read." Corrected: `V3.GetPoolBalances(?at=)` is a genuine PIT read. The real gotcha is the **balance-window tail** (§3): the current pool balance is a point at its last movement, so a read at ~now returns `[]` while `latest` returns the balance. V1's `SDKPaymentsResolver.PoolBalance` therefore reads `?at=` for an explicit past instant and `latest` for the as-of-now default — not a workaround, but the correct read for each case. Documented inline in [`internal/engine/sdk_resolvers.go`](../../internal/engine/sdk_resolvers.go).
 
 ### B. Ledger v2 `/aggregate/balances` + PIT + metadata silent failure
 
@@ -134,7 +147,7 @@ Filed: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416
 
 ## 10. Conditions under which we'd revisit
 
-- **Payments grows PIT support** that's compatible with the legacy SDK shape → switch the resolver to use it; the model doesn't change.
+- ~~**Payments grows PIT support**~~ — done. Payments v3 already has it (`?at=`), and the resolver now uses it per source; the model didn't change.
 - **Ledger v3 introduces cross-ledger snapshot semantics** → the kernel might offer an optional "aligned PIT" mode within a single Formance stack. Cross-vendor sources remain per-source.
 - **A customer surfaces a use case where tolerance can't encode the drift they care about** → revisit, but expect this to be a new template (e.g. "balance change over time window") rather than a model change.
 

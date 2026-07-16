@@ -14,7 +14,7 @@ This document describes the diff between the legacy reconciliation behaviour (wh
 | **Asset handling** | One pass/fail per request; "different number of assets" hard fails | Per-asset outcomes, fingerprint-dedup'd; one alert per asset |
 | **Drift convention** | Implicit (`ledgerBalance + poolBalance == 0`) — only **negative** drift flags `NOT_OK` (legacy bug) | Same arithmetic; templates treat **any** drift outside tolerance as failure |
 | **Tolerance** | Strict zero only | Per-asset tolerance, configurable per template |
-| **Payments-side read** | Legacy SDK route `/api/payments/pools/{id}/balances?at=` — **silently empty** under payments v3 | V3 `/balances/latest` via `SDKPaymentsResolver` |
+| **Payments-side read** | `/api/payments/pools/{id}/balances?at=` — genuine point-in-time (an earlier "silently empty under v3" read was a misdiagnosis; see §5) | Point-in-time per source: `V3 /balances?at=` for an explicit past instant, `V3 /balances/latest` for as-of-now |
 | **Notifications** | None (HTTP response only) | Webhook events + email digest at V1 GA |
 | **Resolution** | None — every fail recomputes from scratch | Three paths: `auto` / `fixed_by_booking` / `accepted_by_business`, all audit-trailed |
 | **Reopen behaviour** | N/A | Same alert row flips back to OPEN in place; lifetime `occurrence_count` keeps growing; the prior resolution is preserved in the `alert_event` log |
@@ -118,13 +118,13 @@ Templates treat any `abs(drift) > tolerance` as failure, regardless of sign. The
 
 ### Legacy
 
-The SDK call hits `/api/payments/pools/{id}/balances?at=…`. This endpoint exists in payments v3 but **silently returns `[]`** — the PIT path was not implemented. Symptom: `paymentsBalances: {}` on every reconciliation, so the comparison harmonises to "zero on both sides" and reports `status: OK`.
+The SDK call hits `/api/payments/pools/{id}/balances?at=…`. An earlier baseline check read `[]` here and concluded "the PIT path is not implemented under payments v3" — that diagnosis was **wrong**. Re-verified against payments v3.3.1: the route returns the pool balance **valid at `at`**, correct and historically distinct, on both the v1 (`/api/payments/pools/{id}/balances?at=`) and v3 (`/v3/pools/{id}/balances?at=`) routes.
 
-Empirically reproduced during the baseline check; see the inline note at [internal/api/service/utils.go:48](../../internal/api/service/utils.go).
+The `[]` is real but narrower: a pool balance has a validity window `[createdAt, lastUpdatedAt]`, and the **current** balance sits as a point at the last movement until it is superseded. So a read strictly *after* the last balance movement — which is exactly what a read at ~now does — matches no window and returns `[]`, while `/balances/latest` returns the current balance unconditionally. The baseline symptom (`paymentsBalances: {}` → "zero on both sides" → `status: OK`) is consistent with a read at ~now (or past the demo data's last event), not with a missing PIT path.
 
 ### V1
 
-`SDKPaymentsResolver` uses `Payments.V3.GetPoolBalancesLatest` — the current snapshot endpoint that actually returns the data ([internal/engine/sdk_resolvers.go](../../internal/engine/sdk_resolvers.go)). Cross-source PIT consistency is handled by tolerances in the template, not by a payments-side PIT that doesn't exist (see [ADR-002](../prd/adr-002-pit-consistency.md)).
+Each source reads at its own point-in-time (PIT-per-source — see [ADR-002](../prd/adr-002-pit-consistency.md)). `SDKPaymentsResolver.PoolBalance` reads the pool point-in-time via `Payments.V3.GetPoolBalances` (`?at=`) when an explicit past instant is requested, and `Payments.V3.GetPoolBalancesLatest` for the "as of now" default — because a PIT read at ~now hits the empty balance-window tail described above ([internal/engine/sdk_resolvers.go](../../internal/engine/sdk_resolvers.go)). The legacy `/policies` path (which requires `reconciledAtPayments` in the past) always reads point-in-time. Callers set per-source PITs on `POST /rules/{id}/evaluate` via `sourcePITs`; residual cross-source skew is still absorbed by the template's `tolerance`.
 
 ---
 
