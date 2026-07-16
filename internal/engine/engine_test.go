@@ -41,7 +41,7 @@ type fakePayments struct {
 	err      error
 }
 
-func (f *fakePayments) PoolBalanceLatest(_ context.Context, poolID string) (map[string]*big.Int, error) {
+func (f *fakePayments) PoolBalance(_ context.Context, poolID string, _ *time.Time) (map[string]*big.Int, error) {
 	if f.err != nil {
 		return nil, f.err
 	}

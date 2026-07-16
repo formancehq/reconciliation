@@ -437,14 +437,14 @@ func (f *orchestrationLedger) ListAccounts(context.Context, string, json.RawMess
 
 type orchestrationPayments struct {
 	current map[string]*big.Int
-	// afterFirst, when non-nil, is returned by every PoolBalanceLatest call AFTER
+	// afterFirst, when non-nil, is returned by every PoolBalance call AFTER
 	// the first. Lets a test simulate a pool balance changing between the scout
 	// read and the kernel's live re-read — the pool-`latest` TOCTOU.
 	afterFirst map[string]*big.Int
 	calls      int
 }
 
-func (f *orchestrationPayments) PoolBalanceLatest(context.Context, string) (map[string]*big.Int, error) {
+func (f *orchestrationPayments) PoolBalance(context.Context, string, *time.Time) (map[string]*big.Int, error) {
 	f.calls++
 	src := f.current
 	if f.calls > 1 && f.afterFirst != nil {

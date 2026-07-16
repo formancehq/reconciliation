@@ -109,7 +109,7 @@ func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, pit
 	case SourceLedger:
 		return resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query, pit)
 	case SourcePaymentsPool:
-		return resolvers.Payments.PoolBalanceLatest(ctx, s.PoolID)
+		return resolvers.Payments.PoolBalance(ctx, s.PoolID, nil)
 	default:
 		return nil, fmt.Errorf("%w: cannot resolve source kind %q", ErrInvalidSpec, s.Kind)
 	}

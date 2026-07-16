@@ -21,6 +21,9 @@ type fakeSDKClient struct {
 func (f *fakeSDKClient) V2GetBalancesAggregated(context.Context, operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error) {
 	return nil, nil
 }
+func (f *fakeSDKClient) V3GetPoolBalances(context.Context, operations.V3GetPoolBalancesRequest) (*operations.V3GetPoolBalancesResponse, error) {
+	return nil, nil
+}
 func (f *fakeSDKClient) V3GetPoolBalancesLatest(context.Context, operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error) {
 	return nil, nil
 }

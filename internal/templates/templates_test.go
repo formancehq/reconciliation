@@ -44,9 +44,17 @@ func (f *fakeLedger) ListAccounts(_ context.Context, ledger string, query json.R
 
 type fakePayments struct {
 	pools map[string]map[string]*big.Int
+	// gotPITs records the pit argument of each PoolBalance call, keyed by poolID
+	// (last call wins). A nil entry means the pool was read latest; a non-nil
+	// entry means it was read point-in-time at that instant.
+	gotPITs map[string]*time.Time
 }
 
-func (f *fakePayments) PoolBalanceLatest(_ context.Context, id string) (map[string]*big.Int, error) {
+func (f *fakePayments) PoolBalance(_ context.Context, id string, pit *time.Time) (map[string]*big.Int, error) {
+	if f.gotPITs == nil {
+		f.gotPITs = map[string]*time.Time{}
+	}
+	f.gotPITs[id] = pit
 	if f.pools == nil {
 		return map[string]*big.Int{}, nil
 	}

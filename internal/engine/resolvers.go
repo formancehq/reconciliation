@@ -25,14 +25,15 @@ type LedgerResolver interface {
 
 // PaymentsResolver is the kernel's contract for payments-pool-backed sources.
 //
-// V1 deliberately uses the v3 /balances/latest endpoint rather than the legacy
-// /api/payments/pools/{id}/balances?at= route — the legacy PIT endpoint silently
-// returns empty under payments v3 (see baseline findings). Latest is the
-// faithful read of the payments side; PIT semantics across heterogeneous
-// systems are handled by tolerances in the template, not by reaching for a
-// PIT endpoint that doesn't exist.
+// PoolBalance reads a pool's per-asset balance. A nil pit reads the current
+// snapshot (GET /v3/pools/{id}/balances/latest); a non-nil pit reads the
+// balance valid at that instant (GET /v3/pools/{id}/balances?at=). Payments v3
+// implements both faithfully (verified against v3.3.1). Callers pass a pit only
+// for genuinely historical reads: a PIT read at ~now falls past the pool's last
+// balance movement and returns empty (the balance-window tail), so the "as of
+// now" path uses latest. See ADR-002.
 type PaymentsResolver interface {
-	PoolBalanceLatest(ctx context.Context, poolID string) (map[string]*big.Int, error)
+	PoolBalance(ctx context.Context, poolID string, pit *time.Time) (map[string]*big.Int, error)
 }
 
 // Resolvers groups the resolver impls injected into Engine at construction.

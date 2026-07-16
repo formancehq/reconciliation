@@ -86,13 +86,27 @@ func (e *Engine) Compile(expression string) (*Compiled, error) {
 }
 
 // EvalInput carries the per-evaluation knobs.
-//   - PIT: the point-in-time every Source resolves at by default; the
-//     resolver-side then honours or coerces this to its own model (see ADR-002).
-//   - SafetyMargin: the engine subtracts this from PIT before passing it to
-//     resolvers, avoiding races with in-flight commits whose timestamps could
-//     land at PIT-1ms. Default 0; templates default to a sane non-zero value.
+//   - PIT: the default point-in-time every Source resolves at; a source may be
+//     overridden per-source via SourcePITs (see ADR-002, PIT-per-source).
+//   - PITExplicit: true when the caller supplied a PIT (vs the service defaulting
+//     it to now). It gates the payments-pool read: an explicit past PIT is read
+//     point-in-time (GET /v3/pools/{id}/balances?at=), while the "as of now"
+//     default reads latest — a PIT read at ~now falls past the pool's last
+//     balance movement and returns empty (the balance-window tail; see ADR-002).
+//   - SourcePITs: optional per-source overrides keyed by the template's stable
+//     source key ("ledger:<name>#<idx>", "pool:<id>#<idx>"). Lets one evaluation
+//     read each side at a different instant — the legacy reconciledAtLedger vs
+//     reconciledAtPayments contract, generalised to any multi-source template.
+//     Consumed by the template layer; a present override implies an explicit
+//     (point-in-time) read for that source.
+//   - SafetyMargin: the engine subtracts this from every PIT (default and
+//     overrides) before passing it to resolvers, avoiding races with in-flight
+//     commits whose timestamps could land at PIT-1ms. Default 0; templates
+//     default to a sane non-zero value.
 type EvalInput struct {
 	PIT          time.Time
+	PITExplicit  bool
+	SourcePITs   map[string]time.Time
 	SafetyMargin time.Duration
 }
 
@@ -121,7 +135,7 @@ func (e *Engine) Evaluate(ctx context.Context, c *Compiled, in EvalInput) (*Eval
 	}
 
 	budget := newBudgetTracker(e.limits)
-	ec := newEvalCtx(ctx, pit, e.resolvers, budget)
+	ec := newEvalCtx(ctx, pit, in.PITExplicit, e.resolvers, budget)
 
 	// Build a per-eval env that re-declares everything WITH bindings closed
 	// over ec. We re-parse the source here because cel-go programs are tied

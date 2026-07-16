@@ -19,8 +19,11 @@ import (
 type evalCtx struct {
 	ctx       context.Context
 	pit       time.Time
-	resolvers Resolvers
-	budget    *budgetTracker
+	// pitExplicit gates the pool read: an explicit past PIT is read
+	// point-in-time; the "as of now" default reads latest (see EvalInput).
+	pitExplicit bool
+	resolvers   Resolvers
+	budget      *budgetTracker
 	// pitPerSource records the PIT each Source actually resolved at, keyed by
 	// Source.Key. Persisted on the Evaluation row for audit replay.
 	pitPerSource map[string]time.Time
@@ -29,10 +32,11 @@ type evalCtx struct {
 	sourceCounter map[SourceKind]int
 }
 
-func newEvalCtx(ctx context.Context, pit time.Time, resolvers Resolvers, budget *budgetTracker) *evalCtx {
+func newEvalCtx(ctx context.Context, pit time.Time, pitExplicit bool, resolvers Resolvers, budget *budgetTracker) *evalCtx {
 	return &evalCtx{
 		ctx:           ctx,
 		pit:           pit,
+		pitExplicit:   pitExplicit,
 		resolvers:     resolvers,
 		budget:        budget,
 		pitPerSource:  map[string]time.Time{},
@@ -199,7 +203,7 @@ func (e *evalCtx) makePool(poolID ref.Val) ref.Val {
 		Kind:   SourcePaymentsPool,
 		Key:    e.keyFor(SourcePaymentsPool),
 		PoolID: id,
-		PIT:    e.pit, // recorded for audit; payments-side resolver reads "latest"
+		PIT:    e.pit,
 	}
 	e.pitPerSource[src.Key] = e.pit
 	return src
@@ -216,7 +220,15 @@ func (e *evalCtx) resolveBalances(src *Source) (map[string]*big.Int, error) {
 		if e.resolvers.Payments == nil {
 			return nil, fmt.Errorf("payments resolver not configured")
 		}
-		return e.resolvers.Payments.PoolBalanceLatest(e.ctx, src.PoolID)
+		// Point-in-time when an explicit past PIT was requested; latest for the
+		// "as of now" default (a PIT read at ~now falls past the pool's last
+		// balance movement and returns empty — see EvalInput.PITExplicit).
+		var pit *time.Time
+		if e.pitExplicit {
+			p := src.PIT
+			pit = &p
+		}
+		return e.resolvers.Payments.PoolBalance(e.ctx, src.PoolID, pit)
 	default:
 		return nil, fmt.Errorf("unsupported source kind: %s", src.Kind)
 	}

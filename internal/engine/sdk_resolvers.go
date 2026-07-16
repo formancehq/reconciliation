@@ -20,6 +20,7 @@ import (
 type SDKClient interface {
 	V2GetBalancesAggregated(ctx context.Context, req operations.V2GetBalancesAggregatedRequest) (*operations.V2GetBalancesAggregatedResponse, error)
 	V2ListAccounts(ctx context.Context, req operations.V2ListAccountsRequest) (*operations.V2ListAccountsResponse, error)
+	V3GetPoolBalances(ctx context.Context, req operations.V3GetPoolBalancesRequest) (*operations.V3GetPoolBalancesResponse, error)
 	V3GetPoolBalancesLatest(ctx context.Context, req operations.V3GetPoolBalancesLatestRequest) (*operations.V3GetPoolBalancesLatestResponse, error)
 }
 
@@ -129,11 +130,11 @@ func volumeBalance(v shared.V2Volume) *big.Int {
 
 // SDKPaymentsResolver implements PaymentsResolver against the Formance SDK.
 //
-// Uses V3.GetPoolBalancesLatest deliberately — the legacy /api/payments/pools/{id}/balances?at=
-// route the prior SDK call hit returns silently empty under payments v3 (see
-// baseline check). The latest endpoint returns the true current pool balance.
-// Cross-source PIT consistency is handled by tolerances in the template, not
-// by reaching for a PIT endpoint that doesn't exist.
+// A nil pit reads the current snapshot via V3.GetPoolBalancesLatest; a non-nil
+// pit reads point-in-time via V3.GetPoolBalances (GET /v3/pools/{id}/balances?at=).
+// Both are genuine payments-v3 reads (verified against v3.3.1). The PIT route is
+// used only for explicitly historical reads — see PaymentsResolver on why "as of
+// now" stays on latest (the balance-window tail).
 type SDKPaymentsResolver struct {
 	client SDKClient
 }
@@ -142,16 +143,29 @@ func NewSDKPaymentsResolver(client SDKClient) *SDKPaymentsResolver {
 	return &SDKPaymentsResolver{client: client}
 }
 
-func (r *SDKPaymentsResolver) PoolBalanceLatest(ctx context.Context, poolID string) (map[string]*big.Int, error) {
-	resp, err := r.client.V3GetPoolBalancesLatest(ctx, operations.V3GetPoolBalancesLatestRequest{PoolID: poolID})
-	if err != nil {
-		return nil, fmt.Errorf("pool balances latest %q: %w", poolID, err)
+func (r *SDKPaymentsResolver) PoolBalance(ctx context.Context, poolID string, pit *time.Time) (map[string]*big.Int, error) {
+	var data []shared.V3PoolBalance
+	if pit == nil {
+		resp, err := r.client.V3GetPoolBalancesLatest(ctx, operations.V3GetPoolBalancesLatestRequest{PoolID: poolID})
+		if err != nil {
+			return nil, fmt.Errorf("pool balances latest %q: %w", poolID, err)
+		}
+		if resp == nil || resp.V3PoolBalancesResponse == nil {
+			return nil, errors.New("pool balances: empty response")
+		}
+		data = resp.V3PoolBalancesResponse.Data
+	} else {
+		resp, err := r.client.V3GetPoolBalances(ctx, operations.V3GetPoolBalancesRequest{PoolID: poolID, At: pit})
+		if err != nil {
+			return nil, fmt.Errorf("pool balances at %s %q: %w", pit.Format(time.RFC3339), poolID, err)
+		}
+		if resp == nil || resp.V3PoolBalancesResponse == nil {
+			return nil, errors.New("pool balances: empty response")
+		}
+		data = resp.V3PoolBalancesResponse.Data
 	}
-	if resp == nil || resp.V3PoolBalancesResponse == nil {
-		return nil, errors.New("pool balances: empty response")
-	}
-	out := make(map[string]*big.Int, len(resp.V3PoolBalancesResponse.Data))
-	for _, b := range resp.V3PoolBalancesResponse.Data {
+	out := make(map[string]*big.Int, len(data))
+	for _, b := range data {
 		if b.Amount == nil {
 			continue
 		}
