@@ -67,6 +67,22 @@ func (t *SourceParity) Validate(raw json.RawMessage) error {
 	return nil
 }
 
+// SourceKeys returns the left-then-right source keys, matching the order
+// Evaluate assigns them. Two sources sharing a label (same ledger) get
+// distinct "#0"/"#1" suffixes. Kept in lock-step with Evaluate by
+// TestSourceKeys_MatchEvaluate.
+func (t *SourceParity) SourceKeys(raw json.RawMessage) ([]string, error) {
+	var spec ParitySpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+	keyer := newSourceKeyer()
+	return []string{
+		keyer.key(spec.Left.label()),
+		keyer.key(spec.Right.label()),
+	}, nil
+}
+
 // Explain returns the canonical per-asset CEL form with `<asset>` as a literal
 // placeholder (see LedgerVsPoolDrift.Explain for the convention).
 func (t *SourceParity) Explain(raw json.RawMessage) (string, error) {

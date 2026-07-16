@@ -61,6 +61,26 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		return nil, err
 	}
 
+	// Reject per-source PIT overrides that name a source this rule's template
+	// doesn't have — a mistyped key would otherwise be silently ignored, leaving
+	// the caller to believe they pinned a source they didn't. Fail loudly (400)
+	// instead. Valid keys are exactly the ones echoed back in pit_per_source.
+	if len(req.SourcePITs) > 0 {
+		validKeys, err := ev.SourceKeys(rule.TemplateSpec)
+		if err != nil {
+			return nil, err
+		}
+		valid := make(map[string]struct{}, len(validKeys))
+		for _, k := range validKeys {
+			valid[k] = struct{}{}
+		}
+		for k := range req.SourcePITs {
+			if _, ok := valid[k]; !ok {
+				return nil, fmt.Errorf("%w: sourcePITs: unknown source key %q for template %s (valid keys: %v)", ErrValidation, k, rule.TemplateKind, validKeys)
+			}
+		}
+	}
+
 	// Serialise the whole read+persist window against other evaluations of the
 	// same rule. Two evaluations read their sources at different instants and
 	// then commit separately; without this an older evaluation could commit

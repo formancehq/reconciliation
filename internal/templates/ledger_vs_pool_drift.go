@@ -88,6 +88,21 @@ func (t *LedgerVsPoolDrift) Validate(raw json.RawMessage) error {
 	return nil
 }
 
+// SourceKeys returns the ledger-then-pool source keys, matching the order
+// Evaluate assigns them (see its keyer). Kept in lock-step with Evaluate by
+// TestSourceKeys_MatchEvaluate.
+func (t *LedgerVsPoolDrift) SourceKeys(raw json.RawMessage) ([]string, error) {
+	var spec DriftSpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+	keyer := newSourceKeyer()
+	return []string{
+		keyer.key(SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.LedgerQuery}.label()),
+		keyer.key(SourceSpec{Kind: SourcePaymentsPool, PoolID: spec.PaymentsPoolID}.label()),
+	}, nil
+}
+
 // Explain returns the canonical per-asset CEL form. At evaluation time the
 // asset literal is substituted with the actual asset code; this representative
 // version uses `<asset>` as a literal placeholder so the saved compiled_cel

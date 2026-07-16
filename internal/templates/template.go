@@ -71,6 +71,13 @@ type Evaluator interface {
 		resolvers engine.Resolvers,
 		in engine.EvalInput,
 	) ([]Outcome, error)
+
+	// SourceKeys returns the stable source keys ("<label>#<idx>") this template
+	// produces for spec, in evaluation order — the exact keys Evaluate records
+	// in each Outcome's PitPerSource. The service layer uses them to validate
+	// per-source PIT overrides (EvalInput.SourcePITs) and reject unknown keys,
+	// rather than silently ignoring a mistyped override.
+	SourceKeys(spec json.RawMessage) ([]string, error)
 }
 
 // Registry indexes evaluators by template kind. Built once at startup and

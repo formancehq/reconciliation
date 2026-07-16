@@ -922,7 +922,8 @@ components:
             source with an override reads at that instant instead of `at`; this
             expresses the two-independent-timestamps contract (ledger at one
             instant, payments pool at another, to absorb inter-system settlement
-            lag). Every value must be in the past.
+            lag). Every value must be in the past. A key that names no source of
+            the rule's template is rejected with 400 (it is not silently ignored).
           additionalProperties: { type: string, format: date-time }
           example: { "ledger:main#0": "2026-06-30T23:59:59Z", "pool:acct#0": "2026-06-30T23:00:00Z" }
     Evaluation:

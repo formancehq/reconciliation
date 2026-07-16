@@ -68,6 +68,22 @@ func (t *LedgerInvariant) Validate(raw json.RawMessage) error {
 	return nil
 }
 
+// SourceKeys returns one key per term, in term order, matching how Evaluate
+// assigns them — two terms on the same ledger get "#0"/"#1". Kept in lock-step
+// with Evaluate by TestSourceKeys_MatchEvaluate.
+func (t *LedgerInvariant) SourceKeys(raw json.RawMessage) ([]string, error) {
+	var spec InvariantSpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+	keyer := newSourceKeyer()
+	keys := make([]string, 0, len(spec.Terms))
+	for _, term := range spec.Terms {
+		keys = append(keys, keyer.key(SourceSpec{Kind: SourceLedger, Ledger: term.Ledger}.label()))
+	}
+	return keys, nil
+}
+
 func (t *LedgerInvariant) Explain(raw json.RawMessage) (string, error) {
 	var spec InvariantSpec
 	if err := unmarshalSpec(raw, &spec); err != nil {

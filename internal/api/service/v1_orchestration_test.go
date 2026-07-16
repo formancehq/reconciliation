@@ -613,6 +613,40 @@ func TestEvaluate_DisabledRuleIsValidationError(t *testing.T) {
 	}
 }
 
+// TestEvaluate_UnknownSourcePITKeyRejected: a sourcePITs key that names no
+// source of the rule's template is a client mistake (typo, wrong index) that
+// would otherwise be silently ignored — it must be rejected with an
+// ErrValidation-wrapped error (→ 400), not accepted-and-ignored.
+func TestEvaluate_UnknownSourcePITKeyRejected(t *testing.T) {
+	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
+	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-100)}}
+	svc, _ := newOrchestrationService(t, l, p)
+	// driftSpec uses ledger "buildr" + pool "pool" → valid keys are
+	// ledger:buildr#0 and pool:pool#0.
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	ctx := context.Background()
+
+	// Unknown key → rejected.
+	_, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{
+		PIT:        time.Now(),
+		SourcePITs: map[string]time.Time{"pool:typo#0": time.Now().Add(-time.Hour)},
+	})
+	if err == nil {
+		t.Fatal("expected an error for an unknown sourcePITs key")
+	}
+	if !errors.Is(err, ErrValidation) {
+		t.Errorf("unknown-key error must wrap ErrValidation (→ 400), got: %v", err)
+	}
+
+	// A valid key is accepted (the evaluation runs to completion).
+	if _, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{
+		PIT:        time.Now(),
+		SourcePITs: map[string]time.Time{"ledger:buildr#0": time.Now().Add(-time.Hour)},
+	}); err != nil {
+		t.Fatalf("valid sourcePITs key must be accepted, got: %v", err)
+	}
+}
+
 // TestEvaluate_LifecycleInPlace — the headline test for the new model: through
 // one rule we exercise open → update → auto-resolve → REOPEN-IN-PLACE in
 // sequence. The same alert id stays valid across the entire lifecycle; the

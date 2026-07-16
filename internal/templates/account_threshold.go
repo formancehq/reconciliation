@@ -97,6 +97,17 @@ func (t *AccountThreshold) Explain(raw json.RawMessage) (string, error) {
 	return buildThresholdExpression(&spec, assets[0]), nil
 }
 
+// SourceKeys returns the single ledger source key. Kept in lock-step with
+// Evaluate by TestSourceKeys_MatchEvaluate.
+func (t *AccountThreshold) SourceKeys(raw json.RawMessage) ([]string, error) {
+	var spec ThresholdSpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+	src := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.Query}
+	return []string{newSourceKeyer().key(src.label())}, nil
+}
+
 func (t *AccountThreshold) Evaluate(
 	ctx context.Context,
 	raw json.RawMessage,
