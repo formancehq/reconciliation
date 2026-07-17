@@ -11,21 +11,10 @@ import (
 	"github.com/formancehq/reconciliation/internal/engine"
 )
 
-func metadataSource(ledger, query, key, asset string) SourceSpec {
-	return SourceSpec{
-		Kind:        SourceAccountMetadata,
-		Ledger:      ledger,
-		Query:       json.RawMessage(query),
-		MetadataKey: key,
-		Asset:       asset,
-	}
-}
-
 func TestSourceSpec_Validate_AccountMetadata(t *testing.T) {
 	cases := map[string]SourceSpec{
-		"missing metadataKey": {Kind: SourceAccountMetadata, Ledger: "l", Query: json.RawMessage(`{}`), Asset: "USD/2"},
-		"missing asset":       {Kind: SourceAccountMetadata, Ledger: "l", Query: json.RawMessage(`{}`), MetadataKey: "ext"},
-		"unknown kind":        {Kind: "bank", Ledger: "l", Query: json.RawMessage(`{}`)},
+		"missing metadataKeyPrefix": {Kind: SourceAccountMetadata, Ledger: "l", Query: json.RawMessage(`{}`)},
+		"unknown kind":              {Kind: "bank", Ledger: "l", Query: json.RawMessage(`{}`)},
 	}
 	for name, s := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -34,16 +23,17 @@ func TestSourceSpec_Validate_AccountMetadata(t *testing.T) {
 			}
 		})
 	}
-	ok := metadataSource("l", `{"$match":{"address":"mirror:x"}}`, "ext", "USD/2")
+	ok := metadataPrefixSource("l", `{"$match":{"address":"mirror:x"}}`, "reported_balance.")
 	if err := ok.Validate("src"); err != nil {
 		t.Errorf("valid account_metadata source rejected: %v", err)
 	}
 }
 
-// TestSourceParity_LedgerVsMetadata is the headline: a ledger balance reconciled
-// against an externally-synced value stored in account metadata (a mirror
-// account). PASS when they agree, FAIL when the synced value drifts.
-func TestSourceParity_LedgerVsMetadata(t *testing.T) {
+// TestSourceParity_LedgerVsMetadata_SingleCurrency is the single-currency case: a
+// ledger balance reconciled against one externally-synced value in account
+// metadata, pinned by a one-entry `assets` allowlist (the asset is the key suffix
+// — reported_balance.USD/2). PASS when they agree, FAIL when the sync drifts.
+func TestSourceParity_LedgerVsMetadata_SingleCurrency(t *testing.T) {
 	tmpl := NewSourceParity()
 	const bookQ = `{"$match":{"address":"cash:stripe"}}`
 	const mirrorQ = `{"$match":{"address":"mirror:stripe"}}`
@@ -55,7 +45,7 @@ func TestSourceParity_LedgerVsMetadata(t *testing.T) {
 		accounts: map[string][]engine.Account{
 			"mirror|" + mirrorQ: {{
 				Address:  "mirror:stripe",
-				Metadata: map[string]string{"ext_balance": "35000"}, // synced snapshot
+				Metadata: map[string]string{"reported_balance.USD/2": "35000"}, // synced snapshot
 			}},
 		},
 	}
@@ -63,7 +53,7 @@ func TestSourceParity_LedgerVsMetadata(t *testing.T) {
 
 	spec := mustJSON(t, ParitySpec{
 		Left:  ledgerSource("book", bookQ),
-		Right: metadataSource("mirror", mirrorQ, "ext_balance", "USD/2"),
+		Right: metadataPrefixSourceWithAssets("mirror", mirrorQ, "reported_balance.", "USD/2"),
 	})
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
@@ -78,7 +68,7 @@ func TestSourceParity_LedgerVsMetadata(t *testing.T) {
 	}
 
 	// Drift the synced value → mismatch fails at tolerance 0.
-	l.accounts["mirror|"+mirrorQ][0].Metadata["ext_balance"] = "34000"
+	l.accounts["mirror|"+mirrorQ][0].Metadata["reported_balance.USD/2"] = "34000"
 	out, err = tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
 		t.Fatalf("Evaluate (drift): %v", err)
@@ -88,50 +78,12 @@ func TestSourceParity_LedgerVsMetadata(t *testing.T) {
 	}
 }
 
-// TestSourceParity_MetadataExplainCompiles guards that a metadata rule's
-// rendered compiled_cel type-checks against the kernel (CreateRule compiles it).
-func TestSourceParity_MetadataExplainCompiles(t *testing.T) {
-	tmpl := NewSourceParity()
-	spec := mustJSON(t, ParitySpec{
-		Left:      ledgerSource("book", `{"$match":{"address":"cash:stripe"}}`),
-		Right:     metadataSource("mirror", `{"$match":{"address":"mirror:stripe"}}`, "ext_balance", "USD/2"),
-		Tolerance: map[string]int64{"USD/2": 0},
-	})
-	expr, err := tmpl.Explain(spec)
-	if err != nil {
-		t.Fatalf("Explain: %v", err)
-	}
-	eng, _ := newTestEngine(t, &fakeLedger{})
-	if _, err := eng.Compile(expr); err != nil {
-		t.Errorf("metadata Explain output does not compile: %v\nexpr: %s", err, expr)
-	}
-}
-
 func metadataPrefixSource(ledger, query, prefix string) SourceSpec {
 	return SourceSpec{
 		Kind:              SourceAccountMetadata,
 		Ledger:            ledger,
 		Query:             json.RawMessage(query),
 		MetadataKeyPrefix: prefix,
-	}
-}
-
-func TestSourceSpec_Validate_MetadataModesExclusive(t *testing.T) {
-	// prefix mode alone is valid
-	ok := metadataPrefixSource("l", `{}`, "reported_balance.")
-	if err := ok.Validate("src"); err != nil {
-		t.Errorf("prefix-mode source rejected: %v", err)
-	}
-	// both single + prefix is invalid
-	both := SourceSpec{Kind: SourceAccountMetadata, Ledger: "l", Query: json.RawMessage(`{}`),
-		MetadataKey: "k", Asset: "USD/2", MetadataKeyPrefix: "reported_balance."}
-	if err := both.Validate("src"); !errors.Is(err, ErrInvalidSpec) {
-		t.Errorf("expected ErrInvalidSpec when both modes set, got %v", err)
-	}
-	// neither is invalid
-	neither := SourceSpec{Kind: SourceAccountMetadata, Ledger: "l", Query: json.RawMessage(`{}`)}
-	if err := neither.Validate("src"); !errors.Is(err, ErrInvalidSpec) {
-		t.Errorf("expected ErrInvalidSpec when no metadata mode set, got %v", err)
 	}
 }
 
@@ -226,8 +178,8 @@ func TestSourceSpec_Validate_AssetsAllowlist(t *testing.T) {
 
 	bad := map[string]SourceSpec{
 		"malformed asset code": metadataPrefixSourceWithAssets("l", `{}`, "reported_balance.", "usdc"),
-		"assets with single mode": {Kind: SourceAccountMetadata, Ledger: "l", Query: json.RawMessage(`{}`),
-			MetadataKey: "ext", Asset: "USD/2", Assets: []string{"USDC"}},
+		"assets without prefix": {Kind: SourceAccountMetadata, Ledger: "l", Query: json.RawMessage(`{}`),
+			Assets: []string{"USDC"}},
 		"assets on ledger kind": {Kind: SourceLedger, Ledger: "l", Query: json.RawMessage(`{}`),
 			Assets: []string{"USDC"}},
 	}
@@ -317,7 +269,7 @@ func TestSourceParity_MetadataRejectedInPerAccount(t *testing.T) {
 	tmpl := NewSourceParity()
 	spec := mustJSON(t, ParitySpec{
 		Left:  ledgerSource("a", `{}`),
-		Right: metadataSource("mirror", `{"$match":{"address":"mirror:x"}}`, "ext", "USD/2"),
+		Right: metadataPrefixSource("mirror", `{"$match":{"address":"mirror:x"}}`, "reported_balance."),
 		Scope: ScopePerAccount,
 	})
 	if err := tmpl.Validate(spec); !errors.Is(err, ErrInvalidSpec) {
