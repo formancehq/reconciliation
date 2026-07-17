@@ -73,6 +73,14 @@ type SourceSpec struct {
 	// account_metadata, per-asset mode: read `<prefix><asset>` keys into a
 	// per-asset map. Mutually exclusive with metadataKey/asset.
 	MetadataKeyPrefix string `json:"metadataKeyPrefix,omitempty"`
+	// Assets is an optional allowlist for per-asset mode (metadataKeyPrefix):
+	// when set, the source reads exactly `<prefix><asset>` for each declared
+	// asset — turning discovery into strict presence, so a mirror missing a
+	// declared currency's key is an error (like single-asset mode) rather than a
+	// silently-absent asset. Each entry must be a well-formed asset code. Only
+	// valid alongside metadataKeyPrefix; rejected with metadataKey/asset or a
+	// ledger source.
+	Assets []string `json:"assets,omitempty"`
 }
 
 // kind returns the effective kind, defaulting an empty discriminator to ledger.
@@ -97,6 +105,9 @@ func (s SourceSpec) Validate(field string) error {
 	switch s.kind() {
 	case SourceLedger:
 		// ledger + query suffice.
+		if len(s.Assets) > 0 {
+			return fmt.Errorf("%w: %s.assets is only valid with kind %q + metadataKeyPrefix", ErrInvalidSpec, field, SourceAccountMetadata)
+		}
 	case SourceAccountMetadata:
 		single := s.MetadataKey != "" || s.Asset != ""
 		prefixed := s.MetadataKeyPrefix != ""
@@ -104,8 +115,17 @@ func (s SourceSpec) Validate(field string) error {
 		case single && prefixed:
 			return fmt.Errorf("%w: %s specify either metadataKey+asset (single asset) or metadataKeyPrefix (per asset), not both", ErrInvalidSpec, field)
 		case prefixed:
-			// per-asset: assets are discovered from the <prefix><asset> keys.
+			// per-asset: assets are discovered from the <prefix><asset> keys,
+			// unless an explicit allowlist narrows the read to exactly those.
+			for _, a := range s.Assets {
+				if !engine.ValidAssetCode(a) {
+					return fmt.Errorf("%w: %s.assets contains %q, which is not a valid asset code", ErrInvalidSpec, field, a)
+				}
+			}
 		case single:
+			if len(s.Assets) > 0 {
+				return fmt.Errorf("%w: %s.assets requires metadataKeyPrefix (per-asset mode), not metadataKey+asset", ErrInvalidSpec, field)
+			}
 			if s.MetadataKey == "" {
 				return fmt.Errorf("%w: %s.metadataKey is required alongside asset for kind %q", ErrInvalidSpec, field, SourceAccountMetadata)
 			}
@@ -132,6 +152,20 @@ func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, lim
 			return nil, err
 		}
 		if s.MetadataKeyPrefix != "" {
+			if len(s.Assets) > 0 {
+				// Explicit allowlist: read exactly `<prefix><asset>` for each
+				// declared asset. SumAccountMetadataInt errors if a matched
+				// account is missing the key — strict presence, like single-asset.
+				out := make(map[string]*big.Int, len(s.Assets))
+				for _, a := range s.Assets {
+					total, err := engine.SumAccountMetadataInt(accts, s.MetadataKeyPrefix+a)
+					if err != nil {
+						return nil, err
+					}
+					out[a] = total
+				}
+				return out, nil
+			}
 			return engine.SumAccountMetadataByPrefix(accts, s.MetadataKeyPrefix)
 		}
 		total, err := engine.SumAccountMetadataInt(accts, s.MetadataKey)

@@ -314,12 +314,23 @@ func SumAccountMetadataInt(accts []Account, key string) (*big.Int, error) {
 // per-asset (multi-currency) mode of the account_metadata source: one mirror
 // account can carry a synced reported balance per currency, discovered from the
 // keys present (the asset universe is the union across matched accounts).
+//
+// The suffix is only treated as an asset when it is a well-formed ledger asset
+// code (ValidAssetCode). A suffix that is not — a connector's namespaced sidecar
+// metadata like `reported_balance.updated_at`, or a typo — is skipped, not
+// reconciled against 0: discovery mode is lenient so it does not turn every
+// non-asset key into a phantom currency. A genuinely missing/typo'd currency
+// still surfaces as a break against the ledger side (that asset is present there,
+// zero here). For strict presence, declare the assets explicitly (SourceSpec.Assets).
 func SumAccountMetadataByPrefix(accts []Account, prefix string) (map[string]*big.Int, error) {
 	out := map[string]*big.Int{}
 	for _, a := range accts {
 		for k, raw := range a.Metadata {
 			asset, ok := strings.CutPrefix(k, prefix)
 			if !ok || asset == "" {
+				continue
+			}
+			if !ValidAssetCode(asset) {
 				continue
 			}
 			n, err := parseMetadataInt(a.Address, k, raw)

@@ -211,6 +211,108 @@ func TestSourceParity_MetadataPrefixExplainCompiles(t *testing.T) {
 	}
 }
 
+func metadataPrefixSourceWithAssets(ledger, query, prefix string, assets ...string) SourceSpec {
+	s := metadataPrefixSource(ledger, query, prefix)
+	s.Assets = assets
+	return s
+}
+
+func TestSourceSpec_Validate_AssetsAllowlist(t *testing.T) {
+	// prefix + well-formed asset codes is valid.
+	ok := metadataPrefixSourceWithAssets("l", `{}`, "reported_balance.", "USDC", "EURC/6")
+	if err := ok.Validate("src"); err != nil {
+		t.Errorf("prefix + valid assets rejected: %v", err)
+	}
+
+	bad := map[string]SourceSpec{
+		"malformed asset code": metadataPrefixSourceWithAssets("l", `{}`, "reported_balance.", "usdc"),
+		"assets with single mode": {Kind: SourceAccountMetadata, Ledger: "l", Query: json.RawMessage(`{}`),
+			MetadataKey: "ext", Asset: "USD/2", Assets: []string{"USDC"}},
+		"assets on ledger kind": {Kind: SourceLedger, Ledger: "l", Query: json.RawMessage(`{}`),
+			Assets: []string{"USDC"}},
+	}
+	for name, s := range bad {
+		t.Run(name, func(t *testing.T) {
+			if err := s.Validate("src"); !errors.Is(err, ErrInvalidSpec) {
+				t.Errorf("expected ErrInvalidSpec, got %v", err)
+			}
+		})
+	}
+}
+
+// TestSourceParity_MetadataPrefixAssets reconciles against an explicit assets
+// allowlist: exactly the declared per-currency keys are read (a sidecar key is
+// ignored), and every asset present on the ledger side lines up.
+func TestSourceParity_MetadataPrefixAssets(t *testing.T) {
+	tmpl := NewSourceParity()
+	const bookQ = `{"$match":{"address":"cash:custody"}}`
+	const mirrorQ = `{"$match":{"address":"mirror:custody"}}`
+
+	l := &fakeLedger{
+		balances: map[string]map[string]*big.Int{
+			"book|" + bookQ: {"USDC": big.NewInt(1000000), "EURC/6": big.NewInt(500000)},
+		},
+		accounts: map[string][]engine.Account{
+			"mirror|" + mirrorQ: {{
+				Address: "mirror:custody",
+				Metadata: map[string]string{
+					"reported_balance.USDC":       "1000000",
+					"reported_balance.EURC/6":     "500000",
+					"reported_balance.updated_at": "1720000000", // sidecar — not declared, ignored
+				},
+			}},
+		},
+	}
+	eng, res := newTestEngine(t, l)
+	spec := mustJSON(t, ParitySpec{
+		Left:  ledgerSource("book", bookQ),
+		Right: metadataPrefixSourceWithAssets("mirror", mirrorQ, "reported_balance.", "USDC", "EURC/6"),
+	})
+
+	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected 2 outcomes (USDC, EURC/6), got %d: %+v", len(out), out)
+	}
+	for _, a := range []string{"USDC", "EURC/6"} {
+		if o := findOutcome(out, "asset:"+a); o == nil || !o.Passed {
+			t.Errorf("%s should reconcile, got %+v", a, o)
+		}
+	}
+}
+
+// TestSourceParity_MetadataPrefixAssets_MissingErrors proves strict presence:
+// a declared asset whose `<prefix><asset>` key is absent on a matched mirror
+// account is an error, not a silently-zero balance.
+func TestSourceParity_MetadataPrefixAssets_MissingErrors(t *testing.T) {
+	tmpl := NewSourceParity()
+	const bookQ = `{"$match":{"address":"cash:custody"}}`
+	const mirrorQ = `{"$match":{"address":"mirror:custody"}}`
+
+	l := &fakeLedger{
+		balances: map[string]map[string]*big.Int{
+			"book|" + bookQ: {"USDC": big.NewInt(1000000)},
+		},
+		accounts: map[string][]engine.Account{
+			"mirror|" + mirrorQ: {{
+				Address:  "mirror:custody",
+				Metadata: map[string]string{"reported_balance.USDC": "1000000"}, // EURC/6 missing
+			}},
+		},
+	}
+	eng, res := newTestEngine(t, l)
+	spec := mustJSON(t, ParitySpec{
+		Left:  ledgerSource("book", bookQ),
+		Right: metadataPrefixSourceWithAssets("mirror", mirrorQ, "reported_balance.", "USDC", "EURC/6"),
+	})
+
+	if _, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()}); err == nil {
+		t.Fatal("expected error on a missing declared asset key, got nil")
+	}
+}
+
 func TestSourceParity_MetadataRejectedInPerAccount(t *testing.T) {
 	tmpl := NewSourceParity()
 	spec := mustJSON(t, ParitySpec{
