@@ -1149,6 +1149,48 @@ via `serve`: `cash:custody` (real USDC 1_000_000 + EURC 500_000) vs `mirror:cust
 `reported_balance.{USDC,EURC}` — PASS both, then drifted `reported_balance.EURC`→400_000 → FAIL on
 `asset:EURC` only (Δ100_000), USDC still reconciles.
 
+### account_metadata — asset-code validation for the per-asset suffix (`9e124a3`, 2026-07-17)
+
+Closes a silent-false-break gap in per-asset mode: the suffix after `metadataKeyPrefix` was taken
+**verbatim** as the asset code, so `reported_balance.updated_at` or a typo became a phantom "asset"
+reconciled against 0. The suffix should equal the ledger's own asset code (incl. precision, `EURC/6`)
+— that's what makes the two sides align. Two layers, sharing **one** validator:
+
+- **Eval-time guard** (protects discovery mode). New engine `ValidAssetCode` — a local mirror of the
+  ledger's posting validator (`github.com/formancehq/invariants` v0.11.0): base `[A-Z][A-Z0-9]{0,16}`,
+  optional precision `/[1-9][0-9]{0,2}` value 1–255, no underscore/leading-zero. `SumAccountMetadataByPrefix`
+  now treats a suffix as an asset **only** if it clears `ValidAssetCode`, else **skips** it (lenient —
+  a connector may namespace sidecar keys like `reported_balance.updated_at` under the same prefix; a
+  typo'd/missing currency still surfaces as a break against the ledger side, which has the asset).
+  Mirrored rather than imported: reconciliation talks to the ledger only via generated protobuf and
+  pins no ledger/invariants module.
+- **Create-time `assets` allowlist** (optional, per-asset only). `SourceSpec.Assets []string`: `Validate`
+  checks each is a well-formed code (bad → `ErrInvalidSpec`) and rejects `assets` alongside
+  `metadataKey`/`asset` or on a `ledger` source; when set, `resolve` reads exactly `<prefix><asset>`
+  for each declared asset and ERRORs on a matched account **missing** one (strict presence, via the
+  existing `SumAccountMetadataInt`). Same asset-code grammar as the engine guard.
+
+**Residual (documented, not prevented):** a well-formed but *mismatched* suffix (`reported_balance.USDC`
+vs ledger `USDC/6`) — both valid, they don't align → one-sided false break. Mitigate with the `assets`
+allowlist (pins exact codes) + the single-sided balances already in evidence. No kernel change; no
+chart/it bump.
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` green (engine
+`ValidAssetCode` table + prefix-sum skips non-asset suffixes; templates `assets` Validate — bad code
+/ with-single-mode / on-ledger-kind → `ErrInvalidSpec` — + `source_parity` ledger↔metadata-prefix
+with `assets` PASS, + missing-declared-asset → ERROR). **Proven live** via `serve` (:8085) against a
+fresh data ledger `recon-topica-live1` (`cash:custody` USDC 1_000_000 / EURC 500_000; `mirror:custody`
+`reported_balance.{USDC,EURC}` + a `reported_balance.updated_at` sidecar):
+- **Create-time** — `assets:["usdc"]` → 400 `right.assets contains "usdc", which is not a valid asset
+  code`; `assets` on a ledger source → 400 `left.assets is only valid with kind "account_metadata" +
+  metadataKeyPrefix`; `assets` with `metadataKey`+`asset` → 400 `right.assets requires metadataKeyPrefix`.
+- **Discovery skip** — prefix rule (no allowlist) → `PASS` (the `updated_at` sidecar is skipped; were
+  it read as an asset, ledger-0 vs 1_720_000_000 would FAIL). Drift variant (USDC/EURC off by 1) →
+  exactly two alerts `asset:USDC` + `asset:EURC`, **no `asset:updated_at`**.
+- **Allowlist** — `assets:["USDC","EURC"]` → `PASS`; against `mirror:onlyusdc` (no EURC key) →
+  evaluation `result: ERROR` (`account "mirror:onlyusdc" has no metadata[reported_balance.EURC]`).
+Demo rules deleted, demo alerts resolved (shared `reconciliation` control ledger).
+
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
 Closes a real leak in the state model: EPHEMERAL purges a marker only at **zero** balance, but
