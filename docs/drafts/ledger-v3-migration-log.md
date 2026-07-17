@@ -1191,6 +1191,30 @@ fresh data ledger `recon-topica-live1` (`cash:custody` USDC 1_000_000 / EURC 500
   evaluation `result: ERROR` (`account "mirror:onlyusdc" has no metadata[reported_balance.EURC]`).
 Demo rules deleted, demo alerts resolved (shared `reconciliation` control ledger).
 
+### account_metadata — unify on the prefix shape, drop single-asset mode (`452519c`, 2026-07-17)
+
+Since prefix mode + a one-entry `assets` allowlist already expresses the single-asset case (the asset
+is the key suffix, e.g. `reported_balance.USD/2`), the separate single-asset mode (`metadataKey` +
+`asset`) was redundant — two ways to say the same thing, and its `asset` was the *only* place the
+currency was stated (a typo there was an unvalidated false-break waiting to happen). Collapsed to one
+shape: `account_metadata` requires `metadataKeyPrefix`; optional `assets` allowlist narrows discovery
+to strict presence. **Removed** `SourceSpec.MetadataKey` and `SourceSpec.Asset`; `Validate` now just
+requires the prefix (+ well-formed allowlist codes); `resolve`/`celTerm`/`label` lost their
+single-asset branches. Single currency = `metadataKeyPrefix` + `assets:["USD/2"]` — the asset lives
+in the key, never declared separately.
+
+**Breaking** the `account_metadata` source contract (drops two fields) — acceptable pre-GA; an old
+`metadataKey`/`asset` spec now fails create with `metadataKeyPrefix is required`. No kernel change; no
+chart/it bump.
+
+**Checks:** build/vet/`golangci-lint --build-tags it` (0)/gofmt clean; `-race` green (templates suite
+updated — single-currency-via-one-entry-allowlist PASS→drift→FAIL, prefix-required Validate, allowlist
+bad-code/no-prefix/on-ledger → `ErrInvalidSpec`, discovery multi-asset, missing-declared-asset ERROR).
+**Proven live** via `serve` (:8085) on `recon-topica-live1`: old single-mode spec (`metadataKey`+`asset`)
+→ 400 `right.metadataKeyPrefix is required for kind "account_metadata"`; single currency
+(`cash:usdonly` USD/2 5000 vs `mirror:usdonly` `reported_balance.USD/2`) via `assets:["USD/2"]` → `PASS`;
+multi-currency discovery → `PASS`. Demo rules deleted.
+
 ### Phase 1 step 3c-4 — burn-on-close (2026-07-03)
 
 Closes a real leak in the state model: EPHEMERAL purges a marker only at **zero** balance, but
