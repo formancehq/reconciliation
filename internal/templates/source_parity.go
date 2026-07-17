@@ -83,6 +83,19 @@ func (t *SourceParity) SourceKeys(raw json.RawMessage) ([]string, error) {
 	}, nil
 }
 
+func (t *SourceParity) SourcePITs(raw json.RawMessage, in engine.EvalInput) (map[string]time.Time, error) {
+	var spec ParitySpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+	keyer := newSourceKeyer()
+	leftKey := keyer.key(spec.Left.label())
+	rightKey := keyer.key(spec.Right.label())
+	leftPIT, _ := effectiveSourcePIT(in, leftKey)
+	rightPIT, _ := effectiveSourcePIT(in, rightKey)
+	return map[string]time.Time{leftKey: leftPIT, rightKey: rightPIT}, nil
+}
+
 // Explain returns the canonical per-asset CEL form with `<asset>` as a literal
 // placeholder (see LedgerVsPoolDrift.Explain for the convention).
 func (t *SourceParity) Explain(raw json.RawMessage) (string, error) {

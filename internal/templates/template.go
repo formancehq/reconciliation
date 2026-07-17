@@ -78,6 +78,12 @@ type Evaluator interface {
 	// per-source PIT overrides (EvalInput.SourcePITs) and reject unknown keys,
 	// rather than silently ignoring a mistyped override.
 	SourceKeys(spec json.RawMessage) ([]string, error)
+
+	// SourcePITs returns the resolved PIT for each source key this template would
+	// contact for the given spec and evaluation input. The service uses this to
+	// preserve pit_per_source for zero-outcome evaluations, even when no Outcome
+	// objects are emitted.
+	SourcePITs(spec json.RawMessage, in engine.EvalInput) (map[string]time.Time, error)
 }
 
 // Registry indexes evaluators by template kind. Built once at startup and

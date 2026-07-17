@@ -84,6 +84,21 @@ func (t *LedgerInvariant) SourceKeys(raw json.RawMessage) ([]string, error) {
 	return keys, nil
 }
 
+func (t *LedgerInvariant) SourcePITs(raw json.RawMessage, in engine.EvalInput) (map[string]time.Time, error) {
+	var spec InvariantSpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+	keyer := newSourceKeyer()
+	pitPerSource := make(map[string]time.Time, len(spec.Terms))
+	for _, term := range spec.Terms {
+		key := keyer.key(SourceSpec{Kind: SourceLedger, Ledger: term.Ledger}.label())
+		pit, _ := effectiveSourcePIT(in, key)
+		pitPerSource[key] = pit
+	}
+	return pitPerSource, nil
+}
+
 func (t *LedgerInvariant) Explain(raw json.RawMessage) (string, error) {
 	var spec InvariantSpec
 	if err := unmarshalSpec(raw, &spec); err != nil {

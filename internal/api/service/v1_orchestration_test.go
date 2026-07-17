@@ -589,6 +589,35 @@ func TestEvaluate_PassNoAlerts(t *testing.T) {
 	}
 }
 
+func TestEvaluate_PreservesSourcePITsWhenNoOutcomes(t *testing.T) {
+	l := &orchestrationLedger{current: map[string]*big.Int{}}
+	p := &orchestrationPayments{current: map[string]*big.Int{}}
+	svc, store := newOrchestrationService(t, l, p)
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+
+	pit := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
+	ev, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: pit, SafetyMargin: 30 * time.Second})
+	if err != nil {
+		t.Fatalf("EvaluateRule: %v", err)
+	}
+	if len(ev.PitPerSource) != 2 {
+		t.Fatalf("expected 2 source PIT entries, got %d: %v", len(ev.PitPerSource), ev.PitPerSource)
+	}
+	if got, ok := ev.PitPerSource["ledger:buildr#0"]; !ok || !got.Equal(pit.Add(-30*time.Second)) {
+		t.Fatalf("ledger PIT = %v, want %v", got, pit.Add(-30*time.Second))
+	}
+	if got, ok := ev.PitPerSource["pool:pool#0"]; !ok || !got.Equal(pit.Add(-30*time.Second)) {
+		t.Fatalf("pool PIT = %v, want %v", got, pit.Add(-30*time.Second))
+	}
+	stored, err := store.GetEvaluation(context.Background(), ev.ID)
+	if err != nil {
+		t.Fatalf("GetEvaluation: %v", err)
+	}
+	if len(stored.PitPerSource) != 2 {
+		t.Fatalf("stored evaluation should preserve 2 source PIT entries, got %d: %v", len(stored.PitPerSource), stored.PitPerSource)
+	}
+}
+
 // TestEvaluate_DisabledRuleIsValidationError locks the fix for NumaryBot
 // r3593989719: evaluating a disabled rule is a predictable client-side
 // invalid-state, so EvaluateRule must return an ErrValidation-wrapped error

@@ -131,16 +131,22 @@ func (s *Service) runEvaluation(ctx context.Context, rule *models.Rule, ev templ
 		defer cancel()
 	}
 
-	started := time.Now().UTC()
-	outcomes, evalErr := ev.Evaluate(evalCtx, rule.TemplateSpec, s.engine, s.resolvers, engine.EvalInput{
+	evalInput := engine.EvalInput{
 		PIT:          req.PIT,
 		PITExplicit:  pitExplicit,
 		SourcePITs:   req.SourcePITs,
 		SafetyMargin: req.SafetyMargin,
-	})
+	}
+	sourcePITs, err := ev.SourcePITs(rule.TemplateSpec, evalInput)
+	if err != nil {
+		return nil, err
+	}
+
+	started := time.Now().UTC()
+	outcomes, evalErr := ev.Evaluate(evalCtx, rule.TemplateSpec, s.engine, s.resolvers, evalInput)
 	ended := time.Now().UTC()
 
-	pitPerSource, mergeErr := mergePitPerSource(outcomes)
+	pitPerSource, mergeErr := mergePitPerSource(outcomes, sourcePITs)
 	if mergeErr != nil {
 		// Promote to a kernel error: a kernel/template disagreement is an
 		// engine-health problem, not a data alert.
@@ -342,11 +348,11 @@ func (s *Service) openEngineErrorAlert(ctx context.Context, rule *models.Rule, e
 // template resolves a given Source at one PIT for the whole evaluation. A
 // disagreement is a kernel/template contract bug, not a "last write wins"
 // situation, so surface it as an error rather than silently picking one.
-func mergePitPerSource(outcomes []templates.Outcome) (map[string]time.Time, error) {
-	if len(outcomes) == 0 {
-		return map[string]time.Time{}, nil
+func mergePitPerSource(outcomes []templates.Outcome, sourcePITs map[string]time.Time) (map[string]time.Time, error) {
+	out := make(map[string]time.Time, len(sourcePITs))
+	for k, v := range sourcePITs {
+		out[k] = v
 	}
-	out := map[string]time.Time{}
 	for _, o := range outcomes {
 		for k, v := range o.PitPerSource {
 			if existing, ok := out[k]; ok && !existing.Equal(v) {

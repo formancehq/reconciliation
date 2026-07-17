@@ -103,6 +103,21 @@ func (t *LedgerVsPoolDrift) SourceKeys(raw json.RawMessage) ([]string, error) {
 	}, nil
 }
 
+func (t *LedgerVsPoolDrift) SourcePITs(raw json.RawMessage, in engine.EvalInput) (map[string]time.Time, error) {
+	var spec DriftSpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+	ledgerSrc := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.LedgerQuery}
+	poolSrc := SourceSpec{Kind: SourcePaymentsPool, PoolID: spec.PaymentsPoolID}
+	keyer := newSourceKeyer()
+	ledgerKey := keyer.key(ledgerSrc.label())
+	poolKey := keyer.key(poolSrc.label())
+	ledgerPIT, _ := effectiveSourcePIT(in, ledgerKey)
+	poolPIT, _ := effectiveSourcePIT(in, poolKey)
+	return map[string]time.Time{ledgerKey: ledgerPIT, poolKey: poolPIT}, nil
+}
+
 // Explain returns the canonical per-asset CEL form. At evaluation time the
 // asset literal is substituted with the actual asset code; this representative
 // version uses `<asset>` as a literal placeholder so the saved compiled_cel

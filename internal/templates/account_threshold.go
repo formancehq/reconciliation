@@ -108,6 +108,17 @@ func (t *AccountThreshold) SourceKeys(raw json.RawMessage) ([]string, error) {
 	return []string{newSourceKeyer().key(src.label())}, nil
 }
 
+func (t *AccountThreshold) SourcePITs(raw json.RawMessage, in engine.EvalInput) (map[string]time.Time, error) {
+	var spec ThresholdSpec
+	if err := unmarshalSpec(raw, &spec); err != nil {
+		return nil, err
+	}
+	src := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.Query}
+	srcKey := newSourceKeyer().key(src.label())
+	pit, _ := effectiveSourcePIT(in, srcKey)
+	return map[string]time.Time{srcKey: pit}, nil
+}
+
 func (t *AccountThreshold) Evaluate(
 	ctx context.Context,
 	raw json.RawMessage,
