@@ -560,6 +560,12 @@ func TestEvaluate_PassNoAlerts(t *testing.T) {
 	if len(store.alerts) != 0 {
 		t.Errorf("expected no alerts, got %d", len(store.alerts))
 	}
+	if string(ev.Evidence) != "[]" {
+		t.Errorf("expected empty evaluation evidence, got %s", ev.Evidence)
+	}
+	if len(store.captures) != 1 || string(store.captures[0].Evidence) != "[]" {
+		t.Errorf("expected one capture with empty evidence, got %+v", store.captures)
+	}
 }
 
 // TestEvaluate_LifecycleInPlace — the headline test for the new model: through

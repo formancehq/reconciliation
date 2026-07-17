@@ -10,8 +10,9 @@ import (
 // Capture is one immutable evaluation record read back from the control ledger
 // (ADR-003). Every rule evaluation mints a capture transaction in the
 // `capture:rule:{ruleID}:per:{period}` bucket carrying this self-describing
-// snapshot — positive assurance on a pass, break evidence on a fail. It is
-// reconstructed from the capture transaction's metadata plus its ledger id.
+// snapshot. Its bounded evidence contains every failing outcome plus passing
+// outcomes that resolved active alerts. It is reconstructed from the capture
+// transaction's metadata plus its ledger id.
 //
 // Unlike an AlertEvent (the alert transition timeline, sink-gated), a Capture is
 // a first-class ledger transaction, so a rule's capture history is queryable live

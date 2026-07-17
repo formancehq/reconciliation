@@ -57,10 +57,13 @@ Direct math is now authoritative. The rendered CEL stays in `evidence.compiledCE
 
 ## 6. Decision C — audit-grade capture in `_recon`
 
-Every evaluation records an **immutable capture transaction** on the control ledger — the durable "what reconciled and when": positive assurance on a pass, break evidence on a fail, recorded independently of the alert lifecycle.
+Every evaluation records an **immutable capture transaction** on the control ledger — the durable
+"what reconciled and when", recorded independently of the alert lifecycle. Its evidence roster is
+bounded to every failing outcome plus passing outcomes that automatically resolve an active alert;
+unrelated passes remain omitted.
 
 - **Chart**: `capture:rule:{ruleId}:per:{period}` (NORMAL) bucket + `capture:pool:rule:{ruleId}` (NORMAL) mint source; asset `CAPTURE` (precision 0); numscript `capture` mints one `CAPTURE` from the pool into the bucket. `−balance(bucket, CAPTURE)` counts captures for the (rule, period); **one evaluation = one transaction**, so the bucket's transaction log is the period's ordered series of captures.
-- **Snapshot**: the observed state rides the **transaction metadata** (`COMMITTED_TRANSACTION`, self-describing: `type, rule_id, template_kind, period, evaluation_id, captured_at, verdict, trigger, evidence`). The transaction is immutable and receipt-signed — the audit record. The address is a bucket; the transaction carries the distinguishing context (`evaluation_id`, `captured_at`, `trigger`).
+- **Snapshot**: the observed state rides the **transaction metadata** (`COMMITTED_TRANSACTION`, self-describing: `type, rule_id, template_kind, period, evaluation_id, captured_at, verdict, trigger, evidence`). The transaction is immutable and receipt-signed — the audit record. The address is a bucket; the transaction carries the distinguishing context (`evaluation_id`, `captured_at`, `trigger`). A mixed-verdict capture may contain failing evidence for one fingerprint and successful resolution evidence for another because retention follows individual alert transitions, not the overall verdict.
 - **Idempotent** per (rule, period, evaluation): a gRPC retransmit dedups; a genuinely new evaluation gets a fresh key.
 
 This **revises the "evaluations non-durable" decision** (RFC §4.4.2): the durable record is the capture transaction (ledger-native, immutable), not a queryable Postgres evaluation table.

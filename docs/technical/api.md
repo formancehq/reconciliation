@@ -90,15 +90,19 @@ the template's `tolerance`. Returns `200` + the evaluation result (not persisted
 }
 ```
 
-`evidence` records **only the failing fingerprints** (an all-`PASS` evaluation has `"evidence": []`);
-the durable copy of a break's evidence lives on the alert. The evaluation object itself is **not** a
-durable entity (a deterministic projection, RFC §4.4.2) — but each run's **capture** is (ADR-003),
-queryable via `GET /rules/{id}/captures` below.
+`evidence` records every failing fingerprint plus a passing fingerprint only when that pass
+automatically resolves an active alert. This bounded roster documents both the break and its later
+successful reconciliation without persisting thousands of unrelated passing fingerprints from a
+wide rule. An all-`PASS` evaluation with no active alert still has `"evidence": []`. The evaluation
+object itself is **not** a durable entity (a deterministic projection, RFC §4.4.2) — but each run's
+**capture** is (ADR-003), queryable via `GET /rules/{id}/captures` below.
 
 #### `GET /rules/{id}/captures` — evaluation history (captures)
 
-The immutable capture recorded per evaluation (ADR-003): positive assurance on a pass, break evidence
-on a fail — recorded independently of the alert lifecycle. Unlike the alert-transition timeline
+The immutable capture recorded per evaluation (ADR-003): positive assurance on a pass, evidence for
+every break, and successful evidence when a pass resolves an active alert. Evidence retention is
+planned per fingerprint, so an overall `FAIL` capture can contain both failing and successful
+resolution evidence. Unlike the alert-transition timeline
 (`/alerts/{id}/events`, sink-gated), **captures are first-class ledger transactions**, so this is
 queryable **live** today — no event sink required. Cursor-paginated, most-recent-first. Optional
 `?period=` scopes to one reconciliation period.

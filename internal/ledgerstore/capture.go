@@ -20,8 +20,8 @@ import (
 // one evaluation (ADR-003): a self-describing snapshot (verdict, trigger, evidence)
 // on a COMMITTED_TRANSACTION plus a CAPTURE counter unit in the (rule, period)
 // bucket. The transaction is receipt-signed and append-only — the durable audit
-// record complementing the alert lifecycle (positive assurance on a pass, break
-// evidence on a fail). Idempotent per (rule, period, evaluation): a gRPC
+// record complementing the alert lifecycle (all failing evidence plus passing
+// evidence retained for automatic resolutions). Idempotent per (rule, period, evaluation): a gRPC
 // retransmit dedups; a genuinely new evaluation gets a fresh key.
 func (s *LedgerStore) RecordCapture(ctx context.Context, in store.CaptureInput) error {
 	md := map[string]*commonpb.MetadataValue{

@@ -26,8 +26,8 @@ type Store interface {
 	ListRules(ctx context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error)
 
 	// V1 — Evaluation. Evaluations are not a durable, queryable entity
-	// (RFC §4.4.2): the run result is returned from EvaluateRule and its
-	// break evidence lives on the alert (Evidence + LastEvaluationID). There
+	// (RFC §4.4.2): the run result is returned from EvaluateRule and failing
+	// evidence lives on the alert (Evidence + LastEvaluationID). There
 	// is no read surface. CreateEvaluation persists on Postgres today; the
 	// ledger-native store treats it as a no-op (step 6a-5).
 	CreateEvaluation(ctx context.Context, ev *models.Evaluation) error
@@ -35,8 +35,8 @@ type Store interface {
 	// RecordCapture writes the immutable audit record of an evaluation to the
 	// control ledger (ADR-003): a capture transaction carrying the observed
 	// snapshot (verdict, evidence, trigger). This is the durable "what reconciled
-	// and when" — positive assurance on a pass, break evidence on a fail —
-	// recorded independently of the alert lifecycle.
+	// and when": all failures plus passes retained to document automatic alert
+	// resolution, recorded independently of the alert lifecycle.
 	RecordCapture(ctx context.Context, in store.CaptureInput) error
 
 	// ListCaptures returns a rule's evaluation history — the captures recorded by

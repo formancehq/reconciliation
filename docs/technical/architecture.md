@@ -162,10 +162,11 @@ freshness floor) is available but unused.
 
 Every evaluation is recorded as an **immutable capture transaction** on `_recon` (ADR-003): a
 self-describing snapshot (`verdict`, `trigger`, `evidence`, …) on a `COMMITTED_TRANSACTION`, plus a
-`CAPTURE` counter unit in the `capture:rule:{id}:per:{p}` bucket. This is the durable "what reconciled
-and when" — positive assurance on a pass, break evidence on a fail — receipt-signed and append-only,
-replacing a queryable evaluation table (RFC §4.4.2). The run result is also returned from
-`EvaluateRule`.
+`CAPTURE` counter unit in the `capture:rule:{id}:per:{p}` bucket. Evidence is bounded to every failing
+outcome plus passing outcomes that automatically resolve an active alert; unrelated passes are not
+retained. This is the durable "what reconciled and when" — including the exact observed values that
+cleared a prior break — receipt-signed and append-only, replacing a queryable evaluation table
+(RFC §4.4.2). The run result is also returned from `EvaluateRule`.
 
 ---
 

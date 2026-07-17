@@ -9,8 +9,9 @@ import (
 
 // CaptureInput is the immutable audit record of one rule evaluation, written to
 // the control ledger as a capture transaction (ADR-003). It is the durable
-// "what was reconciled and when" — positive assurance on a pass, break evidence
-// on a fail — recorded independently of the alert lifecycle.
+// "what was reconciled and when" — all failing evidence plus successful
+// evidence for automatic alert resolutions — recorded independently of the
+// alert lifecycle.
 type CaptureInput struct {
 	RuleID       uuid.UUID
 	TemplateKind string

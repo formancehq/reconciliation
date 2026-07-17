@@ -101,31 +101,40 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 			break
 		}
 	}
-	evidence, mErr := marshalOutcomes(outcomes)
-	if mErr != nil {
-		return nil, mErr
-	}
-	evaluation.Evidence = evidence
-
 	// The period this evaluation reconciles, derived from the rule's cadence
 	// and the evaluation PIT. Every alert this evaluation opens/resolves is
 	// scoped to it, so a new period's run never rewrites a prior period's
 	// cases (see models.Cadence.PeriodID).
 	periodID := rule.Cadence.PeriodID(req.PIT)
 
-	// Record the immutable capture (ADR-003) — the durable "what reconciled and
-	// when", positive assurance on a pass and break evidence on a fail — then drive
-	// every alert transition. The idempotent ledger store has no cross-op
-	// transaction, so inTx runs them sequentially; each write is individually
+	// Plan alert transitions before recording the capture so its bounded evidence
+	// contains every failure plus the passing outcomes that will resolve active
+	// alerts. The plan and capture both use the exact outcomes evaluated above —
+	// no Ledger read is repeated and no prior alert evidence is reused.
+	//
+	// The idempotent ledger store has no cross-op transaction, so inTx runs the
+	// capture and planned transitions sequentially; each write is individually
 	// idempotent per (rule, period, evaluation).
 	err = s.inTx(ctx, func(ctx context.Context, st Store) error {
+		activeFingerprints, err := st.ListActiveAlertFingerprints(ctx, rule.ID, periodID)
+		if err != nil {
+			return fmt.Errorf("plan active alerts: %w", err)
+		}
+		plan := planAlertTransitions(outcomes, activeFingerprints)
+
+		evidence, err := marshalOutcomes(plan.evidenceOutcomes())
+		if err != nil {
+			return err
+		}
+		evaluation.Evidence = evidence
+
 		if err := st.CreateEvaluation(ctx, evaluation); err != nil {
 			return err
 		}
 		if err := st.RecordCapture(ctx, captureInput(rule, evaluation, periodID, req.Trigger)); err != nil {
 			return err
 		}
-		return driveAlerts(ctx, st, rule, evaluation, outcomes, periodID, ended)
+		return driveAlertTransitions(ctx, st, rule, evaluation, plan, periodID, ended)
 	})
 	if err != nil {
 		return nil, err
@@ -135,8 +144,8 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 }
 
 // captureInput builds the immutable capture record for an evaluation (ADR-003):
-// the verdict, the (bounded) break evidence the evaluation already computed, and
-// what triggered the run.
+// the verdict, the bounded transition evidence the evaluation already computed,
+// and what triggered the run.
 func captureInput(rule *models.Rule, ev *models.Evaluation, periodID, trigger string) store.CaptureInput {
 	verdict := "pass"
 	if ev.Result == models.EvaluationFail {
@@ -155,42 +164,114 @@ func captureInput(rule *models.Rule, ev *models.Evaluation, periodID, trigger st
 	}
 }
 
-// driveAlerts applies the evaluation's outcomes to the alert layer.
-// Three cases:
-//   - failing outcome → OpenOrUpdateAlert (which handles first-open, reopen
-//     after resolve, and update-while-open all in one place)
-//   - passing outcome → AutoResolveAlert for that fingerprint
-//   - fingerprint disappears entirely (no outcome at all) → AutoResolveAlert
-//
-// The third case matters for templates like source_parity whose
-// asset union is dynamic: when both sides of a USD imbalance clear to zero,
-// "USD/2" simply stops appearing as an outcome. Without the sweep below,
-// that alert would stay OPEN forever despite the condition having cleared.
-func driveAlerts(
+type alertTransitionKind uint8
+
+const (
+	alertTransitionOpenOrUpdate alertTransitionKind = iota
+	alertTransitionAutoResolve
+)
+
+type alertOutcomeTransition struct {
+	kind    alertTransitionKind
+	outcome templates.Outcome
+}
+
+// alertTransitionPlan is the service-layer decision for one evaluated outcome
+// set. It freezes which outcome-backed alerts will open/update or resolve, plus
+// active fingerprints that disappeared from the outcome set and must resolve.
+// Capture evidence and alert writes are both derived from this plan.
+type alertTransitionPlan struct {
+	outcomeTransitions   []alertOutcomeTransition
+	disappearedActiveFPs []string
+}
+
+// planAlertTransitions classifies outcomes against the active alerts observed
+// before persistence. Every failure opens or updates an alert. A pass is planned
+// only when its fingerprint is active and therefore eligible for automatic
+// resolution; unrelated passing outcomes are intentionally omitted. Active
+// fingerprints absent from the outcome set are swept as resolved without
+// evidence because this evaluation produced no outcome for them.
+func planAlertTransitions(outcomes []templates.Outcome, activeFingerprints []string) alertTransitionPlan {
+	active := make(map[string]struct{}, len(activeFingerprints))
+	for _, fingerprint := range activeFingerprints {
+		active[fingerprint] = struct{}{}
+	}
+
+	plan := alertTransitionPlan{
+		outcomeTransitions: make([]alertOutcomeTransition, 0, len(outcomes)),
+	}
+	seen := make(map[string]struct{}, len(outcomes))
+	for _, outcome := range outcomes {
+		seen[outcome.Fingerprint] = struct{}{}
+		if !outcome.Passed {
+			plan.outcomeTransitions = append(plan.outcomeTransitions, alertOutcomeTransition{
+				kind:    alertTransitionOpenOrUpdate,
+				outcome: outcome,
+			})
+			continue
+		}
+		if _, ok := active[outcome.Fingerprint]; ok {
+			plan.outcomeTransitions = append(plan.outcomeTransitions, alertOutcomeTransition{
+				kind:    alertTransitionAutoResolve,
+				outcome: outcome,
+			})
+		}
+	}
+
+	// Preserve the store's order for deterministic transition application while
+	// de-duplicating defensive duplicate entries from a store implementation.
+	disappeared := make(map[string]struct{}, len(activeFingerprints))
+	for _, fingerprint := range activeFingerprints {
+		if _, ok := seen[fingerprint]; !ok {
+			if _, duplicate := disappeared[fingerprint]; duplicate {
+				continue
+			}
+			disappeared[fingerprint] = struct{}{}
+			plan.disappearedActiveFPs = append(plan.disappearedActiveFPs, fingerprint)
+		}
+	}
+	return plan
+}
+
+// evidenceOutcomes returns the bounded capture roster: every failure and only
+// those passes that are planned to resolve an active alert. The original
+// outcome values are retained verbatim from the evaluation.
+func (p alertTransitionPlan) evidenceOutcomes() []templates.Outcome {
+	outcomes := make([]templates.Outcome, 0, len(p.outcomeTransitions))
+	for _, transition := range p.outcomeTransitions {
+		outcomes = append(outcomes, transition.outcome)
+	}
+	return outcomes
+}
+
+// driveAlertTransitions applies the precomputed plan after the capture is
+// recorded. Open/update, auto-resolution, disappearance sweeping, and their
+// idempotency semantics remain owned by the store.
+func driveAlertTransitions(
 	ctx context.Context,
 	st Store,
 	rule *models.Rule,
 	evaluation *models.Evaluation,
-	outcomes []templates.Outcome,
+	plan alertTransitionPlan,
 	periodID string,
 	ended time.Time,
 ) error {
-	seenFingerprints := make(map[string]struct{}, len(outcomes))
-	for _, o := range outcomes {
-		seenFingerprints[o.Fingerprint] = struct{}{}
-		if o.Passed {
-			if _, err := st.AutoResolveAlert(ctx, rule.ID, o.Fingerprint, periodID, evaluation.ID, ended); err != nil {
-				return fmt.Errorf("auto-resolve %s: %w", o.Fingerprint, err)
+	for _, transition := range plan.outcomeTransitions {
+		outcome := transition.outcome
+		if transition.kind == alertTransitionAutoResolve {
+			if _, err := st.AutoResolveAlert(ctx, rule.ID, outcome.Fingerprint, periodID, evaluation.ID, ended); err != nil {
+				return fmt.Errorf("auto-resolve %s: %w", outcome.Fingerprint, err)
 			}
 			continue
 		}
-		evidenceJSON, err := json.Marshal(o.Evidence)
+
+		evidenceJSON, err := json.Marshal(outcome.Evidence)
 		if err != nil {
-			return fmt.Errorf("marshal evidence for %s: %w", o.Fingerprint, err)
+			return fmt.Errorf("marshal evidence for %s: %w", outcome.Fingerprint, err)
 		}
 		_, err = st.OpenOrUpdateAlert(ctx, store.OpenAlertInput{
 			RuleID:       rule.ID,
-			Fingerprint:  o.Fingerprint,
+			Fingerprint:  outcome.Fingerprint,
 			PeriodID:     periodID,
 			Severity:     rule.Severity,
 			EvaluationID: evaluation.ID,
@@ -199,23 +280,15 @@ func driveAlerts(
 			OccurredAt:   ended,
 		})
 		if err != nil {
-			return fmt.Errorf("open/update alert for %s: %w", o.Fingerprint, err)
+			return fmt.Errorf("open/update alert for %s: %w", outcome.Fingerprint, err)
 		}
 	}
 
-	// Sweep is scoped to this period: a fingerprint that cleared this round
-	// auto-resolves its case for THIS period only. Prior periods' open cases
-	// are untouched — they remain the historical record for their period.
-	activeFPs, err := st.ListActiveAlertFingerprints(ctx, rule.ID, periodID)
-	if err != nil {
-		return fmt.Errorf("sweep active alerts: %w", err)
-	}
-	for _, fp := range activeFPs {
-		if _, seen := seenFingerprints[fp]; seen {
-			continue
-		}
-		if _, err := st.AutoResolveAlert(ctx, rule.ID, fp, periodID, evaluation.ID, ended); err != nil {
-			return fmt.Errorf("auto-resolve disappeared fingerprint %s: %w", fp, err)
+	// Sweep is scoped to this period. Prior periods' open cases are untouched —
+	// they remain the historical record for their period.
+	for _, fingerprint := range plan.disappearedActiveFPs {
+		if _, err := st.AutoResolveAlert(ctx, rule.ID, fingerprint, periodID, evaluation.ID, ended); err != nil {
+			return fmt.Errorf("auto-resolve disappeared fingerprint %s: %w", fingerprint, err)
 		}
 	}
 	return nil
@@ -261,17 +334,13 @@ func (s *Service) openEngineErrorAlert(ctx context.Context, rule *models.Rule, e
 
 // marshalOutcomes encodes the evidence persisted on the evaluation row.
 //
-// Only FAILING outcomes are persisted. A rule's outcome list covers every
-// fingerprint it touched — passing included — but storing the passing roster on
-// every tick is pure write amplification: for a wide rule (thousands of
-// fingerprints) it is a multi-thousand-element JSONB rewritten every evaluation,
-// almost all of it "still fine". The failing subset is the part anyone queries,
-// and it mirrors what the alert layer records. The evaluation's `result`
-// (PASS/FAIL/ERROR) already carries the pass/fail verdict; an all-PASS
-// evaluation therefore persists `[]`.
+// The caller supplies the bounded roster selected by alertTransitionPlan: every
+// failing outcome plus only passing outcomes that document an automatic alert
+// resolution. Persisting the full passing roster remains intentionally avoided:
+// a wide rule can produce thousands of fingerprints on every evaluation.
 //
-// The per-entry `passed` field is retained (always false here) so consumers
-// that parse the array keep a stable shape.
+// The per-entry `passed` field distinguishes break evidence from successful
+// resolution evidence without changing the existing response shape.
 func marshalOutcomes(outcomes []templates.Outcome) (json.RawMessage, error) {
 	type encoded struct {
 		Fingerprint string         `json:"fingerprint"`
@@ -280,9 +349,6 @@ func marshalOutcomes(outcomes []templates.Outcome) (json.RawMessage, error) {
 	}
 	enc := make([]encoded, 0, len(outcomes))
 	for _, o := range outcomes {
-		if o.Passed {
-			continue
-		}
 		enc = append(enc, encoded{
 			Fingerprint: o.Fingerprint,
 			Passed:      o.Passed,

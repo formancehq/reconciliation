@@ -86,9 +86,14 @@ sequenceDiagram
 - **A capture per evaluation** (ADR-003). `RecordCapture` mints one `CAPTURE` into
   `capture:rule:{id}:per:{p}`; the observed snapshot (`verdict`, `trigger`, `evidence`, …) rides the
   `COMMITTED_TRANSACTION` metadata — the durable, receipt-signed "what reconciled and when", covering
-  passes as well as breaks. It is written **before** the alert transitions.
+  passes as well as breaks. Its bounded evidence contains every failing outcome and only those
+  passing outcomes that resolve an active alert. A mixed run can therefore retain failure evidence
+  for one fingerprint and successful resolution evidence for another. It is written **before** the
+  planned alert transitions.
 - The `Outcome` list covers every asset the template touched — passing included — so the service
-  can **auto-resolve** prior alerts whose fingerprint isn't in the failing set.
+  can plan **auto-resolution** from the same observed values before persisting the capture. Passing
+  outcomes with no active alert are not retained; active fingerprints that disappear still resolve
+  without evidence because no outcome was observed for them.
 - **The capture is the durable evaluation record** (ADR-003, revising RFC §4.4.2) — an immutable
   `_recon` transaction, not a queryable Postgres evaluation table (`CreateEvaluation` is a no-op).
   The run result is also returned; the break `evidence` is additionally durable on `alert:item`. The
