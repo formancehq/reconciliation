@@ -35,63 +35,6 @@ func TestSumAccountMetadataInt_NonInteger(t *testing.T) {
 	}
 }
 
-func TestSumAccountMetadataByPrefix(t *testing.T) {
-	accts := []Account{
-		{Address: "mirror:a", Metadata: map[string]string{
-			"reported_balance.USDC": "1000",
-			"reported_balance.EURC": "500",
-			"reported_balance.":     "9", // empty suffix → skipped
-			"unrelated":             "7", // no prefix → ignored
-		}},
-		{Address: "mirror:b", Metadata: map[string]string{
-			"reported_balance.USDC": "250", // aggregates with mirror:a
-		}},
-	}
-	got, err := SumAccountMetadataByPrefix(accts, "reported_balance.")
-	if err != nil {
-		t.Fatalf("SumAccountMetadataByPrefix: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("expected 2 assets (USDC, EURC), got %d: %v", len(got), got)
-	}
-	if got["USDC"].String() != "1250" {
-		t.Errorf("USDC = %s, want 1250 (1000+250)", got["USDC"])
-	}
-	if got["EURC"].String() != "500" {
-		t.Errorf("EURC = %s, want 500", got["EURC"])
-	}
-}
-
-func TestSumAccountMetadataByPrefix_NonInteger(t *testing.T) {
-	accts := []Account{{Address: "mirror:a", Metadata: map[string]string{"reported_balance.USDC": "1.5"}}}
-	if _, err := SumAccountMetadataByPrefix(accts, "reported_balance."); err == nil {
-		t.Fatal("expected error on non-integer value, got nil")
-	}
-}
-
-// TestSumAccountMetadataByPrefix_SkipsNonAssetSuffix proves the eval-time guard:
-// a suffix that is not a well-formed asset code (a connector's sidecar metadata,
-// or a typo) is skipped, not turned into a phantom asset reconciled against 0.
-// A malformed value under such a key is never parsed, so it cannot error either.
-func TestSumAccountMetadataByPrefix_SkipsNonAssetSuffix(t *testing.T) {
-	accts := []Account{{Address: "mirror:a", Metadata: map[string]string{
-		"reported_balance.USDC":       "1000", // valid asset → kept
-		"reported_balance.updated_at": "1720000000",
-		"reported_balance.note":       "hello", // non-integer, but skipped before parse
-		"reported_balance.usdc":       "5",     // lowercase → not a valid asset code
-	}}}
-	got, err := SumAccountMetadataByPrefix(accts, "reported_balance.")
-	if err != nil {
-		t.Fatalf("SumAccountMetadataByPrefix: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("expected only USDC to be treated as an asset, got %d: %v", len(got), got)
-	}
-	if got["USDC"].String() != "1000" {
-		t.Errorf("USDC = %s, want 1000", got["USDC"])
-	}
-}
-
 func TestValidAssetCode(t *testing.T) {
 	valid := []string{
 		"USD", "USDC", "EURC", "A", "BTC", "USD/2", "EURC/6", "BTC/8",

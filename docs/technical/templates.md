@@ -181,59 +181,38 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 **Source kinds.** A `SourceSpec` carries an optional `kind` discriminator (default `"ledger"`, the non-breaking seam ADR-001 §7 reserved):
 
 - **`ledger`** (default) — `{ "ledger", "query" }`. The posting-derived aggregate balance of the matched account set, read **live** at the evaluation instant (a single aggregate is an internally consistent snapshot, ADR-003); cross-ledger skew is absorbed by `tolerance`.
-- **`account_metadata`** — `{ "kind": "account_metadata", "ledger", "query", "metadataKeyPrefix", "assets"? }`. Reads a balance **synced into account metadata** rather than posted (a "mirror" account whose balance an external connector writes as a metadata value, a base-10 integer in the asset's minor units), summed across the matched accounts (via `ListAccounts`, bounded by `MaxAccountsScanned`). This reconciles the **sync** against a ledger balance — it catches connector drift / missed events, and is the right tool when the external side gives a *number*, not a movement stream (if you get movements, post them and do ledger↔ledger). Note: reading a metadata *value* needs no index; only a metadata *filter* in `query` does.
+- **`account_metadata`** — `{ "kind": "account_metadata", "ledger", "query", "metadataKey", "asset" }`. Reads one balance **synced into account metadata** rather than posted (a "mirror" account whose balance an external connector writes as a metadata value, a base-10 integer in the declared asset's minor units), summed across the matched accounts (via `ListAccounts`, bounded by `MaxAccountsScanned`). This reconciles the **sync** against a ledger balance — it catches connector drift / missed events, and is the right tool when the external side gives a *number*, not a movement stream (if you get movements, post them and do ledger↔ledger). Note: reading a metadata *value* needs no index; only a metadata *filter* in `query` does.
 
-  **The asset is always the key suffix.** Keys of the form `<metadataKeyPrefix><asset>` (e.g. `reported_balance.USDC`, `reported_balance.EURC/6`) become a **per-asset** map — one mirror account carries a reported balance per currency, and `source_parity`'s per-asset union checks each independently. The suffix **must be a well-formed ledger asset code** to be read as an asset — this is what lets the two sides align: it has to equal the ledger's own asset code, **including precision** (`EURC/6`, not `EURC`, when the ledger books `EURC/6`). Assets are discovered from the keys present; a suffix that isn't a valid asset code — a connector's namespaced sidecar key (`reported_balance.updated_at`) or a typo — is **skipped** (lenient discovery, so sidecar metadata under the same prefix doesn't become a phantom currency), and a non-integer value under a valid-asset key is an ERROR.
-  - **`assets` allowlist** (optional) — `{ …, "assets": ["USDC", "EURC/6"] }`. When set, discovery is replaced by **strict presence**: the source reads exactly `<prefix><asset>` for each declared asset and a matched account **missing** a declared key is an ERROR, catching a currency the connector stopped syncing. Each entry is validated as a well-formed asset code at rule-create time (`ErrInvalidSpec` → 400). `assets` is valid only on an `account_metadata` source (rejected on a `ledger` source).
-  - **Single currency** is just a one-entry allowlist: `"metadataKeyPrefix": "reported_balance.", "assets": ["USD/2"]` reads exactly `reported_balance.USD/2`. There is no separate "declare the asset" field — the asset is in the key. (A bare prefix like `"balance."` with the connector writing `balance.USD/2` works identically.)
-  - **Residual you can't prevent:** a suffix that is *well-formed but mismatched* — `reported_balance.USDC` while the ledger books `USDC/6` — is a valid code on both sides that simply doesn't align, surfacing as a one-sided (false) break. There is no create-time way to know the mirror's precision; use the `assets` allowlist to pin the exact codes, and read the evidence's single-sided balances as the tell.
+  `metadataKey` and `asset` are independent. The key may include the asset (`reported.USD`) or be arbitrary (`value_known.toto`); the source never infers an asset from the key. One rule checks exactly that key against exactly that asset, even when the matched ledger account contains other assets. Configure another rule for each additional key/asset pair. A matched account missing the key, or holding a non-integer value, is an ERROR rather than a silent zero.
 
 ```jsonc
-// single currency: one synced value, addressed by a one-entry allowlist
+// one asset against one independently named synced value
 {
   "left":      { "ledger": "book",   "query": { "$match": { "address": "cash:stripe" } } },
   "right":     { "kind": "account_metadata", "ledger": "book",
                  "query": { "$match": { "address": "mirror:stripe" } },
-                 "metadataKeyPrefix": "reported_balance.",
-                 "assets": ["USD/2"] },   // reads exactly reported_balance.USD/2
+                 "metadataKey": "value_known.toto",
+                 "asset": "USD/2" },
   "tolerance": { "USD/2": 0 }
-}
-// multi-currency discovery: every valid-asset suffix under the prefix
-{
-  "left":      { "ledger": "book",   "query": { "$match": { "address": "cash:custody" } } },
-  "right":     { "kind": "account_metadata", "ledger": "book",
-                 "query": { "$match": { "address": "mirror:custody" } },
-                 "metadataKeyPrefix": "reported_balance." },   // discovers reported_balance.USDC, reported_balance.EURC, …
-  "tolerance": { "USDC": 0, "EURC": 0 }
-}
-// multi-currency with an explicit allowlist: strict presence, exact codes (precision-matched)
-{
-  "left":      { "ledger": "book",   "query": { "$match": { "address": "cash:custody" } } },
-  "right":     { "kind": "account_metadata", "ledger": "book",
-                 "query": { "$match": { "address": "mirror:custody" } },
-                 "metadataKeyPrefix": "reported_balance.",
-                 "assets": ["USDC", "EURC/6"] },   // reads exactly these; a missing key is an ERROR
-  "tolerance": { "USDC": 0, "EURC/6": 0 }
 }
 ```
 
 **Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B; see [the scope model](#how-templates-work). An `account_metadata` source is aggregate-only (it has no per-account breakdown).
 
-**Validation** — each side: `ledger` + `query` present, plus (for an `account_metadata` source) `metadataKeyPrefix` present and an optional `assets` allowlist of well-formed asset codes; `tolerance` values ≥ 0; `per_account` scope rejects an `account_metadata` source. Asset codes follow the ledger's grammar `[A-Z][A-Z0-9]{0,16}(/[1-9][0-9]{0,2})?` (precision 1–255).
+**Validation** — each side: `ledger` + `query` present, plus (for an `account_metadata` source) one `metadataKey` and one well-formed `asset`; two metadata sources must declare the same asset; `tolerance` values ≥ 0; `per_account` scope rejects an `account_metadata` source. Asset codes follow the ledger's grammar `[A-Z][A-Z0-9]{0,16}(/[1-9][0-9]{0,2})?` (precision 1–255).
 
-**Asset universe** — `union(leftBalances, rightBalances)`; every asset on either side is checked, missing-side defaults to 0.
+**Asset universe** — ledger↔ledger uses `union(leftBalances, rightBalances)`; every asset on either side is checked and a missing side defaults to 0. If either side is `account_metadata`, the rule checks only its explicitly declared `asset`; other ledger assets belong to separate rules.
 
-**Per-asset CEL** (runtime form) — a ledger side renders `balance(ledgerSet(…), asset)`; an `account_metadata` side renders `metadataInt(ledgerSet(…), "<prefix>" + asset)` (the asset is the key suffix):
+**Per-asset CEL** (runtime form) — a ledger side renders `balance(ledgerSet(…), asset)`; an `account_metadata` side renders `metadataInt(ledgerSet(…), metadataKey)`:
 
 ```cel
 abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(ledgerSet("control", "<query json>"), "USD/2")) <= 0
-abs(balance(ledgerSet("book", "<query json>"), "USD/2") - metadataInt(ledgerSet("book", "<query json>"), "reported_balance." + "USD/2")) <= 0
-abs(balance(ledgerSet("book", "<query json>"), "USDC") - metadataInt(ledgerSet("book", "<query json>"), "reported_balance." + "USDC")) <= 0
+abs(balance(ledgerSet("book", "<query json>"), "USD/2") - metadataInt(ledgerSet("book", "<query json>"), "value_known.toto")) <= 0
 ```
 
 **Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account)
 
-**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` or `metadata:book[reported_balance.*]`; per_account also carries `account`).
+**Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` or `metadata:book[value_known.toto]`; per_account also carries `account`).
 
 **The equality primitive** — `source_parity` is the cross-source equality check (`abs(left − right) ≤ tol`), resolving and rendering both sides through the shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source". `account_metadata` is the first non-ledger source kind; an external bank/PSP-account kind slots in the same way once it has a resolver + kernel builtin.
 

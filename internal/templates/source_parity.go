@@ -62,6 +62,11 @@ func (t *SourceParity) Validate(raw json.RawMessage) error {
 		(spec.Left.kind() == SourceAccountMetadata || spec.Right.kind() == SourceAccountMetadata) {
 		return fmt.Errorf("%w: per_account scope does not support an account_metadata source (aggregate only)", ErrInvalidSpec)
 	}
+	if spec.Left.kind() == SourceAccountMetadata &&
+		spec.Right.kind() == SourceAccountMetadata &&
+		spec.Left.Asset != spec.Right.Asset {
+		return fmt.Errorf("%w: account_metadata sources must declare the same asset (left %q, right %q)", ErrInvalidSpec, spec.Left.Asset, spec.Right.Asset)
+	}
 	for asset, tol := range spec.Tolerance {
 		if tol < 0 {
 			return fmt.Errorf("%w: tolerance for %s must be >= 0, got %d", ErrInvalidSpec, asset, tol)
@@ -129,6 +134,14 @@ func (t *SourceParity) Evaluate(
 	}
 
 	assets := unionAssets(leftBalances, rightBalances)
+	// An account_metadata source defines a one-key/one-asset control. Scope the
+	// comparison to that declared asset even if the ledger account set holds
+	// other assets; those belong in separate rules.
+	if spec.Left.kind() == SourceAccountMetadata {
+		assets = []string{spec.Left.Asset}
+	} else if spec.Right.kind() == SourceAccountMetadata {
+		assets = []string{spec.Right.Asset}
+	}
 	outcomes := make([]Outcome, 0, len(assets))
 	for _, asset := range assets {
 		tolerance := spec.Tolerance[asset] // 0 if absent

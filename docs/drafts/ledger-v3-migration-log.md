@@ -1191,6 +1191,16 @@ fresh data ledger `recon-topica-live1` (`cash:custody` USDC 1_000_000 / EURC 500
   evaluation `result: ERROR` (`account "mirror:onlyusdc" has no metadata[reported_balance.EURC]`).
 Demo rules deleted, demo alerts resolved (shared `reconciliation` control ledger).
 
+### account_metadata — restore explicit key/asset rules (2026-07-17)
+
+Corrects `452519c`: metadata keys are opaque and do not encode the asset. An
+`account_metadata` source once again requires one `metadataKey` plus one `asset`;
+for example, `asset: "USD/2"` may read either `metadataKey: "reported.USD"` or
+`metadataKey: "value_known.toto"`. Prefix discovery and the `assets` allowlist are
+removed. A metadata rule scopes the comparison to its declared asset, so other
+assets held by the matched ledger account do not produce outcomes; configure one
+rule per additional key/asset pair.
+
 ### account_metadata — unify on the prefix shape, drop single-asset mode (`452519c`, 2026-07-17)
 
 Since prefix mode + a one-entry `assets` allowlist already expresses the single-asset case (the asset

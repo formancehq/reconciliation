@@ -41,16 +41,12 @@ const (
 	// SourceLedger (default) reads the posting-derived aggregate balance of a
 	// ledger account set (ledger + query).
 	SourceLedger SourceKind = "ledger"
-	// SourceAccountMetadata reads a balance synced into account metadata (a
+	// SourceAccountMetadata reads a scalar synced into account metadata (a
 	// "mirror" account whose balance an external connector writes as a metadata
-	// value, not as postings). The asset is always carried in the key: keys of the
-	// form `<metadataKeyPrefix><asset>` (e.g. reported_balance.USDC,
-	// reported_balance.EURC/6) are summed across matched accounts into a per-asset
-	// map, so one mirror account can carry a reported balance per currency. An
-	// optional `assets` allowlist narrows the read to exactly the declared codes
-	// (strict presence); a single-currency mirror is just a one-entry allowlist.
-	// Values are base-10 integers in each asset's minor units. Reconciles the
-	// *sync* against a ledger balance.
+	// value, not as postings). The value of metadataKey — a base-10 integer in
+	// the explicitly declared asset's minor units — is summed across the matched
+	// accounts. The key is opaque and need not contain the asset code. Reconciles
+	// the *sync* against a ledger balance.
 	SourceAccountMetadata SourceKind = "account_metadata"
 )
 
@@ -60,23 +56,17 @@ const (
 // balances.
 //
 // Kind selects the read shape (default "ledger"). For "account_metadata",
-// MetadataKeyPrefix is required and the amount comes from `<prefix><asset>`
-// metadata keys rather than postings.
+// MetadataKey + Asset are required and the amount comes from metadata rather
+// than postings. One source describes one metadata key / asset pair.
 type SourceSpec struct {
 	Kind   SourceKind      `json:"kind,omitempty"`
 	Ledger string          `json:"ledger,omitempty"`
 	Query  json.RawMessage `json:"query,omitempty"`
 
-	// account_metadata: read `<prefix><asset>` keys into a per-asset map (the
-	// asset is always the key suffix). Required for kind account_metadata.
-	MetadataKeyPrefix string `json:"metadataKeyPrefix,omitempty"`
-	// Assets is an optional allowlist: when set, the source reads exactly
-	// `<prefix><asset>` for each declared asset — turning discovery into strict
-	// presence, so a mirror missing a declared currency's key is an error rather
-	// than a silently-absent asset. A single-currency mirror is a one-entry
-	// allowlist. Each entry must be a well-formed asset code. Only valid with
-	// metadataKeyPrefix (rejected on a ledger source).
-	Assets []string `json:"assets,omitempty"`
+	// account_metadata only. MetadataKey is opaque: the asset is declared
+	// independently and is not inferred from the key.
+	MetadataKey string `json:"metadataKey,omitempty"`
+	Asset       string `json:"asset,omitempty"`
 }
 
 // kind returns the effective kind, defaulting an empty discriminator to ledger.
@@ -101,20 +91,15 @@ func (s SourceSpec) Validate(field string) error {
 	switch s.kind() {
 	case SourceLedger:
 		// ledger + query suffice.
-		if len(s.Assets) > 0 {
-			return fmt.Errorf("%w: %s.assets is only valid with kind %q + metadataKeyPrefix", ErrInvalidSpec, field, SourceAccountMetadata)
-		}
 	case SourceAccountMetadata:
-		// The asset is always the key suffix: `<metadataKeyPrefix><asset>`.
-		if s.MetadataKeyPrefix == "" {
-			return fmt.Errorf("%w: %s.metadataKeyPrefix is required for kind %q", ErrInvalidSpec, field, SourceAccountMetadata)
+		if s.MetadataKey == "" {
+			return fmt.Errorf("%w: %s.metadataKey is required for kind %q", ErrInvalidSpec, field, SourceAccountMetadata)
 		}
-		// assets are discovered from the <prefix><asset> keys, unless an explicit
-		// allowlist narrows the read to exactly those (strict presence).
-		for _, a := range s.Assets {
-			if !engine.ValidAssetCode(a) {
-				return fmt.Errorf("%w: %s.assets contains %q, which is not a valid asset code", ErrInvalidSpec, field, a)
-			}
+		if s.Asset == "" {
+			return fmt.Errorf("%w: %s.asset is required for kind %q", ErrInvalidSpec, field, SourceAccountMetadata)
+		}
+		if !engine.ValidAssetCode(s.Asset) {
+			return fmt.Errorf("%w: %s.asset %q is not a valid asset code", ErrInvalidSpec, field, s.Asset)
 		}
 	default:
 		return fmt.Errorf("%w: %s.kind %q must be one of %q, %q", ErrInvalidSpec, field, s.Kind, SourceLedger, SourceAccountMetadata)
@@ -124,30 +109,19 @@ func (s SourceSpec) Validate(field string) error {
 
 // resolve reads the per-asset amount map for this source, live (ADR-003). A
 // ledger source aggregates postings (one internally-consistent snapshot); an
-// account_metadata source sums the `<prefix><asset>` metadata keys across the
-// matched accounts into a per-asset map. limit is the accounts budget for the
-// metadata read.
+// account_metadata source sums metadataKey across the matched accounts, keyed
+// by the declared asset. limit is the accounts budget for the metadata read.
 func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, limit int) (map[string]*big.Int, error) {
 	if s.kind() == SourceAccountMetadata {
 		accts, err := resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, limit)
 		if err != nil {
 			return nil, err
 		}
-		if len(s.Assets) > 0 {
-			// Explicit allowlist: read exactly `<prefix><asset>` for each declared
-			// asset. SumAccountMetadataInt errors if a matched account is missing
-			// the key — strict presence.
-			out := make(map[string]*big.Int, len(s.Assets))
-			for _, a := range s.Assets {
-				total, err := engine.SumAccountMetadataInt(accts, s.MetadataKeyPrefix+a)
-				if err != nil {
-					return nil, err
-				}
-				out[a] = total
-			}
-			return out, nil
+		total, err := engine.SumAccountMetadataInt(accts, s.MetadataKey)
+		if err != nil {
+			return nil, err
 		}
-		return engine.SumAccountMetadataByPrefix(accts, s.MetadataKeyPrefix)
+		return map[string]*big.Int{s.Asset: total}, nil
 	}
 	return resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query)
 }
@@ -155,13 +129,12 @@ func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, lim
 // celTerm renders the kernel expression that reads this source's amount for
 // assetExpr (already a CEL expression, e.g. `"USD/2"` or `<asset>`). Mirrors the
 // kernel builtins (ledgerSet/balance, metadataInt) so the rendered form
-// type-checks against the kernel and cross-checks the direct computation. An
-// account_metadata source's key is `prefix + asset`, rendered via CEL string
-// concat so the form stays faithful for each asset (the kernel evaluates the
-// concat to the concrete `<prefix><asset>` key before metadataInt runs).
+// type-checks against the kernel and cross-checks the direct computation. A
+// metadata source's amount is labelled by the declared asset, but its key is
+// independent of that asset, so assetExpr is unused for that kind.
 func (s SourceSpec) celTerm(assetExpr string) string {
 	if s.kind() == SourceAccountMetadata {
-		return fmt.Sprintf("metadataInt(ledgerSet(%s, %s), %s + %s)", celString(s.Ledger), celJSON(s.Query), celString(s.MetadataKeyPrefix), assetExpr)
+		return fmt.Sprintf("metadataInt(ledgerSet(%s, %s), %s)", celString(s.Ledger), celJSON(s.Query), celString(s.MetadataKey))
 	}
 	return fmt.Sprintf("balance(ledgerSet(%s, %s), %s)", celString(s.Ledger), celJSON(s.Query), assetExpr)
 }
@@ -201,7 +174,7 @@ func accountsByAddress(accts []engine.Account) map[string]map[string]*big.Int {
 // so an operator can tell which side of a comparison a balance came from.
 func (s SourceSpec) label() string {
 	if s.kind() == SourceAccountMetadata {
-		return fmt.Sprintf("metadata:%s[%s*]", s.Ledger, s.MetadataKeyPrefix)
+		return fmt.Sprintf("metadata:%s[%s]", s.Ledger, s.MetadataKey)
 	}
 	return "ledger:" + s.Ledger
 }
