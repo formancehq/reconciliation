@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 
+	"github.com/formancehq/reconciliation/internal/contractversion"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/store"
@@ -56,6 +58,21 @@ type Store interface {
 	GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error)
 	ListAlerts(ctx context.Context, q store.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error)
 	ListAlertEvents(ctx context.Context, alertID uuid.UUID, q store.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error)
+}
+
+type ruleActivityStore interface {
+	ListRuleActivities(context.Context, uuid.UUID, store.GetRuleActivitiesQuery) (*bunpaginate.Cursor[models.RuleActivity], error)
+}
+
+func (s *Service) ListRuleActivities(ctx context.Context, ruleID uuid.UUID, q store.GetRuleActivitiesQuery) (*bunpaginate.Cursor[models.RuleActivity], error) {
+	activityStore, ok := s.store.(ruleActivityStore)
+	if !ok {
+		return nil, errors.New("rule activity history is not supported by this store")
+	}
+	if version, ok := contractversion.FromContext(ctx); ok {
+		q.Options.Options.ContractVersion = &version
+	}
+	return activityStore.ListRuleActivities(ctx, ruleID, q)
 }
 
 // Service is the orchestrator for the V1 rule/evaluation/alert surface.

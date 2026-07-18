@@ -91,3 +91,25 @@ func TestRuleMetadataMinimal(t *testing.T) {
 	require.Empty(t, got.Labels)
 	require.False(t, got.Enabled)
 }
+
+func TestRuleMetadataContractVersionCompatibility(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	legacy := &commonpb.Account{
+		Address:  schema.RuleAccount(id.String()),
+		Metadata: map[string]*commonpb.MetadataValue{},
+	}
+	got, err := ruleFromAccount(legacy)
+	require.NoError(t, err)
+	require.Equal(t, models.ContractVersionV1, got.ContractVersion)
+
+	rule := &models.Rule{ID: id, ContractVersion: models.ContractVersionV2}
+	md, err := ruleToMetadata(rule)
+	require.NoError(t, err)
+	require.Equal(t, "2", md[schema.MetaContractVersion].GetStringValue())
+
+	got, err = ruleFromAccount(&commonpb.Account{Address: schema.RuleAccount(id.String()), Metadata: md})
+	require.NoError(t, err)
+	require.Equal(t, models.ContractVersionV2, got.ContractVersion)
+}

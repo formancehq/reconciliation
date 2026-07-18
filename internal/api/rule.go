@@ -10,6 +10,7 @@ import (
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/api/backend"
 	"github.com/formancehq/reconciliation/internal/api/service"
+	"github.com/formancehq/reconciliation/internal/contractversion"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -17,23 +18,25 @@ import (
 )
 
 type ruleResponse struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	TemplateKind  string            `json:"templateKind"`
-	TemplateSpec  json.RawMessage   `json:"templateSpec"`
-	CompiledCEL   string            `json:"compiledCEL,omitempty"`
-	Enabled       bool              `json:"enabled"`
-	Severity      string            `json:"severity"`
-	Cadence       string            `json:"cadence"`
-	Schedule      *models.Schedule  `json:"schedule,omitempty"`
-	Notifications []string          `json:"notifications,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	CreatedAt     time.Time         `json:"createdAt"`
-	UpdatedAt     time.Time         `json:"updatedAt"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	TemplateKind    string            `json:"templateKind"`
+	TemplateSpec    json.RawMessage   `json:"templateSpec"`
+	CompiledCEL     string            `json:"compiledCEL,omitempty"`
+	Enabled         bool              `json:"enabled"`
+	Severity        string            `json:"severity"`
+	Cadence         string            `json:"cadence"`
+	Schedule        *models.Schedule  `json:"schedule,omitempty"`
+	Notifications   []string          `json:"notifications,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
+	ContractVersion int               `json:"contractVersion,omitempty"`
+	Revision        string            `json:"revision,omitempty"`
 }
 
 func renderRule(r *models.Rule) *ruleResponse {
-	return &ruleResponse{
+	response := &ruleResponse{
 		ID:            r.ID.String(),
 		Name:          r.Name,
 		TemplateKind:  string(r.TemplateKind),
@@ -48,6 +51,11 @@ func renderRule(r *models.Rule) *ruleResponse {
 		CreatedAt:     r.CreatedAt,
 		UpdatedAt:     r.UpdatedAt,
 	}
+	if r.ContractVersion.Effective() == models.ContractVersionV2 {
+		response.ContractVersion = int(models.ContractVersionV2)
+		response.Revision = r.Revision
+	}
+	return response
 }
 
 func createRuleHandler(b backend.Backend) http.HandlerFunc {
@@ -167,6 +175,12 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 		cursor, err := b.GetService().ListRules(r.Context(), q)
 		if err != nil {
 			handleServiceErrors(w, r, err)
+			return
+		}
+		if version, _ := contractversion.FromContext(r.Context()); version == models.ContractVersionV2 {
+			api.RenderCursor(w, *bunpaginate.MapCursor(cursor, func(rule models.Rule) *ruleResponse {
+				return renderRule(&rule)
+			}))
 			return
 		}
 		api.RenderCursor(w, *cursor)

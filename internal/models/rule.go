@@ -9,9 +9,26 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// TemplateKind is the V1 public-API surface for rules — a typed catalog entry
-// that compiles deterministically to an internal CEL expression. The kernel is
-// not exposed at V1 GA; templates are the entire customer-facing surface.
+// ContractVersion identifies the public HTTP contract that owns a persisted
+// rule and all evidence derived from it. It is immutable for the lifetime of a
+// rule. Records written before the field existed are V1.
+type ContractVersion int
+
+const (
+	ContractVersionV1 ContractVersion = 1
+	ContractVersionV2 ContractVersion = 2
+)
+
+func (v ContractVersion) Effective() ContractVersion {
+	if v == 0 {
+		return ContractVersionV1
+	}
+	return v
+}
+
+// TemplateKind identifies a typed catalog entry that compiles deterministically
+// to an internal CEL expression. Contract-version validation controls which
+// entries are available through V1 and V2; the kernel remains internal.
 // See ADR-001 for the rationale.
 type TemplateKind string
 
@@ -27,6 +44,16 @@ const (
 	// generalised "two independent records of the same money match" check;
 	// see internal/templates/source.go.
 	TemplateSourceParity TemplateKind = "source_parity"
+	// TemplateBalanceEquation is the V2 N-source equality primitive. It asserts
+	// that an integer-weighted sum of named balances is zero within tolerance.
+	TemplateBalanceEquation TemplateKind = "balance_equation"
+	// TemplateExchangeRateBounds is the V2 cross-asset rate primitive. It checks
+	// the exact quote-major/base-major ratio against inclusive bounds.
+	TemplateExchangeRateBounds TemplateKind = "exchange_rate_bounds"
+	// TemplateSourceConsensus is the V2 symmetric N-source agreement primitive.
+	TemplateSourceConsensus TemplateKind = "source_consensus"
+	// TemplateCoverageRatioBounds compares exact signed multi-source portfolios.
+	TemplateCoverageRatioBounds TemplateKind = "coverage_ratio_bounds"
 )
 
 // Severity is shared between Rule (declared severity at creation) and Alert
@@ -123,17 +150,19 @@ type Schedule struct {
 type Rule struct {
 	bun.BaseModel `bun:"reconciliations.rule" json:"-"`
 
-	ID            uuid.UUID         `bun:",pk,nullzero"           json:"id"`
-	Name          string            `bun:",notnull"               json:"name"`
-	TemplateKind  TemplateKind      `bun:"template_kind,notnull"  json:"templateKind"`
-	TemplateSpec  json.RawMessage   `bun:"template_spec,type:jsonb,notnull" json:"templateSpec"`
-	CompiledCEL   string            `bun:"compiled_cel,notnull"   json:"compiledCEL,omitempty"`
-	Enabled       bool              `bun:",notnull"               json:"enabled"`
-	Severity      Severity          `bun:",notnull"               json:"severity"`
-	Cadence       Cadence           `bun:",notnull"               json:"cadence"`
-	Schedule      *Schedule         `bun:",type:jsonb"            json:"schedule,omitempty"`
-	Notifications []string          `bun:",type:jsonb"            json:"notifications,omitempty"`
-	Labels        map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`
-	CreatedAt     time.Time         `bun:"created_at,notnull,nullzero" json:"createdAt"`
-	UpdatedAt     time.Time         `bun:"updated_at,notnull,nullzero" json:"updatedAt"`
+	ID              uuid.UUID         `bun:",pk,nullzero"           json:"id"`
+	ContractVersion ContractVersion   `bun:"-" json:"-"`
+	Revision        string            `bun:"-" json:"-"`
+	Name            string            `bun:",notnull"               json:"name"`
+	TemplateKind    TemplateKind      `bun:"template_kind,notnull"  json:"templateKind"`
+	TemplateSpec    json.RawMessage   `bun:"template_spec,type:jsonb,notnull" json:"templateSpec"`
+	CompiledCEL     string            `bun:"compiled_cel,notnull"   json:"compiledCEL,omitempty"`
+	Enabled         bool              `bun:",notnull"               json:"enabled"`
+	Severity        Severity          `bun:",notnull"               json:"severity"`
+	Cadence         Cadence           `bun:",notnull"               json:"cadence"`
+	Schedule        *Schedule         `bun:",type:jsonb"            json:"schedule,omitempty"`
+	Notifications   []string          `bun:",type:jsonb"            json:"notifications,omitempty"`
+	Labels          map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`
+	CreatedAt       time.Time         `bun:"created_at,notnull,nullzero" json:"createdAt"`
+	UpdatedAt       time.Time         `bun:"updated_at,notnull,nullzero" json:"updatedAt"`
 }

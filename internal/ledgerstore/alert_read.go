@@ -87,7 +87,9 @@ func (s *LedgerStore) ListAlerts(ctx context.Context, q store.GetAlertsQuery) (*
 			return nil, fmt.Errorf("list alerts: decode %s: %w", acct.GetAddress(), derr)
 		}
 
-		alerts = append(alerts, *a)
+		if version := q.Options.Options.ContractVersion; version == nil || a.ContractVersion.Effective() == *version {
+			alerts = append(alerts, *a)
+		}
 	}
 
 	slices.SortFunc(alerts, func(a, b models.Alert) int { return b.LastSeenAt.Compare(a.LastSeenAt) })

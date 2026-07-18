@@ -67,7 +67,7 @@ paths:
       security:
         - Authorization: [reconciliation:write]
     delete:
-      summary: Delete a rule (cascades to evaluations + alerts + alert events)
+      summary: Delete a rule definition while preserving its audit history
       operationId: deleteRule
       tags: [reconciliation.v1]
       responses:
@@ -117,6 +117,26 @@ paths:
           schema: { type: string }
       responses:
         '200': { $ref: '#/components/responses/Captures' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /rules/{ruleID}/timeline:
+    parameters: [{ $ref: '#/components/parameters/RuleID' }]
+    get:
+      summary: List the combined lifecycle and observation history for a rule
+      description: |
+        Returns immutable rule lifecycle, evaluation, and alert lifecycle events
+        in newest-first order. Events are committed to the rule activity stream
+        atomically with the state mutation they describe. History created before
+        the activity-journal rollout may be incomplete.
+      operationId: listRuleTimeline
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200': { $ref: '#/components/responses/RuleActivities' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
@@ -267,6 +287,233 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
+  /v2/rules:
+    post:
+      summary: Create a V2 multi-source rule
+      operationId: createRuleV2
+      tags: [reconciliation.v2]
+      requestBody: { $ref: '#/components/requestBodies/RuleV2' }
+      responses:
+        '201': { $ref: '#/components/responses/RuleV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+    get:
+      summary: List V2 rules
+      operationId: listRulesV2
+      tags: [reconciliation.v2]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryBuilderV2' }
+      responses:
+        '200': { $ref: '#/components/responses/RulesV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /v2/rules/{ruleID}:
+    parameters: [{ $ref: '#/components/parameters/RuleID' }]
+    get:
+      summary: Get a V2 rule
+      operationId: getRuleV2
+      tags: [reconciliation.v2]
+      responses:
+        '200': { $ref: '#/components/responses/RuleV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+    patch:
+      summary: Patch a V2 rule
+      description: Changing a V2 operation requires both `templateKind` and its matching typed `templateSpec`.
+      operationId: patchRuleV2
+      tags: [reconciliation.v2]
+      requestBody: { $ref: '#/components/requestBodies/RulePatchV2' }
+      responses:
+        '200': { $ref: '#/components/responses/RuleV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+    delete:
+      summary: Delete a V2 rule definition while preserving its audit history
+      operationId: deleteRuleV2
+      tags: [reconciliation.v2]
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /v2/rules/{ruleID}/evaluate:
+    post:
+      summary: Evaluate a V2 rule now
+      operationId: evaluateRuleV2
+      tags: [reconciliation.v2]
+      parameters: [{ $ref: '#/components/parameters/RuleID' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvaluateRuleRequestV2' }
+      responses:
+        '200': { $ref: '#/components/responses/EvaluationV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /v2/rules/{ruleID}/captures:
+    parameters: [{ $ref: '#/components/parameters/RuleID' }]
+    get:
+      summary: List a V2 rule's immutable evaluation captures
+      operationId: listRuleCapturesV2
+      tags: [reconciliation.v2]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+        - name: period
+          in: query
+          required: false
+          description: Scope the history to a single reconciliation period (for example, "2026-03" or "continuous").
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/CapturesV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /v2/rules/{ruleID}/timeline:
+    parameters: [{ $ref: '#/components/parameters/RuleID' }]
+    get:
+      summary: List the combined lifecycle and observation history for a V2 rule
+      operationId: listRuleTimelineV2
+      tags: [reconciliation.v2]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200': { $ref: '#/components/responses/RuleActivities' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /v2/alerts:
+    get:
+      summary: List V2 alerts
+      operationId: listAlertsV2
+      tags: [reconciliation.v2]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryBuilderV2' }
+      responses:
+        '200': { $ref: '#/components/responses/AlertsV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /v2/alerts/{alertID}:
+    parameters: [{ $ref: '#/components/parameters/AlertID' }]
+    get:
+      summary: Get a V2 alert
+      operationId: getAlertV2
+      tags: [reconciliation.v2]
+      responses:
+        '200': { $ref: '#/components/responses/AlertV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /v2/alerts/{alertID}/ack:
+    post:
+      summary: Acknowledge a V2 alert
+      operationId: ackAlertV2
+      tags: [reconciliation.v2]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AckAlertRequestV2' }
+      responses:
+        '200': { $ref: '#/components/responses/AlertV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /v2/alerts/{alertID}/resolve:
+    post:
+      summary: Resolve a V2 alert (fixed_by_booking)
+      operationId: resolveAlertV2
+      tags: [reconciliation.v2]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveAlertRequestV2' }
+      responses:
+        '200': { $ref: '#/components/responses/AlertV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /v2/alerts/{alertID}/accept:
+    post:
+      summary: Accept a V2 alert (accepted_by_business)
+      operationId: acceptAlertV2
+      tags: [reconciliation.v2]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptAlertRequestV2' }
+      responses:
+        '200': { $ref: '#/components/responses/AlertV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /v2/alerts/{alertID}/snooze:
+    post:
+      summary: Snooze a V2 alert's notifications until a future instant
+      operationId: snoozeAlertV2
+      tags: [reconciliation.v2]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SnoozeAlertRequestV2' }
+      responses:
+        '200': { $ref: '#/components/responses/AlertV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /v2/alerts/{alertID}/unsnooze:
+    post:
+      summary: Lift a V2 alert snooze early
+      operationId: unsnoozeAlertV2
+      tags: [reconciliation.v2]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UnsnoozeAlertRequestV2' }
+      responses:
+        '200': { $ref: '#/components/responses/AlertV2' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
 components:
   parameters:
     PageSize:
@@ -353,6 +600,41 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/CapturesCursorResponse' }
+    RuleActivities:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RuleActivitiesCursorResponse' }
+    RuleV2:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RuleResponseV2' }
+    RulesV2:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RulesCursorResponseV2' }
+    EvaluationV2:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EvaluationResponseV2' }
+    AlertV2:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AlertResponseV2' }
+    AlertsV2:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AlertsCursorResponseV2' }
+    CapturesV2:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/CapturesCursorResponseV2' }
   requestBodies:
     Rule:
       required: true
@@ -364,6 +646,16 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/RulePatchRequest' }
+    RuleV2:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RuleRequestV2' }
+    RulePatchV2:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RulePatchRequestV2' }
   schemas:
     QueryBuilder:
       type: object
@@ -677,7 +969,7 @@ components:
         trigger: { type: string, enum: [scheduled, manual] }
         capturedAt: { type: string, format: date-time }
         evidence:
-          description: The evaluation's outcome evidence (present on a fail; bounded).
+          description: The evaluation's outcome evidence.
           type: object
           additionalProperties: true
     CapturesCursorResponse:
@@ -695,6 +987,41 @@ components:
             data:
               type: array
               items: { $ref: '#/components/schemas/Capture' }
+
+    RuleActivity:
+      type: object
+      required: [id, sequence, kind, category, ruleID, contractVersion, occurredAt, recordedAt]
+      properties:
+        id: { type: string, example: "8941:0" }
+        sequence: { type: string, description: Ledger-local ordering key represented as a string for JavaScript safety. }
+        kind:
+          type: string
+          enum: [rule.created, rule.updated, rule.deleted, evaluation.completed, alert.opened, alert.occurred, alert.reopened, alert.acknowledged, alert.resolved, alert.accepted, alert.auto_resolved, alert.snoozed, alert.unsnoozed]
+        category: { type: string, enum: [rule, evaluation, alert] }
+        ruleID: { type: string, format: uuid }
+        contractVersion: { type: integer, enum: [1, 2] }
+        ruleRevision: { type: string }
+        correlationID: { type: string, description: Evaluation ID for evaluation-driven activity. }
+        occurredAt: { type: string, format: date-time }
+        recordedAt: { type: string, format: date-time }
+        payload:
+          type: object
+          additionalProperties: true
+    RuleActivitiesCursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/RuleActivity' }
 
     AckAlertRequest:
       type: object
@@ -731,6 +1058,675 @@ components:
         until: { type: string, format: date-time }
         note: { type: string }
     UnsnoozeAlertRequest:
+      type: object
+      required: [by]
+      properties:
+        by: { type: string, example: "ops@buildr.com" }
+
+    # --- V2 named multi-source schemas ------------------------------------
+
+    QueryBuilderV2:
+      type: object
+      additionalProperties: true
+    ContractVersionV2:
+      type: integer
+      format: int32
+      enum: [2]
+      readOnly: true
+    TemplateKindV2:
+      type: string
+      enum: [balance_equation, exchange_rate_bounds, source_consensus, coverage_ratio_bounds]
+    SeverityV2:
+      type: string
+      enum: [info, low, medium, high, critical]
+    CadenceV2:
+      type: string
+      enum: [continuous, daily, weekly, monthly]
+      default: continuous
+    ScheduleV2:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [on_demand, cron] }
+        expr: { type: string, example: "*/15 * * * *" }
+        tz: { type: string, example: "UTC" }
+
+    UnsignedIntegerStringV2:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+      description: A non-negative base-10 integer encoded as a string to avoid JSON precision loss.
+      example: "1250"
+    SignedIntegerStringV2:
+      type: string
+      pattern: '^-?(0|[1-9][0-9]*)$'
+      description: A signed base-10 integer encoded as a string to avoid JSON precision loss.
+      example: "-1250"
+    PositiveDecimalStringV2:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)(\.[0-9]{1,18})?$'
+      description: A positive plain-decimal value with at most 18 fractional digits; signs and exponent notation are rejected.
+      example: "1.10"
+    AssetV2:
+      type: string
+      minLength: 1
+      description: Ledger asset code including precision, for example `USD/2`.
+      example: USD/2
+    SourceIDV2:
+      type: string
+      pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$'
+      description: Stable machine identifier used by terms, fingerprints, and evidence.
+      example: customerBook
+
+    LedgerNamedSourceV2:
+      type: object
+      required: [id, ledger, query, asset]
+      properties:
+        id: { $ref: '#/components/schemas/SourceIDV2' }
+        label: { type: string }
+        kind:
+          type: string
+          enum: [ledger]
+          default: ledger
+        ledger: { type: string, minLength: 1 }
+        query:
+          type: object
+          additionalProperties: true
+        asset: { $ref: '#/components/schemas/AssetV2' }
+    AccountMetadataNamedSourceV2:
+      type: object
+      required: [id, kind, ledger, query, metadataKey, asset]
+      properties:
+        id: { $ref: '#/components/schemas/SourceIDV2' }
+        label: { type: string }
+        kind: { type: string, enum: [account_metadata] }
+        ledger: { type: string, minLength: 1 }
+        query:
+          type: object
+          additionalProperties: true
+        metadataKey:
+          type: string
+          minLength: 1
+          description: Opaque metadata key; the asset is declared independently.
+        asset: { $ref: '#/components/schemas/AssetV2' }
+    NamedSourceV2:
+      oneOf:
+        - $ref: '#/components/schemas/LedgerNamedSourceV2'
+        - $ref: '#/components/schemas/AccountMetadataNamedSourceV2'
+      discriminator:
+        propertyName: kind
+        mapping:
+          ledger: '#/components/schemas/LedgerNamedSourceV2'
+          account_metadata: '#/components/schemas/AccountMetadataNamedSourceV2'
+
+    BalanceEquationTermV2:
+      type: object
+      required: [source, coefficient]
+      properties:
+        source: { $ref: '#/components/schemas/SourceIDV2' }
+        coefficient:
+          description: Non-zero signed integer coefficient for this source.
+          oneOf:
+            - { type: integer, format: int64, maximum: -1 }
+            - { type: integer, format: int64, minimum: 1 }
+    BalanceEquationSpecV2:
+      type: object
+      description: Checks `abs(sum(coefficient * balance)) <= tolerance` for sources declaring the same asset.
+      required: [sources, terms, tolerance]
+      properties:
+        sources:
+          type: array
+          minItems: 2
+          maxItems: 32
+          items: { $ref: '#/components/schemas/NamedSourceV2' }
+          description: Ordered sources with unique IDs. Every source must declare the same asset.
+        terms:
+          type: array
+          minItems: 2
+          maxItems: 32
+          items: { $ref: '#/components/schemas/BalanceEquationTermV2' }
+          description: Each source ID must be referenced exactly once.
+        tolerance: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
+    ExplicitRateBoundsV2:
+      type: object
+      required: [min, max]
+      properties:
+        min: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
+        max: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
+      description: Inclusive positive lower and upper exchange-rate bounds; min must not exceed max.
+    TargetRateBoundsV2:
+      type: object
+      required: [target, toleranceBps]
+      properties:
+        target: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
+        toleranceBps:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 10000
+      description: Inclusive bounds derived exactly from target plus or minus the basis-point tolerance.
+    ExchangeRateV2:
+      oneOf:
+        - $ref: '#/components/schemas/ExplicitRateBoundsV2'
+        - $ref: '#/components/schemas/TargetRateBoundsV2'
+    ExchangeRateBoundsSpecV2:
+      type: object
+      description: Checks the exact signed quote-major-units per base-major-unit rate using integer cross-multiplication.
+      required: [sources, baseSource, quoteSource, rate]
+      properties:
+        sources:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/NamedSourceV2' }
+          description: Exactly two ordered sources with unique IDs.
+        baseSource: { $ref: '#/components/schemas/SourceIDV2' }
+        quoteSource: { $ref: '#/components/schemas/SourceIDV2' }
+        rate: { $ref: '#/components/schemas/ExchangeRateV2' }
+    SourceConsensusSpecV2:
+      type: object
+      description: Checks that every source is present and `max(balance) - min(balance) <= tolerance` for one shared asset.
+      required: [sources, tolerance]
+      properties:
+        sources:
+          type: array
+          minItems: 2
+          maxItems: 32
+          items: { $ref: '#/components/schemas/NamedSourceV2' }
+          description: Ordered independent records with unique IDs. Every source must declare the same asset.
+        tolerance: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
+    CoverageRatioBoundsSpecV2:
+      type: object
+      description: Checks the exact ratio of two signed, same-asset portfolios against inclusive bounds.
+      required: [sources, numeratorTerms, denominatorTerms, ratio]
+      properties:
+        sources:
+          type: array
+          minItems: 2
+          maxItems: 32
+          items: { $ref: '#/components/schemas/NamedSourceV2' }
+          description: Every source must declare the same asset and be assigned exactly once across the two portfolios.
+        numeratorTerms:
+          type: array
+          minItems: 1
+          maxItems: 31
+          items: { $ref: '#/components/schemas/BalanceEquationTermV2' }
+        denominatorTerms:
+          type: array
+          minItems: 1
+          maxItems: 31
+          items: { $ref: '#/components/schemas/BalanceEquationTermV2' }
+        ratio: { $ref: '#/components/schemas/ExchangeRateV2' }
+
+    RuleRequestCommonV2:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        severity: { $ref: '#/components/schemas/SeverityV2' }
+        cadence: { $ref: '#/components/schemas/CadenceV2' }
+        schedule: { $ref: '#/components/schemas/ScheduleV2' }
+        notifications:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        enabled: { type: boolean }
+    BalanceEquationRuleRequestV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [balance_equation] }
+            templateSpec: { $ref: '#/components/schemas/BalanceEquationSpecV2' }
+    ExchangeRateBoundsRuleRequestV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [exchange_rate_bounds] }
+            templateSpec: { $ref: '#/components/schemas/ExchangeRateBoundsSpecV2' }
+    SourceConsensusRuleRequestV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [source_consensus] }
+            templateSpec: { $ref: '#/components/schemas/SourceConsensusSpecV2' }
+    CoverageRatioBoundsRuleRequestV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [coverage_ratio_bounds] }
+            templateSpec: { $ref: '#/components/schemas/CoverageRatioBoundsSpecV2' }
+    RuleRequestV2:
+      oneOf:
+        - $ref: '#/components/schemas/BalanceEquationRuleRequestV2'
+        - $ref: '#/components/schemas/ExchangeRateBoundsRuleRequestV2'
+        - $ref: '#/components/schemas/SourceConsensusRuleRequestV2'
+        - $ref: '#/components/schemas/CoverageRatioBoundsRuleRequestV2'
+      discriminator:
+        propertyName: templateKind
+        mapping:
+          balance_equation: '#/components/schemas/BalanceEquationRuleRequestV2'
+          exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsRuleRequestV2'
+          source_consensus: '#/components/schemas/SourceConsensusRuleRequestV2'
+          coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsRuleRequestV2'
+    RulePatchRequestV2:
+      type: object
+      description: Partial update. A changed definition is validated as a complete V2 definition; contractVersion is immutable and cannot be supplied.
+      properties:
+        name: { type: string, minLength: 1 }
+        templateKind: { $ref: '#/components/schemas/TemplateKindV2' }
+        templateSpec:
+          oneOf:
+            - $ref: '#/components/schemas/BalanceEquationSpecV2'
+            - $ref: '#/components/schemas/ExchangeRateBoundsSpecV2'
+            - $ref: '#/components/schemas/SourceConsensusSpecV2'
+            - $ref: '#/components/schemas/CoverageRatioBoundsSpecV2'
+        enabled: { type: boolean }
+        severity: { $ref: '#/components/schemas/SeverityV2' }
+        schedule: { $ref: '#/components/schemas/ScheduleV2' }
+        notifications:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+
+    RuleCommonV2:
+      type: object
+      required: [id, contractVersion, name, enabled, severity, cadence, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        revision: { type: string, description: Content-derived identifier of the effective rule configuration. }
+        contractVersion: { $ref: '#/components/schemas/ContractVersionV2' }
+        name: { type: string }
+        compiledCEL: { type: string, readOnly: true }
+        enabled: { type: boolean }
+        severity: { $ref: '#/components/schemas/SeverityV2' }
+        cadence: { $ref: '#/components/schemas/CadenceV2' }
+        schedule: { $ref: '#/components/schemas/ScheduleV2' }
+        notifications:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    BalanceEquationRuleV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [balance_equation] }
+            templateSpec: { $ref: '#/components/schemas/BalanceEquationSpecV2' }
+    ExchangeRateBoundsRuleV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [exchange_rate_bounds] }
+            templateSpec: { $ref: '#/components/schemas/ExchangeRateBoundsSpecV2' }
+    SourceConsensusRuleV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [source_consensus] }
+            templateSpec: { $ref: '#/components/schemas/SourceConsensusSpecV2' }
+    CoverageRatioBoundsRuleV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [coverage_ratio_bounds] }
+            templateSpec: { $ref: '#/components/schemas/CoverageRatioBoundsSpecV2' }
+    RuleV2:
+      oneOf:
+        - $ref: '#/components/schemas/BalanceEquationRuleV2'
+        - $ref: '#/components/schemas/ExchangeRateBoundsRuleV2'
+        - $ref: '#/components/schemas/SourceConsensusRuleV2'
+        - $ref: '#/components/schemas/CoverageRatioBoundsRuleV2'
+      discriminator:
+        propertyName: templateKind
+        mapping:
+          balance_equation: '#/components/schemas/BalanceEquationRuleV2'
+          exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsRuleV2'
+          source_consensus: '#/components/schemas/SourceConsensusRuleV2'
+          coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsRuleV2'
+    RuleResponseV2:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/RuleV2' }
+    RulesCursorResponseV2:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/RuleV2' }
+
+    EvidenceSourceV2:
+      type: object
+      required: [id, kind, asset, balance, present]
+      properties:
+        id: { $ref: '#/components/schemas/SourceIDV2' }
+        label: { type: string }
+        kind: { type: string, enum: [ledger, account_metadata] }
+        asset: { $ref: '#/components/schemas/AssetV2' }
+        balance: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+        present: { type: boolean }
+    BalanceEquationEvidenceSourceV2:
+      allOf:
+        - $ref: '#/components/schemas/EvidenceSourceV2'
+        - type: object
+          required: [coefficient, contribution]
+          properties:
+            coefficient:
+              oneOf:
+                - { type: integer, format: int64, maximum: -1 }
+                - { type: integer, format: int64, minimum: 1 }
+            contribution: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+    BalanceEquationEvidenceV2:
+      type: object
+      required: [schemaVersion, operation, asset, sources, residual, absoluteResidual, tolerance, compiledCEL]
+      properties:
+        schemaVersion: { type: integer, format: int32, enum: [2] }
+        operation: { type: string, enum: [balance_equation] }
+        asset: { $ref: '#/components/schemas/AssetV2' }
+        sources:
+          type: array
+          minItems: 2
+          maxItems: 32
+          items: { $ref: '#/components/schemas/BalanceEquationEvidenceSourceV2' }
+        residual: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+        absoluteResidual: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
+        tolerance: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
+        compiledCEL: { type: string }
+    RationalRateV2:
+      type: object
+      required: [numerator, denominator]
+      properties:
+        numerator: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+        denominator: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+    EffectiveRateBoundsV2:
+      type: object
+      required: [min, max]
+      properties:
+        min: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
+        max: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
+    ExchangeRateBoundsEvidenceV2:
+      type: object
+      description: "`observedRate` is omitted and `undefinedReason` is set only when the base balance is zero."
+      required: [schemaVersion, operation, base, quote, effectiveBounds, compiledCEL]
+      properties:
+        schemaVersion: { type: integer, format: int32, enum: [2] }
+        operation: { type: string, enum: [exchange_rate_bounds] }
+        base: { $ref: '#/components/schemas/EvidenceSourceV2' }
+        quote: { $ref: '#/components/schemas/EvidenceSourceV2' }
+        observedRate: { $ref: '#/components/schemas/RationalRateV2' }
+        effectiveBounds: { $ref: '#/components/schemas/EffectiveRateBoundsV2' }
+        undefinedReason: { type: string, enum: [base_balance_zero] }
+        compiledCEL: { type: string }
+    SourceConsensusEvidenceV2:
+      type: object
+      required: [schemaVersion, operation, asset, sources, minimumSource, minimumBalance, maximumSource, maximumBalance, spread, tolerance, missingSources, compiledCEL]
+      properties:
+        schemaVersion: { type: integer, format: int32, enum: [2] }
+        operation: { type: string, enum: [source_consensus] }
+        asset: { $ref: '#/components/schemas/AssetV2' }
+        sources:
+          type: array
+          minItems: 2
+          maxItems: 32
+          items: { $ref: '#/components/schemas/EvidenceSourceV2' }
+        minimumSource: { $ref: '#/components/schemas/SourceIDV2' }
+        minimumBalance: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+        maximumSource: { $ref: '#/components/schemas/SourceIDV2' }
+        maximumBalance: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+        spread: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
+        tolerance: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
+        missingSources:
+          type: array
+          items: { $ref: '#/components/schemas/SourceIDV2' }
+        compiledCEL: { type: string }
+    CoveragePortfolioV2:
+      type: object
+      required: [sources, total]
+      properties:
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 31
+          items: { $ref: '#/components/schemas/BalanceEquationEvidenceSourceV2' }
+        total: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+    CoverageRatioBoundsEvidenceV2:
+      type: object
+      description: "`observedRatio` is omitted and `undefinedReason` is set only when the denominator portfolio totals zero."
+      required: [schemaVersion, operation, asset, numerator, denominator, effectiveBounds, compiledCEL]
+      properties:
+        schemaVersion: { type: integer, format: int32, enum: [2] }
+        operation: { type: string, enum: [coverage_ratio_bounds] }
+        asset: { $ref: '#/components/schemas/AssetV2' }
+        numerator: { $ref: '#/components/schemas/CoveragePortfolioV2' }
+        denominator: { $ref: '#/components/schemas/CoveragePortfolioV2' }
+        observedRatio: { $ref: '#/components/schemas/RationalRateV2' }
+        effectiveBounds: { $ref: '#/components/schemas/EffectiveRateBoundsV2' }
+        undefinedReason: { type: string, enum: [denominator_total_zero] }
+        compiledCEL: { type: string }
+    EvidenceV2:
+      oneOf:
+        - $ref: '#/components/schemas/BalanceEquationEvidenceV2'
+        - $ref: '#/components/schemas/ExchangeRateBoundsEvidenceV2'
+        - $ref: '#/components/schemas/SourceConsensusEvidenceV2'
+        - $ref: '#/components/schemas/CoverageRatioBoundsEvidenceV2'
+      discriminator:
+        propertyName: operation
+        mapping:
+          balance_equation: '#/components/schemas/BalanceEquationEvidenceV2'
+          exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsEvidenceV2'
+          source_consensus: '#/components/schemas/SourceConsensusEvidenceV2'
+          coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsEvidenceV2'
+
+    OutcomeV2:
+      type: object
+      required: [fingerprint, passed, evidence]
+      properties:
+        fingerprint: { type: string }
+        passed: { type: boolean }
+        evidence: { $ref: '#/components/schemas/EvidenceV2' }
+
+    EvaluateRuleRequestV2:
+      type: object
+      properties:
+        at: { type: string, format: date-time, description: "Point in time for the evaluation. Defaults to now." }
+    EvaluationV2:
+      type: object
+      required: [id, contractVersion, ruleID, startedAt, endedAt, result, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        contractVersion: { $ref: '#/components/schemas/ContractVersionV2' }
+        ruleID: { type: string, format: uuid }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        result: { type: string, enum: [PASS, FAIL, ERROR] }
+        evidence:
+          oneOf:
+            - type: array
+              items: { $ref: '#/components/schemas/OutcomeV2' }
+            - type: object
+              additionalProperties: true
+        error: { type: string }
+        costUnits: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+    EvaluationResponseV2:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/EvaluationV2' }
+
+    AckV2:
+      type: object
+      required: [by, at]
+      properties:
+        by: { type: string }
+        at: { type: string, format: date-time }
+        note: { type: string }
+    ResolutionV2:
+      type: object
+      required: [kind, by, at]
+      properties:
+        kind: { type: string, enum: [auto, fixed_by_booking, accepted_by_business] }
+        by: { type: string }
+        at: { type: string, format: date-time }
+        note: { type: string }
+        transactionRefs:
+          type: array
+          items: { type: string }
+        evidenceSnapshot: { $ref: '#/components/schemas/EvidenceV2' }
+        expiresAt: { type: string, format: date-time }
+    SnoozeV2:
+      type: object
+      required: [until, by, at]
+      properties:
+        until: { type: string, format: date-time }
+        by: { type: string }
+        at: { type: string, format: date-time }
+        note: { type: string }
+    AlertV2:
+      type: object
+      required: [id, contractVersion, ruleID, fingerprint, periodID, status, severity, firstSeenAt, lastSeenAt, occurrenceCount, lastEvaluationID, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        contractVersion: { $ref: '#/components/schemas/ContractVersionV2' }
+        ruleID: { type: string, format: uuid }
+        fingerprint: { type: string }
+        periodID: { type: string }
+        status: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
+        severity: { $ref: '#/components/schemas/SeverityV2' }
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        occurrenceCount: { type: integer, format: int64 }
+        lastEvaluationID: { type: string, format: uuid }
+        evidence: { $ref: '#/components/schemas/EvidenceV2' }
+        ack: { $ref: '#/components/schemas/AckV2' }
+        resolution: { $ref: '#/components/schemas/ResolutionV2' }
+        snooze: { $ref: '#/components/schemas/SnoozeV2' }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AlertResponseV2:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/AlertV2' }
+    AlertsCursorResponseV2:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/AlertV2' }
+    CaptureV2:
+      type: object
+      required: [transactionID, contractVersion, ruleID, periodID, evaluationID, templateKind, verdict, trigger, capturedAt]
+      properties:
+        transactionID: { type: integer, format: int64 }
+        contractVersion: { $ref: '#/components/schemas/ContractVersionV2' }
+        ruleID: { type: string, format: uuid }
+        periodID: { type: string }
+        evaluationID: { type: string, format: uuid }
+        templateKind: { $ref: '#/components/schemas/TemplateKindV2' }
+        verdict: { type: string, enum: [pass, fail, error] }
+        trigger: { type: string, enum: [scheduled, manual] }
+        capturedAt: { type: string, format: date-time }
+        ruleRevision: { type: string }
+        pit: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        result: { type: string, enum: [PASS, FAIL, ERROR] }
+        error: { type: string }
+        evidence:
+          oneOf:
+            - type: array
+              items: { $ref: '#/components/schemas/OutcomeV2' }
+            - type: object
+              additionalProperties: true
+    CapturesCursorResponseV2:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/CaptureV2' }
+
+    AckAlertRequestV2:
+      type: object
+      required: [by]
+      properties:
+        by: { type: string, example: "ops@buildr.com" }
+        note: { type: string }
+    ResolveAlertRequestV2:
+      type: object
+      required: [by]
+      properties:
+        by: { type: string }
+        note: { type: string }
+        transactionRefs:
+          type: array
+          items: { type: string }
+    AcceptAlertRequestV2:
+      type: object
+      required: [by, note]
+      properties:
+        by: { type: string }
+        note: { type: string, minLength: 1 }
+        expiresAt: { type: string, format: date-time }
+    SnoozeAlertRequestV2:
+      type: object
+      required: [by, until]
+      properties:
+        by: { type: string, example: "ops@buildr.com" }
+        until: { type: string, format: date-time }
+        note: { type: string }
+    UnsnoozeAlertRequestV2:
       type: object
       required: [by]
       properties:

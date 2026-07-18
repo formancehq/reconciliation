@@ -44,7 +44,7 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		return nil, errors.New("service: engine + templates registry are required to evaluate rules")
 	}
 
-	rule, err := s.store.GetRule(ctx, ruleID)
+	rule, err := s.getRuleForContract(ctx, ruleID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,10 +71,12 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	ended := time.Now().UTC()
 
 	evaluation := &models.Evaluation{
-		ID:        uuid.New(),
-		RuleID:    rule.ID,
-		StartedAt: started,
-		EndedAt:   ended,
+		ID:              uuid.New(),
+		ContractVersion: rule.ContractVersion.Effective(),
+		RuleID:          rule.ID,
+		StartedAt:       started,
+		EndedAt:         ended,
+		CreatedAt:       ended,
 	}
 
 	if evalErr != nil {
@@ -86,6 +88,10 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		}
 		evaluation.Evidence = ev
 		if err := s.store.CreateEvaluation(ctx, evaluation); err != nil {
+			return nil, err
+		}
+		periodID := rule.Cadence.PeriodID(req.PIT)
+		if err := s.store.RecordCapture(ctx, captureInput(rule, evaluation, periodID, req.Trigger, req.PIT)); err != nil {
 			return nil, err
 		}
 		if _, mErr := s.openEngineErrorAlert(ctx, rule, evaluation, evalErr); mErr != nil {
@@ -107,10 +113,10 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	// cases (see models.Cadence.PeriodID).
 	periodID := rule.Cadence.PeriodID(req.PIT)
 
-	// Plan alert transitions before recording the capture so its bounded evidence
-	// contains every failure plus the passing outcomes that will resolve active
-	// alerts. The plan and capture both use the exact outcomes evaluated above —
-	// no Ledger read is repeated and no prior alert evidence is reused.
+	// Plan alert transitions before recording the capture. The capture retains
+	// every exact outcome from this evaluation; the plan independently selects
+	// only the outcomes that need an alert mutation. No Ledger read is repeated
+	// and no prior alert evidence is reused.
 	//
 	// The idempotent ledger store has no cross-op transaction, so inTx runs the
 	// capture and planned transitions sequentially; each write is individually
@@ -122,7 +128,7 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		}
 		plan := planAlertTransitions(outcomes, activeFingerprints)
 
-		evidence, err := marshalOutcomes(plan.evidenceOutcomes())
+		evidence, err := marshalOutcomes(outcomes)
 		if err != nil {
 			return err
 		}
@@ -131,7 +137,7 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		if err := st.CreateEvaluation(ctx, evaluation); err != nil {
 			return err
 		}
-		if err := st.RecordCapture(ctx, captureInput(rule, evaluation, periodID, req.Trigger)); err != nil {
+		if err := st.RecordCapture(ctx, captureInput(rule, evaluation, periodID, req.Trigger, req.PIT)); err != nil {
 			return err
 		}
 		return driveAlertTransitions(ctx, st, rule, evaluation, plan, periodID, ended)
@@ -144,23 +150,32 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 }
 
 // captureInput builds the immutable capture record for an evaluation (ADR-003):
-// the verdict, the bounded transition evidence the evaluation already computed,
+// the verdict, the complete outcome evidence the evaluation already computed,
 // and what triggered the run.
-func captureInput(rule *models.Rule, ev *models.Evaluation, periodID, trigger string) store.CaptureInput {
+func captureInput(rule *models.Rule, ev *models.Evaluation, periodID, trigger string, pit time.Time) store.CaptureInput {
 	verdict := "pass"
-	if ev.Result == models.EvaluationFail {
+	switch ev.Result {
+	case models.EvaluationFail:
 		verdict = "fail"
+	case models.EvaluationError:
+		verdict = "error"
 	}
 
 	return store.CaptureInput{
-		RuleID:       rule.ID,
-		TemplateKind: string(rule.TemplateKind),
-		PeriodID:     periodID,
-		EvaluationID: ev.ID,
-		CapturedAt:   ev.EndedAt,
-		Verdict:      verdict,
-		Trigger:      trigger,
-		Evidence:     ev.Evidence,
+		RuleID:          rule.ID,
+		ContractVersion: rule.ContractVersion.Effective(),
+		TemplateKind:    string(rule.TemplateKind),
+		PeriodID:        periodID,
+		EvaluationID:    ev.ID,
+		CapturedAt:      ev.EndedAt,
+		Verdict:         verdict,
+		Trigger:         trigger,
+		Evidence:        ev.Evidence,
+		RuleRevision:    rule.Revision,
+		PIT:             pit,
+		StartedAt:       ev.StartedAt,
+		Result:          ev.Result,
+		Error:           ev.Error,
 	}
 }
 
@@ -233,17 +248,6 @@ func planAlertTransitions(outcomes []templates.Outcome, activeFingerprints []str
 	return plan
 }
 
-// evidenceOutcomes returns the bounded capture roster: every failure and only
-// those passes that are planned to resolve an active alert. The original
-// outcome values are retained verbatim from the evaluation.
-func (p alertTransitionPlan) evidenceOutcomes() []templates.Outcome {
-	outcomes := make([]templates.Outcome, 0, len(p.outcomeTransitions))
-	for _, transition := range p.outcomeTransitions {
-		outcomes = append(outcomes, transition.outcome)
-	}
-	return outcomes
-}
-
 // driveAlertTransitions applies the precomputed plan after the capture is
 // recorded. Open/update, auto-resolution, disappearance sweeping, and their
 // idempotency semantics remain owned by the store.
@@ -270,14 +274,15 @@ func driveAlertTransitions(
 			return fmt.Errorf("marshal evidence for %s: %w", outcome.Fingerprint, err)
 		}
 		_, err = st.OpenOrUpdateAlert(ctx, store.OpenAlertInput{
-			RuleID:       rule.ID,
-			Fingerprint:  outcome.Fingerprint,
-			PeriodID:     periodID,
-			Severity:     rule.Severity,
-			EvaluationID: evaluation.ID,
-			Evidence:     evidenceJSON,
-			Labels:       rule.Labels,
-			OccurredAt:   ended,
+			RuleID:          rule.ID,
+			ContractVersion: rule.ContractVersion.Effective(),
+			Fingerprint:     outcome.Fingerprint,
+			PeriodID:        periodID,
+			Severity:        rule.Severity,
+			EvaluationID:    evaluation.ID,
+			Evidence:        evidenceJSON,
+			Labels:          rule.Labels,
+			OccurredAt:      ended,
 		})
 		if err != nil {
 			return fmt.Errorf("open/update alert for %s: %w", outcome.Fingerprint, err)
@@ -314,8 +319,9 @@ func (s *Service) openEngineErrorAlert(ctx context.Context, rule *models.Rule, e
 	}
 
 	res, err := s.store.OpenOrUpdateAlert(ctx, store.OpenAlertInput{
-		RuleID:      rule.ID,
-		Fingerprint: engineErrorFingerprint,
+		RuleID:          rule.ID,
+		ContractVersion: rule.ContractVersion.Effective(),
+		Fingerprint:     engineErrorFingerprint,
 		// Engine-health is operational, not a per-period reconciliation fact:
 		// a resolver timeout means "the check couldn't run", not "March didn't
 		// reconcile". Keep it in the continuous scope regardless of cadence.

@@ -560,11 +560,11 @@ func TestEvaluate_PassNoAlerts(t *testing.T) {
 	if len(store.alerts) != 0 {
 		t.Errorf("expected no alerts, got %d", len(store.alerts))
 	}
-	if string(ev.Evidence) != "[]" {
-		t.Errorf("expected empty evaluation evidence, got %s", ev.Evidence)
+	if string(ev.Evidence) == "[]" {
+		t.Errorf("expected complete successful evaluation evidence, got %s", ev.Evidence)
 	}
-	if len(store.captures) != 1 || string(store.captures[0].Evidence) != "[]" {
-		t.Errorf("expected one capture with empty evidence, got %+v", store.captures)
+	if len(store.captures) != 1 || string(store.captures[0].Evidence) != string(ev.Evidence) {
+		t.Errorf("expected one capture with complete evidence, got %+v", store.captures)
 	}
 }
 
@@ -732,6 +732,9 @@ func TestEvaluate_EngineError_RaisesMetaAlert(t *testing.T) {
 	}
 	if ev.Error == "" {
 		t.Errorf("expected non-empty Error on evaluation row")
+	}
+	if len(store.captures) != 1 || store.captures[0].Verdict != "error" {
+		t.Fatalf("expected one durable error capture, got %+v", store.captures)
 	}
 
 	if got := len(store.alerts); got != 1 {

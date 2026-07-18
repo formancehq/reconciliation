@@ -3,10 +3,10 @@ package ledgerstore
 import (
 	"context"
 	"encoding/json"
-	"slices"
 	"testing"
 	"time"
 
+	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -55,14 +55,13 @@ func TestLedgerStore_CreateRule(t *testing.T) {
 	m := NewMockledgerClient(ctrl)
 	id := uuid.New()
 
-	m.EXPECT().
-		SaveAccountMetadataValues(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ string, md map[string]*commonpb.MetadataValue) error {
-			require.Equal(t, "r", md[schema.MetaName].GetStringValue())
-			require.True(t, md[schema.MetaEnabled].GetBoolValue())
-
-			return nil
-		})
+	m.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tx ledger.CreateTransactionInput) error {
+		md := tx.AccountMetadata[schema.RuleAccount(id.String())].Values
+		require.Equal(t, "r", md[schema.MetaName].GetStringValue())
+		require.True(t, md[schema.MetaEnabled].GetBoolValue())
+		require.Equal(t, "rule.created", tx.TxMetadata[schema.ActivityMetaKind].GetStringValue())
+		return nil
+	})
 
 	require.NoError(t, New(m, controlLedger).CreateRule(context.Background(), newRule(id)))
 }
@@ -126,13 +125,13 @@ func TestLedgerStore_PatchRule(t *testing.T) {
 	m.EXPECT().
 		GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).
 		Return(account(t, newRule(id)), nil)
-	m.EXPECT().
-		SaveAccountMetadataValues(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ string, md map[string]*commonpb.MetadataValue) error {
-			require.Equal(t, "renamed", md[schema.MetaName].GetStringValue())
-			require.False(t, md[schema.MetaEnabled].GetBoolValue()) // patched to false
-			return nil
-		})
+	m.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tx ledger.CreateTransactionInput) error {
+		md := tx.AccountMetadata[schema.RuleAccount(id.String())].Values
+		require.Equal(t, "renamed", md[schema.MetaName].GetStringValue())
+		require.False(t, md[schema.MetaEnabled].GetBoolValue()) // patched to false
+		require.Equal(t, "rule.updated", tx.TxMetadata[schema.ActivityMetaKind].GetStringValue())
+		return nil
+	})
 
 	err := New(m, controlLedger).PatchRule(context.Background(), id, store.RulePatch{
 		Name:    ptr("renamed"),
@@ -152,14 +151,10 @@ func TestLedgerStore_PatchRule_PrunesRemovedLabels(t *testing.T) {
 	base.Labels = map[string]string{"env": "prod", "team": "treasury"}
 
 	m.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).Return(account(t, base), nil)
-	m.EXPECT().SaveAccountMetadataValues(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).Return(nil)
-	// "team" was removed -> its label key must be deleted.
-	m.EXPECT().
-		DeleteAccountMetadata(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ string, keys ...string) error {
-			require.Equal(t, []string{schema.LabelPrefix + "team"}, keys)
-			return nil
-		})
+	m.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tx ledger.CreateTransactionInput) error {
+		require.Equal(t, []string{schema.LabelPrefix + "team"}, tx.DeleteMetadata[schema.RuleAccount(id.String())])
+		return nil
+	})
 
 	err := New(m, controlLedger).PatchRule(context.Background(), id, store.RulePatch{
 		Labels: ptr(map[string]string{"env": "prod"}),
@@ -175,13 +170,11 @@ func TestLedgerStore_DeleteRule(t *testing.T) {
 	id := uuid.New()
 
 	m.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).Return(account(t, newRule(id)), nil)
-	m.EXPECT().
-		DeleteAccountMetadata(gomock.Any(), controlLedger, schema.RuleAccount(id.String()), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ string, keys ...string) error {
-			require.NotEmpty(t, keys)
-			require.True(t, slices.Contains(keys, schema.MetaName))
-			return nil
-		})
+	m.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tx ledger.CreateTransactionInput) error {
+		require.NotEmpty(t, tx.DeleteMetadata[schema.RuleAccount(id.String())])
+		require.Equal(t, "rule.deleted", tx.TxMetadata[schema.ActivityMetaKind].GetStringValue())
+		return nil
+	})
 
 	require.NoError(t, New(m, controlLedger).DeleteRule(context.Background(), id))
 }

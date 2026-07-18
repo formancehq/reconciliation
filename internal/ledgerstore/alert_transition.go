@@ -34,6 +34,7 @@ func (s *LedgerStore) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ac
 	prev := alert.Status
 	alert.Status = models.AlertAcknowledged
 	alert.Ack = ack
+	alert.UpdatedAt = ack.At
 
 	md, err := alertToMetadata(alert)
 	if err != nil {
@@ -98,6 +99,7 @@ func (s *LedgerStore) resolve(ctx context.Context, id uuid.UUID, resolution *mod
 	alert.Status = models.AlertResolved
 	alert.Resolution = resolution
 	alert.Snooze = nil
+	alert.UpdatedAt = resolution.At
 
 	md, err := alertToMetadata(alert)
 	if err != nil {
@@ -165,6 +167,7 @@ func (s *LedgerStore) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fi
 	alert.Resolution = &models.Resolution{Kind: models.ResolutionAuto, By: "system", At: at}
 	alert.Snooze = nil
 	alert.LastEvaluationID = evaluationID
+	alert.UpdatedAt = at
 
 	md, err := alertToMetadata(alert)
 	if err != nil {
@@ -211,14 +214,21 @@ func (s *LedgerStore) moveMarker(ctx context.Context, alert *models.Alert, fpHas
 	rule := alert.RuleID.String()
 	itemAddr := schema.AlertItemAccount(rule, alert.PeriodID, fpHash)
 
+	txmd, err := alertActivityMetadata(alert, md)
+	if err != nil {
+		return err
+	}
 	return s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{
 		Ledger:        s.controlLedger,
 		ScriptName:    schema.NumscriptAlertMove,
 		ScriptVersion: schema.NumscriptVersion,
 		Vars: map[string]string{
-			schema.VarStFrom: schema.AlertStateAccount(fromState, rule, alert.PeriodID, fpHash),
-			schema.VarStTo:   toAddr,
+			schema.VarStFrom:       schema.AlertStateAccount(fromState, rule, alert.PeriodID, fpHash),
+			schema.VarStTo:         toAddr,
+			schema.VarActivityPool: schema.ActivityPool(rule),
+			schema.VarActivity:     schema.ActivityAccount(rule),
 		},
+		TxMetadata:      txmd,
 		AccountMetadata: map[string]*commonpb.MetadataMap{itemAddr: {Values: md}},
 		DeleteMetadata:  deletes,
 		IdempotencyKey:  key,

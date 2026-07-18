@@ -2,12 +2,14 @@
 
 Where the pieces live and how they fit together, **after the ledger-native migration**.
 Reconciliation is now **Postgres-free and stateless**: all its state lives on a Ledger v3
-control-ledger (`_recon`), it reads the ledgers it reconciles **live**, and it records each
-evaluation as an immutable `_recon` **capture** transaction. For the *why* behind the kernel, see
+control ledger (default name `reconciliation`; `_recon` in design shorthand), it reads the ledgers
+it reconciles **live**, and it records each evaluation as an immutable **capture** transaction. For
+the *why* behind the kernel, see
 [ADR-001](../prd/adr-001-cel-kernel.md); for the read/consistency model,
 [ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md) (which supersedes the checkpoint model
 of [ADR-002](../prd/adr-002-pit-consistency.md)); for the storage/event design, the
-[ledger-native storage RFC](../drafts/rfc-ledger-native-storage.md).
+[ledger-native storage RFC](../drafts/rfc-ledger-native-storage.md); and for V2 multi-source
+semantics, [ADR-004](../prd/adr-004-multi-source-comparisons.md).
 
 ---
 
@@ -15,10 +17,10 @@ of [ADR-002](../prd/adr-002-pit-consistency.md)); for the storage/event design, 
 
 ```text
 internal/
-├── models/          Go types — Rule, Evaluation, Alert, AlertEvent, Resolution
+├── models/          Go types — Rule, Evaluation, Alert, AlertEvent, Resolution, RuleActivity
 ├── store/           Storage-agnostic contract types + sentinels (leaf; no ORM) — the
 │                    Store interface shape shared by the service and ledgerstore
-├── ledgerpb/        Generated Ledger v3 gRPC protos (synced from ledger-connect)
+├── ledgerpb/        Generated Ledger v3 gRPC protos (synced from Ledger release/v3.0)
 ├── ledger/          Ledger v3 gRPC client: transactions, metadata, account/log queries,
 │                    events sinks; live Reader; provisioner
 ├── ledgerauth/      Ed25519 request signing + TLS; refuses insecure transport by default (F2)
@@ -28,7 +30,7 @@ internal/
 ├── ledgerresolver/  Adapter: ledger.Reader (live) → engine.LedgerResolver
 ├── engine/          Internal CEL kernel
 │   └── types.go / source.go / resolvers.go / builtins.go / engine.go / budget.go / errors.go
-├── templates/       V1 GA template catalog (source.go, ledger_invariant, account_threshold, source_parity)
+├── templates/       Versioned template catalogs: V1 binary controls + V2 named-source controls
 └── api/
     ├── service/     Rule / Evaluation / Alert orchestration; live reads + a capture per evaluation
     ├── backend/     Backend interface + generated mock
@@ -52,22 +54,22 @@ flowchart TB
     Svc --> Store[LedgerStore]
     Reg --> Eng[engine.Engine]
     Eng --> LR["Ledger resolver<br/>live Reader adapter"]
-    Store --> Recon[("control-ledger _recon (gRPC)<br/>rules, alerts, captures")]
-    LR --> Data[("data-ledgers A/B<br/>(live)")]
+    Store --> Recon[("control ledger (gRPC)<br/>rules, alerts, captures, activity")]
+    LR --> Data[("data ledgers A/B/C/...<br/>(live)")]
 ```
 
 | Layer | Responsibility | Key types |
 |---|---|---|
 | **HTTP** | OpenAPI-typed surface; auth scopes; cursor pagination | handlers in [`internal/api/`](../../internal/api/), routes in [`router.go`](../../internal/api/router.go) |
 | **Service** | Validation, evaluation orchestration, **capture recording**, alert dedup + lifecycle | `Service` (rule.go / evaluation.go / alert.go) |
-| **Templates** | Typed specs → direct `big.Int` math; per-fingerprint outcomes; rendered CEL for explainability | `Evaluator`, `Outcome`, `Registry` |
-| **Engine** | CEL type-check at rule-create + budget/resolver dispatch (live reads) | `Engine`, `Source`, `Resolvers`, `Limits` |
+| **Templates** | Versioned typed specs; per-fingerprint outcomes; V1 integer and V2 exact integer/rational semantics | `Evaluator`, `Outcome`, versioned registries |
+| **Engine** | CEL type-check plus exact financial built-ins backed by `big.Int` / `big.Rat`; budget/resolver dispatch | `Engine`, `Source`, `Resolvers`, `Limits` |
 | **Resolvers** | Ledger reads **live** (strictly ledger↔ledger) | `ledgerresolver.Resolver` (over `ledger.Reader`) |
-| **Storage** | Rules + alert lifecycle + immutable evaluation **captures** as Numscript batches + typed metadata on `_recon` | `LedgerStore`, `ledger.Client`, `ledgerschema` |
+| **Storage** | Rules + alert lifecycle + immutable evaluation **captures** and combined activity history as Numscript batches + typed metadata on the control ledger | `LedgerStore`, `ledger.Client`, `ledgerschema` |
 
 ---
 
-## The kernel — CEL for validation + explainability
+## The kernel — typed financial evaluation
 
 A `Source` is an opaque CEL value naming a backend dataset (`ledgerSet(ledger, query)`)
 over builtins (`balance`, `balances`, `sum`, `abs`). At **rule-create** time the engine
@@ -77,10 +79,26 @@ equivalent CEL into `evidence.compiledCEL` for explainability but do **not** run
 `TestCrossCheck_*` guards that the two agree). `engine.Evaluate` (the CEL runtime) is reserved for
 the post-GA raw-CEL power mode.
 
+V2 retains `compiledCEL`, but introduces purpose-built financial built-ins whose implementations use
+exact `big.Int` / `big.Rat` arithmetic. The typed template evaluator's direct math is authoritative;
+the equivalent built-ins keep compiled CEL exact for explainability and cross-checking.
+`balance_equation` evaluates a signed integer-coefficient sum; `source_consensus` evaluates the
+symmetric max-minus-min spread; `exchange_rate_bounds` compares a quote/base ratio after accounting
+for both asset precisions; and `coverage_ratio_bounds` compares two signed portfolio totals. The
+ratio operations use exact rational arithmetic. No V2 path converts ledger values or decimal bounds
+to binary floating point.
+
 Resolvers (ADR-003): reconciliation is strictly **ledger↔ledger**.
 - **Ledger sources** read **live** — a single `AggregateVolumes` is an internally consistent
   snapshot; cross-ledger skew is absorbed by the template's `tolerance`. Backed by
   `ledgerresolver.Resolver` over `ledger.Reader`.
+
+Ledger v3 segregates balances by `(account, asset, color)`. Current reconciliation source
+contracts remain asset-based: aggregate reads request `collapse_colors`, account reads sum all
+returned color rows for the same asset, and control-ledger point reads request collapsed rows.
+Consequently, an observed `USD/2` balance is the total of its uncolored and colored buckets. The
+vendored protobuf contract preserves `color`, but selecting or comparing an individual color is
+not exposed by V1 or V2 templates; that would require an explicit, versioned source selector.
 
 ```mermaid
 flowchart LR
@@ -92,14 +110,29 @@ flowchart LR
 See [engine/engine.go](../../internal/engine/engine.go), [engine/builtins.go](../../internal/engine/builtins.go),
 and the adapter [ledgerresolver/resolver.go](../../internal/ledgerresolver/resolver.go).
 
+## Contract-version isolation
+
+V1 and V2 share lifecycle machinery and the control-ledger, but not resource visibility. Rules,
+alerts, and captures persist an immutable integer `contract_version`. A missing marker on a legacy
+record means V1. The unprefixed handlers scope every operation to version 1; `/v2` handlers scope to
+version 2. Lists apply the version predicate before cursor construction, avoiding both data leakage
+and pagination holes. Point lookups and mutations through the wrong route return not found.
+
+The version boundary also selects the template registry: V1 accepts the existing catalog and wire
+shapes; V2 accepts `balance_equation`, `exchange_rate_bounds`, `source_consensus`, and
+`coverage_ratio_bounds`. A patch cannot move a rule between contracts. Both versions then feed the
+same capture and alert orchestration, carrying their native evidence shape unchanged.
+
 ---
 
 ## The control-ledger data model
 
-Reconciliation stores everything on `_recon` — there is no relational schema. The chart has
-**6 account types** plus three precision-0 assets — `ALERT` (the lifecycle marker), `OCC`
-(occurrence counter), and `CAPTURE` (per-evaluation counter). The data-ledgers being reconciled
-(A, B) are *external* and read-only to recon; they are not part of this chart.
+Reconciliation stores everything on its control ledger — there is no relational schema. The chart
+has **8 account types** plus four precision-0 assets: `ALERT` (the lifecycle marker), `OCC`
+(occurrence counter), `CAPTURE` (per-evaluation counter), and `ACTIVITY` (combined-history
+counter). The data ledgers being reconciled (A, B, C, and beyond) are *external* and read-only to
+recon; they are not part of this chart. The complete executable mapping is documented in
+[ledger-v3-storage.md](./ledger-v3-storage.md).
 
 | Account | Type | Role |
 |---|---|---|
@@ -109,15 +142,19 @@ Reconciliation stores everything on `_recon` — there is no relational schema. 
 | `alert:pool:rule:{id}` | NORMAL | mint source for `ALERT`+`OCC` (overdraft) and free gauges |
 | `capture:rule:{id}:per:{p}` | NORMAL | **evaluation capture bucket** (ADR-003) — one immutable capture tx per evaluation (snapshot in tx metadata); `−balance(·, CAPTURE)` = count |
 | `capture:pool:rule:{id}` | NORMAL | mint source for `CAPTURE` (overdraft) |
+| `activity:rule:{id}` | NORMAL | append-only transaction stream for the combined rule timeline |
+| `activity:pool:rule:{id}` | NORMAL | mint source for `ACTIVITY` (overdraft) |
 
 The **marker is the status source-of-truth**; the `status` metadata key is an LWW mirror for O(1)
 point-reads. Both are written in **one atomic Numscript batch**, so they never diverge.
 
 ### Transition workflow
 
-Five numscripts (library, pinned `v1.0.0`): `alert_open` (mint marker + OCC), `alert_bump`
+Six numscripts (library, pinned `v2.0.0`): `alert_open` (mint marker + OCC), `alert_bump`
 (OCC only), `alert_move` (guarded marker move, no OCC), `alert_reopen` (guarded move + OCC),
-and `capture` (mint 1 `CAPTURE` → capture bucket).
+`capture` (mint 1 `CAPTURE` → capture bucket), and `activity` (append a rule-scoped history item).
+Every program also posts one `ACTIVITY` unit; rule changes and status-neutral alert interactions use
+the generic `activity` program.
 
 ```mermaid
 flowchart TB
@@ -139,7 +176,8 @@ flowchart TB
   **EPHEMERAL purges it** → a closed alert has *no* marker (no accumulation). Reopen re-mints.
 - **Free gauges.** `−balance(pool, ALERT)` = active (open+ack) alerts; `−balance(pool, OCC)` =
   total occurrences.
-- **Snooze / unsnooze** are metadata-only (no marker move), status-neutral.
+- **Snooze / unsnooze** are status-neutral and do not move the marker. Their account metadata
+  mutation and activity record now commit atomically in an `activity` transaction.
 - **Idempotency.** Each batch carries a deterministic key over `(action, rule, fingerprint,
   period, evaluationID)` — a gRPC retransmit is deduplicated by the ledger (see **F17** in the
   migration log for the content-sensitive caveat).
@@ -162,11 +200,24 @@ freshness floor) is available but unused.
 
 Every evaluation is recorded as an **immutable capture transaction** on `_recon` (ADR-003): a
 self-describing snapshot (`verdict`, `trigger`, `evidence`, …) on a `COMMITTED_TRANSACTION`, plus a
-`CAPTURE` counter unit in the `capture:rule:{id}:per:{p}` bucket. Evidence is bounded to every failing
-outcome plus passing outcomes that automatically resolve an active alert; unrelated passes are not
-retained. This is the durable "what reconciled and when" — including the exact observed values that
+`CAPTURE` counter unit in the `capture:rule:{id}:per:{p}` bucket. Evidence retains every outcome,
+including successful outcomes that do not mutate an alert. This is the durable "what reconciled and
+when" — including the exact observed values that
 cleared a prior break — receipt-signed and append-only, replacing a queryable evaluation table
 (RFC §4.4.2). The run result is also returned from `EvaluateRule`.
+
+Every externally meaningful mutation also posts one precision-zero `ACTIVITY`
+unit to `activity:rule:{ruleID}`. Rule metadata changes use a generic activity
+transaction; captures and alert transitions include the posting in their
+existing transaction. State and history therefore commit atomically. Transaction
+metadata carries a versioned semantic envelope, while Rule and Alert accounts
+remain current-state projections; this is not full event sourcing.
+
+For V2, N sources are still separate live reads. A multi-source equation therefore widens the
+possible read-skew window; its minor-unit tolerance must reflect acceptable ingestion skew. An FX
+bound must likewise be wide enough for the operational clocks of its base and quote records. The
+capture freezes every source value, contribution or exact ratio component used by the verdict so
+the decision remains reproducible after the ledgers move on.
 
 ---
 
@@ -175,14 +226,16 @@ cleared a prior break — receipt-signed and append-only, replacing a queryable 
 Reconciliation runs **no message bus**. On every transition the store stamps a self-describing
 `last_transition` envelope (`reconciliation.alert.<type>`, subject, prev/new status,
 correlationID, payload) into `alert:item` metadata, so each Ledger log entry for that write is
-self-describing — `COMMITTED_TRANSACTION` for lifecycle moves, `SAVED_METADATA`/`DELETED_METADATA`
-for snooze/unsnooze.
+self-describing. Current lifecycle moves and snooze/unsnooze interactions are all
+`COMMITTED_TRANSACTION` events because each write appends activity in a transaction.
 
 Delivery is the ledger's native **events sink**: when `--events-sink-url` is configured, recon
 provisions an HTTP webhook sink at boot for `[COMMITTED_TRANSACTION, SAVED_METADATA,
-DELETED_METADATA]`. The ledger delivers matching events to the webhook (e.g. the Webhooks
-module); consumers filter on `event.ledger == _recon` (sink filtering is by event type, not
-ledger — RFC §4.4). See [ledger/events_sink.go](../../internal/ledger/events_sink.go).
+DELETED_METADATA]`. The metadata event types remain subscribed for compatibility with older or
+direct metadata writers; current lifecycle activity is transaction-backed. The ledger delivers
+matching events to the webhook (e.g. the Webhooks module); consumers filter on the configured
+control-ledger name (sink filtering is by event type, not ledger — RFC §4.4). See
+[ledger/events_sink.go](../../internal/ledger/events_sink.go).
 
 ---
 
@@ -199,6 +252,8 @@ ledger — RFC §4.4). See [ledger/events_sink.go](../../internal/ledger/events_
 - **Statelessness** — recon holds no local state; multiple replicas share `_recon`. Reads are
   live and each write (alert transition, capture) is idempotent per (rule, period, evaluation), so
   concurrent replicas converge without coordination.
+- **Rule configuration identity** is a content-derived SHA-256 revision. Captures
+  retain it so an observation stays tied to the configuration evaluated.
 
 ---
 
@@ -218,8 +273,9 @@ strictly ledger↔ledger and reads the data ledgers directly over gRPC.
 
 ## What's not here yet
 
-- **`ListAlertEvents` (paginated history)** — returns empty; a queryable history needs a
-  downstream sink (ClickHouse/Databricks), since the ledger log has no per-account filter (RFC §10).
+- **Legacy history backfill** — the activity journal is complete only from its
+  rollout. A future offline import may scan Ledger logs, but request handlers do
+  not scan the global log.
 - **Semantic event types + replay API** — the future generic event-log; today's events are
   generic log-derived events carrying the `last_transition` envelope.
 - **Certifiable atomic multi-ledger read** for exact replay / provable simultaneity — a future

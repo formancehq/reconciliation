@@ -11,6 +11,13 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 
 ## 👋 Handoff — resume here
 
+> **Current implementation note (2026-07-18).** This file is a chronological development log, so
+> older sections intentionally preserve decisions that were later superseded. The current branch
+> adds the `ACTIVITY` asset and rule-scoped activity accounts, stores lifecycle and snooze/unsnooze
+> history as transactions, and exposes a combined rule timeline. The exact current chart, six
+> Numscript programs at `v2.0.0`, indexes, queries, and provisioning behavior are consolidated in
+> [Ledger v3 storage model](../technical/ledger-v3-storage.md).
+
 **🎉 Checkpoint alternative COMPLETE (2026-07-08, ADR-003).** Query checkpoints **removed** — recon
 reads its data ledgers **live** and records each evaluation as an immutable `_recon` **capture**
 transaction (audit-grade: receipt-signed, append-only; positive assurance on pass, break evidence on
@@ -1262,14 +1269,18 @@ sweep) — kept uniform to avoid forking the address shape/code path for a cosme
 
 ## Proto re-sync procedure (F5)
 
-The ledger protos are **copied**, not submoduled (mirrors ledger-connect). To update:
+The Ledger protos are **copied**, not submoduled. To update:
 
-1. `cp <ledger-connect>/proto/ledger/*.proto proto/ledger/` (ledger-connect keeps them synced
-   to a ledger release — currently **v3.0.0-alpha.3**).
-2. Rewrite the module path: `sed -i '' 's#formancehq/ledger-connect/internal/ledgerpb#formancehq/reconciliation/internal/ledgerpb#g' proto/ledger/*.proto`.
-3. `just generate-ledger-proto` (regenerates `internal/ledgerpb/*`).
-4. Re-copy hand-written helpers if ledger-connect changed them:
-   `internal/ledgerpb/commonpb/{metadata,index,uint256}_helpers.go`.
-5. `go mod tidy && go build ./...`. Commit the regenerated output.
+1. Check out the target Ledger revision (currently the `release/v3.0` branch) and copy
+   `<ledger>/misc/proto/*.proto` to `proto/ledger/`.
+2. Rewrite every `go_package` prefix from
+   `github.com/formancehq/ledger/v3/internal/proto/` to
+   `github.com/formancehq/reconciliation/internal/ledgerpb/`.
+3. Run `nix develop --command just generate-ledger-proto`. The Nix shell pins `protoc`,
+   `protoc-gen-go`, `protoc-gen-go-grpc`, and `protoc-gen-go-vtproto`; the recipe replaces only
+   generated `*.pb.go` files, preserving hand-written helpers.
+4. Run `go mod tidy && go test ./...`, then the tagged live-ledger suite with `-p 1`.
+5. Verify `git diff --check` and review all protobuf/API shape changes before committing the
+   vendored definitions and regenerated output.
 
-Record the ledger version each sync targets in the commit message.
+Record the exact Ledger revision each sync targets in the commit message.

@@ -3,6 +3,7 @@ package store
 import (
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/query"
+	"github.com/formancehq/reconciliation/internal/models"
 )
 
 type PaginatedQueryOptions[T any] struct {
@@ -30,7 +31,9 @@ func NewPaginatedQueryOptions[T any](options T) PaginatedQueryOptions[T] {
 	}
 }
 
-type RulesFilters struct{}
+type RulesFilters struct {
+	ContractVersion *models.ContractVersion
+}
 
 type GetRulesQuery bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[RulesFilters]]
 
@@ -42,7 +45,9 @@ func NewGetRulesQuery(opts PaginatedQueryOptions[RulesFilters]) GetRulesQuery {
 	}
 }
 
-type AlertsFilters struct{}
+type AlertsFilters struct {
+	ContractVersion *models.ContractVersion
+}
 
 type GetAlertsQuery bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[AlertsFilters]]
 
@@ -69,7 +74,8 @@ func NewGetAlertEventsQuery(opts PaginatedQueryOptions[AlertEventsFilters]) GetA
 // CapturesFilters scopes a rule's capture history. Period is optional: empty
 // lists every period of the rule; set, it scopes to that (rule, period) bucket.
 type CapturesFilters struct {
-	Period string `json:"period"`
+	Period          string                  `json:"period"`
+	ContractVersion *models.ContractVersion `json:"-"`
 }
 
 type GetCapturesQuery bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[CapturesFilters]]
@@ -80,4 +86,10 @@ func NewGetCapturesQuery(opts PaginatedQueryOptions[CapturesFilters]) GetCapture
 		Order:    bunpaginate.OrderAsc,
 		Options:  opts,
 	}
+}
+
+type GetRuleActivitiesQuery bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[RuleActivitiesFilters]]
+
+func NewGetRuleActivitiesQuery(opts PaginatedQueryOptions[RuleActivitiesFilters]) GetRuleActivitiesQuery {
+	return GetRuleActivitiesQuery{PageSize: opts.PageSize, Order: bunpaginate.OrderAsc, Options: opts}
 }

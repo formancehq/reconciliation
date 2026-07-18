@@ -46,7 +46,10 @@ func TestAlertMetadataRoundTrip(t *testing.T) {
 	acct := &commonpb.Account{
 		Address:  schema.AlertItemAccount(ruleID.String(), orig.PeriodID, schema.FingerprintHash(orig.Fingerprint)),
 		Metadata: md,
-		Volumes:  map[string]*commonpb.VolumesWithBalance{schema.AssetOcc: {Balance: "3"}},
+		Volumes: []*commonpb.AccountVolume{
+			{Asset: schema.AssetOcc, Volumes: &commonpb.VolumesWithBalance{Balance: "2"}},
+			{Asset: schema.AssetOcc, Color: "RETRY", Volumes: &commonpb.VolumesWithBalance{Balance: "1"}},
+		},
 	}
 
 	got, err := alertFromAccount(acct)
@@ -89,6 +92,26 @@ func TestAlertMetadataNoOccVolume(t *testing.T) {
 	require.Nil(t, got.Resolution)
 	require.Nil(t, got.Snooze)
 	require.Empty(t, got.Labels)
+}
+
+func TestAlertMetadataContractVersionCompatibility(t *testing.T) {
+	t.Parallel()
+
+	base := &models.Alert{ID: uuid.New(), RuleID: uuid.New()}
+	md, err := alertToMetadata(base)
+	require.NoError(t, err)
+	delete(md, schema.MetaContractVersion)
+	got, err := alertFromAccount(&commonpb.Account{Metadata: md})
+	require.NoError(t, err)
+	require.Equal(t, models.ContractVersionV1, got.ContractVersion)
+
+	base.ContractVersion = models.ContractVersionV2
+	md, err = alertToMetadata(base)
+	require.NoError(t, err)
+	require.Equal(t, "2", md[schema.MetaContractVersion].GetStringValue())
+	got, err = alertFromAccount(&commonpb.Account{Metadata: md})
+	require.NoError(t, err)
+	require.Equal(t, models.ContractVersionV2, got.ContractVersion)
 }
 
 func TestStatusStateMapping(t *testing.T) {

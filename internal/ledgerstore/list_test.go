@@ -85,6 +85,26 @@ func TestListRules_SecondPage(t *testing.T) {
 	require.NotEmpty(t, page.Previous)
 }
 
+func TestListRules_FiltersContractBeforePagination(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	client := NewMockledgerClient(ctrl)
+	store := New(client, testControl)
+	base := time.Now().Truncate(time.Microsecond).UTC()
+	v1 := &models.Rule{ID: uuid.New(), Name: "v1", ContractVersion: models.ContractVersionV1, CreatedAt: base.Add(-time.Hour), UpdatedAt: base}
+	v2 := &models.Rule{ID: uuid.New(), Name: "v2-newest", ContractVersion: models.ContractVersionV2, CreatedAt: base, UpdatedAt: base}
+	client.EXPECT().QueryAccounts(gomock.Any(), testControl, gomock.Any()).Return([]*commonpb.Account{ruleAccount(t, v2), ruleAccount(t, v1)}, nil)
+
+	version := models.ContractVersionV1
+	q := recstore.NewGetRulesQuery(recstore.NewPaginatedQueryOptions(recstore.RulesFilters{ContractVersion: &version}).WithPageSize(1))
+	page, err := store.ListRules(context.Background(), q)
+	require.NoError(t, err)
+	require.Len(t, page.Data, 1)
+	require.Equal(t, "v1", page.Data[0].Name)
+	require.False(t, page.HasMore)
+}
+
 func TestListAlerts_SortedByLastSeen(t *testing.T) {
 	t.Parallel()
 
@@ -111,6 +131,26 @@ func TestListAlerts_SortedByLastSeen(t *testing.T) {
 	require.Len(t, page.Data, 2)
 	require.Equal(t, "fp-fresh", page.Data[0].Fingerprint, "most-recently-seen first")
 	require.Equal(t, "fp-old", page.Data[1].Fingerprint)
+	require.False(t, page.HasMore)
+}
+
+func TestListAlerts_FiltersContractBeforePagination(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	client := NewMockledgerClient(ctrl)
+	store := New(client, testControl)
+	base := time.Now().Truncate(time.Microsecond).UTC()
+	v1 := &models.Alert{ID: uuid.New(), RuleID: uuid.New(), Fingerprint: "v1", ContractVersion: models.ContractVersionV1, PeriodID: "continuous", Status: models.AlertOpen, LastSeenAt: base.Add(-time.Hour), CreatedAt: base}
+	v2 := &models.Alert{ID: uuid.New(), RuleID: uuid.New(), Fingerprint: "v2-newest", ContractVersion: models.ContractVersionV2, PeriodID: "continuous", Status: models.AlertOpen, LastSeenAt: base, CreatedAt: base}
+	client.EXPECT().QueryAccounts(gomock.Any(), testControl, gomock.Any()).Return([]*commonpb.Account{priorAccount(t, v2, "1"), priorAccount(t, v1, "1")}, nil)
+
+	version := models.ContractVersionV1
+	q := recstore.NewGetAlertsQuery(recstore.NewPaginatedQueryOptions(recstore.AlertsFilters{ContractVersion: &version}).WithPageSize(1))
+	page, err := store.ListAlerts(context.Background(), q)
+	require.NoError(t, err)
+	require.Len(t, page.Data, 1)
+	require.Equal(t, "v1", page.Data[0].Fingerprint)
 	require.False(t, page.HasMore)
 }
 

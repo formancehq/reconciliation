@@ -48,8 +48,10 @@ func (e *evalCtx) keyFor(kind SourceKind) string {
 // expressions at rule-create time without exercising any resolvers.
 func declarations() []cel.EnvOption {
 	srcT := celSourceType
+	exactBalanceT := celExactBalanceType
 	intMap := types.NewMapType(types.StringType, types.IntType)
 	intList := types.NewListType(types.IntType)
+	exactBalanceList := types.NewListType(exactBalanceT)
 
 	return []cel.EnvOption{
 		cel.Function("ledgerSet",
@@ -74,6 +76,26 @@ func declarations() []cel.EnvOption {
 		cel.Function("abs",
 			cel.Overload("abs_int", []*cel.Type{cel.IntType}, cel.IntType),
 		),
+		cel.Function("exactBalance",
+			cel.Overload("exactBalance_source_string_string",
+				[]*cel.Type{srcT, cel.StringType, cel.StringType}, exactBalanceT),
+		),
+		cel.Function("balanceEquation",
+			cel.Overload("balanceEquation_list_list_string",
+				[]*cel.Type{exactBalanceList, intList, cel.StringType}, cel.BoolType),
+		),
+		cel.Function("exchangeRateWithin",
+			cel.Overload("exchangeRateWithin_balance_balance_string_string",
+				[]*cel.Type{exactBalanceT, exactBalanceT, cel.StringType, cel.StringType}, cel.BoolType),
+		),
+		cel.Function("sourceConsensus",
+			cel.Overload("sourceConsensus_list_string",
+				[]*cel.Type{exactBalanceList, cel.StringType}, cel.BoolType),
+		),
+		cel.Function("coverageRatioWithin",
+			cel.Overload("coverageRatioWithin_list_list_list_list_string_string",
+				[]*cel.Type{exactBalanceList, intList, exactBalanceList, intList, cel.StringType, cel.StringType}, cel.BoolType),
+		),
 	}
 }
 
@@ -81,8 +103,10 @@ func declarations() []cel.EnvOption {
 // runtime closures over the supplied evalCtx. Built fresh per Evaluate call.
 func bindings(e *evalCtx) []cel.EnvOption {
 	srcT := celSourceType
+	exactBalanceT := celExactBalanceType
 	intMap := types.NewMapType(types.StringType, types.IntType)
 	intList := types.NewListType(types.IntType)
+	exactBalanceList := types.NewListType(exactBalanceT)
 
 	return []cel.EnvOption{
 		cel.Function("ledgerSet",
@@ -158,6 +182,31 @@ func bindings(e *evalCtx) []cel.EnvOption {
 					return types.Int(i)
 				}),
 			),
+		),
+		cel.Function("exactBalance",
+			cel.Overload("exactBalance_source_string_string",
+				[]*cel.Type{srcT, cel.StringType, cel.StringType}, exactBalanceT,
+				cel.FunctionBinding(e.makeExactBalance)),
+		),
+		cel.Function("balanceEquation",
+			cel.Overload("balanceEquation_list_list_string",
+				[]*cel.Type{exactBalanceList, intList, cel.StringType}, cel.BoolType,
+				cel.FunctionBinding(e.balanceEquation)),
+		),
+		cel.Function("exchangeRateWithin",
+			cel.Overload("exchangeRateWithin_balance_balance_string_string",
+				[]*cel.Type{exactBalanceT, exactBalanceT, cel.StringType, cel.StringType}, cel.BoolType,
+				cel.FunctionBinding(e.exchangeRateWithin)),
+		),
+		cel.Function("sourceConsensus",
+			cel.Overload("sourceConsensus_list_string",
+				[]*cel.Type{exactBalanceList, cel.StringType}, cel.BoolType,
+				cel.FunctionBinding(e.sourceConsensus)),
+		),
+		cel.Function("coverageRatioWithin",
+			cel.Overload("coverageRatioWithin_list_list_list_list_string_string",
+				[]*cel.Type{exactBalanceList, intList, exactBalanceList, intList, cel.StringType, cel.StringType}, cel.BoolType,
+				cel.FunctionBinding(e.coverageRatioWithin)),
 		),
 	}
 }

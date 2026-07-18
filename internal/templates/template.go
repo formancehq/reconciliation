@@ -1,10 +1,10 @@
-// Package templates is the V1 GA public-API surface for rules. Each Evaluator
+// Package templates is the versioned public-API surface for rules. Each Evaluator
 // owns a typed spec, a validator, a representative compiler (for the
 // rule.compiled_cel explainability field), and an end-to-end evaluation flow
 // that produces one Outcome per fingerprint axis (typically per-asset).
 //
-// Templates are the entire customer-facing surface at V1 GA — raw CEL is
-// internal-only; see ADR-001 and the project memory `reconciliation-v1-scope-discipline`.
+// V1 and V2 templates share this registry and are isolated at the HTTP and
+// persistence contract seams. Raw CEL remains internal-only; see ADR-001.
 package templates
 
 import (
@@ -93,12 +93,16 @@ func NewRegistry(evaluators ...Evaluator) *Registry {
 	return r
 }
 
-// DefaultRegistry returns a Registry with all V1 GA templates registered.
+// DefaultRegistry returns a Registry with all shipped V1 and V2 templates.
 func DefaultRegistry() *Registry {
 	return NewRegistry(
 		NewLedgerInvariant(),
 		NewAccountThreshold(),
 		NewSourceParity(),
+		NewBalanceEquation(),
+		NewExchangeRateBounds(),
+		NewSourceConsensus(),
+		NewCoverageRatioBounds(),
 	)
 }
 

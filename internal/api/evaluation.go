@@ -8,19 +8,20 @@ import (
 )
 
 type evaluationResponse struct {
-	ID        string          `json:"id"`
-	RuleID    string          `json:"ruleID"`
-	StartedAt time.Time       `json:"startedAt"`
-	EndedAt   time.Time       `json:"endedAt"`
-	Result    string          `json:"result"`
-	Evidence  json.RawMessage `json:"evidence,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	CostUnits int64           `json:"costUnits"`
-	CreatedAt time.Time       `json:"createdAt"`
+	ID              string          `json:"id"`
+	RuleID          string          `json:"ruleID"`
+	StartedAt       time.Time       `json:"startedAt"`
+	EndedAt         time.Time       `json:"endedAt"`
+	Result          string          `json:"result"`
+	Evidence        json.RawMessage `json:"evidence,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	CostUnits       int64           `json:"costUnits"`
+	CreatedAt       time.Time       `json:"createdAt"`
+	ContractVersion int             `json:"contractVersion,omitempty"`
 }
 
 func renderEvaluation(ev *models.Evaluation) *evaluationResponse {
-	return &evaluationResponse{
+	response := &evaluationResponse{
 		ID:        ev.ID.String(),
 		RuleID:    ev.RuleID.String(),
 		StartedAt: ev.StartedAt,
@@ -31,4 +32,8 @@ func renderEvaluation(ev *models.Evaluation) *evaluationResponse {
 		CostUnits: ev.CostUnits,
 		CreatedAt: ev.CreatedAt,
 	}
+	if ev.ContractVersion.Effective() == models.ContractVersionV2 {
+		response.ContractVersion = int(models.ContractVersionV2)
+	}
+	return response
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/api/backend"
 	"github.com/formancehq/reconciliation/internal/api/service"
+	"github.com/formancehq/reconciliation/internal/contractversion"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -19,6 +20,7 @@ import (
 type alertResponse struct {
 	ID               string             `json:"id"`
 	RuleID           string             `json:"ruleID"`
+	PeriodID         string             `json:"periodID,omitempty"`
 	Fingerprint      string             `json:"fingerprint"`
 	Status           string             `json:"status"`
 	Severity         string             `json:"severity"`
@@ -33,10 +35,11 @@ type alertResponse struct {
 	Labels           map[string]string  `json:"labels,omitempty"`
 	CreatedAt        time.Time          `json:"createdAt"`
 	UpdatedAt        time.Time          `json:"updatedAt"`
+	ContractVersion  int                `json:"contractVersion,omitempty"`
 }
 
 func renderAlert(a *models.Alert) *alertResponse {
-	return &alertResponse{
+	response := &alertResponse{
 		ID:               a.ID.String(),
 		RuleID:           a.RuleID.String(),
 		Fingerprint:      a.Fingerprint,
@@ -54,6 +57,11 @@ func renderAlert(a *models.Alert) *alertResponse {
 		CreatedAt:        a.CreatedAt,
 		UpdatedAt:        a.UpdatedAt,
 	}
+	if a.ContractVersion.Effective() == models.ContractVersionV2 {
+		response.ContractVersion = int(models.ContractVersionV2)
+		response.PeriodID = a.PeriodID
+	}
+	return response
 }
 
 type alertEventResponse struct {
@@ -129,6 +137,12 @@ func listAlertsHandler(b backend.Backend) http.HandlerFunc {
 		cursor, err := b.GetService().ListAlerts(r.Context(), q)
 		if err != nil {
 			handleServiceErrors(w, r, err)
+			return
+		}
+		if version, _ := contractversion.FromContext(r.Context()); version == models.ContractVersionV2 {
+			api.RenderCursor(w, *bunpaginate.MapCursor(cursor, func(alert models.Alert) *alertResponse {
+				return renderAlert(&alert)
+			}))
 			return
 		}
 		api.RenderCursor(w, *cursor)

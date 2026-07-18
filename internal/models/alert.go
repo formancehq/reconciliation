@@ -99,9 +99,10 @@ type Resolution struct {
 type Alert struct {
 	bun.BaseModel `bun:"reconciliations.alert" json:"-"`
 
-	ID          uuid.UUID `bun:",pk,nullzero"                  json:"id"`
-	RuleID      uuid.UUID `bun:"rule_id,notnull"               json:"ruleID"`
-	Fingerprint string    `bun:",notnull"                      json:"fingerprint"`
+	ID              uuid.UUID       `bun:",pk,nullzero"                  json:"id"`
+	ContractVersion ContractVersion `bun:"-" json:"-"`
+	RuleID          uuid.UUID       `bun:"rule_id,notnull"               json:"ruleID"`
+	Fingerprint     string          `bun:",notnull"                      json:"fingerprint"`
 	// PeriodID scopes the alert to a reconciliation period (e.g. "2026-03",
 	// or "continuous" for a live-monitoring rule). The dedup identity is
 	// (rule_id, fingerprint, period_id): a new period opens a fresh case

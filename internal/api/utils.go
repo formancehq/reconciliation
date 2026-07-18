@@ -73,3 +73,11 @@ func getPaginatedQueryOptionsCaptures(r *http.Request) (*store.PaginatedQueryOpt
 		Period: r.URL.Query().Get("period"),
 	}).WithPageSize(pageSize)), nil
 }
+
+func getPaginatedQueryOptionsRuleActivities(r *http.Request) (*store.PaginatedQueryOptions[store.RuleActivitiesFilters], error) {
+	pageSize, err := getPageSize(r)
+	if err != nil {
+		return nil, err
+	}
+	return pointer.For(store.NewPaginatedQueryOptions(store.RuleActivitiesFilters{}).WithPageSize(pageSize)), nil
+}

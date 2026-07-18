@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/google/uuid"
 )
 
@@ -13,12 +14,18 @@ import (
 // evidence for automatic alert resolutions — recorded independently of the
 // alert lifecycle.
 type CaptureInput struct {
-	RuleID       uuid.UUID
-	TemplateKind string
-	PeriodID     string
-	EvaluationID uuid.UUID
-	CapturedAt   time.Time
-	Verdict      string          // "pass" | "fail"
-	Trigger      string          // "scheduled" | "manual"
-	Evidence     json.RawMessage // the evaluation's outcome evidence (bounded)
+	RuleID          uuid.UUID
+	ContractVersion models.ContractVersion
+	TemplateKind    string
+	PeriodID        string
+	EvaluationID    uuid.UUID
+	CapturedAt      time.Time
+	Verdict         string          // "pass" | "fail"
+	Trigger         string          // "scheduled" | "manual"
+	Evidence        json.RawMessage // the evaluation's outcome evidence (bounded)
+	RuleRevision    string
+	PIT             time.Time
+	StartedAt       time.Time
+	Result          models.EvaluationResult
+	Error           string
 }

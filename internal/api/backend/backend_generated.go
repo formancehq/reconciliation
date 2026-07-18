@@ -194,6 +194,21 @@ func (mr *MockServiceMockRecorder) ListCaptures(ctx, ruleID, q any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListCaptures", reflect.TypeOf((*MockService)(nil).ListCaptures), ctx, ruleID, q)
 }
 
+// ListRuleActivities mocks base method.
+func (m *MockService) ListRuleActivities(ctx context.Context, ruleID uuid.UUID, q store.GetRuleActivitiesQuery) (*bunpaginate.Cursor[models.RuleActivity], error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListRuleActivities", ctx, ruleID, q)
+	ret0, _ := ret[0].(*bunpaginate.Cursor[models.RuleActivity])
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListRuleActivities indicates an expected call of ListRuleActivities.
+func (mr *MockServiceMockRecorder) ListRuleActivities(ctx, ruleID, q any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListRuleActivities", reflect.TypeOf((*MockService)(nil).ListRuleActivities), ctx, ruleID, q)
+}
+
 // ListRules mocks base method.
 func (m *MockService) ListRules(ctx context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
 	m.ctrl.T.Helper()

@@ -14,7 +14,39 @@ import (
 	"github.com/formancehq/go-libs/auth"
 	"github.com/formancehq/go-libs/health"
 	"github.com/formancehq/reconciliation/internal/api/backend"
+	"github.com/formancehq/reconciliation/internal/contractversion"
+	"github.com/formancehq/reconciliation/internal/models"
 )
+
+func contractVersionMiddleware(version models.ContractVersion) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(contractversion.WithContext(r.Context(), version)))
+		})
+	}
+}
+
+func mountRuleAndAlertRoutes(r chi.Router, b backend.Backend, includeDeferredAlertEvents bool) {
+	r.Post("/rules", createRuleHandler(b))
+	r.Get("/rules", listRulesHandler(b))
+	r.Get("/rules/{ruleID}", getRuleHandler(b))
+	r.Patch("/rules/{ruleID}", patchRuleHandler(b))
+	r.Delete("/rules/{ruleID}", deleteRuleHandler(b))
+	r.Post("/rules/{ruleID}/evaluate", evaluateRuleHandler(b))
+	r.Get("/rules/{ruleID}/captures", listRuleCapturesHandler(b))
+	r.Get("/rules/{ruleID}/timeline", listRuleActivitiesHandler(b))
+
+	r.Get("/alerts", listAlertsHandler(b))
+	r.Get("/alerts/{alertID}", getAlertHandler(b))
+	if includeDeferredAlertEvents {
+		r.Get("/alerts/{alertID}/events", listAlertEventsHandler(b))
+	}
+	r.Post("/alerts/{alertID}/ack", ackAlertHandler(b))
+	r.Post("/alerts/{alertID}/resolve", resolveAlertHandler(b))
+	r.Post("/alerts/{alertID}/accept", acceptAlertHandler(b))
+	r.Post("/alerts/{alertID}/snooze", snoozeAlertHandler(b))
+	r.Post("/alerts/{alertID}/unsnooze", unsnoozeAlertHandler(b))
+}
 
 func newRouter(
 	b backend.Backend,
@@ -39,23 +71,14 @@ func newRouter(
 		r.Use(auth.Middleware(authenticator))
 		r.Use(service.OTLPMiddleware("reconciliation", serviceInfo.Debug))
 
-		// V1 — Rule / Evaluation / Alert
-		r.Post("/rules", createRuleHandler(b))
-		r.Get("/rules", listRulesHandler(b))
-		r.Get("/rules/{ruleID}", getRuleHandler(b))
-		r.Patch("/rules/{ruleID}", patchRuleHandler(b))
-		r.Delete("/rules/{ruleID}", deleteRuleHandler(b))
-		r.Post("/rules/{ruleID}/evaluate", evaluateRuleHandler(b))
-		r.Get("/rules/{ruleID}/captures", listRuleCapturesHandler(b))
-
-		r.Get("/alerts", listAlertsHandler(b))
-		r.Get("/alerts/{alertID}", getAlertHandler(b))
-		r.Get("/alerts/{alertID}/events", listAlertEventsHandler(b))
-		r.Post("/alerts/{alertID}/ack", ackAlertHandler(b))
-		r.Post("/alerts/{alertID}/resolve", resolveAlertHandler(b))
-		r.Post("/alerts/{alertID}/accept", acceptAlertHandler(b))
-		r.Post("/alerts/{alertID}/snooze", snoozeAlertHandler(b))
-		r.Post("/alerts/{alertID}/unsnooze", unsnoozeAlertHandler(b))
+		r.Group(func(r chi.Router) {
+			r.Use(contractVersionMiddleware(models.ContractVersionV1))
+			mountRuleAndAlertRoutes(r, b, true)
+		})
+		r.Route("/v2", func(r chi.Router) {
+			r.Use(contractVersionMiddleware(models.ContractVersionV2))
+			mountRuleAndAlertRoutes(r, b, false)
+		})
 	})
 
 	return r

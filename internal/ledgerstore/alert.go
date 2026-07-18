@@ -92,6 +92,7 @@ func (s *LedgerStore) openNewAlert(ctx context.Context, in store.OpenAlertInput,
 	alert := &models.Alert{
 		ID:               uuid.New(),
 		RuleID:           in.RuleID,
+		ContractVersion:  in.ContractVersion.Effective(),
 		Fingerprint:      in.Fingerprint,
 		PeriodID:         in.PeriodID,
 		Status:           models.AlertOpen,
@@ -103,6 +104,7 @@ func (s *LedgerStore) openNewAlert(ctx context.Context, in store.OpenAlertInput,
 		Evidence:         in.Evidence,
 		Labels:           in.Labels,
 		CreatedAt:        in.OccurredAt,
+		UpdatedAt:        in.OccurredAt,
 	}
 
 	md, err := alertToMetadata(alert)
@@ -114,16 +116,23 @@ func (s *LedgerStore) openNewAlert(ctx context.Context, in store.OpenAlertInput,
 		map[string]any{"occurrenceCount": alert.OccurrenceCount}); err != nil {
 		return nil, fmt.Errorf("open alert %s: %w", in.Fingerprint, err)
 	}
+	txmd, err := alertActivityMetadata(alert, md)
+	if err != nil {
+		return nil, fmt.Errorf("open alert %s activity: %w", in.Fingerprint, err)
+	}
 
 	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{
 		Ledger:        s.controlLedger,
 		ScriptName:    schema.NumscriptAlertOpen,
 		ScriptVersion: schema.NumscriptVersion,
 		Vars: map[string]string{
-			schema.VarPool:   schema.PoolAccount(rule),
-			schema.VarStOpen: schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash),
-			schema.VarItem:   itemAddr,
+			schema.VarPool:         schema.PoolAccount(rule),
+			schema.VarStOpen:       schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash),
+			schema.VarItem:         itemAddr,
+			schema.VarActivityPool: schema.ActivityPool(rule),
+			schema.VarActivity:     schema.ActivityAccount(rule),
 		},
+		TxMetadata:      txmd,
 		AccountMetadata: map[string]*commonpb.MetadataMap{itemAddr: {Values: md}},
 		IdempotencyKey:  alertBatchKey(in),
 	}); err != nil {
@@ -146,6 +155,7 @@ func (s *LedgerStore) updateAlert(ctx context.Context, in store.OpenAlertInput, 
 	prior.OccurrenceCount++
 	prior.Status = models.AlertOpen
 	prior.LastSeenAt = in.OccurredAt
+	prior.UpdatedAt = in.OccurredAt
 	prior.LastEvaluationID = in.EvaluationID
 	prior.Evidence = in.Evidence
 
@@ -184,6 +194,10 @@ func (s *LedgerStore) updateAlert(ctx context.Context, in store.OpenAlertInput, 
 		DeleteMetadata:  deletes,
 		IdempotencyKey:  alertBatchKey(in),
 	}
+	tx.TxMetadata, err = alertActivityMetadata(prior, md)
+	if err != nil {
+		return nil, fmt.Errorf("update alert %s activity: %w", in.Fingerprint, err)
+	}
 
 	stOpen := schema.AlertStateAccount(schema.StateOpen, rule, in.PeriodID, fpHash)
 
@@ -215,6 +229,7 @@ func (s *LedgerStore) updateAlert(ctx context.Context, in store.OpenAlertInput, 
 			schema.VarItem:   itemAddr,
 		}
 	}
+	addActivityVars(tx.Vars, rule)
 
 	if err := s.client.CreateTransaction(ctx, tx); err != nil {
 		return nil, fmt.Errorf("update alert %s: %w", in.Fingerprint, err)

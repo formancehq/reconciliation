@@ -16,19 +16,25 @@ import (
 )
 
 type captureResponse struct {
-	TransactionID uint64          `json:"transactionID"`
-	RuleID        string          `json:"ruleID"`
-	PeriodID      string          `json:"periodID"`
-	EvaluationID  string          `json:"evaluationID"`
-	TemplateKind  string          `json:"templateKind"`
-	Verdict       string          `json:"verdict"`
-	Trigger       string          `json:"trigger"`
-	CapturedAt    time.Time       `json:"capturedAt"`
-	Evidence      json.RawMessage `json:"evidence,omitempty"`
+	TransactionID   uint64          `json:"transactionID"`
+	RuleID          string          `json:"ruleID"`
+	PeriodID        string          `json:"periodID"`
+	EvaluationID    string          `json:"evaluationID"`
+	TemplateKind    string          `json:"templateKind"`
+	Verdict         string          `json:"verdict"`
+	Trigger         string          `json:"trigger"`
+	CapturedAt      time.Time       `json:"capturedAt"`
+	Evidence        json.RawMessage `json:"evidence,omitempty"`
+	ContractVersion int             `json:"contractVersion,omitempty"`
+	RuleRevision    string          `json:"ruleRevision,omitempty"`
+	PIT             *time.Time      `json:"pit,omitempty"`
+	StartedAt       *time.Time      `json:"startedAt,omitempty"`
+	Result          string          `json:"result,omitempty"`
+	Error           string          `json:"error,omitempty"`
 }
 
 func renderCapture(c *models.Capture) *captureResponse {
-	return &captureResponse{
+	response := &captureResponse{
 		TransactionID: c.TransactionID,
 		RuleID:        c.RuleID.String(),
 		PeriodID:      c.PeriodID,
@@ -39,6 +45,15 @@ func renderCapture(c *models.Capture) *captureResponse {
 		CapturedAt:    c.CapturedAt,
 		Evidence:      c.Evidence,
 	}
+	if c.ContractVersion.Effective() == models.ContractVersionV2 {
+		response.ContractVersion = int(models.ContractVersionV2)
+		response.RuleRevision = c.RuleRevision
+		response.PIT = &c.PIT
+		response.StartedAt = &c.StartedAt
+		response.Result = string(c.Result)
+		response.Error = c.Error
+	}
+	return response
 }
 
 // listRuleCapturesHandler returns a rule's evaluation history — the immutable
