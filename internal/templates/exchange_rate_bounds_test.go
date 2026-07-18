@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/formancehq/reconciliation/internal/engine"
@@ -44,7 +45,7 @@ func TestExchangeRateBounds_ValidateRateShapes(t *testing.T) {
 	}
 }
 
-func TestExchangeRateBounds_ExactSignedCELMatchesDirectAtFullTolerance(t *testing.T) {
+func TestExchangeRateBounds_ExactSignedCELMatchesDirectAtFullToleranceAndMaxTarget(t *testing.T) {
 	t.Parallel()
 	const qBase = `{"$match":{"address":"eur"}}`
 	const qQuote = `{"$match":{"address":"usd"}}`
@@ -62,7 +63,7 @@ func TestExchangeRateBounds_ExactSignedCELMatchesDirectAtFullTolerance(t *testin
 			v2LedgerSource("usd", "bank", qQuote, "USD/6"),
 		},
 		BaseSource: "eur", QuoteSource: "usd",
-		Rate: RateConstraint{Target: "1.0800", ToleranceBps: intPtr(10_000)},
+		Rate: RateConstraint{Target: strings.Repeat("9", 78), ToleranceBps: intPtr(10_000)},
 	}
 	raw := mustJSON(t, spec)
 	tmpl := NewExchangeRateBounds()

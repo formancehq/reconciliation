@@ -290,6 +290,12 @@ func intList(value ref.Val) ([]int64, error) {
 var exactDecimalPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]+)?$`)
 var exactIntegerPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
+// Valid V2 rate targets are at most 78 characters. Applying a basis-point
+// factor can add one integer digit and up to four fractional digits; the
+// template renderer retains up to 22 fractional digits. Keep enough room for
+// every valid derived bound while still rejecting unbounded power-mode input.
+const maxExactDecimalLength = 128
+
 func exactNonNegativeInteger(value ref.Val) (*big.Int, error) {
 	text, ok := value.Value().(string)
 	if !ok || len(text) > 78 || !exactIntegerPattern.MatchString(text) {
@@ -315,7 +321,7 @@ func exactPositiveDecimal(value ref.Val) (*big.Rat, error) {
 
 func exactNonNegativeDecimal(value ref.Val) (*big.Rat, error) {
 	text, ok := value.Value().(string)
-	if !ok || len(text) > 78 || !exactDecimalPattern.MatchString(text) {
+	if !ok || len(text) > maxExactDecimalLength || !exactDecimalPattern.MatchString(text) {
 		return nil, fmt.Errorf("must be a plain decimal string")
 	}
 	r, ok := new(big.Rat).SetString(text)
