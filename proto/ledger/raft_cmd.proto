@@ -30,18 +30,55 @@ message Order {
   // composition and ordering are authenticated. Reserved.
   reserved 4;
   reserved "signature";
+  // technical carries admission-derived fields (the coverage gate and the
+  // Numscript inputs-resolution hash) that must ride in the Raft entry for the
+  // FSM apply path but are NOT part of the request's logical identity. hashOrder
+  // excludes this whole sub-message from the idempotency hash in one shot, so
+  // adding a new technical field can never silently break idempotency/replay.
+  OrderTechnical technical = 5;
+  // Field 6 previously held `repeated common.ErrorReason skippable_reasons`.
+  // The opt-in moved into LedgerApplyOrder because it only makes sense for
+  // ledger-apply variants — non-Apply orders (CreateLedger, SystemScoped
+  // signing key operations, etc.) have no business error that maps to an
+  // idempotent skip semantic. See LedgerApplyOrder.skippable_reasons below.
+  reserved 6;
+  reserved "skippable_reasons";
+}
+
+// OrderTechnical holds admission-derived fields that ride in the Raft entry for
+// the FSM apply path but are excluded from the order's logical identity (the
+// idempotency hash). Keeping them out of the business messages means the
+// idempotency hash is computed over the pure request and cannot silently drift
+// when a new technical field is added.
+message OrderTechnical {
   // coverage_bits is a packed bitset over ExecutionPlan.attributes restricting
   // which entries this single order may read. Bit i (byteIdx = i/8,
-  // bit-within-byte = i%8, LSB-first) is set iff attributes[i] covers a key
-  // this order may read. The FSM constructs the per-order scope from this
-  // bitset so a key declared by another order in the same batch is not
-  // transparently readable (closes the batch-level vs order-level coverage gap).
-  //
-  // Length = ceil(len(attributes)/8). Empty bytes admit NO plan — every read
-  // surfaces as *ErrCoverageMiss. Proposal-wide scopes (used by the FSM's
+  // bit-within-byte = i%8, LSB-first) is set iff attributes[i] covers a key this
+  // order may read. The FSM constructs the per-order scope from this bitset so a
+  // key declared by another order in the same batch is not transparently
+  // readable (closes the batch-level vs order-level coverage gap). Length =
+  // ceil(len(attributes)/8). Empty/absent admits NO plan — every read surfaces
+  // as *ErrCoverageMiss. Proposal-wide scopes (used by the FSM's
   // ValidateTransientVolumes) go through state.ScopeFactory.NewProposalScope
   // instead, not through an "empty bits means admit all" convention.
-  bytes coverage_bits = 5;
+  bytes coverage_bits = 1;
+  // inputs_resolution_hash binds the balance/metadata values that admission's
+  // Numscript dependency resolution (ResolveDependencies) read to compute the
+  // preload set. The FSM re-resolves against preloaded cache values and
+  // recomputes this hash; a mismatch means the inputs changed between admission
+  // and apply, so the preload set may be wrong and the order is rejected with
+  // ERROR_REASON_STALE_INPUTS_RESOLUTION (retryable). Empty for postings-only
+  // orders and scripts whose resolution reads nothing. See EN-1406.
+  bytes inputs_resolution_hash = 2;
+  // preload_unavailable marks an order whose preload set admission could NOT
+  // build (e.g. Numscript dependency discovery failed against current state).
+  // Set only when the batch carries an idempotency key: admission forwards the
+  // order instead of failing fast, so the FSM decides — replay a frozen outcome
+  // if one exists, otherwise reject with ERROR_REASON_PRELOAD_UNAVAILABLE
+  // (retryable, NOT frozen). The FSM MUST NOT execute such an order (its
+  // coverage is empty). See EN-1406. Generic on purpose: any future
+  // "preload could not be built" cause reuses this flag.
+  bool preload_unavailable = 3;
 }
 
 // LedgerScopedOrder is the wrapper for every Order variant that targets a
@@ -261,6 +298,31 @@ message LedgerApplyOrder {
     RemoveAccountTypeOrder remove_account_type = 10;
     UpdateDefaultEnforcementModeOrder update_default_enforcement_mode = 11;
   }
+  // skippable_reasons opts the apply order into a "continue-on-failure"
+  // mode: when the FSM produces a business error whose `Reason()`
+  // matches one of these entries, ProcessOrders swaps the failure for
+  // a common.OrderSkippedLog carrying the reason and the error's
+  // Metadata() and lets the proposal continue. Empty (default)
+  // preserves the historical fail-fast behaviour.
+  //
+  // Populated by admission from LedgerApplyRequest.skippable_reasons
+  // after validation against the per-action whitelist declared via
+  // (allowed_skippable_reasons) annotations on LedgerAction's oneof
+  // cases (see misc/proto/bucket.proto). Structural KindInternal
+  // reasons are rejected up front; the FSM applies the same gate as
+  // defense-in-depth.
+  //
+  // A reason may be whitelisted only if the producing sub-processor
+  // is "dry" up to the matching detection point (no Scope.Put runs
+  // before the branch that returns the error) or the sub-processor's
+  // scope is wrapped in an orderOverlayScope that buffers writes for
+  // rollback. See processor_skippable.go for the per-reason audit log.
+  //
+  // Located on LedgerApplyOrder (not Order) because only Apply
+  // variants can be idempotent-skipped today — CreateLedger,
+  // SystemScoped signing key operations, chapter management, etc.
+  // have no business error that maps to a legitimate skip semantic.
+  repeated common.ErrorReason skippable_reasons = 12;
 }
 
 // CreateIndexOrder requests the creation of a new index.
@@ -319,6 +381,8 @@ message CreateTransactionOrder {
   bool force = 7;  // Skip balance checks when true
   bool expand_volumes = 8;  // Include post-commit volumes in response
   NumscriptReference numscript_reference = 9;
+  // inputs_resolution_hash moved to OrderTechnical.inputs_resolution_hash — it is
+  // an admission-derived technical hint, not part of the transaction's identity.
 }
 
 // NumscriptReference identifies a numscript from the library to use for a transaction.
@@ -666,14 +730,23 @@ message CreatedLogOrReference {
 message LedgerBoundaries {
   fixed64 next_transaction_id = 1;
   fixed64 next_log_id = 2;
-  fixed64 volume_count = 3;
-  fixed64 metadata_count = 4;
-  fixed64 reference_count = 5;
-  fixed64 posting_count = 6;
-  fixed64 ephemeral_evicted_count = 7;
-  fixed64 transient_used_count = 8;
-  fixed64 revert_count = 9;
-  fixed64 numscript_execution_count = 10;
+
+  // Fields 3-10 held per-ledger counters (volume_count, metadata_count,
+  // reference_count, posting_count, ephemeral_evicted_count,
+  // transient_used_count, revert_count, numscript_execution_count) that
+  // migrated to the usagestore projection (EN-1420 / EN-1422). They are
+  // reserved — never reuse these tags: the vtprotobuf unmarshaller retains
+  // unknown-field bytes and re-emits them on MarshalVT, so an old persisted
+  // Pebble record carrying e.g. volume_count at tag 3 would be mis-decoded
+  // as whatever new field claimed tag 3.
+  reserved 3, 4, 5, 6, 7, 8, 9, 10;
+  reserved "volume_count", "metadata_count", "reference_count",
+           "posting_count", "ephemeral_evicted_count", "transient_used_count",
+           "revert_count", "numscript_execution_count";
+  // Highest source (v2) log ID already applied to this mirror ledger. Gates
+  // idempotent replay: a MirrorIngest whose v2LogId is <= this value is a
+  // deterministic no-op on the FSM apply path (see processMirrorIngest).
+  fixed64 last_mirror_v2_log_id = 11;
 }
 
 message VolumePair {
@@ -692,18 +765,19 @@ message ExecutionPlan {
   fixed64 lastPersistedIndex = 1;
   // Cache epoch at admission time; FSM rejects on mismatch (cache was reset)
   fixed64 cache_epoch = 4;
-  // Per-attribute plans produced by admission. Each entry is either a
-  // value preload, a Gen1→Gen0 promotion, or a pure coverage declaration —
-  // every plan also feeds the FSM-side state.Plan coverage set, so the
-  // admission layer is the single source of truth for what the FSM may
-  // read during apply.
-  repeated AttributePlan attributes = 6;
+  // Coverage entries produced by admission. Each entry declares that the
+  // FSM apply path may access the key; entries with a `value` field set
+  // additionally seed the FSM cache with the Pebble-loaded value at
+  // admission time. Every entry feeds the FSM-side state.Plan coverage
+  // set, so the admission layer is the single source of truth for what
+  // the FSM may read (and delete) during apply.
+  repeated AttributeCoverage attributes = 6;
 
   // Idempotency keys preloaded for this proposal. They live outside the
-  // AttributePlan list because they are NOT a cache attribute: the FSM
-  // applies them to the dedicated IdempotencyStore and the state.Plan
+  // AttributeCoverage list because they are NOT a cache attribute: the
+  // FSM applies them to the dedicated IdempotencyStore and the state.Plan
   // does not track their coverage. Kept as a top-level field instead of
-  // an AttributePlan variant to make that distinction visible at the
+  // an AttributeCoverage variant to make that distinction visible at the
   // wire level.
   repeated ReloadIdempotencyKey idempotency_keys = 7;
 
@@ -711,43 +785,26 @@ message ExecutionPlan {
   reserved "preloads", "touches", "declared", "productions";
 }
 
-// AttributePlan describes what the FSM must do with a single attribute key
-// on apply. attr_code (dal.SubAttrXxx) lives on the plan itself, not on
-// the intent, so the kind/code can be read uniformly without inspecting
-// the oneof — keeps coverage indexing, dispatch, and unmarshal routing
-// all on the same field. Exactly one of declare/touch/value is set; that
-// choice tells the cache-mutation path (Touch promotes, AttributeValue
-// writes, Declare is a no-op) what to do.
-message AttributePlan {
+// AttributeCoverage declares the FSM apply path may access `id` under
+// `attr_code`. When `value` is set, the FSM's MirrorPreload seeds the
+// cache with it (CacheMiss + Pebble-load-hit at admission); when unset,
+// the entry is coverage-only and Preload skips it — AttributeCache.Get's
+// gen0→gen1 fallback and AttributeCache.Del's lazy Gen0-tombstone
+// fabrication handle reads and deletes without a preemptive promote pass.
+// attr_code (dal.SubAttrXxx) lives on the envelope so coverage indexing,
+// dispatch, and unmarshal routing all read the same field.
+message AttributeCoverage {
   AttributeID id = 1;
   uint32 attr_code = 2;
-  oneof intent {
-    // Declare: the key was already CacheGuaranteed (Gen0) at admission time.
-    // No FSM-side cache mutation; pure coverage declaration so state.Plan
-    // admits reads on hot keys without a false-positive miss.
-    Declare declare = 3;
-    // Touch: the key is in Gen1 and would not survive the next rotation.
-    // The FSM mirrors the promotion via MirrorTouch.
-    Touch touch = 4;
-    // AttributeValue: load the value into Gen0 cache. Carries the typed value.
-    AttributeValue value = 5;
-  }
+  // Optional seed: nil = coverage-only; non-nil = seed into the FSM cache.
+  AttributeValue value = 3;
 }
 
-// Declare is the sentinel intent for AttributePlan. Empty by design — the
-// presence of the field is the entire signal.
-message Declare {}
-
-// Touch is the sentinel intent for AttributePlan. Empty by design — the
-// presence of the field plus AttributePlan.attr_code drive the Gen1→Gen0
-// promotion on the FSM side.
-message Touch {}
-
-// AttributeValue carries the typed value to write into the FSM-side cache
-// for one AttributePlan. The value is type-erased on the wire (a vtproto-
-// marshaled blob) and the FSM dispatches the typed unmarshal via the
-// parent AttributePlan.attr_code (dal.SubAttrXxx) — kept off this message
-// to avoid carrying the kind in two places.
+// AttributeValue carries the typed value to seed the FSM-side cache for
+// one AttributeCoverage entry. The value is type-erased on the wire (a
+// vtproto-marshaled blob) and the FSM dispatches the typed unmarshal via
+// the parent AttributeCoverage.attr_code (dal.SubAttrXxx) — kept off
+// this message to avoid carrying the kind in two places.
 message AttributeValue {
   bytes raw_value = 1;
 }
@@ -762,15 +819,6 @@ message ReloadIdempotencyKey {
   common.IdempotencyKeyValue value = 2;
 }
 
-// ============================================================================
-// Snapshot
-// ============================================================================
-
-// NodeSnapshot carries cluster-level metadata (peer addresses) for WAL snapshots.
-message NodeSnapshot {
-  repeated PeerAddress peer_addresses = 1;
-}
-
 // CacheGenerationMeta stores per-generation metadata in Pebble.
 message CacheGenerationMeta {
   fixed64 base_index = 1;
@@ -781,11 +829,31 @@ message CacheSnapshotMeta {
   fixed64 current_generation = 1;
 }
 
-// PeerAddress stores a peer's raft and service addresses in snapshots.
+// PeerAddress stores a peer's raft and service addresses in snapshots and in
+// the Global-zone Peer store (see SubGlobPeers). instance_id is a 16-byte
+// UUID generated by the peer at its very first boot and reported to the
+// leader in JoinAsLearnerRequest; it discriminates two pods that share the
+// same node_id across a scale-down / scale-up cycle. Empty only on rows
+// that were seeded before any peer boot — bootstrap initial-peer entries
+// and admin AddLearner rows whose peer has not yet gone through the join
+// path — and refreshed with the real value when the peer joins.
 message PeerAddress {
   uint64 node_id = 1;
   string raft_address = 2;
   string service_address = 3;
+  bytes instance_id = 4;
+}
+
+// RemovedMemberEntry is the persisted blacklist row keyed by
+// [ZoneGlobal][SubGlobRemovedMembers][node_id BE 8][instance_id 16]. Written
+// by both the consensus and force removal paths, read by JoinAsLearner
+// admission and checkAndPromoteLearners to refuse a peer from silently
+// rejoining. See docs/technical/architecture/subsystems/consensus/removed-member-registry.md.
+message RemovedMemberEntry {
+  uint64 node_id     = 1;
+  bytes instance_id  = 2;   // 16 bytes
+  uint64 removed_at  = 3;   // wall-clock microseconds since epoch, stamped on the force path only; consensus path leaves it 0 to preserve FSM determinism (invariant #2). Audit only, not part of the identity check.
+  string reason      = 4;   // "consensus" | "force"
 }
 
 message GenerationSnapshot {

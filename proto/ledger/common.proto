@@ -5,6 +5,7 @@ package common;
 option go_package = "github.com/formancehq/reconciliation/internal/ledgerpb/commonpb";
 
 import "signature.proto";
+import "google/protobuf/descriptor.proto";
 
 // ============================================================================
 // Core Data Types
@@ -61,6 +62,10 @@ message Posting {
   string destination = 2;
   Uint256 amount = 3;
   string asset = 4;
+  // Color of the funds being moved. The empty string is the "uncolored" bucket
+  // and is treated as just another color from a segregation standpoint.
+  // Color values are constrained to ^[A-Z]*$ at admission time.
+  string color = 5;
 }
 
 // Transaction represents a transaction
@@ -74,6 +79,10 @@ message Transaction {
   Timestamp inserted_at = 7;
   Timestamp updated_at = 8;
   Timestamp reverted_at = 9;
+  // Id of the transaction that reverted this one. 0 = not reverted.
+  fixed64 reverted_by_transaction = 10;
+  // Id of the original transaction this transaction reverts. 0 = not a revert.
+  fixed64 reverts_transaction = 11;
 }
 
 message Script {
@@ -99,12 +108,23 @@ message VolumesWithBalance {
   string balance = 3;  // big.Int as string
 }
 
-// VolumesByAssets represents volumes grouped by asset
+// VolumesByAssets is a sorted list of post-commit (asset, color) volume
+// entries for a single account. Sorted by (asset, color) ascending so the
+// serialization is deterministic and stable across reads.
 message VolumesByAssets {
-  map<string, Volumes> volumes = 1;
+  repeated VolumeEntry volumes = 1;
 }
 
-// PostCommitVolumes represents volumes after commit, grouped by account and asset
+// VolumeEntry is one (asset, color) row inside VolumesByAssets. The empty
+// color is the uncolored bucket and is itself just another segregated bucket.
+message VolumeEntry {
+  string asset = 1;
+  string color = 2;
+  Volumes volumes = 3;
+}
+
+// PostCommitVolumes represents volumes after commit, grouped by account.
+// Within each account, entries are flat-listed per (asset, color) tuple.
 message PostCommitVolumes {
   map<string, VolumesByAssets> volumes_by_account = 1;
 }
@@ -113,14 +133,25 @@ message PostCommitVolumes {
 // Account
 // ============================================================================
 
-// Account represents an account in the ledger
+// AccountVolume is one (asset, color) row in Account.volumes.
+message AccountVolume {
+  string asset = 1;
+  string color = 2;
+  VolumesWithBalance volumes = 3;
+}
+
+// Account represents an account in the ledger.
 message Account {
   string address = 1;
   map<string, MetadataValue> metadata = 2;
   Timestamp first_usage = 3;
   Timestamp insertion_date = 4;
   Timestamp updated_at = 5;
-  map<string, VolumesWithBalance> volumes = 6;  // Volumes per asset
+  // Volumes is a sorted list of per (asset, color) entries.
+  // Sorted by (asset, color) ascending for stable serialization.
+  // When the request opts into collapse_colors, the list collapses to one
+  // entry per asset with color = "" and amounts summed across colors.
+  repeated AccountVolume volumes = 6;
 }
 
 // ============================================================================
@@ -200,8 +231,9 @@ enum TransactionBuiltinIndex {
   TX_BUILTIN_INDEX_ID = 2;               // range scan on existence bucket (no index)
   TX_BUILTIN_INDEX_ADDRESS = 3;          // account→transaction mapping (any role)
   TX_BUILTIN_INDEX_SOURCE_ADDRESS = 4;   // source account→transaction mapping
-  TX_BUILTIN_INDEX_DEST_ADDRESS = 5;     // destination account→transaction mapping
+  TX_BUILTIN_INDEX_DESTINATION_ADDRESS = 5;     // destination account→transaction mapping
   TX_BUILTIN_INDEX_INSERTED_AT = 6;     // requires Pebble "txiat" index (inserted_at date)
+  TX_BUILTIN_INDEX_REVERTED_AT = 7;     // requires Pebble "rvat" index (reverted_at date)
 }
 
 // AccountBuiltinIndex identifies a built-in account field that can be indexed.
@@ -472,6 +504,10 @@ enum EventType {
   DELETED_METADATA = 4;
   CREATED_LEDGER = 5;
   DELETED_LEDGER = 6;
+  // SKIPPED_ORDER is emitted when a batch order tripped a whitelisted business
+  // failure (skippable_reasons) and was skipped instead of failing the whole
+  // proposal. The OrderSkippedLog carries the reason + context. See EN-1356.
+  SKIPPED_ORDER = 7;
 }
 
 // ============================================================================
@@ -496,6 +532,14 @@ message SavedNumscriptLog {
 message DeletedNumscriptLog {
   string name = 1;
   string ledger = 2;
+}
+
+// TemplateUsage tracks per-template invocation usage. Persisted as a
+// projection of the audit log by the usagebuilder subsystem — NOT part of
+// the FSM authoritative state. Rebuildable from cursor=0 on demand.
+message TemplateUsage {
+  fixed64 count = 1;
+  Timestamp last_used = 2;
 }
 
 // SetQueryCheckpointScheduleLog records a query checkpoint schedule change.
@@ -623,24 +667,42 @@ message LedgerLog {
   LedgerLogPayload data = 1;
   Timestamp date = 2;
   fixed64 id = 3;
-  // Volumes (account+asset) whose ephemeral state was purged (zero balance)
-  // by THIS log specifically. Subset of the proposal's purged universe —
-  // only volumes touched by the order that produced this log. Empty when
-  // the order did not contribute to any ephemeral purge. The index builder
-  // uses this to skip account->transaction mappings for the corresponding
-  // (account, asset) tuples without reading the audit zone. Carrying the
-  // asset dimension matters: a multi-asset account may have one asset
-  // purged while another stays kept; tagging the account as a whole would
-  // over-skip mappings for transactions that touched the kept asset.
+  // Volumes (account+asset) DRAINED to zero by THIS log — the entry had a
+  // pre-existing non-zero balance in Pebble and this log brought it back to
+  // zero, causing the volume to be evicted from the attribute store at
+  // commit. Purged is DISJOINT from ephemeral_volumes and new_kept_volumes.
+  // The index builder skips account->transaction mappings for
+  // purged ∪ ephemeral (both are evicted from Pebble). The usagebuilder
+  // subtracts len(purged_volumes) from VolumeCount — a draining eviction
+  // decreases the live cardinality by one.
   repeated TouchedVolume purged_volumes = 4;
+  // Volumes (account+asset) whose PERSISTENT entry was newly created by
+  // THIS log AND SURVIVED past commit. New + kept — disjoint from
+  // purged_volumes and ephemeral_volumes. The usagebuilder increments
+  // VolumeCount by len(new_kept_volumes) — a newly-persisted key raises
+  // the live cardinality by one.
+  repeated TouchedVolume new_kept_volumes = 5;
+  // Volumes (account+asset) that were both newly created AND purged by
+  // THIS log — pure ephemeral. Written to Pebble briefly then evicted at
+  // commit. Contributes +0 to VolumeCount (was zero, is zero after commit)
+  // and is tracked separately so:
+  //   - the index builder can skip acct->tx mappings for them (via
+  //     purged_volumes ∪ ephemeral_volumes);
+  //   - the log payload does not duplicate ephemeral tuples in two lists
+  //     (previous encoding carried them in both purged_volumes AND
+  //     new_volumes, doubling bytes on ephemeral-heavy workloads).
+  repeated TouchedVolume ephemeral_volumes = 6;
 }
 
 // TouchedVolume identifies a (ledger-local) volume cell — an account paired
-// with an asset. Used in transient/purged volume exclusion sets where the
-// indexer must distinguish per-asset state inside a multi-asset account.
+// with an asset and a color. Used in transient/purged volume exclusion sets
+// where the indexer must distinguish per-(asset, color) state inside a
+// multi-bucket account. The empty color is the uncolored bucket and is itself
+// just another segregated cell.
 message TouchedVolume {
   string account = 1;
   string asset = 2;
+  string color = 3;
 }
 
 message LedgerLogPayload {
@@ -657,7 +719,27 @@ message LedgerLogPayload {
     AddedAccountTypeLog added_account_type = 13;
     RemovedAccountTypeLog removed_account_type = 14;
     UpdatedDefaultEnforcementModeLog updated_default_enforcement_mode = 15;
+    OrderSkippedLog order_skipped = 16;
   }
+}
+
+// OrderSkippedLog records an order that the FSM rejected with a business
+// error whose reason was listed in the order's `skippable_reasons` whitelist.
+// No state mutation occurred for the skipped order, but the rest of the
+// proposal applied normally. The `reason` here is a PROJECTION and is NOT
+// hash-chain-bound — only the AuditItem.serialized_order (the submitted
+// order, including its allowed skippable_reasons whitelist) is bound. Because
+// the projected reason can be tampered with, the checker does not trust it:
+// it replays the serialized order against the audit-derived state at the
+// applied index, re-derives the failure the FSM must have produced, and
+// confirms that reason both matches the projection and was whitelisted
+// (defense against forged skip entries).
+message OrderSkippedLog {
+  ErrorReason reason = 1;
+  // Free-form context populated by the producing branch. Conventional keys
+  // are documented case-by-case (e.g. reference / existingTransactionId for
+  // TRANSACTION_REFERENCE_CONFLICT). Treat as opaque if the reason is unknown.
+  map<string, string> context = 2;
 }
 
 // CreatedIndexLog records the creation of an index.
@@ -777,7 +859,188 @@ message MirrorSourceConfig {
     PostgresMirrorSourceConfig postgres = 3;
   }
   uint32 batch_size = 4;  // Max logs per batch (0 = default 100). Client's responsibility to avoid saturating the instance.
+  // Ordered rewrite rules applied to every mirror log entry as v2 logs are
+  // translated into v3 orders. Each rule can rename address segments, transform
+  // metadata, or drop transactions. See MirrorRewriteRule.
+  repeated MirrorRewriteRule rewrite_rules = 5;
 }
+
+// MirrorRewriteRule transforms a mirror log entry during v2->v3 translation.
+//
+// A rule is scoped to exactly one variant of MirrorLogEntry.data: the `scope`
+// oneof selects which. That scope determines two things: (a) the CEL type of
+// `log` in the rule's `match` predicate, and (b) which actions are legal in
+// its `actions` list. This makes invalid combinations (e.g. set_metadata on a
+// deleted_metadata rule) impossible to represent on the wire — the proto oneof
+// nesting rejects them at deserialisation.
+//
+// Rules run top-to-bottom against every translated log entry. A rule whose
+// scope doesn't match the entry's variant is silently skipped. When `stop` is
+// true and the rule matches (scope + predicate), no further rules are
+// evaluated. Rewriting is a pure, deterministic translation-time projection
+// performed on the mirror leader; the source v2 ledger is never modified.
+message MirrorRewriteRule {
+  // Exactly one must be set.
+  oneof scope {
+    CreatedTransactionRule created_transaction = 1;
+    RevertedTransactionRule reverted_transaction = 2;
+    SavedMetadataRule saved_metadata = 3;
+    DeletedMetadataRule deleted_metadata = 4;
+    AnyVariantRule any_variant = 5;
+  }
+  bool stop = 6;
+}
+
+// Per-variant rules. In each rule's `match`, the CEL variable `log` is typed
+// as the corresponding variant proto message directly (e.g. inside a
+// CreatedTransactionRule, `log.metadata["k"]` — NOT
+// `log.created_transaction.metadata["k"]`). This keeps predicates concise and
+// forbids reading fields of other variants by construction.
+
+message CreatedTransactionRule {
+  string match = 1;
+  repeated CreatedTransactionAction actions = 2;
+}
+
+message RevertedTransactionRule {
+  string match = 1;
+  repeated RevertedTransactionAction actions = 2;
+}
+
+message SavedMetadataRule {
+  string match = 1;
+  repeated SavedMetadataAction actions = 2;
+}
+
+message DeletedMetadataRule {
+  string match = 1;
+  repeated DeletedMetadataAction actions = 2;
+}
+
+// AnyVariantRule runs on every variant. `log` is typed as MirrorLogEntry, so
+// its match must use `has(log.<variant>)` guards to read variant-specific
+// fields. Its action set is restricted to operations that are meaningful on
+// every variant.
+message AnyVariantRule {
+  string match = 1;
+  repeated AnyVariantAction actions = 2;
+}
+
+// Actions per variant. Each oneof exposes only the actions that make semantic
+// sense on that variant. E.g. DeletedMetadataAction has no set_metadata
+// because MirrorDeletedMetadata carries only a key, not a metadata map.
+
+message CreatedTransactionAction {
+  oneof action {
+    RewriteAddressAction rewrite_address = 1;
+    SetMetadataAction set_metadata = 2;
+    DeleteMetadataAction delete_metadata = 3;
+    SetAccountMetadataAction set_account_metadata = 4;
+    DeleteAccountMetadataAction delete_account_metadata = 5;
+    SetAccountMetadataFromAddressAction set_account_metadata_from_address = 6;
+    DropAction drop = 7;
+  }
+}
+
+message RevertedTransactionAction {
+  oneof action {
+    RewriteAddressAction rewrite_address = 1;
+    SetMetadataAction set_metadata = 2;
+    DeleteMetadataAction delete_metadata = 3;
+    DropAction drop = 4;
+  }
+}
+
+message SavedMetadataAction {
+  oneof action {
+    RewriteAddressAction rewrite_address = 1;  // acts on Target only
+    SetMetadataAction set_metadata = 2;
+    DeleteMetadataAction delete_metadata = 3;
+    DropAction drop = 4;
+  }
+}
+
+message DeletedMetadataAction {
+  oneof action {
+    RewriteAddressAction rewrite_address = 1;  // acts on Target only
+    DropAction drop = 2;
+  }
+}
+
+message AnyVariantAction {
+  oneof action {
+    RewriteAddressAction rewrite_address = 1;
+    DropAction drop = 2;
+  }
+}
+
+// Shared action payloads. Each carries the parameters an operator supplies for
+// that operation; there is no CEL evaluation involved — the values are
+// consumed by a typed Go executor.
+
+message RewriteAddressAction {
+  string pattern = 1;      // RE2 pattern, validated at admission
+  string replacement = 2;  // may reference groups from `pattern`
+}
+
+message SetMetadataAction {
+  string key = 1;
+  // Source of the metadata value. `value` is a literal string; `value_expr` is
+  // a CEL expression evaluated at commit time against the current variant
+  // (e.g. `log.reference`, `log.metadata["other_key"].string_value`). Neither
+  // set = literal empty string.
+  oneof source {
+    string value = 2;
+    string value_expr = 3;
+  }
+  // Optional metadata type token: one of "string" (default), "int64", "bool",
+  // "uint64", "int8", "int16", "int32", "uint8", "uint16", "uint32",
+  // "datetime". When set, the produced string is coerced into the matching
+  // typed MetadataValue via the platform conversion matrix — a value that does
+  // not parse as the declared type becomes a null value preserving the
+  // original string. Empty = string (unchanged behaviour).
+  string type = 4;
+}
+
+message DeleteMetadataAction {
+  string key = 1;
+}
+
+message SetAccountMetadataAction {
+  string account = 1;
+  string key = 2;
+  // See SetMetadataAction.source for the literal-vs-CEL semantics.
+  oneof source {
+    string value = 3;
+    string value_expr = 4;
+  }
+  // See SetMetadataAction.type — same tokens, same coercion semantics.
+  string type = 5;
+}
+
+message DeleteAccountMetadataAction {
+  string account = 1;
+  string key = 2;
+}
+
+// SetAccountMetadataFromAddressAction runs a single RE2 pattern over every
+// posting address in the current CreatedTransaction and, for each matching
+// address, writes one or more metadata entries on the *matched account* using
+// group-capturing replacements. Multiple replacements share the same pattern
+// so an operator can extract several fields from a single address in one pass
+// (e.g. worker id + acquirer name from `acquirer:acme:worker:001:bank`).
+message SetAccountMetadataFromAddressAction {
+  string pattern = 1;  // RE2 pattern, should anchor with ^…$ for exact match
+  repeated SetAccountMetadataFromAddressReplacement replacements = 2;
+}
+
+message SetAccountMetadataFromAddressReplacement {
+  string key = 1;
+  string replacement = 2;  // RE2 replacement (uses groups from the parent pattern)
+  string type = 3;         // optional metadata type token — see SetMetadataAction.type
+}
+
+message DropAction {}
 
 message HttpMirrorSourceConfig {
   string base_url = 1;
@@ -807,7 +1070,7 @@ message PostgresAwsIamAuth {
   // set, the mirror calls sts:AssumeRole on this ARN and signs the RDS token
   // with the assumed credentials, decoupling the per-mirror IAM identity from
   // the pod's ambient credentials. Enables multi-account / multi-tenant
-  // mirrors from a single LedgerService whose base role only needs
+  // mirrors from a single Cluster whose base role only needs
   // sts:AssumeRole on these targets (no direct rds-db:connect grant).
   string assume_role_arn = 2;
 }
@@ -877,6 +1140,19 @@ message TransactionState {
   // creation). Required for at_effective_date reverts to be deterministic
   // without re-reading the original log from Pebble.
   Timestamp timestamp = 4;
+  // Postings captured at creation. Populated by processCreateTransaction (and
+  // the mirror equivalent) so a later revert reads them from the FSM cache
+  // without needing to scan the Pebble-backed log — invariant #3 (no Pebble
+  // reads on the hot path) and invariant #8 (business decisions belong in
+  // the audit chain, so a revert of a non-existent tx must reach the FSM
+  // apply loop rather than fail-fast at admission).
+  repeated Posting postings = 5;
+  // Effective timestamp at which this transaction was reverted (the
+  // compensating transaction's timestamp). Nil when not reverted.
+  Timestamp reverted_at = 6;
+  // On a compensating transaction, the id of the transaction it reverts.
+  // 0 = this transaction is not a revert.
+  fixed64 reverts_transaction = 7;
 }
 
 // IdempotencyKeyValue stores the outcome associated with a proposal's
@@ -962,10 +1238,28 @@ enum ErrorReason {
   ERROR_REASON_CHECKPOINT_ID_REQUIRED = 56;
   ERROR_REASON_NUMSCRIPT_RUNTIME = 57;
   ERROR_REASON_VOLUME_NOT_MATERIALIZED = 58;
-  ERROR_REASON_NON_DETERMINISTIC_SCRIPT = 59;
   ERROR_REASON_CLUSTER_UNHEALTHY = 60;
   ERROR_REASON_WRITES_BLOCKED_DISK_FULL = 61;
   ERROR_REASON_WRITES_BLOCKED_CLOCK_SKEW = 62;
+  ERROR_REASON_CHECKPOINT_NOT_READY = 63;
+  ERROR_REASON_MIRROR_V2_LOG_ID_GAP = 64;
+  ERROR_REASON_MIRROR_V2_LOG_ID_INVALID = 65;
+  // ERROR_REASON_STALE_INPUTS_RESOLUTION: the balance/metadata values that
+  // Numscript dependency resolution read at admission time changed before the
+  // FSM applied the transaction, so the preloaded key set may be wrong.
+  // Retryable (Kind=Unavailable) — a second admission re-resolves against the
+  // new values. See EN-1406.
+  ERROR_REASON_STALE_INPUTS_RESOLUTION = 66;
+  // ERROR_REASON_PRELOAD_UNAVAILABLE: admission could not build the preload set
+  // for an order (e.g. Numscript dependency discovery failed against current
+  // state). When the batch carries an idempotency key, admission forwards the
+  // order to the FSM (marked OrderTechnical.preload_unavailable) instead of
+  // failing fast, so the FSM can replay a frozen outcome. If no frozen outcome
+  // exists the FSM emits THIS reason: retryable (Kind=Unavailable), NOT frozen —
+  // a preparation gap, never an authoritative business verdict. See EN-1406.
+  ERROR_REASON_PRELOAD_UNAVAILABLE = 67;
+  ERROR_REASON_AGGREGATE_OVERFLOW = 68;
+  ERROR_REASON_BALANCE_NOT_FOUND = 69;
 }
 
 // IdempotencyFailure captures a definitive business rejection so a retried key
@@ -1048,25 +1342,174 @@ message UpdatedDefaultEnforcementModeLog {
 // Prepared Queries — Filter Model
 // ============================================================================
 
+// allowed_query_targets is the single source of truth for per-target
+// QueryFilter condition validity (EN-1504). It annotates each arm of the
+// QueryFilter.filter oneof with the exact set of QueryTargets the condition is
+// valid on. protoc-gen-queryfilter-validity reads these annotations from the
+// descriptor and emits the query_target_validity.pb.go table consumed by both
+// the compile layer (internal/query) and the REST decode layer
+// (internal/adapter/http), so the two layers cannot drift and a new arm cannot
+// be added without declaring its validity.
+//
+// EVERY QueryFilter.filter oneof arm MUST carry an explicit validity
+// declaration: either a non-empty `allowed_query_targets`, OR
+// `valid_on_no_query_target = true` for an arm deliberately valid on no target.
+// protoc-gen-queryfilter-validity FAILS generation (so `just generate-proto`
+// fails) on an arm that declares neither — a forgotten annotation is a build
+// error, not a silently all-false row. An empty repeated `allowed_query_targets`
+// is indistinguishable from an absent one on the wire, which is exactly why the
+// "valid nowhere" intent needs its own boolean marker rather than being inferred
+// from absence.
+//
+// Extension numbers 50123-50124 are in the private, non-reserved range for
+// FieldOptions extensions (50000-99999, per descriptor.proto guidance).
+extend google.protobuf.FieldOptions {
+  repeated QueryTarget allowed_query_targets = 50123;
+  // valid_on_no_query_target declares that an arm is intentionally valid on no
+  // QueryTarget (rejected everywhere). It is the EXPLICIT opt-in the generator
+  // requires instead of inferring "valid nowhere" from a missing annotation.
+  bool valid_on_no_query_target = 50124;
+}
+
 message QueryFilter {
   oneof filter {
-    FieldCondition field = 1;
-    AddressMatch address = 2;
-    AndFilter and = 3;
-    OrFilter or = 4;
-    NotFilter not = 5;
-    ReferenceCondition reference = 6;
-    BuiltinUintCondition builtin_uint = 7;
-    LedgerCondition ledger = 8;
-    LogIdCondition log_id = 9;
-    LogBuiltinUintCondition log_builtin_uint = 10;
-    AccountHasAssetCondition account_has_asset = 11;
+    // Metadata field conditions ($match/$gt/$exists on metadata[<key>]) are
+    // valid on ACCOUNTS and TRANSACTIONS, which have a populated metadata index.
+    // LOGS is deliberately excluded: there is no log-metadata index — the index
+    // builder never populates the NamespaceLog metadata keyspace that
+    // compileFieldCondition scans — so a metadata filter on LOGS would return
+    // empty or error at execute time. Advertising the capability without an
+    // index behind it is a lying contract, so it is rejected up front at
+    // admission/validation instead. Building a real log-metadata index is a
+    // separate feature (out of scope for EN-1503, tracked separately).
+    FieldCondition field = 1 [
+      (allowed_query_targets) = QUERY_TARGET_ACCOUNTS,
+      (allowed_query_targets) = QUERY_TARGET_TRANSACTIONS
+    ];
+    // Address matches resolve to account addresses (ACCOUNTS) or to the
+    // account→transaction index (TRANSACTIONS). There is no account→log
+    // translation, so address is NOT valid on LOGS (it would silently feed
+    // transaction-keyed entities into a log result pipeline).
+    AddressMatch address = 2 [
+      (allowed_query_targets) = QUERY_TARGET_ACCOUNTS,
+      (allowed_query_targets) = QUERY_TARGET_TRANSACTIONS
+    ];
+    // Combinators are structural — they recurse into children, each of which is
+    // validated on its own arm. And/Or are accepted by every compiler,
+    // including the audit compiler. Not is accepted by query.Compile
+    // (accounts/transactions/logs) but NOT by CompileAuditFilter, so it is not
+    // valid on the audit target.
+    AndFilter and = 3 [
+      (allowed_query_targets) = QUERY_TARGET_ACCOUNTS,
+      (allowed_query_targets) = QUERY_TARGET_TRANSACTIONS,
+      (allowed_query_targets) = QUERY_TARGET_LOGS,
+      (allowed_query_targets) = QUERY_TARGET_AUDIT
+    ];
+    OrFilter or = 4 [
+      (allowed_query_targets) = QUERY_TARGET_ACCOUNTS,
+      (allowed_query_targets) = QUERY_TARGET_TRANSACTIONS,
+      (allowed_query_targets) = QUERY_TARGET_LOGS,
+      (allowed_query_targets) = QUERY_TARGET_AUDIT
+    ];
+    NotFilter not = 5 [
+      (allowed_query_targets) = QUERY_TARGET_ACCOUNTS,
+      (allowed_query_targets) = QUERY_TARGET_TRANSACTIONS,
+      (allowed_query_targets) = QUERY_TARGET_LOGS
+    ];
+    // Reference matches read the transaction reference index and yield
+    // transaction-keyed entities: meaningful only on the transactions target.
+    // (No account or log translation exists.)
+    ReferenceCondition reference = 6 [
+      (allowed_query_targets) = QUERY_TARGET_TRANSACTIONS
+    ];
+    // Builtin uint fields (id/timestamp/insertedAt/revertedAt) read transaction
+    // indexes and yield transaction-keyed entities: transactions only.
+    BuiltinUintCondition builtin_uint = 7 [
+      (allowed_query_targets) = QUERY_TARGET_TRANSACTIONS
+    ];
+    // Log-only fields.
+    LedgerCondition ledger = 8 [
+      (allowed_query_targets) = QUERY_TARGET_LOGS
+    ];
+    LogIdCondition log_id = 9 [
+      (allowed_query_targets) = QUERY_TARGET_LOGS
+    ];
+    LogBuiltinUintCondition log_builtin_uint = 10 [
+      (allowed_query_targets) = QUERY_TARGET_LOGS
+    ];
+    // Account has-asset filter: accounts only.
+    AccountHasAssetCondition account_has_asset = 11 [
+      (allowed_query_targets) = QUERY_TARGET_ACCOUNTS
+    ];
+    // Reverted (revert-status) filter: transactions only.
+    RevertedCondition reverted = 12 [
+      (allowed_query_targets) = QUERY_TARGET_TRANSACTIONS
+    ];
+    // Audit conditions are valid only on the audit target: query.Compile
+    // (accounts/transactions/logs) rejects them, and CompileAuditFilter accepts
+    // them. Modeling audit as a first-class target keeps its condition validity
+    // in this single source of truth rather than as an undocumented exception.
+    // (An arm deliberately valid on no target must say so explicitly with
+    // [(common.valid_on_no_query_target) = true] — a missing annotation is a
+    // generation error, not a silent all-false row.)
+    AuditCondition audit = 13 [
+      (allowed_query_targets) = QUERY_TARGET_AUDIT
+    ];
   }
 }
 
 // ReferenceCondition filters transactions by reference (exact match).
 message ReferenceCondition {
   StringCondition cond = 1;
+}
+
+// RevertedCondition filters transactions by revert status. Served from the
+// per-ledger reversion bitset (no index required): value=true matches reverted
+// originals, value=false matches everything else.
+message RevertedCondition {
+  bool value = 1;
+}
+
+// AuditCondition filters audit entries by a single audit field, mirroring
+// BuiltinUintCondition's (field-enum × condition) shape. It is only meaningful
+// for the audit list path: the audit compiler (query.CompileAuditFilter) accepts
+// Audit/And/Or leaves and rejects every other QueryFilter variant with
+// InvalidArgument, while the index compiler used for accounts/transactions/logs
+// (query.Compile) never lists QueryFilter_Audit and rejects it there too.
+// Audit is a first-class QueryFilter target (QUERY_TARGET_AUDIT): the audit
+// arm above is annotated valid only for that target, so its condition validity
+// lives in the same generated source of truth as the other targets. Dispatch is
+// still internal — ListAuditEntries routes QUERY_TARGET_AUDIT to
+// CompileAuditFilter rather than query.Compile — but the target itself is
+// modeled here rather than treated as an undocumented exception.
+//
+// Every exposed field is answerable from the readstore audit secondary index
+// (EN-1339) — outcome, ledger, caller_subject, order_type, timestamp,
+// proposal_id, log_seq — except AUDIT_FIELD_SEQUENCE, which is the audit-zone
+// key itself and is served by bounding the entry scan. There is deliberately no
+// scan-time predicate fallback: a field the index cannot answer is not exposed.
+message AuditCondition {
+  AuditField field = 1;
+  oneof condition {
+    StringCondition string_cond = 2;
+    UintCondition   uint_cond   = 3;
+  }
+}
+
+// AuditField enumerates the audit fields that can be filtered. The set is
+// intentionally limited to what the audit access path can resolve efficiently
+// (index lookup or key-range bound); NOT / non-indexed fields are rejected
+// rather than degrading to a full-chain scan.
+enum AuditField {
+  AUDIT_FIELD_UNSPECIFIED    = 0;
+  AUDIT_FIELD_SEQUENCE       = 1;  // uint   -> AuditEntry.sequence (audit-zone key range)
+  AUDIT_FIELD_PROPOSAL_ID    = 2;  // uint   -> AuditEntry.proposal_id (index range)
+  AUDIT_FIELD_TIMESTAMP      = 3;  // uint   -> AuditEntry.timestamp.data, unix micros (index range)
+  AUDIT_FIELD_LOG_SEQUENCE   = 4;  // uint   -> item log_sequence, match-any (index range)
+  AUDIT_FIELD_OUTCOME        = 5;  // string in {success, failure} (index)
+  AUDIT_FIELD_CALLER_SUBJECT = 6;  // string -> caller_snapshot.identity.subject (index)
+  AUDIT_FIELD_LEDGER         = 7;  // string -> AuditEntry.ledgers, match-any (index)
+  AUDIT_FIELD_ORDER_TYPE     = 8;  // string -> order payload variant, match-any (index)
 }
 
 // LedgerCondition filters logs by ledger name (exact match).
@@ -1079,7 +1522,7 @@ message LogIdCondition {
   UintCondition cond = 1;
 }
 
-// BuiltinUintCondition filters transactions by a built-in uint64 field (id, timestamp, or inserted_at).
+// BuiltinUintCondition filters transactions by a built-in uint64 field (id, timestamp, inserted_at, or reverted_at).
 message BuiltinUintCondition {
   TransactionBuiltinIndex field = 1;
   UintCondition cond = 2;
@@ -1187,6 +1630,16 @@ enum QueryTarget {
   QUERY_TARGET_ACCOUNTS = 0;
   QUERY_TARGET_TRANSACTIONS = 1;
   QUERY_TARGET_LOGS = 2;
+  // Audit entries. Dispatched internally to query.CompileAuditFilter (not
+  // query.Compile), but modeled here as a first-class QueryFilter target so
+  // audit condition validity lives in the same source of truth as the other
+  // targets (EN-1241 / EN-1305 / EN-1339 / EN-1481 move ListAuditEntries onto
+  // the shared ListOptions.filter contract). CompileAuditFilter accepts only
+  // audit-condition leaves combined with and/or — not, and every non-audit
+  // condition, are rejected — which the per-arm annotations below reflect. On
+  // the textual DSL these are the bare audit fields (outcome, ledger, seq, …)
+  // resolved against QUERY_TARGET_AUDIT (EN-1549).
+  QUERY_TARGET_AUDIT = 3;
 }
 
 enum QueryMode {
@@ -1204,11 +1657,15 @@ message PreparedQuery {
   QueryTarget target = 3;
 }
 
-// AggregatedVolume represents per-asset aggregated input/output volumes.
+// AggregatedVolume represents aggregated input/output volumes for a single
+// (asset, color) bucket. When collapse_colors is requested on the aggregate
+// query, all entries are produced with color = "" and amounts summed across
+// colors.
 message AggregatedVolume {
   string asset = 1;
   Uint256 input = 2;
   Uint256 output = 3;
+  string color = 4;
 }
 
 message AggregateResult {
@@ -1231,13 +1688,13 @@ message PreparedQueryCursor {
   string next = 4;
   repeated Account account_data = 5;
   repeated Transaction transaction_data = 6;
+  repeated Log log_data = 7;
 }
 
 // LedgerStats contains aggregate statistics for a ledger.
 message LedgerStats {
   fixed64 transaction_count = 1;
   fixed64 volume_count = 2;
-  fixed64 metadata_count = 3;
   fixed64 reference_count = 4;
   fixed64 posting_count = 5;
   fixed64 ephemeral_evicted_count = 6;
@@ -1257,7 +1714,7 @@ message PersistedConfig {
   uint32 storage_schema_version = 4;
 }
 
-// CallerIdentity uniquely identifies an authenticated caller. It is
+// CallerIdentity uniquely identifies who initiated an action. It is
 // strictly an *identification* — subject plus the mechanism that
 // authenticated it — and carries no authorization decision.
 //
@@ -1265,6 +1722,10 @@ message PersistedConfig {
 // a request to the leader) because no downstream code makes an
 // authorization decision based on it: the admission point that issued
 // it already vetted the call.
+//
+// source distinguishes a user (issuer or key_id) from a system action
+// (system_component). An absent source means the identity is a bare
+// subject with no known origin.
 message CallerIdentity {
   string subject = 1;
   // Fields 2 and 3 historically held `repeated string scopes` and
@@ -1275,8 +1736,9 @@ message CallerIdentity {
   reserved 2, 3;
   reserved "scopes", "god";
   oneof source {
-    string issuer = 4;   // OIDC token issuer URL
-    string key_id = 5;   // Ed25519 signing key ID
+    string issuer = 4;             // OIDC token issuer URL
+    string key_id = 5;             // Ed25519 signing key ID
+    string system_component = 6;   // system/internal actor (no user); names the subsystem
   }
 }
 
@@ -1287,8 +1749,9 @@ message CallerIdentity {
 // etc.).
 //
 // Carried on Proposals through Raft, then copied to AuditEntry by the
-// FSM. Nil when authentication is disabled or for system-initiated
-// proposals.
+// FSM. Nil when authentication is disabled. System-initiated proposals
+// carry a non-nil identity whose source is system_component (never nil),
+// so an audit entry is never ambiguously blank.
 message CallerSnapshot {
   CallerIdentity identity = 1;
   repeated string scopes = 2;

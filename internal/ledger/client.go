@@ -2,8 +2,8 @@
 // convenience methods reconciliation needs to run its control-ledger (`_recon`).
 //
 // Adapted from ledger-connect's internal/infra/ledger/client.go. The generated
-// proto lives in internal/ledgerpb (see `just generate-ledger-proto`), synced
-// from ledger-connect and aligned on ledger v3.0.0-alpha.3.
+// proto lives in internal/ledgerpb (see `just generate-ledger-proto`) and is
+// synced directly from Ledger's release/v3.0 branch.
 package ledger
 
 import (
@@ -543,8 +543,9 @@ func nextCursorFromTrailer(trailer metadata.MD) string {
 // observed state in an immutable _recon capture (ADR-003).
 func (c *Client) AggregateVolumes(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter) (map[string]*big.Int, error) {
 	resp, err := c.service.AggregateVolumes(ctx, &servicepb.AggregateVolumesRequest{
-		Ledger: ledgerName,
-		Filter: filter,
+		Ledger:         ledgerName,
+		Filter:         filter,
+		CollapseColors: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("aggregate volumes on %s: %w", ledgerName, err)
@@ -552,7 +553,15 @@ func (c *Client) AggregateVolumes(ctx context.Context, ledgerName string, filter
 
 	out := make(map[string]*big.Int, len(resp.GetVolumes()))
 	for _, v := range resp.GetVolumes() {
-		out[v.GetAsset()] = new(big.Int).Sub(v.GetInput().ToBigInt(), v.GetOutput().ToBigInt())
+		if v == nil {
+			continue
+		}
+
+		balance := new(big.Int).Sub(v.GetInput().ToBigInt(), v.GetOutput().ToBigInt())
+		if out[v.GetAsset()] == nil {
+			out[v.GetAsset()] = new(big.Int)
+		}
+		out[v.GetAsset()].Add(out[v.GetAsset()], balance)
 	}
 
 	return out, nil
@@ -561,8 +570,9 @@ func (c *Client) AggregateVolumes(ctx context.Context, ledgerName string, filter
 // GetAccount retrieves an account (volumes + metadata) by address, from live state.
 func (c *Client) GetAccount(ctx context.Context, ledgerName, address string) (*commonpb.Account, error) {
 	acct, err := c.service.GetAccount(ctx, &servicepb.GetAccountRequest{
-		Ledger:  ledgerName,
-		Address: address,
+		Ledger:         ledgerName,
+		Address:        address,
+		CollapseColors: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get account %s@%s: %w", address, ledgerName, err)

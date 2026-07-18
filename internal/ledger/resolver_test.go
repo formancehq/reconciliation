@@ -160,9 +160,10 @@ func TestAccountFromProto(t *testing.T) {
 		Metadata: map[string]*commonpb.MetadataValue{
 			"type": {Type: &commonpb.MetadataValue_StringValue{StringValue: "payout"}},
 		},
-		Volumes: map[string]*commonpb.VolumesWithBalance{
-			"USD/2": {Balance: "100"},
-			"EUR/2": {Input: "70", Output: "20"},
+		Volumes: []*commonpb.AccountVolume{
+			{Asset: "USD/2", Volumes: &commonpb.VolumesWithBalance{Balance: "100"}},
+			{Asset: "USD/2", Color: "RESERVED", Volumes: &commonpb.VolumesWithBalance{Balance: "25"}},
+			{Asset: "EUR/2", Volumes: &commonpb.VolumesWithBalance{Input: "70", Output: "20"}},
 		},
 	}
 
@@ -170,6 +171,6 @@ func TestAccountFromProto(t *testing.T) {
 	require.Equal(t, "acct:1", got.Address)
 	require.Equal(t, "ledgerA", got.Ledger)
 	require.Equal(t, map[string]string{"type": "payout"}, got.Metadata)
-	require.Equal(t, "100", got.Balances["USD/2"].String())
+	require.Equal(t, "125", got.Balances["USD/2"].String())
 	require.Equal(t, "50", got.Balances["EUR/2"].String())
 }

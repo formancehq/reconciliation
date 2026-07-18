@@ -129,16 +129,11 @@ func (r *Reader) ValidateQuery(ctx context.Context, ledgerName string, query jso
 // address, string-flattened metadata, and a per-asset balance derived from each
 // asset's volumes.
 func accountFromProto(ledgerName string, acct *commonpb.Account) Account {
-	balances := make(map[string]*big.Int, len(acct.GetVolumes()))
-	for asset, v := range acct.GetVolumes() {
-		balances[asset] = volumeBalance(v)
-	}
-
 	return Account{
 		Address:  acct.GetAddress(),
 		Ledger:   ledgerName,
 		Metadata: commonpb.MetadataToMap(acct.GetMetadata()),
-		Balances: balances,
+		Balances: commonpb.BalancesByAsset(acct),
 	}
 }
 
@@ -147,27 +142,7 @@ func accountFromProto(ledgerName string, acct *commonpb.Account) Account {
 // arbitrary-precision integers encoded as decimal strings; an empty or
 // unparseable string is treated as 0.
 func volumeBalance(v *commonpb.VolumesWithBalance) *big.Int {
-	if v == nil {
-		return new(big.Int)
-	}
-	if v.GetBalance() != "" {
-		return decimalBig(v.GetBalance())
-	}
-
-	return new(big.Int).Sub(decimalBig(v.GetInput()), decimalBig(v.GetOutput()))
-}
-
-// decimalBig parses a base-10 big.Int, returning 0 for an empty or malformed
-// string (the ledger emits "" for a zero side).
-func decimalBig(s string) *big.Int {
-	if s == "" {
-		return new(big.Int)
-	}
-	if n, ok := new(big.Int).SetString(s, 10); ok {
-		return n
-	}
-
-	return new(big.Int)
+	return commonpb.VolumeBalance(v)
 }
 
 // dataLedgerLeaf maps a data-ledger source predicate (the query DSL a template

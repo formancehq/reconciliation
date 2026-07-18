@@ -130,6 +130,43 @@ func TestIntegration_LiveListAccounts(t *testing.T) {
 	}, 5*time.Second, 25*time.Millisecond)
 }
 
+// TestIntegration_ColorAwareBalances proves compatibility with Ledger v3's
+// repeated (asset, color) volume rows while preserving Reconciliation's current
+// per-asset source semantics.
+func TestIntegration_ColorAwareBalances(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, err := NewClient(itAddr(), nil)
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	ledgerName := "recon-it-color-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(ctx, ledgerName) }()
+	require.NoError(t, client.CreateLedger(ctx, ledgerName, nil, nil, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT))
+
+	const asset = "USD/2"
+	account := "colored:" + uuid.NewString()
+	query := addressQuery(account)
+	reader := NewReader(client)
+
+	writeBalance(ctx, t, client, ledgerName, account, asset, 100)
+	writeColoredBalance(ctx, t, client, ledgerName, account, asset, "RESERVED", 25)
+
+	requireEventualBalance(ctx, t, reader, ledgerName, query, asset, "125")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		accounts, listErr := reader.ListAccounts(ctx, ledgerName, query, 1)
+		if !assert.NoError(c, listErr) || !assert.Len(c, accounts, 1) {
+			return
+		}
+		assert.Equal(c, "125", accounts[0].Balances[asset].String())
+	}, 5*time.Second, 25*time.Millisecond)
+
+	protoAccount, err := client.GetAccount(ctx, ledgerName, account)
+	require.NoError(t, err)
+	require.Equal(t, "125", commonpb.BalanceByAsset(protoAccount, asset).String())
+}
+
 // TestIntegration_MetadataOperators proves the extended query DSL end-to-end
 // against a typed, indexed metadata field: a numeric comparison ($gt) and
 // existence ($exists) select the right account set (AC#1), and ValidateQuery
@@ -237,6 +274,12 @@ func addressQuery(account string) json.RawMessage {
 // writeBalance mints `amount` of asset to account in ledger (world → account).
 func writeBalance(ctx context.Context, t *testing.T, c *Client, ledgerName, account, asset string, amount uint64) {
 	t.Helper()
+	writeColoredBalance(ctx, t, c, ledgerName, account, asset, "", amount)
+}
+
+// writeColoredBalance mints amount into one Ledger color bucket.
+func writeColoredBalance(ctx context.Context, t *testing.T, c *Client, ledgerName, account, asset, color string, amount uint64) {
+	t.Helper()
 
 	_, err := c.Apply(ctx, &servicepb.Request{
 		Type: &servicepb.Request_Apply{
@@ -250,6 +293,7 @@ func writeBalance(ctx context.Context, t *testing.T, c *Client, ledgerName, acco
 								Destination: account,
 								Amount:      commonpb.NewUint256FromUint64(amount),
 								Asset:       asset,
+								Color:       color,
 							}},
 						},
 					},
@@ -257,7 +301,7 @@ func writeBalance(ctx context.Context, t *testing.T, c *Client, ledgerName, acco
 			},
 		},
 	})
-	require.NoError(t, err, "write %d %s to %s@%s", amount, asset, account, ledgerName)
+	require.NoError(t, err, "write %d %s (color %q) to %s@%s", amount, asset, color, account, ledgerName)
 }
 
 // requireEventualBalance retries the live aggregate read until it equals want

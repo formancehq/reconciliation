@@ -45,6 +45,10 @@
             go_1_26
             gotools
             just
+            protobuf
+            protoc-gen-go
+            protoc-gen-go-grpc
+            protoc-gen-go-vtproto
           ];
           unstablePackages = with pkgs-unstable; [
             golangci-lint
