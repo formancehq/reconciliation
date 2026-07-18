@@ -146,6 +146,9 @@ func (e *evalCtx) exchangeRateWithin(args ...ref.Val) ref.Val {
 	if err != nil {
 		return types.NewErr("exchangeRateWithin: resolve base: %v", err)
 	}
+	// Resolve both inputs before applying the undefined-base verdict. The direct
+	// template resolves its full source set first, so later data errors must not
+	// disappear when the stored CEL is replayed.
 	quoteValue, err := e.resolveExactBalance(quote)
 	if err != nil {
 		return types.NewErr("exchangeRateWithin: resolve quote: %v", err)
@@ -177,6 +180,9 @@ func (e *evalCtx) sourceConsensus(args ...ref.Val) ref.Val {
 	}
 
 	var minimum, maximum *big.Int
+	// Missing is a business verdict, not a reason to skip remaining reads. Keep
+	// resolving so a later malformed or over-budget source has the same error
+	// semantics as the direct template path.
 	missing := false
 	for i, balance := range balances {
 		value, present, resolveErr := e.resolveExactBalanceWithPresence(balance)
