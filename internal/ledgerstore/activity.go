@@ -106,8 +106,17 @@ func (s *LedgerStore) ListRuleActivities(ctx context.Context, ruleID uuid.UUID, 
 	}); err != nil {
 		return nil, fmt.Errorf("list activities for rule %s: %w", ruleID, err)
 	}
-	if len(items) == 0 && seenOtherContract {
-		return nil, fmt.Errorf("list activities for rule %s: %w", ruleID, store.ErrNotFound)
+	if len(items) == 0 {
+		if seenOtherContract {
+			return nil, fmt.Errorf("list activities for rule %s: %w", ruleID, store.ErrNotFound)
+		}
+		rule, err := s.GetRule(ctx, ruleID)
+		if err != nil {
+			return nil, err
+		}
+		if version := q.Options.Options.ContractVersion; version != nil && rule.ContractVersion.Effective() != *version {
+			return nil, fmt.Errorf("list activities for rule %s: %w", ruleID, store.ErrNotFound)
+		}
 	}
 	slices.SortFunc(items, func(a, b models.RuleActivity) int {
 		if c := b.OccurredAt.Compare(a.OccurredAt); c != 0 {

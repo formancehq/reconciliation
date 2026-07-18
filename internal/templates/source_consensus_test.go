@@ -154,8 +154,41 @@ func TestV2MetadataSourcesShareEvaluationAccountBudget(t *testing.T) {
 		Tolerance: "0",
 	}
 	_, err = NewSourceConsensus().Evaluate(context.Background(), mustJSON(t, spec), eng, resolvers, engine.EvalInput{})
-	if err == nil || !strings.Contains(err.Error(), "evaluation budget exceeded") {
+	if err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("expected cumulative evaluation budget error, got %v", err)
+	}
+}
+
+func TestV2MetadataSourcesAllowZeroMatchAtExhaustedBudget(t *testing.T) {
+	t.Parallel()
+	const q = `{}`
+	ledger := &fakeLedger{accounts: map[string][]engine.Account{
+		"book|" + q: {{Address: "mirror:book", Metadata: map[string]string{"amount": "10"}}},
+		"bank|" + q: nil,
+	}}
+	resolvers := engine.Resolvers{Ledger: ledger}
+	eng, err := engine.New(resolvers, engine.Limits{MaxAccountsScanned: 1})
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	spec := SourceConsensusSpec{
+		Sources: []V2NamedSource{
+			{ID: "book", Kind: SourceAccountMetadata, Ledger: "book", Query: json.RawMessage(q), MetadataKey: "amount", Asset: "USD/2"},
+			{ID: "bank", Kind: SourceAccountMetadata, Ledger: "bank", Query: json.RawMessage(q), MetadataKey: "amount", Asset: "USD/2"},
+		},
+		Tolerance: "0",
+	}
+
+	outcomes, err := NewSourceConsensus().Evaluate(context.Background(), mustJSON(t, spec), eng, resolvers, engine.EvalInput{})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if outcomes[0].Passed {
+		t.Fatal("zero-match source must fail consensus presence")
+	}
+	missing := outcomes[0].Evidence["missingSources"].([]string)
+	if len(missing) != 1 || missing[0] != "bank" {
+		t.Fatalf("missingSources = %v, want [bank]", missing)
 	}
 }
 

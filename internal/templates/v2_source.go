@@ -114,9 +114,6 @@ func resolveV2Sources(ctx context.Context, sources []V2NamedSource, resolvers en
 func resolveV2Source(ctx context.Context, source V2NamedSource, resolvers engine.Resolvers, limit int) (resolvedV2Source, int, error) {
 	spec := source.sourceSpec()
 	if spec.kind() == SourceAccountMetadata {
-		if limit <= 0 {
-			return resolvedV2Source{}, 0, fmt.Errorf("resolve Source %q: evaluation budget exceeded: scanned at least %d accounts (limit %d)", source.displayLabel(), limit+1, limit)
-		}
 		accounts, err := resolvers.Ledger.ListAccounts(ctx, spec.Ledger, spec.Query, limit)
 		if err != nil {
 			return resolvedV2Source{}, 0, fmt.Errorf("resolve Source %q: %w", source.displayLabel(), err)

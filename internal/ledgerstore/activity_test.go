@@ -55,3 +55,47 @@ func TestListRuleActivitiesHidesOtherContract(t *testing.T) {
 	_, err := New(client, controlLedger).ListRuleActivities(context.Background(), ruleID, q)
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
+
+func TestListRuleActivitiesEmptyStreamRequiresMatchingRule(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		storedRule  *models.Rule
+		query       models.ContractVersion
+		wantMissing bool
+	}{
+		{name: "missing rule", query: models.ContractVersionV2, wantMissing: true},
+		{name: "matching rule", storedRule: newRule(uuid.New()), query: models.ContractVersionV1},
+		{name: "other contract", storedRule: newRule(uuid.New()), query: models.ContractVersionV2, wantMissing: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			client := NewMockledgerClient(ctrl)
+			ruleID := uuid.New()
+			if tt.storedRule != nil {
+				tt.storedRule.ID = ruleID
+			}
+
+			client.EXPECT().ListTransactionsFunc(gomock.Any(), controlLedger, gomock.Any(), gomock.Any()).Return(nil)
+			get := client.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(ruleID.String()))
+			if tt.storedRule == nil {
+				get.Return(nil, notFound())
+			} else {
+				get.Return(account(t, tt.storedRule), nil)
+			}
+
+			q := store.NewGetRuleActivitiesQuery(store.NewPaginatedQueryOptions(store.RuleActivitiesFilters{ContractVersion: &tt.query}))
+			cur, err := New(client, controlLedger).ListRuleActivities(context.Background(), ruleID, q)
+			if tt.wantMissing {
+				require.ErrorIs(t, err, store.ErrNotFound)
+				return
+			}
+			require.NoError(t, err)
+			require.Empty(t, cur.Data)
+		})
+	}
+}

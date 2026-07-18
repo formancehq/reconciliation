@@ -41,9 +41,13 @@ generate-ledger-proto:
         proto/ledger/restore.proto \
         proto/ledger/proposal.proto
 
-# Run tests with race detector and coverage
+# Run hermetic tests with race detector and coverage
 tests:
-    go test -race -covermode atomic -tags it ./...
+    go test -race -covermode atomic ./...
+
+# Run the serial integration suite against a live Ledger v3 on localhost:8888
+tests-integration:
+    go test -race -covermode atomic -tags it -p 1 ./...
 
 # Build the binary locally
 build:

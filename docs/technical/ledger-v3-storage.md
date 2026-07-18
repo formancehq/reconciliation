@@ -148,8 +148,9 @@ multi-source specifications and is isolated by route and persisted contract vers
 
 Storage changes should exercise:
 
-- schema, query-filter, Numscript, provisioner, and LedgerStore unit tests;
-- the serial `it`-tagged suite against Ledger v3;
+- schema, query-filter, Numscript, provisioner, and LedgerStore unit tests with `just tests`;
+- the serial `it`-tagged suite against a live Ledger v3 on `localhost:8888` with
+  `just tests-integration`;
 - a live create, evaluate, alert action, timeline read, and delete flow;
 - restart provisioning against the same control ledger to verify additive idempotency and index
   readiness behavior.
