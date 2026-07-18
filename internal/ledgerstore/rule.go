@@ -111,7 +111,7 @@ func (s *LedgerStore) PatchRule(ctx context.Context, id uuid.UUID, patch store.R
 	if err != nil {
 		return fmt.Errorf("patch rule %s event: %w", id, err)
 	}
-	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{Ledger: s.controlLedger, ScriptName: schema.NumscriptActivity, ScriptVersion: schema.NumscriptVersion, Vars: activityVars(id.String()), TxMetadata: txmd, AccountMetadata: map[string]*commonpb.MetadataMap{schema.RuleAccount(id.String()): {Values: md}}, DeleteMetadata: deletes, IdempotencyKey: alertActionKey("rule-patch", id.String(), rule.Revision)}); err != nil {
+	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{Ledger: s.controlLedger, ScriptName: schema.NumscriptActivity, ScriptVersion: schema.NumscriptVersion, Vars: activityVars(id.String()), TxMetadata: txmd, AccountMetadata: map[string]*commonpb.MetadataMap{schema.RuleAccount(id.String()): {Values: md}}, DeleteMetadata: deletes, IdempotencyKey: uniqueActionKey("rule-patch", id.String(), rule.Revision)}); err != nil {
 		return fmt.Errorf("patch rule %s: %w", id, err)
 	}
 

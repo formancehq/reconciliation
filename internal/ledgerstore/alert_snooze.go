@@ -55,7 +55,7 @@ func (s *LedgerStore) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.
 	if err != nil {
 		return nil, fmt.Errorf("snooze alert %s activity: %w", id, err)
 	}
-	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{Ledger: s.controlLedger, ScriptName: schema.NumscriptActivity, ScriptVersion: schema.NumscriptVersion, Vars: activityVars(alert.RuleID.String()), TxMetadata: txmd, AccountMetadata: map[string]*commonpb.MetadataMap{itemAddr: {Values: md}}, IdempotencyKey: alertActionKey("snooze", id.String(), until.UTC().Format(time.RFC3339Nano))}); err != nil {
+	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{Ledger: s.controlLedger, ScriptName: schema.NumscriptActivity, ScriptVersion: schema.NumscriptVersion, Vars: activityVars(alert.RuleID.String()), TxMetadata: txmd, AccountMetadata: map[string]*commonpb.MetadataMap{itemAddr: {Values: md}}, IdempotencyKey: uniqueActionKey("snooze", id.String(), until.UTC().Format(time.RFC3339Nano))}); err != nil {
 		return nil, fmt.Errorf("snooze alert %s: %w", id, err)
 	}
 

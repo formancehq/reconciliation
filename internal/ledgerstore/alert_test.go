@@ -24,6 +24,14 @@ const testControl = "recon-test"
 // account (so readAlertItem treats it as "no prior alert").
 func notFound() error { return status.Error(codes.NotFound, "account not found") }
 
+func TestUniqueActionKeyDoesNotReuseBusinessIdentity(t *testing.T) {
+	t.Parallel()
+
+	first := uniqueActionKey("rule-patch", "rule", "revision")
+	second := uniqueActionKey("rule-patch", "rule", "revision")
+	require.NotEqual(t, first, second)
+}
+
 // priorAccount builds the item-account snapshot GetAccount would return for an
 // existing alert with the given status/occurrence and optional closure state.
 func priorAccount(t *testing.T, a *models.Alert, occ string) *commonpb.Account {

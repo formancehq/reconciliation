@@ -274,3 +274,11 @@ func alertActionKey(parts ...string) string {
 
 	return hex.EncodeToString(sum[:])
 }
+
+// uniqueActionKey identifies a newly accepted API operation while remaining
+// stable for any transport retry of the resulting CreateTransaction call.
+// Use it when the API has no caller-supplied operation ID and repeating the
+// same business value still represents a new audit event.
+func uniqueActionKey(parts ...string) string {
+	return alertActionKey(append(parts, uuid.NewString())...)
+}
