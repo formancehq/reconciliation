@@ -137,3 +137,37 @@ func TestExchangeRateBounds_BaseZeroIsUndefinedFailure(t *testing.T) {
 		t.Fatal("CEL verdict = pass, want base-zero failure")
 	}
 }
+
+func TestExchangeRateBounds_BaseZeroStillResolvesInvalidQuote(t *testing.T) {
+	t.Parallel()
+	const q = `{}`
+	ledger := &fakeLedger{
+		balances: map[string]map[string]*big.Int{"books|" + q: {"EUR/2": big.NewInt(0)}},
+		accounts: map[string][]engine.Account{"bank|" + q: {{Address: "mirror:bank", Metadata: map[string]string{"amount": "invalid"}}}},
+	}
+	eng, resolvers := newTestEngine(t, ledger)
+	spec := ExchangeRateBoundsSpec{
+		Sources: []V2NamedSource{
+			v2LedgerSource("eur", "books", q, "EUR/2"),
+			{ID: "usd", Kind: SourceAccountMetadata, Ledger: "bank", Query: []byte(q), MetadataKey: "amount", Asset: "USD/2"},
+		},
+		BaseSource: "eur", QuoteSource: "usd",
+		Rate: RateConstraint{Min: "1", Max: "2"},
+	}
+	raw := mustJSON(t, spec)
+	tmpl := NewExchangeRateBounds()
+	if _, err := tmpl.Evaluate(context.Background(), raw, eng, resolvers, engine.EvalInput{}); err == nil {
+		t.Fatal("direct evaluation must reject invalid quote metadata")
+	}
+	expression, err := tmpl.Explain(raw)
+	if err != nil {
+		t.Fatalf("Explain: %v", err)
+	}
+	compiled, err := eng.Compile(expression)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if _, err := eng.Evaluate(context.Background(), compiled, engine.EvalInput{}); err == nil {
+		t.Fatal("CEL evaluation must reject invalid quote metadata")
+	}
+}

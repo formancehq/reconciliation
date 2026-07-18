@@ -146,12 +146,12 @@ func (e *evalCtx) exchangeRateWithin(args ...ref.Val) ref.Val {
 	if err != nil {
 		return types.NewErr("exchangeRateWithin: resolve base: %v", err)
 	}
-	if baseValue.Sign() == 0 {
-		return types.False
-	}
 	quoteValue, err := e.resolveExactBalance(quote)
 	if err != nil {
 		return types.NewErr("exchangeRateWithin: resolve quote: %v", err)
+	}
+	if baseValue.Sign() == 0 {
+		return types.False
 	}
 	observed := new(big.Rat).SetFrac(
 		new(big.Int).Mul(quoteValue, exactPow10(exactAssetPrecision(base.Asset))),
@@ -177,13 +177,15 @@ func (e *evalCtx) sourceConsensus(args ...ref.Val) ref.Val {
 	}
 
 	var minimum, maximum *big.Int
+	missing := false
 	for i, balance := range balances {
 		value, present, resolveErr := e.resolveExactBalanceWithPresence(balance)
 		if resolveErr != nil {
 			return types.NewErr("sourceConsensus: resolve source %d: %v", i, resolveErr)
 		}
 		if !present {
-			return types.False
+			missing = true
+			continue
 		}
 		if minimum == nil || value.Cmp(minimum) < 0 {
 			minimum = new(big.Int).Set(value)
@@ -191,6 +193,9 @@ func (e *evalCtx) sourceConsensus(args ...ref.Val) ref.Val {
 		if maximum == nil || value.Cmp(maximum) > 0 {
 			maximum = new(big.Int).Set(value)
 		}
+	}
+	if missing {
+		return types.False
 	}
 
 	spread := new(big.Int).Sub(maximum, minimum)

@@ -135,6 +135,39 @@ func TestSourceConsensus_EmptyMetadataQueryIsMissing(t *testing.T) {
 	assertTemplateCELMatches(t, NewSourceConsensus(), mustJSON(t, spec), eng, outcomes[0].Passed)
 }
 
+func TestSourceConsensus_MissingSourceStillResolvesLaterInvalidSource(t *testing.T) {
+	t.Parallel()
+	const q = `{}`
+	ledger := &fakeLedger{accounts: map[string][]engine.Account{
+		"book|" + q: nil,
+		"bank|" + q: {{Address: "mirror:bank", Metadata: map[string]string{"amount": "invalid"}}},
+	}}
+	eng, resolvers := newTestEngine(t, ledger)
+	spec := SourceConsensusSpec{
+		Sources: []V2NamedSource{
+			{ID: "book", Kind: SourceAccountMetadata, Ledger: "book", Query: json.RawMessage(q), MetadataKey: "amount", Asset: "USD/2"},
+			{ID: "bank", Kind: SourceAccountMetadata, Ledger: "bank", Query: json.RawMessage(q), MetadataKey: "amount", Asset: "USD/2"},
+		},
+		Tolerance: "0",
+	}
+	raw := mustJSON(t, spec)
+	tmpl := NewSourceConsensus()
+	if _, err := tmpl.Evaluate(context.Background(), raw, eng, resolvers, engine.EvalInput{}); err == nil {
+		t.Fatal("direct evaluation must reject later invalid metadata")
+	}
+	expression, err := tmpl.Explain(raw)
+	if err != nil {
+		t.Fatalf("Explain: %v", err)
+	}
+	compiled, err := eng.Compile(expression)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if _, err := eng.Evaluate(context.Background(), compiled, engine.EvalInput{}); err == nil {
+		t.Fatal("CEL evaluation must reject later invalid metadata")
+	}
+}
+
 func TestV2MetadataSourcesShareEvaluationAccountBudget(t *testing.T) {
 	t.Parallel()
 	const q = `{}`
