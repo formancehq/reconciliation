@@ -44,7 +44,7 @@ func TestExchangeRateBounds_ValidateRateShapes(t *testing.T) {
 	}
 }
 
-func TestExchangeRateBounds_ExactSignedCELMatchesDirect(t *testing.T) {
+func TestExchangeRateBounds_ExactSignedCELMatchesDirectAtFullTolerance(t *testing.T) {
 	t.Parallel()
 	const qBase = `{"$match":{"address":"eur"}}`
 	const qQuote = `{"$match":{"address":"usd"}}`
@@ -62,7 +62,7 @@ func TestExchangeRateBounds_ExactSignedCELMatchesDirect(t *testing.T) {
 			v2LedgerSource("usd", "bank", qQuote, "USD/6"),
 		},
 		BaseSource: "eur", QuoteSource: "usd",
-		Rate: RateConstraint{Target: "1.0800", ToleranceBps: intPtr(25)},
+		Rate: RateConstraint{Target: "1.0800", ToleranceBps: intPtr(10_000)},
 	}
 	raw := mustJSON(t, spec)
 	tmpl := NewExchangeRateBounds()

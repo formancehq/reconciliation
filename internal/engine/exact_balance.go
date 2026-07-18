@@ -134,7 +134,7 @@ func (e *evalCtx) exchangeRateWithin(args ...ref.Val) ref.Val {
 	if !ok {
 		return types.NewErr("exchangeRateWithin: quote must be ExactBalance")
 	}
-	min, err := exactPositiveDecimal(args[2])
+	min, err := exactNonNegativeDecimal(args[2])
 	if err != nil {
 		return types.NewErr("exchangeRateWithin: min: %v", err)
 	}
@@ -212,7 +212,7 @@ func (e *evalCtx) coverageRatioWithin(args ...ref.Val) ref.Val {
 	if denominator.Sign() == 0 {
 		return types.False
 	}
-	minimum, err := exactPositiveDecimal(args[4])
+	minimum, err := exactNonNegativeDecimal(args[4])
 	if err != nil {
 		return types.NewErr("coverageRatioWithin: min: %v", err)
 	}
@@ -303,13 +303,24 @@ func exactNonNegativeInteger(value ref.Val) (*big.Int, error) {
 }
 
 func exactPositiveDecimal(value ref.Val) (*big.Rat, error) {
+	r, err := exactNonNegativeDecimal(value)
+	if err != nil {
+		return nil, err
+	}
+	if r.Sign() == 0 {
+		return nil, fmt.Errorf("must be greater than zero")
+	}
+	return r, nil
+}
+
+func exactNonNegativeDecimal(value ref.Val) (*big.Rat, error) {
 	text, ok := value.Value().(string)
 	if !ok || len(text) > 78 || !exactDecimalPattern.MatchString(text) {
 		return nil, fmt.Errorf("must be a plain decimal string")
 	}
 	r, ok := new(big.Rat).SetString(text)
-	if !ok || r.Sign() <= 0 {
-		return nil, fmt.Errorf("must be greater than zero")
+	if !ok || r.Sign() < 0 {
+		return nil, fmt.Errorf("must be greater than or equal to zero")
 	}
 	return r, nil
 }

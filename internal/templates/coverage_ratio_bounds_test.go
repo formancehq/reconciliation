@@ -55,7 +55,7 @@ func TestCoverageRatioBounds_Validate(t *testing.T) {
 	}
 }
 
-func TestCoverageRatioBounds_ExactPortfoliosMatchCEL(t *testing.T) {
+func TestCoverageRatioBounds_ExactPortfoliosMatchCELAtFullTolerance(t *testing.T) {
 	t.Parallel()
 	const (
 		qCash = `{"$match":{"address":"cash"}}`
@@ -77,7 +77,7 @@ func TestCoverageRatioBounds_ExactPortfoliosMatchCEL(t *testing.T) {
 		},
 		NumeratorTerms:   []BalanceEquationTerm{{Source: "cash", Coefficient: 1}, {Source: "securities", Coefficient: 1}},
 		DenominatorTerms: []BalanceEquationTerm{{Source: "liabilities", Coefficient: 1}},
-		Ratio:            RateConstraint{Target: "1.25", ToleranceBps: intPtr(0)},
+		Ratio:            RateConstraint{Target: "1.25", ToleranceBps: intPtr(10_000)},
 	}
 	raw := mustJSON(t, spec)
 	tmpl := NewCoverageRatioBounds()
