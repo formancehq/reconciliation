@@ -75,7 +75,7 @@ func (e *evalCtx) resolveExactBalanceWithPresence(balance *ExactBalance) (*big.I
 			return nil, false, err
 		}
 		value, err := SumAccountMetadataInt(accounts, balance.MetadataKey)
-		return value, true, err
+		return value, len(accounts) > 0, err
 	}
 	balances, err := e.resolveBalances(balance.Source)
 	if err != nil {

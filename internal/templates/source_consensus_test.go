@@ -132,6 +132,7 @@ func TestSourceConsensus_EmptyMetadataQueryIsMissing(t *testing.T) {
 	if len(missing) != 1 || missing[0] != "bank" {
 		t.Fatalf("missingSources = %v, want [bank]", missing)
 	}
+	assertTemplateCELMatches(t, NewSourceConsensus(), mustJSON(t, spec), eng, outcomes[0].Passed)
 }
 
 func TestV2MetadataSourcesShareEvaluationAccountBudget(t *testing.T) {
