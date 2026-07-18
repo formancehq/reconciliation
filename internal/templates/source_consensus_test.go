@@ -158,6 +158,18 @@ func TestV2MetadataSourcesShareEvaluationAccountBudget(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("expected cumulative evaluation budget error, got %v", err)
 	}
+	expression, err := NewSourceConsensus().Explain(mustJSON(t, spec))
+	if err != nil {
+		t.Fatalf("Explain: %v", err)
+	}
+	compiled, err := eng.Compile(expression)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	_, err = eng.Evaluate(context.Background(), compiled, engine.EvalInput{})
+	if err == nil || !strings.Contains(err.Error(), "budget") {
+		t.Fatalf("expected cumulative CEL evaluation budget error, got %v", err)
+	}
 }
 
 func TestV2MetadataSourcesAllowZeroMatchAtExhaustedBudget(t *testing.T) {

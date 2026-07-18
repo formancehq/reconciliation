@@ -70,7 +70,7 @@ func (e *evalCtx) resolveExactBalanceWithPresence(balance *ExactBalance) (*big.I
 		if e.resolvers.Ledger == nil {
 			return nil, false, fmt.Errorf("ledger resolver not configured")
 		}
-		accounts, err := e.resolvers.Ledger.ListAccounts(e.ctx, balance.Source.Ledger, balance.Source.Query, e.budget.limits.MaxAccountsScanned)
+		accounts, err := e.listAccounts(balance.Source)
 		if err != nil {
 			return nil, false, err
 		}

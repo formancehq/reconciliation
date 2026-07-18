@@ -321,7 +321,7 @@ func (e *evalCtx) metadataIntSum(src, key ref.Val) ref.Val {
 	if e.resolvers.Ledger == nil {
 		return types.NewErr("metadataInt: ledger resolver not configured")
 	}
-	accts, err := e.resolvers.Ledger.ListAccounts(e.ctx, s.Ledger, s.Query, e.budget.limits.MaxAccountsScanned)
+	accts, err := e.listAccounts(s)
 	if err != nil {
 		return types.NewErr("metadataInt(%s): %v", k, err)
 	}
@@ -330,6 +330,17 @@ func (e *evalCtx) metadataIntSum(src, key ref.Val) ref.Val {
 		return types.NewErr("metadataInt(%s): %v", k, err)
 	}
 	return bigIntToInt(total)
+}
+
+func (e *evalCtx) listAccounts(source *Source) ([]Account, error) {
+	accounts, err := e.resolvers.Ledger.ListAccounts(e.ctx, source.Ledger, source.Query, e.budget.RemainingAccounts())
+	if err != nil {
+		return nil, err
+	}
+	if err := e.budget.ChargeAccounts(len(accounts)); err != nil {
+		return nil, err
+	}
+	return accounts, nil
 }
 
 // SumAccountMetadataInt sums the base-10 integer metadata field `key` across the

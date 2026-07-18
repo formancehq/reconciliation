@@ -56,8 +56,8 @@ func mergeLimits(override, defaults Limits) Limits {
 // budgetTracker is the per-evaluation accumulator. Resolvers call its methods
 // before doing work; the engine reads .Cost() into the persisted evaluation row.
 type budgetTracker struct {
-	limits           Limits
-	accountsScanned  atomic.Int64
+	limits          Limits
+	accountsScanned atomic.Int64
 }
 
 func newBudgetTracker(limits Limits) *budgetTracker {
@@ -76,6 +76,16 @@ func (b *budgetTracker) ChargeAccounts(n int) error {
 		return fmt.Errorf("evaluation budget exceeded: scanned %d accounts (limit %d)", total, b.limits.MaxAccountsScanned)
 	}
 	return nil
+}
+
+// RemainingAccounts returns the number of accounts another resolver call may
+// scan without exceeding the shared per-evaluation limit.
+func (b *budgetTracker) RemainingAccounts() int {
+	remaining := b.limits.MaxAccountsScanned - int(b.accountsScanned.Load())
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }
 
 // AccountsScanned returns the running total — used to populate
