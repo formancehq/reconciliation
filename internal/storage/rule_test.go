@@ -15,13 +15,13 @@ import (
 
 func makeRule(name string) *models.Rule {
 	return &models.Rule{
-		ID:           uuid.New(),
-		Name:         name,
-		TemplateKind: models.TemplateLedgerInvariant,
-		TemplateSpec: json.RawMessage(`{}`),
-		CompiledCEL:  "true",
-		Enabled:      true,
-		Severity:     models.SeverityHigh,
+		ID:             uuid.New(),
+		Name:           name,
+		TemplateKind:   models.TemplateLedgerInvariant,
+		TemplateSpec:   json.RawMessage(`{}`),
+		ExplanationCEL: "true",
+		Enabled:        true,
+		Severity:       models.SeverityHigh,
 	}
 }
 

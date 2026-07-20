@@ -1,20 +1,22 @@
-# ADR-001 — Engine kernel: CEL over a typed object model
+# ADR-001 — CEL verdict kernel behind typed templates
 
 **Status:** Accepted (implemented in [`internal/engine/`](../../internal/engine/))
 **Linked from:** [PRD §5](./README.md), [architecture.md](../technical/architecture.md)
-**Last updated:** 2026-06-17
+**Last updated:** 2026-07-20
 
 ---
 
 ## 1. Decision in one sentence
 
-The reconciliation rule engine's evaluation core is **Google's Common Expression Language (CEL) bound to a typed object model**, with `Source` as a first-class abstraction and resolvers (`LedgerSet`, `PaymentsPool`, `LedgerPostings`) registered as runtime backends.
+V1 rules are **typed templates** whose evaluators read each source once at its
+effective PIT, discover the fingerprint universe, and run bounded Google Common
+Expression Language (CEL) verdicts over the resulting immutable snapshot.
 
 ---
 
 ## 2. Why this is on the table
 
-The current implementation hardcodes one rule shape: ledger metadata query vs payments pool, drift == 0, per asset. Generalizing to N customer asks, N source kinds, and N predicates requires deciding **how a rule is represented** before we ship anything.
+The legacy implementation hardcodes one rule shape: ledger metadata query vs payments pool, drift == 0, per asset. Generalizing to N customer asks, N source kinds, and N predicates requires deciding **how a rule is represented** before we ship anything.
 
 That decision is hard to revisit. Once customers author rules — especially in EE+ power-mode where they reference builtin names — renaming or restructuring breaks contracts. Pick once, live with it.
 
@@ -24,8 +26,8 @@ That decision is hard to revisit. Once customers author rules — especially in 
 
 | #  | Requirement                                                                                  | Type   |
 | -- | -------------------------------------------------------------------------------------------- | ------ |
-| 1  | **Safety** — customer expressions cannot DOS the engine, access I/O, or fail to terminate    | must   |
-| 2  | **Static type-check** — bad expressions caught at rule-creation, not at 3 AM                  | must   |
+| 1  | **Safety** — generated verdicts cannot DOS the engine, access I/O, or fail to terminate       | must   |
+| 2  | **Early validation** — bad customer-authored template specs are rejected at rule creation     | must   |
 | 3  | **Ergonomic authoring** — GitOps (YAML), one-line readable, diffable in PRs                  | must   |
 | 4  | **Extensibility** — new sources & functions land without re-shaping the public API           | must   |
 | 5  | **Mature runtime** — we don't maintain a parser/evaluator from scratch                       | must   |
@@ -91,7 +93,10 @@ when: |
 # Numscript is a posting language, not a predicate language.
 ```
 
-Read them side by side. **C is the only option that's safe, typed, one-line, and uses a runtime we don't maintain.**
+Read them side by side. CEL is the only verdict language here that is safe,
+typed, compact, and backed by a runtime we do not maintain. V1 nevertheless
+keeps typed templates as the authoring interface: the selected design is A at
+the public seam and C inside each template's verdict implementation.
 
 ---
 
@@ -99,9 +104,9 @@ Read them side by side. **C is the only option that's safe, typed, one-line, and
 
 | Opt | Safe? | Typed? | YAML-friendly? | Extensible | Mature impl? | Verdict |
 | --- | ----- | ------ | -------------- | ---------- | ------------ | ------- |
-| **A** Typed Go structs only | ✅ | ✅ | medium | engine PR per new rule type | ✅ (ours) | Fails (4) — every customer ask = engine PR |
+| **A** Typed Go structs only | ✅ | ✅ | medium | engine PR per new rule type | ✅ (ours) | **Chosen for V1 authoring**, insufficient as the verdict runtime alone |
 | **B** JSON-AST (we evaluate) | ✅ | medium | poor (verbose) | ✅ | we'd own it | Bad ergonomics + bus factor |
-| **C** CEL (`cel-go`) | ✅ | ✅ static | ✅ | ✅ (custom builtins) | ✅ (Google) | **Chosen** |
+| **C** CEL (`cel-go`) | ✅ | ✅ static | ✅ | ✅ (custom builtins) | ✅ (Google) | **Chosen for the internal verdict kernel** |
 | **D** Rego / OPA | ✅ | medium | poor (Datalog) | ✅ | ✅ (OPA) | Wrong abstraction for numeric predicates |
 | **E** Starlark / Lua / Tengo | partial | ❌ | medium | ✅ | ✅ | Loops + unbounded compute = wrong shape |
 | **F** Numscript extension | depends | partial | medium | partial | partial | Mutates Numscript's identity |
@@ -110,12 +115,12 @@ Read them side by side. **C is the only option that's safe, typed, one-line, and
 
 ---
 
-## 6. Why CEL specifically
+## 6. Why CEL for verdicts
 
 1. **Safety is built in, not enforced by a library.** No I/O. No loops. Guaranteed termination. cel-go exposes a cost-limit API per evaluation.
-2. **Statically typed**, with type-checking at *rule-creation time*. `balance("foo") + "bar"` gets a 400 at `POST /rules`, not a stack trace at 3 AM.
+2. **Statically typed.** V1 validates the representative expression at rule creation and compiles every generated snapshot expression before execution. A future raw-CEL interface must type-check customer expressions at its own write boundary.
 3. **One-line readable in YAML.** Reviewable in a PR.
-4. **Custom functions are first-class.** Registering `balance(source) → int`, `lastActivity(source) → timestamp`, etc., is the supported extension model — not a hack on top.
+4. **Custom functions are first-class.** Source-shaped explanations use the same typed vocabulary that a future, separately versioned raw-CEL mode may expose.
 5. **Production-grade Go runtime we don't maintain.** cel-go is used by Kubernetes admission controllers, Envoy, GCP IAM, Cerbos. Google won't drop it.
 6. **C-family syntax** — engineers parse it on first read. No tutorial.
 
@@ -123,9 +128,12 @@ Read them side by side. **C is the only option that's safe, typed, one-line, and
 
 ## 7. The typed object model
 
-CEL is only as good as the types it reasons about. The object model **is the actual product surface** — once customers write expressions against these types, renaming is a breaking change.
+CEL is only as good as the types it reasons about. In V1, the typed template
+specification is the product surface and the source-shaped CEL vocabulary is an
+internal explanation format. If raw CEL power mode is exposed after GA, this
+object model becomes a customer-facing compatibility contract.
 
-### V1 types
+### Candidate raw-CEL types (not a V1 GA interface)
 
 ```ts
 type Source = LedgerSet | PaymentsPool | LedgerPostings
@@ -147,7 +155,7 @@ type Account = {
 type Posting = { txID: string, source: string, destination: string, asset: string, amount: int, at: timestamp }
 ```
 
-### V1 builtins
+### Candidate raw-CEL builtins (not a V1 GA interface)
 
 ```ts
 ledgerSet(ledger: string, query: string|map): Source
@@ -174,8 +182,8 @@ accounts.exists(a, <predicate>)                   // V1.1
 
 ## 8. What CEL is *not* good at (honest limitations)
 
-- **No stateful computation across evaluations.** Want "alert when balance drops 10% WoW"? We provide a `previousBalance(source, "1w")` builtin and the kernel resolves it.
-- **No iteration beyond bounded comprehensions.** No `while`, no recursion. If we need that, we extend the object model with the right pre-computed shape — not the language.
+- **No stateful computation across evaluations.** A future rule such as "alert when balance drops 10% WoW" must receive prior state through a template-owned resolver or an explicitly designed builtin; V1 does not provide one implicitly.
+- **No iteration beyond bounded comprehensions.** No `while`, no recursion. V1 templates perform bounded fingerprint expansion before entering CEL rather than embedding unbounded discovery in the language.
 - **Limited string manipulation.** Adequate for our domain.
 - **No multi-rule correlation.** Each rule evaluates in isolation; cross-rule patterns live in the alert layer.
 
@@ -195,10 +203,10 @@ Scope discipline for V1: CEL stays internal-only, templates are the public API, 
 
 ### Other commitments
 
-1. **A stable CEL builtin namespace.** Renames are breaking changes for EE+ customers. Versioning policy, deprecation cycle, naming review for additions — same rigor as a REST API.
+1. **An internal CEL builtin namespace for V1.** It is covered by compatibility tests but is not a customer contract until raw CEL power mode is explicitly shipped. At that point, renames require a versioning and deprecation policy.
 2. **An eval budget.** Per-evaluation hard ceilings on CEL cost, accounts scanned, wall-clock. Budget exceeded → evaluation errors, raises a meta-alert.
-3. **Two API surfaces.** Templates (typed structs in OpenAPI) compile down to CEL. Power-mode raw CEL for the 20%.
-4. **A compiler from template specs to CEL strings.** Each catalog entry has a deterministic `compile(spec) → cel_expression`. The compiled string is **stored on the rule** for debuggability.
+3. **One V1 API surface.** Typed templates are the only GA authoring interface. Raw CEL remains a future, separately versioned power mode rather than an implicit property of V1 rules.
+4. **One executable source of truth.** `template_spec` plus the versioned template implementation define behavior. `explanation_cel` is a deterministic representative expression for humans; it is never loaded as a runtime program. Each evaluation stores the exact source-shaped expression and observed values for every fingerprint in its evidence.
 
 ---
 
@@ -218,27 +226,37 @@ We would **not** revisit because (a) a customer wants a feature CEL can't expres
 ```text
 POST /rules { template: "ledger_invariant", spec: {…} }
   │
-  ├─ template compiler:   spec  →  CEL string
-  ├─ CEL parser:          CEL   →  AST
-  ├─ CEL type-checker:    AST against typed object model
-  │                       → reject at create time on type mismatch
-  └─ persist { rule, compiled_cel, ast_hash, compiled_program (cached) }
+  ├─ validate typed template spec
+  ├─ Explain(spec) → representative CEL
+  ├─ parse + type-check the representative shape
+  └─ persist { rule, template_spec, explanation_cel }
 
 
-Scheduler tick
+API or worker evaluation
   │
-  ├─ load rule + cached compiled program
-  ├─ build eval context: bind now(), bind source resolvers
-  ├─ cel.Eval(program, ctx) under cost budget
-  │     ├─ CEL hits balance(ledgerSet(…))
-  │     ├─ kernel asks LedgerSet resolver → returns Balance
-  │     │      (memoized within this eval context)
-  │     └─ CEL evaluates arithmetic / comparison → bool
-  ├─ persist Evaluation { result, cost, evidence, duration }
+  ├─ load rule.template_spec
+  ├─ resolve each source once at its effective PIT
+  ├─ discover the asset/account fingerprint universe
+  ├─ for each fingerprint
+  │     ├─ render source-shaped CEL for evidence
+  │     └─ render equivalent CEL over immutable snapshot values
+  ├─ Engine.EvaluateBatch(snapshot expressions)
+  │     └─ enforce one cumulative CEL cost + wall-clock budget
+  ├─ persist Evaluation { result, cost, PITs, evidence, duration }
   └─ if FAIL → Alert layer (fingerprint, open/update/notify; append AlertEvent)
 ```
 
-The kernel's Go code in the runtime path is ~200 lines. Everything else is template compilers, resolvers, scheduler, alert layer. **Small kernel, large composable periphery** — that's the bet.
+Remote I/O deliberately stays outside CEL. This prevents repeated resolver calls
+and time-of-check/time-of-use drift inside one verdict, while allowing templates
+to discover assets and accounts that were not known when the rule was created.
+The source-shaped and snapshot expressions are kept equivalent by kernel-parity
+tests.
+
+The kernel's Go code in the runtime path remains small; templates own source
+resolution and fingerprint expansion behind the `Evaluator` interface. A future
+performance optimization may cache compiled snapshot expression shapes, but it
+must not make a persisted explanation string executable or move hidden network
+I/O back into CEL.
 
 ---
 

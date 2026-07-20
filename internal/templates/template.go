@@ -1,6 +1,6 @@
 // Package templates is the V1 GA public-API surface for rules. Each Evaluator
-// owns a typed spec, a validator, a representative compiler (for the
-// rule.compiled_cel explainability field), and an end-to-end evaluation flow
+// owns a typed spec, a validator, a representative renderer (for the
+// rule.explanation_cel field), and an end-to-end evaluation flow
 // that produces one Outcome per fingerprint axis (typically per-asset).
 //
 // Templates are the entire customer-facing surface at V1 GA — raw CEL is
@@ -57,7 +57,7 @@ type Evaluator interface {
 	// (wrapped) on failure; the API layer surfaces these as 400 VALIDATION.
 	Validate(spec json.RawMessage) error
 
-	// Explain returns a representative CEL string for the rule.compiled_cel
+	// Explain returns a representative CEL string for the rule.explanation_cel
 	// column. This is NOT necessarily the exact expression run at evaluation
 	// time — for templates that fan out per asset/account, Explain returns
 	// the canonical shape for a single fingerprint. Used by fctl + the

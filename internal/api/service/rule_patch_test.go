@@ -30,11 +30,11 @@ func (s *blockingRuleReadStore) GetRule(ctx context.Context, id uuid.UUID) (*mod
 	return rule, nil
 }
 
-// TestPatchRule_RederivesCompiledCELOnSpecChange — when a patch changes the
+// TestPatchRule_RederivesExplanationCELOnSpecChange — when a patch changes the
 // template spec, PatchRule must re-validate it against the template and
-// rederive compiled_cel, so the persisted explanation stays truthful. A patch
+// rederive explanation_cel, so the persisted explanation stays truthful. A patch
 // that leaves the template surface alone must not touch it.
-func TestPatchRule_RederivesCompiledCELOnSpecChange(t *testing.T) {
+func TestPatchRule_RederivesExplanationCELOnSpecChange(t *testing.T) {
 	svc, _ := newOrchestrationService(t, &orchestrationLedger{}, &orchestrationPayments{})
 	ctx := context.Background()
 
@@ -46,12 +46,12 @@ func TestPatchRule_RederivesCompiledCELOnSpecChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRule: %v", err)
 	}
-	oldCEL := created.CompiledCEL
+	oldCEL := created.ExplanationCEL
 	if !strings.Contains(oldCEL, "100") {
-		t.Fatalf("baseline compiled_cel should mention the 100 bound: %q", oldCEL)
+		t.Fatalf("baseline explanation_cel should mention the 100 bound: %q", oldCEL)
 	}
 
-	t.Run("spec change rederives compiled_cel", func(t *testing.T) {
+	t.Run("spec change rederives explanation_cel", func(t *testing.T) {
 		newSpec := json.RawMessage(`{"ledger":"main","query":{},"mode":"aggregate","bounds":{"USD/2":{"min":500}}}`)
 		if err := svc.PatchRule(ctx, created.ID, storage.RulePatch{TemplateSpec: newSpec}); err != nil {
 			t.Fatalf("PatchRule: %v", err)
@@ -60,11 +60,11 @@ func TestPatchRule_RederivesCompiledCELOnSpecChange(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetRule: %v", err)
 		}
-		if updated.CompiledCEL == oldCEL {
-			t.Errorf("compiled_cel not rederived after spec change (still %q)", updated.CompiledCEL)
+		if updated.ExplanationCEL == oldCEL {
+			t.Errorf("explanation_cel not rederived after spec change (still %q)", updated.ExplanationCEL)
 		}
-		if !strings.Contains(updated.CompiledCEL, "500") {
-			t.Errorf("rederived compiled_cel should reflect the new 500 bound: %q", updated.CompiledCEL)
+		if !strings.Contains(updated.ExplanationCEL, "500") {
+			t.Errorf("rederived explanation_cel should reflect the new 500 bound: %q", updated.ExplanationCEL)
 		}
 	})
 
@@ -80,8 +80,8 @@ func TestPatchRule_RederivesCompiledCELOnSpecChange(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetRule: %v", err)
 		}
-		if !strings.Contains(got.CompiledCEL, "500") {
-			t.Errorf("rejected patch should not have mutated compiled_cel: %q", got.CompiledCEL)
+		if !strings.Contains(got.ExplanationCEL, "500") {
+			t.Errorf("rejected patch should not have mutated explanation_cel: %q", got.ExplanationCEL)
 		}
 	})
 }
@@ -134,7 +134,7 @@ func TestPatchRule_RejectsConcurrentRevisionAfterTemplateValidationRead(t *testi
 	if stored.Name != concurrentName {
 		t.Fatalf("concurrent patch was lost: name = %q", stored.Name)
 	}
-	if strings.Contains(stored.CompiledCEL, "500") {
-		t.Fatalf("stale template patch must not persist compiled CEL: %q", stored.CompiledCEL)
+	if strings.Contains(stored.ExplanationCEL, "500") {
+		t.Fatalf("stale template patch must not persist explanation CEL: %q", stored.ExplanationCEL)
 	}
 }

@@ -82,7 +82,7 @@ func fingerprintFor(pairs ...string) string {
 
 // sortedKeys returns the keys of a map[string]V in lexicographic order. Used
 // to keep CEL-string generation and Outcome iteration order deterministic so
-// fingerprints and rule.compiled_cel are stable across runs.
+// fingerprints and rule.explanation_cel are stable across runs.
 func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

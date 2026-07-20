@@ -60,10 +60,10 @@ func (e *Engine) MaxAccountsScanned() int { return e.limits.MaxAccountsScanned }
 // entering the kernel included — not just each kernel Evaluate call.
 func (e *Engine) MaxWallClock() time.Duration { return e.limits.MaxWallClock }
 
-// Compiled is a validated rule expression. Stored on the Rule row as
-// `compiled_cel` for explainability. Compiled is intentionally a value type
-// holding only the source string — re-parsing per evaluation is cheap and
-// avoids the env-binding coupling between compile and eval.
+// Compiled is a validated runtime expression. It is intentionally a value type
+// holding only the source string — re-parsing per evaluation avoids the
+// env-binding coupling between compile and eval. Rule rows persist a separate
+// representative `explanation_cel`; it is not a runtime program.
 type Compiled struct {
 	Source string
 }

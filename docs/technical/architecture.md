@@ -121,7 +121,7 @@ erDiagram
         text name
         text template_kind
         jsonb template_spec
-        text compiled_cel
+        text explanation_cel
         bool enabled
         text severity
         text cadence "continuous|daily|weekly|monthly"

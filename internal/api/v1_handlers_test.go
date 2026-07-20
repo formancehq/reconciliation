@@ -37,16 +37,16 @@ func TestCreateRule_Nominal(t *testing.T) {
 		Severity:     models.SeverityHigh,
 	}
 	resp := &models.Rule{
-		ID:           uuid.New(),
-		Name:         req.Name,
-		TemplateKind: req.TemplateKind,
-		TemplateSpec: req.TemplateSpec,
-		CompiledCEL:  `abs(...) <= 0`,
-		Enabled:      true,
-		Severity:     req.Severity,
-		Cadence:      models.CadenceMonthly,
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		ID:             uuid.New(),
+		Name:           req.Name,
+		TemplateKind:   req.TemplateKind,
+		TemplateSpec:   req.TemplateSpec,
+		ExplanationCEL: `abs(...) <= 0`,
+		Enabled:        true,
+		Severity:       req.Severity,
+		Cadence:        models.CadenceMonthly,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
 	}
 	mockSvc.EXPECT().CreateRule(gomock.Any(), req).Return(resp, nil)
 
@@ -56,10 +56,12 @@ func TestCreateRule_Nominal(t *testing.T) {
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Contains(t, rec.Body.String(), `"explanationCEL"`)
+	require.NotContains(t, rec.Body.String(), `"compiledCEL"`)
 	var got sharedapi.BaseResponse[ruleResponse]
 	sharedapi.Decode(t, rec.Body, &got)
 	require.Equal(t, resp.ID.String(), got.Data.ID)
-	require.Equal(t, resp.CompiledCEL, got.Data.CompiledCEL)
+	require.Equal(t, resp.ExplanationCEL, got.Data.ExplanationCEL)
 	require.Equal(t, "monthly", got.Data.Cadence, "rule response must expose cadence")
 }
 

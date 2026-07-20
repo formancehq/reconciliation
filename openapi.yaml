@@ -838,7 +838,9 @@ components:
         templateSpec:
           type: object
           additionalProperties: true
-        compiledCEL: { type: string }
+        explanationCEL:
+          type: string
+          description: Representative CEL for human explanation; not the runtime program.
         enabled: { type: boolean }
         severity: { $ref: '#/components/schemas/Severity' }
         cadence: { $ref: '#/components/schemas/Cadence' }

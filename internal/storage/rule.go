@@ -13,8 +13,9 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// CreateRule inserts a new rule. compiled_cel must already be populated by the
-// service layer (template Explain output) — the storage layer doesn't compile.
+// CreateRule inserts a new rule. explanation_cel must already be populated by
+// the service layer (template Explain output) — the storage layer doesn't
+// render or compile it.
 func (s *Storage) CreateRule(ctx context.Context, rule *models.Rule) error {
 	// Storage invariant: cadence is never empty in the DB (the rule_cadence_chk
 	// CHECK rejects ''). Default the zero value so direct inserts are safe even
@@ -92,15 +93,15 @@ func (s *Storage) DeleteRule(ctx context.Context, id uuid.UUID) error {
 // left unchanged. Mutating template_kind or template_spec requires re-validation
 // by the service layer before this is called.
 type RulePatch struct {
-	Name          *string
-	TemplateKind  *models.TemplateKind
-	TemplateSpec  []byte
-	CompiledCEL   *string
-	Enabled       *bool
-	Severity      *models.Severity
-	Schedule      *models.Schedule
-	Notifications *[]string
-	Labels        *map[string]string
+	Name           *string
+	TemplateKind   *models.TemplateKind
+	TemplateSpec   []byte
+	ExplanationCEL *string
+	Enabled        *bool
+	Severity       *models.Severity
+	Schedule       *models.Schedule
+	Notifications  *[]string
+	Labels         *map[string]string
 	// ExpectedRevision fences service-layer validation that was derived from a
 	// prior read. It is intentionally not part of the public PATCH payload.
 	ExpectedRevision *int64
@@ -130,8 +131,8 @@ func (s *Storage) patchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 		q = q.Set("template_spec = ?", patch.TemplateSpec)
 		touched = true
 	}
-	if patch.CompiledCEL != nil {
-		q = q.Set("compiled_cel = ?", *patch.CompiledCEL)
+	if patch.ExplanationCEL != nil {
+		q = q.Set("explanation_cel = ?", *patch.ExplanationCEL)
 		touched = true
 	}
 	if patch.Enabled != nil {

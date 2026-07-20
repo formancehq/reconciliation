@@ -1,6 +1,6 @@
 # V1 GA Template Catalog
 
-Templates are the **entire public V1 GA surface** — raw CEL is internal-only (see [ADR-001](../prd/adr-001-cel-kernel.md)). Each template is a typed spec, a validator, an explainer (for the persisted `compiled_cel`), and an end-to-end evaluator that produces one `Outcome` per fingerprint axis (per-asset for V1 GA).
+Templates are the **entire public V1 GA surface** — raw CEL is internal-only (see [ADR-001](../prd/adr-001-cel-kernel.md)). Each template is a typed spec, a validator, an explainer (for the persisted `explanation_cel`), and an end-to-end evaluator that produces one `Outcome` per fingerprint axis (per-asset for V1 GA).
 
 > Status: all four templates are ✅ shipped in [internal/templates/](../../internal/templates/), including `account_threshold` per-account mode.
 
@@ -12,7 +12,7 @@ Templates are the **entire public V1 GA surface** — raw CEL is internal-only (
 flowchart LR
     Spec[Typed Spec] --> Validate
     Spec --> Explain[Explain → representative CEL]
-    Explain --> Persist[Saved to rule.compiled_cel]
+    Explain --> Persist[Saved to rule.explanation_cel]
     Spec --> Evaluate
     Evaluate --> Scout[Scout via SDK resolvers]
     Scout --> Universe[Determine fingerprint axis\n(asset universe)]
@@ -28,7 +28,7 @@ flowchart LR
 Every template:
 
 1. **Validates** the spec at rule-create time. Failures return `ErrInvalidSpec` (→ HTTP 400).
-2. **Explains** itself — produces a representative CEL string for `rule.compiled_cel`. Not executed at runtime.
+2. **Explains** itself — produces a representative CEL string for `rule.explanation_cel`. Not executed at runtime.
 3. **Scouts** the asset universe at evaluation time (queries resolvers).
 4. **Evaluates** per asset through CEL over the already-scouted snapshot values. All fingerprints share one wall-clock deadline and CEL-cost budget; no Ledger or Payments read is repeated.
 5. **Returns `EvaluationResult`** — outcomes plus the PIT actually used per source and cumulative CEL runtime cost.
@@ -293,7 +293,7 @@ func (*MyTemplate) Validate(spec json.RawMessage) error {
 }
 
 func (*MyTemplate) Explain(spec json.RawMessage) (string, error) {
-    // Return a representative CEL string for rule.compiled_cel.
+    // Return a representative CEL string for rule.explanation_cel.
 }
 
 func (*MyTemplate) Evaluate(ctx, spec, eng, resolvers, in) (*EvaluationResult, error) {

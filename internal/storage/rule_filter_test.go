@@ -18,14 +18,14 @@ func TestListRules_FilterEnabledCron(t *testing.T) {
 
 	mk := func(name string, enabled bool, sched *models.Schedule) {
 		require.NoError(t, s.CreateRule(ctx, &models.Rule{
-			ID:           uuid.New(),
-			Name:         name,
-			TemplateKind: models.TemplateLedgerInvariant,
-			TemplateSpec: json.RawMessage(`{}`),
-			CompiledCEL:  "true",
-			Enabled:      enabled,
-			Severity:     models.SeverityHigh,
-			Schedule:     sched,
+			ID:             uuid.New(),
+			Name:           name,
+			TemplateKind:   models.TemplateLedgerInvariant,
+			TemplateSpec:   json.RawMessage(`{}`),
+			ExplanationCEL: "true",
+			Enabled:        enabled,
+			Severity:       models.SeverityHigh,
+			Schedule:       sched,
 		}))
 	}
 	cron := func() *models.Schedule { return &models.Schedule{Kind: models.ScheduleCron, Expr: "* * * * *"} }

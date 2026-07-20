@@ -210,22 +210,23 @@ func (s *Schedule) Next(after time.Time) (time.Time, error) {
 }
 
 // Rule is the customer-facing entity: a template + spec + schedule + delivery.
-// The compiled CEL is persisted for explainability and to support post-GA raw
-// expression mode without recompiling on every load.
+// TemplateSpec is the executable source of truth. ExplanationCEL is a
+// representative, human-readable expression and is never loaded for runtime
+// evaluation.
 type Rule struct {
 	bun.BaseModel `bun:"reconciliations.rule" json:"-"`
 
-	ID            uuid.UUID         `bun:",pk,nullzero"           json:"id"`
-	Name          string            `bun:",notnull"               json:"name"`
-	TemplateKind  TemplateKind      `bun:"template_kind,notnull"  json:"templateKind"`
-	TemplateSpec  json.RawMessage   `bun:"template_spec,type:jsonb,notnull" json:"templateSpec"`
-	CompiledCEL   string            `bun:"compiled_cel,notnull"   json:"compiledCEL,omitempty"`
-	Enabled       bool              `bun:",notnull"               json:"enabled"`
-	Severity      Severity          `bun:",notnull"               json:"severity"`
-	Cadence       Cadence           `bun:",notnull"               json:"cadence"`
-	Schedule      *Schedule         `bun:",type:jsonb"            json:"schedule,omitempty"`
-	Notifications []string          `bun:",type:jsonb"            json:"notifications,omitempty"`
-	Labels        map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`
+	ID             uuid.UUID         `bun:",pk,nullzero"           json:"id"`
+	Name           string            `bun:",notnull"               json:"name"`
+	TemplateKind   TemplateKind      `bun:"template_kind,notnull"  json:"templateKind"`
+	TemplateSpec   json.RawMessage   `bun:"template_spec,type:jsonb,notnull" json:"templateSpec"`
+	ExplanationCEL string            `bun:"explanation_cel,notnull" json:"explanationCEL,omitempty"`
+	Enabled        bool              `bun:",notnull"               json:"enabled"`
+	Severity       Severity          `bun:",notnull"               json:"severity"`
+	Cadence        Cadence           `bun:",notnull"               json:"cadence"`
+	Schedule       *Schedule         `bun:",type:jsonb"            json:"schedule,omitempty"`
+	Notifications  []string          `bun:",type:jsonb"            json:"notifications,omitempty"`
+	Labels         map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`
 	// Revision is incremented for every material rule update. Scheduled jobs
 	// capture it and are fenced at commit time so work computed from an old rule
 	// definition can never overwrite results from the current one.

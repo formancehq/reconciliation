@@ -32,8 +32,8 @@ sequenceDiagram
         Svc-->>U: 400 VALIDATION
     end
     Svc->>Reg: evaluator.Explain(spec) → representative CEL
-    Reg-->>Svc: compiledCEL
-    Svc->>Eng: Compile(compiledCEL)  (sanity-check it parses)
+    Reg-->>Svc: explanationCEL
+    Svc->>Eng: Compile(explanationCEL)  (sanity-check it parses)
     Eng-->>Svc: ok
     Svc->>DB: INSERT INTO reconciliations.rule
     DB-->>Svc: row
@@ -42,7 +42,7 @@ sequenceDiagram
 
 **Notes**
 
-- `Explain()` returns one representative CEL string for the rule's `compiled_cel` column. Real evaluation re-renders the per-asset CEL at run time — `compiled_cel` is for explainability and the future `rules explain` endpoint.
+- `Explain()` returns one representative CEL string for the rule's `explanation_cel` column. Real evaluation re-renders the per-asset CEL at run time — `explanation_cel` is for explainability and the future `rules explain` endpoint.
 - Metadata-filtered ledger templates need no special handling: the ledger#1416 PIT+metadata bug is fixed in **ledger v2.4.11** (Reconciliation's minimum), so there is no create-time feature-flag refusal. See [v1-vs-legacy.md §6](./v1-vs-legacy.md#6-ledger-side-feature-flag-gotcha-fixed-in-ledger-v2411).
 
 ---

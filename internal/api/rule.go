@@ -19,36 +19,36 @@ import (
 )
 
 type ruleResponse struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	TemplateKind  string            `json:"templateKind"`
-	TemplateSpec  json.RawMessage   `json:"templateSpec"`
-	CompiledCEL   string            `json:"compiledCEL,omitempty"`
-	Enabled       bool              `json:"enabled"`
-	Severity      string            `json:"severity"`
-	Cadence       string            `json:"cadence"`
-	Schedule      *models.Schedule  `json:"schedule,omitempty"`
-	Notifications []string          `json:"notifications,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	CreatedAt     time.Time         `json:"createdAt"`
-	UpdatedAt     time.Time         `json:"updatedAt"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	TemplateKind   string            `json:"templateKind"`
+	TemplateSpec   json.RawMessage   `json:"templateSpec"`
+	ExplanationCEL string            `json:"explanationCEL,omitempty"`
+	Enabled        bool              `json:"enabled"`
+	Severity       string            `json:"severity"`
+	Cadence        string            `json:"cadence"`
+	Schedule       *models.Schedule  `json:"schedule,omitempty"`
+	Notifications  []string          `json:"notifications,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
 }
 
 func renderRule(r *models.Rule) *ruleResponse {
 	return &ruleResponse{
-		ID:            r.ID.String(),
-		Name:          r.Name,
-		TemplateKind:  string(r.TemplateKind),
-		TemplateSpec:  r.TemplateSpec,
-		CompiledCEL:   r.CompiledCEL,
-		Enabled:       r.Enabled,
-		Severity:      string(r.Severity),
-		Cadence:       string(r.Cadence),
-		Schedule:      r.Schedule,
-		Notifications: r.Notifications,
-		Labels:        r.Labels,
-		CreatedAt:     r.CreatedAt,
-		UpdatedAt:     r.UpdatedAt,
+		ID:             r.ID.String(),
+		Name:           r.Name,
+		TemplateKind:   string(r.TemplateKind),
+		TemplateSpec:   r.TemplateSpec,
+		ExplanationCEL: r.ExplanationCEL,
+		Enabled:        r.Enabled,
+		Severity:       string(r.Severity),
+		Cadence:        string(r.Cadence),
+		Schedule:       r.Schedule,
+		Notifications:  r.Notifications,
+		Labels:         r.Labels,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
 	}
 }
 
@@ -140,7 +140,7 @@ func patchRuleHandler(b backend.Backend) http.HandlerFunc {
 			return
 		}
 		// Re-fetch so the caller gets the full post-patch document including
-		// the rederived compiled_cel.
+		// the rederived explanation_cel.
 		rule, err := b.GetService().GetRule(r.Context(), id)
 		if err != nil {
 			handleServiceErrors(w, r, err)

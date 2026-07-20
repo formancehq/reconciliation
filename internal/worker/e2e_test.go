@@ -83,7 +83,7 @@ func TestTwoWorkersRollingRestartCommitsOccurrenceOnce(t *testing.T) {
 	ctx := context.Background()
 	rule := &models.Rule{
 		ID: uuid.New(), Name: "rolling", TemplateKind: models.TemplateLedgerInvariant,
-		TemplateSpec: json.RawMessage(`{}`), CompiledCEL: "true", Enabled: true,
+		TemplateSpec: json.RawMessage(`{}`), ExplanationCEL: "true", Enabled: true,
 		Severity: models.SeverityHigh, Cadence: models.CadenceContinuous,
 		Schedule: &models.Schedule{Kind: models.ScheduleCron, Expr: "* * * * *", TZ: "UTC"},
 	}

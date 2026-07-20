@@ -18,7 +18,7 @@ Documented in the main PRD ([§6.2 fast-follow catalog](../prd/README.md#62-v11-
 | `cross_account_ratio` template      | Per-account iteration + multi-source comparison |
 | Snooze + flap suppression           | Alert-layer feature; new state + lifecycle transitions |
 | Daily digest                        | Per-recipient aggregation owned in-module |
-| fctl `rules explain` command        | Pretty-print `rule.compiled_cel` with spec context |
+| fctl `rules explain` command        | Pretty-print `rule.explanation_cel` with spec context |
 
 ---
 

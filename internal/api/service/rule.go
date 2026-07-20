@@ -16,7 +16,7 @@ import (
 )
 
 // CreateRuleRequest is what the API hands to the service. The service validates,
-// derives compiled_cel via the template's Explain, and persists.
+// derives explanation_cel via the template's Explain, and persists.
 type CreateRuleRequest struct {
 	Name         string              `json:"name"`
 	TemplateKind models.TemplateKind `json:"templateKind"`
@@ -83,7 +83,7 @@ func validateSchedule(s *models.Schedule) error {
 }
 
 // CreateRule validates the spec via the relevant template, derives the
-// representative compiled_cel for explainability, and persists the row.
+// representative explanation_cel for explainability, and persists the row.
 func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*models.Rule, error) {
 	if req == nil {
 		return nil, fmt.Errorf("%w: request is nil", templates.ErrInvalidSpec)
@@ -102,7 +102,7 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 	if err := ev.Validate(req.TemplateSpec); err != nil {
 		return nil, err
 	}
-	compiled, err := ev.Explain(req.TemplateSpec)
+	explanation, err := ev.Explain(req.TemplateSpec)
 	if err != nil {
 		return nil, fmt.Errorf("template Explain: %w", err)
 	}
@@ -110,8 +110,8 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 	// catches drift between the template's renderer and the kernel's grammar
 	// at create time, not at 3 AM.
 	if s.engine != nil {
-		if _, err := s.engine.Compile(compiled); err != nil {
-			return nil, fmt.Errorf("template compiled_cel did not parse: %w", err)
+		if _, err := s.engine.Compile(explanation); err != nil {
+			return nil, fmt.Errorf("template explanation_cel did not parse: %w", err)
 		}
 	}
 
@@ -129,17 +129,17 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 	}
 
 	rule := &models.Rule{
-		ID:            uuid.New(),
-		Name:          req.Name,
-		TemplateKind:  req.TemplateKind,
-		TemplateSpec:  req.TemplateSpec,
-		CompiledCEL:   compiled,
-		Enabled:       enabled,
-		Severity:      severity,
-		Cadence:       cadence,
-		Schedule:      req.Schedule,
-		Notifications: req.Notifications,
-		Labels:        req.Labels,
+		ID:             uuid.New(),
+		Name:           req.Name,
+		TemplateKind:   req.TemplateKind,
+		TemplateSpec:   req.TemplateSpec,
+		ExplanationCEL: explanation,
+		Enabled:        enabled,
+		Severity:       severity,
+		Cadence:        cadence,
+		Schedule:       req.Schedule,
+		Notifications:  req.Notifications,
+		Labels:         req.Labels,
 	}
 	if err := s.store.CreateRule(ctx, rule); err != nil {
 		return nil, err
@@ -158,7 +158,7 @@ func (s *Service) ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunp
 }
 
 // PatchRule applies a partial update. If templateKind or templateSpec changes,
-// the new spec is validated and the compiled_cel is rederived.
+// the new spec is validated and the explanation_cel is rederived.
 func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch storage.RulePatch) error {
 	// Validate the mutable enum/schedule fields with the same rules as create,
 	// so a patch can't slip past an invalid severity (→ DB CHECK → 500) or a
@@ -174,7 +174,7 @@ func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch storage.Rul
 	}
 
 	// If the caller is changing the template surface, re-validate against the
-	// registry and rederive compiled_cel so explanations stay accurate.
+	// registry and rederive explanation_cel so explanations stay accurate.
 	if patch.TemplateKind != nil || patch.TemplateSpec != nil {
 		if s.templates == nil {
 			return errors.New("service: templates registry not configured")
@@ -200,16 +200,16 @@ func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch storage.Rul
 		if err := ev.Validate(spec); err != nil {
 			return err
 		}
-		compiled, err := ev.Explain(spec)
+		explanation, err := ev.Explain(spec)
 		if err != nil {
 			return fmt.Errorf("template Explain: %w", err)
 		}
 		if s.engine != nil {
-			if _, err := s.engine.Compile(compiled); err != nil {
-				return fmt.Errorf("compiled_cel did not parse: %w", err)
+			if _, err := s.engine.Compile(explanation); err != nil {
+				return fmt.Errorf("explanation_cel did not parse: %w", err)
 			}
 		}
-		patch.CompiledCEL = &compiled
+		patch.ExplanationCEL = &explanation
 	}
 	if err := s.store.PatchRule(ctx, id, patch); err != nil {
 		if errors.Is(err, storage.ErrRuleRevisionConflict) {

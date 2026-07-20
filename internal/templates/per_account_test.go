@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -71,6 +72,43 @@ func TestThreshold_PerAccount_BudgetExceeded(t *testing.T) {
 	})
 	if _, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()}); err == nil {
 		t.Fatal("expected accounts-budget error, got nil")
+	}
+}
+
+// BenchmarkThreshold_PerAccount records the cost of the current snapshot-CEL
+// fan-out. Keep multiple sizes so production tuning can distinguish fixed CEL
+// setup cost from the per-fingerprint compile/evaluate cost.
+func BenchmarkThreshold_PerAccount(b *testing.B) {
+	for _, accountCount := range []int{10, 100, 1000} {
+		b.Run(fmt.Sprintf("accounts_%d", accountCount), func(b *testing.B) {
+			const q = `{}`
+			min := int64(100)
+			accounts := make([]engine.Account, 0, accountCount)
+			for i := 0; i < accountCount; i++ {
+				accounts = append(accounts, acct(fmt.Sprintf("merchant:%d", i), "USD/2", 150))
+			}
+			ledger := &fakeLedger{accounts: map[string][]engine.Account{"main|" + q: accounts}}
+			resolvers := engine.Resolvers{Ledger: ledger, Payments: &fakePayments{}}
+			eng, err := engine.New(resolvers, engine.Limits{MaxAccountsScanned: accountCount})
+			if err != nil {
+				b.Fatalf("engine.New: %v", err)
+			}
+			spec, err := json.Marshal(ThresholdSpec{
+				Ledger: "main", Query: json.RawMessage(q), Mode: ThresholdPerAccount,
+				Bounds: map[string]ThresholdBounds{"USD/2": {Min: &min}},
+			})
+			if err != nil {
+				b.Fatalf("marshal spec: %v", err)
+			}
+			tmpl := NewAccountThreshold()
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := tmpl.Evaluate(context.Background(), spec, eng, resolvers, engine.EvalInput{PIT: time.Now()}); err != nil {
+					b.Fatalf("Evaluate: %v", err)
+				}
+			}
+		})
 	}
 }
 

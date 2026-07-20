@@ -105,7 +105,7 @@ func (t *LedgerVsPoolDrift) SourceKeys(raw json.RawMessage) ([]string, error) {
 
 // Explain returns the canonical per-asset CEL form. At evaluation time the
 // asset literal is substituted with the actual asset code; this representative
-// version uses `<asset>` as a literal placeholder so the saved compiled_cel
+// version uses `<asset>` as a literal placeholder so the saved explanation_cel
 // reads as a description of the rule's invariant.
 func (t *LedgerVsPoolDrift) Explain(raw json.RawMessage) (string, error) {
 	var spec DriftSpec

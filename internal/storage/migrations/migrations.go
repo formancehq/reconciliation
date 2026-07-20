@@ -109,8 +109,9 @@ func registerMigrations(migrator *migrations.Migrator) {
 					END;
 					$$ LANGUAGE plpgsql;
 
-					-- Rule: customer-facing entity. Template kind + spec drive evaluation;
-					-- compiled_cel is persisted for explainability and post-GA power mode.
+					-- Rule: customer-facing entity. Template kind + spec drive evaluation.
+					-- compiled_cel is the historical name of the representative explanation;
+					-- a later migration renames it to explanation_cel.
 					CREATE TABLE IF NOT EXISTS reconciliations.rule (
 						id              uuid NOT NULL,
 						name            text NOT NULL,
@@ -477,6 +478,20 @@ func registerMigrations(migrator *migrations.Migrator) {
 					CREATE UNIQUE INDEX IF NOT EXISTS evaluation_scheduled_occurrence_unique
 						ON reconciliations.evaluation (rule_id, rule_revision, scheduled_at)
 						WHERE scheduled_at IS NOT NULL;
+				`)
+				return err
+			},
+		},
+		// V3: make the persisted rule-level CEL contract explicit. The original
+		// column name implied that this value was the complete runtime program,
+		// while template_spec is the executable source of truth and this string is
+		// only a representative explanation. Keep this as an additive migration so
+		// environments that already exercised the pre-merge V1 migrations converge.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					ALTER TABLE reconciliations.rule
+						RENAME COLUMN compiled_cel TO explanation_cel;
 				`)
 				return err
 			},

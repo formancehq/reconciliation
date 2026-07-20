@@ -21,13 +21,13 @@ func seedRuleAndEval(t *testing.T, s *Storage) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 	rule := &models.Rule{
-		ID:           uuid.New(),
-		Name:         "test",
-		TemplateKind: models.TemplateLedgerInvariant,
-		TemplateSpec: json.RawMessage(`{}`),
-		CompiledCEL:  "true",
-		Enabled:      true,
-		Severity:     models.SeverityHigh,
+		ID:             uuid.New(),
+		Name:           "test",
+		TemplateKind:   models.TemplateLedgerInvariant,
+		TemplateSpec:   json.RawMessage(`{}`),
+		ExplanationCEL: "true",
+		Enabled:        true,
+		Severity:       models.SeverityHigh,
 	}
 	require.NoError(t, s.CreateRule(ctx, rule))
 

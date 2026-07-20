@@ -89,7 +89,7 @@ EE-gated. Same auth surface as the legacy API. The contracts below match what's 
 }
 ```
 
-Returns `201` + the rule with `id` and the derived `compiledCEL` for explainability. Validation failures return `400 VALIDATION` (e.g. unknown `templateKind`, invalid spec).
+Returns `201` + the rule with `id` and the derived `explanationCEL`. This is a representative expression for explainability, not the runtime program. Validation failures return `400 VALIDATION` (e.g. unknown `templateKind`, invalid spec).
 
 `cadence` (`continuous` *(default)* · `daily` · `weekly` · `monthly`) sets the reconciliation rhythm: it scopes each failing fingerprint into a period, so a March break and an April break are distinct, independently-closable cases and resolving April never rewrites March. `continuous` keeps a single ongoing case per fingerprint (live monitoring). See [alert-period-model.md](./alert-period-model.md).
 

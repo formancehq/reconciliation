@@ -35,7 +35,7 @@ reconciliations.reconciliation   — one row per POST /policies/{id}/reconciliat
 ### V1
 
 ```text
-reconciliations.rule         — typed template + spec + schedule + severity + labels (compiled_cel for explainability)
+reconciliations.rule         — typed template + spec + schedule + severity + labels (explanation_cel for explainability)
 reconciliations.evaluation   — one row per execution (PASS / FAIL / ERROR); pit_per_source + evidence
 reconciliations.alert        — stable per-fingerprint record; ack + resolution + lifetime occurrence_count
 reconciliations.alert_event  — append-only log: one row per evaluation that touched the alert + one per manual transition

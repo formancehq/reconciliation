@@ -142,7 +142,7 @@ func TestSourceParity_Explain(t *testing.T) {
 			t.Errorf("Explain output %q missing %q", expr, want)
 		}
 	}
-	// The Explain output is persisted as rule.compiled_cel and CreateRule
+	// The Explain output is persisted as rule.explanation_cel and CreateRule
 	// sanity-compiles it against the kernel. Guard that it actually parses.
 	eng, _ := newTestEngine(t, &fakeLedger{}, &fakePayments{})
 	if _, err := eng.Compile(expr); err != nil {

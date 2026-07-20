@@ -125,8 +125,8 @@ func (f *fakeV1Store) PatchRule(_ context.Context, id uuid.UUID, p storage.RuleP
 	if p.Name != nil {
 		r.Name = *p.Name
 	}
-	if p.CompiledCEL != nil {
-		r.CompiledCEL = *p.CompiledCEL
+	if p.ExplanationCEL != nil {
+		r.ExplanationCEL = *p.ExplanationCEL
 	}
 	if p.Enabled != nil {
 		r.Enabled = *p.Enabled
@@ -518,15 +518,15 @@ func mustCreateRule(t *testing.T, svc *Service, spec json.RawMessage) *models.Ru
 
 // --- tests ------------------------------------------------------------------
 
-func TestCreateRule_PersistsCompiledCEL(t *testing.T) {
+func TestCreateRule_PersistsExplanationCEL(t *testing.T) {
 	svc, store := newOrchestrationService(t, &orchestrationLedger{current: map[string]*big.Int{}}, &orchestrationPayments{current: map[string]*big.Int{}})
 	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
-	if rule.CompiledCEL == "" {
-		t.Fatalf("expected compiled_cel to be populated")
+	if rule.ExplanationCEL == "" {
+		t.Fatalf("expected explanation_cel to be populated")
 	}
 	saved, _ := store.GetRule(context.Background(), rule.ID)
-	if saved.CompiledCEL != rule.CompiledCEL {
-		t.Errorf("compiled_cel not persisted")
+	if saved.ExplanationCEL != rule.ExplanationCEL {
+		t.Errorf("explanation_cel not persisted")
 	}
 }
 
