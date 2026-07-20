@@ -87,6 +87,29 @@ func TestRuleRevisionFenceBlocksConcurrentPatch(t *testing.T) {
 	}), ErrObsoleteJob)
 }
 
+func TestRulePatchRejectsStaleExpectedRevision(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	rule := makeRule("optimistic-patch-fence")
+	require.NoError(t, s.CreateRule(ctx, rule))
+
+	originalRevision := rule.Revision
+	firstName := "first-patch"
+	require.NoError(t, s.PatchRule(ctx, rule.ID, RulePatch{Name: &firstName}))
+
+	staleName := "stale-patch"
+	err := s.PatchRule(ctx, rule.ID, RulePatch{
+		Name:             &staleName,
+		ExpectedRevision: &originalRevision,
+	})
+	require.ErrorIs(t, err, ErrRuleRevisionConflict)
+
+	stored, err := s.GetRule(ctx, rule.ID)
+	require.NoError(t, err)
+	require.Equal(t, firstName, stored.Name)
+	require.Equal(t, originalRevision+1, stored.Revision)
+}
+
 func TestRule_DeleteCascadesAndNotFound(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

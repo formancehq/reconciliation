@@ -119,6 +119,9 @@ func (f *fakeV1Store) PatchRule(_ context.Context, id uuid.UUID, p storage.RuleP
 	if !ok {
 		return storage.ErrNotFound
 	}
+	if p.ExpectedRevision != nil && r.Revision != *p.ExpectedRevision {
+		return storage.ErrRuleRevisionConflict
+	}
 	if p.Name != nil {
 		r.Name = *p.Name
 	}

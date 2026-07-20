@@ -8,8 +8,9 @@ import (
 )
 
 var (
-	ErrValidation = domain.ErrValidation
-	ErrInvalidID  = errors.New("invalid id")
+	ErrValidation  = domain.ErrValidation
+	ErrRuleChanged = domain.ErrRuleChanged
+	ErrInvalidID   = errors.New("invalid id")
 )
 
 type storageError struct {

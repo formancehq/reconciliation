@@ -101,6 +101,9 @@ type RulePatch struct {
 	Schedule      *models.Schedule
 	Notifications *[]string
 	Labels        *map[string]string
+	// ExpectedRevision fences service-layer validation that was derived from a
+	// prior read. It is intentionally not part of the public PATCH payload.
+	ExpectedRevision *int64
 }
 
 // PatchRule applies a partial update. Returns ErrNotFound if the rule is gone.
@@ -171,6 +174,9 @@ func (s *Storage) patchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 	var current models.Rule
 	if err := s.db.NewSelect().Model(&current).Where("id = ?", id).For("UPDATE").Scan(ctx); err != nil {
 		return e("load rule for patch", err)
+	}
+	if patch.ExpectedRevision != nil && current.Revision != *patch.ExpectedRevision {
+		return ErrRuleRevisionConflict
 	}
 	effectiveSchedule := current.Schedule
 	if patch.Schedule != nil {

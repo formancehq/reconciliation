@@ -14,6 +14,7 @@ var ErrDuplicateKeyValue = errors.New("duplicate key value")
 var ErrInvalidQuery = errors.New("invalid query")
 var ErrStaleClaim = errors.New("stale evaluation job claim")
 var ErrObsoleteJob = errors.New("evaluation job no longer matches the rule")
+var ErrRuleRevisionConflict = errors.New("rule revision changed")
 
 // pgUniqueViolation is SQLSTATE 23505. Both pgx v4's pgconn and pgx v5's
 // pgconn use it but expose disjoint error types (different import paths), so

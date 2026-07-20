@@ -183,6 +183,8 @@ func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch storage.Rul
 		if err != nil {
 			return err
 		}
+		expectedRevision := rule.Revision
+		patch.ExpectedRevision = &expectedRevision
 		kind := rule.TemplateKind
 		if patch.TemplateKind != nil {
 			kind = *patch.TemplateKind
@@ -209,7 +211,13 @@ func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch storage.Rul
 		}
 		patch.CompiledCEL = &compiled
 	}
-	return s.store.PatchRule(ctx, id, patch)
+	if err := s.store.PatchRule(ctx, id, patch); err != nil {
+		if errors.Is(err, storage.ErrRuleRevisionConflict) {
+			return fmt.Errorf("%w: rule %s changed while validating the patch", ErrRuleChanged, id)
+		}
+		return err
+	}
+	return nil
 }
 
 // DeleteRule cascades to evaluations + alerts (and their events) via FK.
