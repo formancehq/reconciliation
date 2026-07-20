@@ -23,7 +23,7 @@ func TestPatchRule_RederivesCompiledCELOnSpecChange(t *testing.T) {
 	created, err := svc.CreateRule(ctx, &CreateRuleRequest{
 		Name:         "threshold",
 		TemplateKind: models.TemplateAccountThreshold,
-		TemplateSpec: json.RawMessage(`{"ledger":"main","query":"q","mode":"aggregate","bounds":{"USD/2":{"min":100}}}`),
+		TemplateSpec: json.RawMessage(`{"ledger":"main","query":{},"mode":"aggregate","bounds":{"USD/2":{"min":100}}}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateRule: %v", err)
@@ -34,7 +34,7 @@ func TestPatchRule_RederivesCompiledCELOnSpecChange(t *testing.T) {
 	}
 
 	t.Run("spec change rederives compiled_cel", func(t *testing.T) {
-		newSpec := json.RawMessage(`{"ledger":"main","query":"q","mode":"aggregate","bounds":{"USD/2":{"min":500}}}`)
+		newSpec := json.RawMessage(`{"ledger":"main","query":{},"mode":"aggregate","bounds":{"USD/2":{"min":500}}}`)
 		if err := svc.PatchRule(ctx, created.ID, storage.RulePatch{TemplateSpec: newSpec}); err != nil {
 			t.Fatalf("PatchRule: %v", err)
 		}
@@ -52,7 +52,7 @@ func TestPatchRule_RederivesCompiledCELOnSpecChange(t *testing.T) {
 
 	t.Run("invalid spec on patch is rejected before persisting", func(t *testing.T) {
 		// min > max is caught by the template's own Validate.
-		bad := json.RawMessage(`{"ledger":"main","query":"q","mode":"aggregate","bounds":{"USD/2":{"min":900,"max":100}}}`)
+		bad := json.RawMessage(`{"ledger":"main","query":{},"mode":"aggregate","bounds":{"USD/2":{"min":900,"max":100}}}`)
 		err := svc.PatchRule(ctx, created.ID, storage.RulePatch{TemplateSpec: bad})
 		if !errors.Is(err, templates.ErrInvalidSpec) {
 			t.Fatalf("expected ErrInvalidSpec on bad spec patch, got %v", err)

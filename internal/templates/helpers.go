@@ -30,15 +30,19 @@ func zeroIfNil(v *big.Int) *big.Int {
 // wrong (404-class) vs the engine's wiring is wrong (500-class).
 var ErrResolverUnavailable = errors.New("required resolver is not configured")
 
-// hasMeaningfulJSON returns true iff the RawMessage holds a non-null, non-empty
-// JSON value. Marshalling a struct with a nil json.RawMessage field produces
-// `null` (4 bytes) on round-trip — so `len(raw) > 0` is not enough; we also
-// reject the literal `null` token.
+// hasMeaningfulJSON returns true iff the RawMessage holds a JSON object. Ledger
+// metadata queries are object-shaped; accepting arrays or scalars here would
+// defer a client validation error until resolver execution.
 func hasMeaningfulJSON(raw json.RawMessage) bool {
 	if len(raw) == 0 {
 		return false
 	}
-	return strings.TrimSpace(string(raw)) != "null"
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return false
+	}
+	var object map[string]any
+	return json.Unmarshal(raw, &object) == nil && object != nil
 }
 
 // celString safely quotes an arbitrary Go string as a CEL string literal.

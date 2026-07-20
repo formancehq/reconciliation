@@ -30,12 +30,16 @@ func TestRule_CreateGet(t *testing.T) {
 
 	rule := makeRule("test-rule")
 	require.NoError(t, s.CreateRule(ctx, rule))
+	require.False(t, rule.CreatedAt.IsZero())
+	require.False(t, rule.UpdatedAt.IsZero())
 
 	got, err := s.GetRule(ctx, rule.ID)
 	require.NoError(t, err)
 	require.Equal(t, rule.ID, got.ID)
 	require.Equal(t, "test-rule", got.Name)
 	require.True(t, got.Enabled)
+	require.Equal(t, rule.CreatedAt, got.CreatedAt)
+	require.Equal(t, rule.UpdatedAt, got.UpdatedAt)
 }
 
 func TestRule_GetNotFound(t *testing.T) {

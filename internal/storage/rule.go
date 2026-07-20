@@ -38,7 +38,7 @@ func (s *Storage) CreateRule(ctx context.Context, rule *models.Rule) error {
 			rule.NextRunAt = &next
 		}
 	}
-	_, err := s.db.NewInsert().Model(rule).Exec(ctx)
+	_, err := s.db.NewInsert().Model(rule).Returning("*").Exec(ctx)
 	if err != nil {
 		return e("failed to create rule", err)
 	}

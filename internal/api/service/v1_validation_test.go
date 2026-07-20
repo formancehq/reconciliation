@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
@@ -50,7 +51,10 @@ func TestCreateRuleRequest_Validate_ScheduleKind(t *testing.T) {
 		"empty kind":   {&models.Schedule{}, true},
 		"on_demand ok": {&models.Schedule{Kind: models.ScheduleOnDemand}, false},
 		"cron ok":      {&models.Schedule{Kind: models.ScheduleCron, Expr: "*/5 * * * *"}, false},
-		"nil ok":       {nil, false},
+		"negative margin": {&models.Schedule{
+			Kind: models.ScheduleCron, Expr: "*/5 * * * *", SafetyMargin: -time.Second,
+		}, true},
+		"nil ok": {nil, false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -78,6 +82,7 @@ func TestPatchRule_RejectsInvalidSeverityAndSchedule(t *testing.T) {
 		"malformed cron":        {Schedule: &models.Schedule{Kind: models.ScheduleCron, Expr: "not a cron"}},
 		"cron without expr":     {Schedule: &models.Schedule{Kind: models.ScheduleCron}},
 		"unknown schedule kind": {Schedule: &models.Schedule{Kind: models.ScheduleKind("weekly-ish")}},
+		"negative margin":       {Schedule: &models.Schedule{Kind: models.ScheduleCron, Expr: "*/5 * * * *", SafetyMargin: -time.Second}},
 	}
 	for name, patch := range cases {
 		t.Run(name, func(t *testing.T) {

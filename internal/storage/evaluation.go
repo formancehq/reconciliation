@@ -14,9 +14,9 @@ import (
 
 // CreateEvaluation inserts an evaluation row. The service layer is responsible
 // for setting started_at / ended_at / result / pit_per_source / evidence — the
-// storage layer is a pure write.
+// storage layer reloads database-generated fields into ev before returning.
 func (s *Storage) CreateEvaluation(ctx context.Context, ev *models.Evaluation) error {
-	_, err := s.db.NewInsert().Model(ev).Exec(ctx)
+	_, err := s.db.NewInsert().Model(ev).Returning("*").Exec(ctx)
 	if err != nil {
 		return e("failed to create evaluation", err)
 	}

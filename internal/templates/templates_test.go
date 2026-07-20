@@ -101,6 +101,28 @@ func findOutcome(result *EvaluationResult, fp string) *Outcome {
 	return nil
 }
 
+func TestHasMeaningfulJSONRequiresObject(t *testing.T) {
+	cases := map[string]struct {
+		raw  json.RawMessage
+		want bool
+	}{
+		"empty object":   {raw: json.RawMessage(`{}`), want: true},
+		"query object":   {raw: json.RawMessage(`{"$match":{"address":"cash"}}`), want: true},
+		"null":           {raw: json.RawMessage(`null`), want: false},
+		"string":         {raw: json.RawMessage(`"q"`), want: false},
+		"array":          {raw: json.RawMessage(`[]`), want: false},
+		"malformed JSON": {raw: json.RawMessage(`{`), want: false},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := hasMeaningfulJSON(tc.raw); got != tc.want {
+				t.Fatalf("hasMeaningfulJSON() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // --- registry ---------------------------------------------------------------
 
 func TestDefaultRegistry_ContainsAllV1Templates(t *testing.T) {
@@ -304,7 +326,7 @@ func TestDrift_Validate_LedgerSignBounds(t *testing.T) {
 	tmpl := NewLedgerVsPoolDrift()
 	for _, ok := range []int{0, 1, -1} {
 		spec := mustJSON(t, DriftSpec{
-			Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: "pool",
+			Ledger: "b", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "pool",
 			LedgerSign: ok,
 		})
 		if err := tmpl.Validate(spec); err != nil {
@@ -313,7 +335,7 @@ func TestDrift_Validate_LedgerSignBounds(t *testing.T) {
 	}
 	for _, bad := range []int{2, -2, 100} {
 		spec := mustJSON(t, DriftSpec{
-			Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: "pool",
+			Ledger: "b", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "pool",
 			LedgerSign: bad,
 		})
 		if err := tmpl.Validate(spec); err == nil {
@@ -378,9 +400,9 @@ func TestInvariant_Validate(t *testing.T) {
 	tmpl := NewLedgerInvariant()
 	bad := []InvariantSpec{
 		{Terms: nil, Tolerance: map[string]int64{"USD/2": 0}},
-		{Terms: []InvariantTerm{{Ledger: "l", Query: json.RawMessage(`"q"`), Sign: 1}}, Tolerance: nil},
-		{Terms: []InvariantTerm{{Ledger: "l", Query: json.RawMessage(`"q"`), Sign: 2}}, Tolerance: map[string]int64{"USD/2": 0}},
-		{Terms: []InvariantTerm{{Sign: 1, Query: json.RawMessage(`"q"`)}}, Tolerance: map[string]int64{"USD/2": 0}},
+		{Terms: []InvariantTerm{{Ledger: "l", Query: json.RawMessage(`{}`), Sign: 1}}, Tolerance: nil},
+		{Terms: []InvariantTerm{{Ledger: "l", Query: json.RawMessage(`{}`), Sign: 2}}, Tolerance: map[string]int64{"USD/2": 0}},
+		{Terms: []InvariantTerm{{Sign: 1, Query: json.RawMessage(`{}`)}}, Tolerance: map[string]int64{"USD/2": 0}},
 	}
 	for i, s := range bad {
 		t.Run(string(rune('a'+i)), func(t *testing.T) {
@@ -474,7 +496,7 @@ func TestThreshold_Validate_PerAccount_Accepted(t *testing.T) {
 	tmpl := NewAccountThreshold()
 	one := int64(1)
 	spec := mustJSON(t, ThresholdSpec{
-		Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdPerAccount,
+		Ledger: "l", Query: json.RawMessage(`{}`), Mode: ThresholdPerAccount,
 		Bounds: map[string]ThresholdBounds{"USD/2": {Min: &one}},
 	})
 	if err := tmpl.Validate(spec); err != nil {
@@ -485,8 +507,8 @@ func TestThreshold_Validate_PerAccount_Accepted(t *testing.T) {
 func TestThreshold_Validate_BoundsRequired(t *testing.T) {
 	tmpl := NewAccountThreshold()
 	cases := []ThresholdSpec{
-		{Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdAggregate, Bounds: map[string]ThresholdBounds{}},
-		{Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdAggregate, Bounds: map[string]ThresholdBounds{"USD/2": {}}},
+		{Ledger: "l", Query: json.RawMessage(`{}`), Mode: ThresholdAggregate, Bounds: map[string]ThresholdBounds{}},
+		{Ledger: "l", Query: json.RawMessage(`{}`), Mode: ThresholdAggregate, Bounds: map[string]ThresholdBounds{"USD/2": {}}},
 	}
 	for i, s := range cases {
 		t.Run(string(rune('a'+i)), func(t *testing.T) {
@@ -501,7 +523,7 @@ func TestThreshold_Validate_MinGreaterThanMax(t *testing.T) {
 	tmpl := NewAccountThreshold()
 	lo, hi := int64(100), int64(50)
 	spec := mustJSON(t, ThresholdSpec{
-		Ledger: "l", Query: json.RawMessage(`"q"`), Mode: ThresholdAggregate,
+		Ledger: "l", Query: json.RawMessage(`{}`), Mode: ThresholdAggregate,
 		Bounds: map[string]ThresholdBounds{"USD/2": {Min: &lo, Max: &hi}},
 	})
 	if err := tmpl.Validate(spec); !errors.Is(err, ErrInvalidSpec) {

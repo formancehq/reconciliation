@@ -35,6 +35,7 @@ func TestEvaluation_List_FilterByRuleAndResult(t *testing.T) {
 		Result:       models.EvaluationFail,
 	}
 	require.NoError(t, s.CreateEvaluation(ctx, fail))
+	require.False(t, fail.CreatedAt.IsZero())
 
 	// Filter by ruleID returns both ruleA evals (PASS + FAIL), not ruleB's.
 	byRule := NewGetEvaluationsQuery(

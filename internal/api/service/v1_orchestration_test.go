@@ -470,11 +470,11 @@ func newOrchestrationService(t *testing.T, l *orchestrationLedger, p *orchestrat
 	return svc, store
 }
 
-func driftSpec(t *testing.T, ledger, query, pool string, tol map[string]int64) json.RawMessage {
+func driftSpec(t *testing.T, ledger, _ string, pool string, tol map[string]int64) json.RawMessage {
 	t.Helper()
 	spec := templates.DriftSpec{
 		Ledger:         ledger,
-		LedgerQuery:    json.RawMessage(query),
+		LedgerQuery:    json.RawMessage(`{}`),
 		PaymentsPoolID: pool,
 		Tolerance:      tol,
 	}

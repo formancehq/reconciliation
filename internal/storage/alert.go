@@ -115,7 +115,7 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 				Evidence:         in.Evidence,
 				Labels:           in.Labels,
 			}
-			if _, ierr := tx.NewInsert().Model(fresh).Exec(ctx); ierr != nil {
+			if _, ierr := tx.NewInsert().Model(fresh).Returning("*").Exec(ctx); ierr != nil {
 				return e("insert alert", ierr)
 			}
 			// A first open always notifies.
@@ -620,7 +620,7 @@ func appendAlertEvent(
 		Notify:       notify,
 		At:           at,
 	}
-	if _, err := tx.NewInsert().Model(event).Exec(ctx); err != nil {
+	if _, err := tx.NewInsert().Model(event).Returning("*").Exec(ctx); err != nil {
 		return nil, e("append alert event", err)
 	}
 	return event, nil

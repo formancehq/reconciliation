@@ -61,6 +61,9 @@ func validateSchedule(s *models.Schedule) error {
 	if s == nil {
 		return nil
 	}
+	if s.SafetyMargin < 0 {
+		return errors.New("schedule.safetyMargin must be non-negative")
+	}
 	if !s.Kind.Valid() {
 		return fmt.Errorf("schedule.kind must be one of on_demand, cron (got %q)", s.Kind)
 	}

@@ -80,6 +80,9 @@ func TestOpenOrUpdateAlert_FirstFailureOpens(t *testing.T) {
 	require.False(t, res.Reopened)
 	require.Equal(t, models.AlertOpen, res.Alert.Status)
 	require.Equal(t, int64(1), res.Alert.OccurrenceCount)
+	require.False(t, res.Alert.CreatedAt.IsZero())
+	require.False(t, res.Alert.UpdatedAt.IsZero())
+	require.False(t, res.Event.CreatedAt.IsZero())
 
 	events := allAlertEvents(t, s, res.Alert.ID)
 	require.Len(t, events, 1)
