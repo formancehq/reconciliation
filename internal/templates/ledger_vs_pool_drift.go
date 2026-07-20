@@ -103,21 +103,6 @@ func (t *LedgerVsPoolDrift) SourceKeys(raw json.RawMessage) ([]string, error) {
 	}, nil
 }
 
-func (t *LedgerVsPoolDrift) SourcePITs(raw json.RawMessage, in engine.EvalInput) (map[string]time.Time, error) {
-	var spec DriftSpec
-	if err := unmarshalSpec(raw, &spec); err != nil {
-		return nil, err
-	}
-	ledgerSrc := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.LedgerQuery}
-	poolSrc := SourceSpec{Kind: SourcePaymentsPool, PoolID: spec.PaymentsPoolID}
-	keyer := newSourceKeyer()
-	ledgerKey := keyer.key(ledgerSrc.label())
-	poolKey := keyer.key(poolSrc.label())
-	ledgerPIT, _ := effectiveSourcePIT(in, ledgerKey)
-	poolPIT, _ := effectiveSourcePIT(in, poolKey)
-	return map[string]time.Time{ledgerKey: ledgerPIT, poolKey: poolPIT}, nil
-}
-
 // Explain returns the canonical per-asset CEL form. At evaluation time the
 // asset literal is substituted with the actual asset code; this representative
 // version uses `<asset>` as a literal placeholder so the saved compiled_cel
@@ -164,13 +149,9 @@ func (t *LedgerVsPoolDrift) Evaluate(
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
 	in engine.EvalInput,
-) ([]Outcome, error) {
+) (*EvaluationResult, error) {
 	var spec DriftSpec
 	if err := unmarshalSpec(raw, &spec); err != nil {
-		return nil, err
-	}
-
-	if err := requireResolvers(resolvers, "ledger", "payments"); err != nil {
 		return nil, err
 	}
 
@@ -190,22 +171,28 @@ func (t *LedgerVsPoolDrift) Evaluate(
 	poolKey := keyer.key(poolSrc.label())
 	ledgerPIT, _ := effectiveSourcePIT(in, ledgerKey)
 	poolPIT, poolExplicit := effectiveSourcePIT(in, poolKey)
+	result := &EvaluationResult{PitPerSource: map[string]time.Time{}}
+	if err := requireResolvers(resolvers, "ledger", "payments"); err != nil {
+		return result, err
+	}
 
 	// Discover the asset universe by querying both sides. This is the V1
 	// ledger_vs_pool_drift contract — check every asset present on either
 	// side, not just those mentioned in spec.Tolerance.
-	ledgerBalances, err := ledgerSrc.resolve(ctx, resolvers, ledgerPIT, false)
+	ledgerBalances, ledgerResolvedAt, err := ledgerSrc.resolve(ctx, resolvers, ledgerPIT, false)
 	if err != nil {
-		return nil, fmt.Errorf("scout ledger balances: %w", err)
+		return result, fmt.Errorf("scout ledger balances: %w", err)
 	}
-	poolBalances, err := poolSrc.resolve(ctx, resolvers, poolPIT, poolExplicit)
+	result.PitPerSource[ledgerKey] = ledgerResolvedAt
+	poolBalances, poolResolvedAt, err := poolSrc.resolve(ctx, resolvers, poolPIT, poolExplicit)
 	if err != nil {
-		return nil, fmt.Errorf("scout pool balances: %w", err)
+		return result, fmt.Errorf("scout pool balances: %w", err)
 	}
+	result.PitPerSource[poolKey] = poolResolvedAt
 
 	assets := unionAssets(ledgerBalances, poolBalances)
 	outcomes := make([]Outcome, 0, len(assets))
-	pitPerSource := map[string]time.Time{ledgerKey: ledgerPIT, poolKey: poolPIT}
+	expressions := make([]string, 0, len(assets))
 
 	sign := spec.effectiveLedgerSign()
 	for _, asset := range assets {
@@ -216,17 +203,6 @@ func (t *LedgerVsPoolDrift) Evaluate(
 		poolVal := zeroIfNil(poolBalances[asset])
 		drift := new(big.Int).Add(ledgerVal, poolVal)
 		driftAbs := new(big.Int).Abs(drift)
-		passed := driftAbs.Cmp(big.NewInt(tolerance)) <= 0
-
-		// compiledCEL renders the exact per-asset invariant this outcome checked,
-		// in kernel grammar, for evidence/explainability. It is NOT run here: the
-		// verdict is the direct math above, and a live kernel re-resolve of the
-		// pool would read `latest` again — with no point-in-time read on the
-		// payments side, that can differ from the scout read by whatever settled
-		// in between (a benign TOCTOU) and would spuriously "disagree". The direct
-		// math and this CEL are proven equivalent by TestKernelParity_Aggregate,
-		// and the renderer↔grammar contract is checked once at rule-create time by
-		// the service's engine.Compile guard.
 		expr := fmt.Sprintf(
 			`abs(%s + %s) <= %d`,
 			signedLedgerTerm(sign, spec.Ledger, spec.LedgerQuery, celString(asset)),
@@ -235,7 +211,6 @@ func (t *LedgerVsPoolDrift) Evaluate(
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
-			Passed:      passed,
 			Evidence: map[string]any{
 				"asset": asset,
 				// Raw value as fetched from the resolver, before LedgerSign.
@@ -250,8 +225,12 @@ func (t *LedgerVsPoolDrift) Evaluate(
 				"signedDrift":   drift.String(),
 				"compiledCEL":   expr,
 			},
-			PitPerSource: pitPerSource,
 		})
+		expressions = append(expressions, fmt.Sprintf(`abs((%s) + (%s)) <= %d`, ledgerVal.String(), poolVal.String(), tolerance))
 	}
-	return outcomes, nil
+	result.Outcomes = outcomes
+	if err := applyKernelVerdicts(ctx, eng, in, result, expressions); err != nil {
+		return result, err
+	}
+	return result, nil
 }

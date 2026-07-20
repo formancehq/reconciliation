@@ -53,11 +53,11 @@ func mergeLimits(override, defaults Limits) Limits {
 	return override
 }
 
-// budgetTracker is the per-evaluation accumulator. Resolvers call its methods
-// before doing work; the engine reads .Cost() into the persisted evaluation row.
+// budgetTracker is the per-evaluation account-scan accumulator. CEL runtime
+// cost is tracked independently by cel-go and persisted as cost_units.
 type budgetTracker struct {
-	limits           Limits
-	accountsScanned  atomic.Int64
+	limits          Limits
+	accountsScanned atomic.Int64
 }
 
 func newBudgetTracker(limits Limits) *budgetTracker {
@@ -78,8 +78,7 @@ func (b *budgetTracker) ChargeAccounts(n int) error {
 	return nil
 }
 
-// AccountsScanned returns the running total — used to populate
-// evaluation.cost_units for the audit row.
+// AccountsScanned returns the running account total.
 func (b *budgetTracker) AccountsScanned() int64 {
 	return b.accountsScanned.Load()
 }

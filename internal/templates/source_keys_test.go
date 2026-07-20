@@ -98,14 +98,12 @@ func TestSourceKeys_MatchEvaluate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)
 			}
-			if len(out) == 0 {
+			if len(out.Outcomes) == 0 {
 				t.Fatal("no outcomes — cannot cross-check pit_per_source keys")
 			}
 			seen := map[string]struct{}{}
-			for _, o := range out {
-				for k := range o.PitPerSource {
-					seen[k] = struct{}{}
-				}
+			for k := range out.PitPerSource {
+				seen[k] = struct{}{}
 			}
 			evalKeys := make([]string, 0, len(seen))
 			for k := range seen {

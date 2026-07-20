@@ -60,6 +60,15 @@ func New(config Config, store *storage.Storage, runner *domain.Runner, logger lo
 	if config.PlannerInterval <= 0 {
 		config.PlannerInterval = time.Minute
 	}
+	if store != nil {
+		maxOpen := store.MaxOpenConnections()
+		if maxOpen > 0 && config.Concurrency >= maxOpen {
+			return nil, fmt.Errorf(
+				"worker concurrency %d must leave at least one of %d PostgreSQL connections available for lease heartbeats",
+				config.Concurrency, maxOpen,
+			)
+		}
+	}
 	metrics, err := newWorkerMetrics()
 	if err != nil {
 		return nil, err

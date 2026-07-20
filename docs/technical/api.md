@@ -124,9 +124,11 @@ Drops the rule and (via FK) all its evaluations, alerts, and alert events.
 }
 ```
 
-All fields are optional: `at` defaults to now, and `safetyMargin` defaults to `30s` (send `"0s"` to read exactly at `at` — e.g. deterministic tests / demos). A negative `safetyMargin` is rejected with `400`; every timestamp (`at` and each `sourcePITs` value) must be in the past.
+All fields are optional: `at` defaults to now, and `safetyMargin` defaults to `30s` (send `"0s"` to read exactly at `at` — e.g. deterministic tests / demos). The margin applies to `at`, not to `sourcePITs`, whose values are already-effective replay instants. A negative `safetyMargin` is rejected with `400`; every timestamp (`at` and each `sourcePITs` value) must be in the past.
 
-`sourcePITs` overrides the PIT of individual sources, keyed by the stable source key echoed back in `pitPerSource` (`"<label>#<idx>"`). This is the two-independent-timestamps contract — read the ledger at one instant and the payments pool at another to absorb inter-system settlement lag — generalised to any multi-source template (including two terms on the same ledger, addressed by their distinct `#idx`). A supplied `at` (or a per-source override) reads the payments pool point-in-time; the as-of-now default reads its latest snapshot (a PIT read at ~now hits the empty balance-window tail). A `sourcePITs` key that names no source of the rule's template is rejected with `400` (not silently ignored) — the valid keys are exactly those a prior evaluation returns in `pitPerSource`.
+`sourcePITs` overrides individual sources at exactly the supplied effective instant, keyed by the stable source key echoed back in `pitPerSource` (`"<label>#<idx>"`). This is the two-independent-timestamps contract — read the ledger at one instant and the payments pool at another to absorb inter-system settlement lag — generalised to any multi-source template (including two terms on the same ledger, addressed by their distinct `#idx`). A supplied `at` (or a per-source override) reads the payments pool point-in-time; the as-of-now default reads its latest snapshot (a PIT read at ~now hits the empty balance-window tail). A `sourcePITs` key that names no source of the rule's template is rejected with `400` (not silently ignored).
+
+For historical reads, `pitPerSource` can be replayed exactly through `sourcePITs`. Payments' `latest` response does not expose its snapshot timestamp, so that path records the successful observation time instead. The evidence is frozen, but replaying that observation time through the historical endpoint is not guaranteed to reconstruct the same latest snapshot.
 
 Returns `200` + the evaluation record:
 
@@ -139,7 +141,7 @@ Returns `200` + the evaluation record:
   "result":       "PASS" | "FAIL" | "ERROR",
   "pitPerSource": { "ledger:buildr#0": "…", "pool:0eb4a31f-…#0": "…" },
   "evidence":     [ { "fingerprint": "asset:USD/2", "passed": false, "evidence": {…} }, … ],
-  "costUnits":    0,
+  "costUnits":    12,
   "error":        ""
 }
 ```

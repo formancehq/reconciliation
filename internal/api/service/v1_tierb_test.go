@@ -86,14 +86,13 @@ func TestEvaluate_PeriodIDUsesMarginAdjustedPIT(t *testing.T) {
 	}
 }
 
-// A pool balance that moves between the scout read and the kernel's live
-// re-read makes the direct math and the kernel cross-check disagree. That is
-// benign pool-`latest` timing, not a contract bug: it must NOT raise a spurious
-// engine.error — the direct math (which backs the evidence) wins.
+// CEL evaluates the snapshot already returned by the scout read. A later pool
+// movement therefore cannot create a second-read disagreement or a spurious
+// engine.error.
 func TestEvaluate_PoolTOCTOU_NoSpuriousEngineError(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
-	// Scout sees pool -100 → direct drift 0 → PASS; the kernel's later re-read
-	// sees -50 → drift 50 → kernel FAIL. Pre-fix this disagreement errored.
+	// The scout sees pool -100 and snapshot CEL evaluates drift 0 → PASS. The
+	// fake would return -50 on a second read, which must never happen.
 	p := &orchestrationPayments{
 		current:    map[string]*big.Int{"USD/2": big.NewInt(-100)},
 		afterFirst: map[string]*big.Int{"USD/2": big.NewInt(-50)},
@@ -106,7 +105,10 @@ func TestEvaluate_PoolTOCTOU_NoSpuriousEngineError(t *testing.T) {
 		t.Fatalf("EvaluateRule: %v", err)
 	}
 	if ev.Result != models.EvaluationPass {
-		t.Fatalf("expected PASS from the scout-based direct math, got %v (error=%q)", ev.Result, ev.Error)
+		t.Fatalf("expected PASS from snapshot CEL, got %v (error=%q)", ev.Result, ev.Error)
+	}
+	if p.calls != 1 {
+		t.Fatalf("expected exactly one Payments read, got %d", p.calls)
 	}
 	if store.alertFor(rule.ID, engineErrorFingerprint) != nil {
 		t.Fatalf("a benign pool-timing divergence must not open an engine.error alert")

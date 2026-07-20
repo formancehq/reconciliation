@@ -54,16 +54,13 @@ func (*rollingEvaluator) Kind() models.TemplateKind                    { return 
 func (*rollingEvaluator) Validate(json.RawMessage) error               { return nil }
 func (*rollingEvaluator) Explain(json.RawMessage) (string, error)      { return "true", nil }
 func (*rollingEvaluator) SourceKeys(json.RawMessage) ([]string, error) { return nil, nil }
-func (*rollingEvaluator) SourcePITs(json.RawMessage, engine.EvalInput) (map[string]time.Time, error) {
-	return map[string]time.Time{}, nil
-}
-func (e *rollingEvaluator) Evaluate(ctx context.Context, _ json.RawMessage, _ *engine.Engine, _ engine.Resolvers, _ engine.EvalInput) ([]templates.Outcome, error) {
+func (e *rollingEvaluator) Evaluate(ctx context.Context, _ json.RawMessage, _ *engine.Engine, _ engine.Resolvers, _ engine.EvalInput) (*templates.EvaluationResult, error) {
 	if e.calls.Add(1) == 1 {
 		close(e.firstStarted)
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	return nil, nil
+	return &templates.EvaluationResult{}, nil
 }
 
 type rollingLedger struct{}

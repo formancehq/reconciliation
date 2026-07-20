@@ -36,8 +36,8 @@ func TestThreshold_PerAccount_FansOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if len(out) != 2 {
-		t.Fatalf("want 2 outcomes (one per account), got %d", len(out))
+	if len(out.Outcomes) != 2 {
+		t.Fatalf("want 2 outcomes (one per account), got %d", len(out.Outcomes))
 	}
 	a := findOutcome(out, "asset:USD/2|account:merchant:a")
 	b := findOutcome(out, "asset:USD/2|account:merchant:b")
@@ -93,14 +93,32 @@ func TestSourceParity_PerAccount_LedgerVsLedger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if len(out) != 2 {
-		t.Fatalf("want 2 outcomes, got %d", len(out))
+	if len(out.Outcomes) != 2 {
+		t.Fatalf("want 2 outcomes, got %d", len(out.Outcomes))
 	}
 	if o := findOutcome(out, "asset:USD/2|account:m:1"); o == nil || !o.Passed {
 		t.Errorf("m:1 should reconcile, got %+v", o)
 	}
 	if o := findOutcome(out, "asset:USD/2|account:m:2"); o == nil || o.Passed {
 		t.Errorf("m:2 should fail (30 gap, tol 0), got %+v", o)
+	}
+}
+
+func TestSourceParity_PerAccountSharesAccountBudgetAcrossSources(t *testing.T) {
+	tmpl := NewSourceParity()
+	const q = `{}`
+	l := &fakeLedger{accounts: map[string][]engine.Account{
+		"a|" + q: {acct("m:1", "USD/2", 1), acct("m:2", "USD/2", 1)},
+		"b|" + q: {acct("m:1", "USD/2", 1), acct("m:2", "USD/2", 1)},
+	}}
+	res := engine.Resolvers{Ledger: l, Payments: &fakePayments{}}
+	eng, err := engine.New(res, engine.Limits{MaxAccountsScanned: 3})
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	spec := mustJSON(t, ParitySpec{Left: ledgerSource("a", q), Right: ledgerSource("b", q), Scope: ScopePerAccount})
+	if _, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()}); err == nil {
+		t.Fatal("expected the combined account scan to exceed the shared budget")
 	}
 }
 

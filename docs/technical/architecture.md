@@ -87,21 +87,21 @@ See [engine/engine.go](../../internal/engine/engine.go) for the Compile/Evaluate
 
 ## Templates layer — one-paragraph view
 
-A template owns its own end-to-end evaluation. It scouts the asset universe by calling resolvers directly (e.g. union of ledger + pool balances for `ledger_vs_pool_drift`), then for each asset it computes the pass/fail verdict directly (big.Int math on the scouted balances) and renders the per-asset CEL string into `evidence.compiledCEL` for explainability, emitting an `Outcome` with a stable fingerprint. The service layer collects outcomes and opens/updates one alert per failing fingerprint (appending one `alert_event` row per outcome).
+A template owns its own end-to-end evaluation. It scouts the asset universe by calling resolvers directly (e.g. union of ledger + pool balances for `ledger_vs_pool_drift`), then evaluates CEL over those immutable snapshot values and renders the source-shaped per-asset CEL into `evidence.compiledCEL` for explainability. The service layer collects the resulting stable-fingerprint outcomes and opens or updates one alert per failure (appending one `alert_event` row per outcome).
 
 ```mermaid
 flowchart LR
     Spec[templateSpec] --> Scout[resolver.AggregateBalance / PoolBalanceLatest]
     Scout --> Universe[Union of assets]
     Universe --> ForEach[For each asset]
-    ForEach --> Direct[Direct big.Int math → passed]
+    ForEach --> SnapshotCEL[CEL over scouted snapshot values]
     ForEach --> CEL[Render asset CEL → evidence.compiledCEL]
-    Direct --> Outcome[Outcome { fingerprint, passed, evidence }]
+    SnapshotCEL --> Outcome[Outcome { fingerprint, passed, evidence }]
     CEL --> Outcome
     ForEach --> Outcomes[List of Outcome]
 ```
 
-The template's direct math and its rendered CEL express the same invariant; their equivalence is guaranteed by a kernel-parity unit test ([kernel_parity_test.go](../../internal/templates/kernel_parity_test.go)) rather than by a per-asset kernel re-resolve at evaluation time. The kernel itself is still exercised at rule-create (the `Explain` output is `engine.Compile`d so the renderer↔grammar contract fails fast at `POST /rules`, not at 3 AM).
+The template executes an equivalent CEL expression over the values it just scouted, so CEL is authoritative without re-reading Ledger or Payments. All fingerprint expressions share one wall-clock deadline and runtime-cost budget. The source-shaped CEL remains in evidence for explainability, and a kernel-parity test verifies both renderings stay equivalent.
 
 ---
 

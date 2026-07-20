@@ -83,19 +83,6 @@ func (t *SourceParity) SourceKeys(raw json.RawMessage) ([]string, error) {
 	}, nil
 }
 
-func (t *SourceParity) SourcePITs(raw json.RawMessage, in engine.EvalInput) (map[string]time.Time, error) {
-	var spec ParitySpec
-	if err := unmarshalSpec(raw, &spec); err != nil {
-		return nil, err
-	}
-	keyer := newSourceKeyer()
-	leftKey := keyer.key(spec.Left.label())
-	rightKey := keyer.key(spec.Right.label())
-	leftPIT, _ := effectiveSourcePIT(in, leftKey)
-	rightPIT, _ := effectiveSourcePIT(in, rightKey)
-	return map[string]time.Time{leftKey: leftPIT, rightKey: rightPIT}, nil
-}
-
 // Explain returns the canonical per-asset CEL form with `<asset>` as a literal
 // placeholder (see LedgerVsPoolDrift.Explain for the convention).
 func (t *SourceParity) Explain(raw json.RawMessage) (string, error) {
@@ -120,15 +107,11 @@ func (t *SourceParity) Evaluate(
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
 	in engine.EvalInput,
-) ([]Outcome, error) {
+) (*EvaluationResult, error) {
 	var spec ParitySpec
 	if err := unmarshalSpec(raw, &spec); err != nil {
 		return nil, err
 	}
-	if err := requireResolvers(resolvers, spec.Left.resolverNeed(), spec.Right.resolverNeed()); err != nil {
-		return nil, err
-	}
-
 	// Each side resolves at its own PIT — the two-independent-timestamps contract
 	// (left vs right, e.g. sub-ledger vs control account read a settlement cycle
 	// apart). Keys are assigned left-then-right; two sources sharing a label
@@ -138,23 +121,29 @@ func (t *SourceParity) Evaluate(
 	rightKey := keyer.key(spec.Right.label())
 	leftPIT, leftExplicit := effectiveSourcePIT(in, leftKey)
 	rightPIT, rightExplicit := effectiveSourcePIT(in, rightKey)
+	result := &EvaluationResult{PitPerSource: map[string]time.Time{}}
+	if err := requireResolvers(resolvers, spec.Left.resolverNeed(), spec.Right.resolverNeed()); err != nil {
+		return result, err
+	}
 
 	if spec.Scope == ScopePerAccount {
-		return t.evaluatePerAccount(ctx, &spec, eng, resolvers, leftKey, leftPIT, rightKey, rightPIT)
+		return t.evaluatePerAccount(ctx, &spec, eng, resolvers, result, leftKey, leftPIT, rightKey, rightPIT, in)
 	}
 
-	leftBalances, err := spec.Left.resolve(ctx, resolvers, leftPIT, leftExplicit)
+	leftBalances, leftResolvedAt, err := spec.Left.resolve(ctx, resolvers, leftPIT, leftExplicit)
 	if err != nil {
-		return nil, fmt.Errorf("scout %s: %w", spec.Left.label(), err)
+		return result, fmt.Errorf("scout %s: %w", spec.Left.label(), err)
 	}
-	rightBalances, err := spec.Right.resolve(ctx, resolvers, rightPIT, rightExplicit)
+	result.PitPerSource[leftKey] = leftResolvedAt
+	rightBalances, rightResolvedAt, err := spec.Right.resolve(ctx, resolvers, rightPIT, rightExplicit)
 	if err != nil {
-		return nil, fmt.Errorf("scout %s: %w", spec.Right.label(), err)
+		return result, fmt.Errorf("scout %s: %w", spec.Right.label(), err)
 	}
+	result.PitPerSource[rightKey] = rightResolvedAt
 
 	assets := unionAssets(leftBalances, rightBalances)
 	outcomes := make([]Outcome, 0, len(assets))
-	pitPerSource := map[string]time.Time{leftKey: leftPIT, rightKey: rightPIT}
+	expressions := make([]string, 0, len(assets))
 	for _, asset := range assets {
 		tolerance := spec.Tolerance[asset] // 0 if absent
 
@@ -162,15 +151,6 @@ func (t *SourceParity) Evaluate(
 		rightVal := zeroIfNil(rightBalances[asset])
 		diff := new(big.Int).Sub(leftVal, rightVal)
 		diffAbs := new(big.Int).Abs(diff)
-		passed := diffAbs.Cmp(big.NewInt(tolerance)) <= 0
-
-		// compiledCEL is rendered for evidence/explainability only, not run: the
-		// verdict is the direct math above. A pool source has no point-in-time
-		// read, so re-resolving it through the kernel could diverge on benign
-		// `latest` timing (the same TOCTOU ledger_vs_pool_drift documents) — and
-		// a source_parity can compare against a pool. Direct-math ≡ CEL is proven
-		// by TestKernelParity_Aggregate; the renderer↔grammar contract is checked
-		// once at rule-create time by the service's engine.Compile guard.
 		expr := fmt.Sprintf(
 			`abs(%s - %s) <= %d`,
 			spec.Left.celTerm(celString(asset)), spec.Right.celTerm(celString(asset)), tolerance,
@@ -178,7 +158,6 @@ func (t *SourceParity) Evaluate(
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
-			Passed:      passed,
 			Evidence: map[string]any{
 				"asset":        asset,
 				"leftSource":   spec.Left.label(),
@@ -190,44 +169,51 @@ func (t *SourceParity) Evaluate(
 				"tolerance":    tolerance,
 				"compiledCEL":  expr,
 			},
-			PitPerSource: pitPerSource,
 		})
+		expressions = append(expressions, fmt.Sprintf(`abs((%s) - (%s)) <= %d`, leftVal.String(), rightVal.String(), tolerance))
 	}
-	return outcomes, nil
+	result.Outcomes = outcomes
+	if err := applyKernelVerdicts(ctx, eng, in, result, expressions); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // evaluatePerAccount compares the two ledger sources account-by-account, aligned
 // by address, emitting one Outcome per (account, asset). Like account_threshold
-// per_account it reads balances via ListAccounts (no kernel cross-check — the
-// values aren't from a balance(ledgerSet) CEL call); the per-account CEL is
-// rendered into evidence for explainability. Both sources are guaranteed
-// ledger by Validate.
+// per_account it reads balances via ListAccounts, then evaluates CEL over those
+// snapshot values. The source-shaped per-account CEL remains in evidence for
+// explainability. Both sources are guaranteed ledger by Validate.
 func (t *SourceParity) evaluatePerAccount(
 	ctx context.Context,
 	spec *ParitySpec,
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
+	result *EvaluationResult,
 	leftKey string,
 	leftPIT time.Time,
 	rightKey string,
 	rightPIT time.Time,
-) ([]Outcome, error) {
+	in engine.EvalInput,
+) (*EvaluationResult, error) {
 	// Both sides are ledger sources here (Validate enforces it), so each reads
 	// point-in-time at its own PIT; the pool latest/PIT gate does not apply.
 	limit := eng.MaxAccountsScanned()
 	leftAccts, err := spec.Left.resolveAccounts(ctx, resolvers, leftPIT, limit)
 	if err != nil {
-		return nil, fmt.Errorf("scout %s accounts: %w", spec.Left.label(), err)
+		return result, fmt.Errorf("scout %s accounts: %w", spec.Left.label(), err)
 	}
-	rightAccts, err := spec.Right.resolveAccounts(ctx, resolvers, rightPIT, limit)
+	result.PitPerSource[leftKey] = leftPIT
+	rightAccts, err := spec.Right.resolveAccounts(ctx, resolvers, rightPIT, limit-len(leftAccts))
 	if err != nil {
-		return nil, fmt.Errorf("scout %s accounts: %w", spec.Right.label(), err)
+		return result, fmt.Errorf("scout %s accounts: %w", spec.Right.label(), err)
 	}
+	result.PitPerSource[rightKey] = rightPIT
 	leftByAddr := accountsByAddress(leftAccts)
 	rightByAddr := accountsByAddress(rightAccts)
-	pitPerSource := map[string]time.Time{leftKey: leftPIT, rightKey: rightPIT}
 
 	outcomes := make([]Outcome, 0, len(leftByAddr))
+	expressions := make([]string, 0, len(leftByAddr))
 	for _, addr := range unionAssets(leftByAddr, rightByAddr) { // sorted union of addresses
 		lBal, rBal := leftByAddr[addr], rightByAddr[addr]
 		for _, asset := range unionAssets(lBal, rBal) {
@@ -236,11 +222,8 @@ func (t *SourceParity) evaluatePerAccount(
 			rightVal := zeroIfNil(rBal[asset])
 			diff := new(big.Int).Sub(leftVal, rightVal)
 			diffAbs := new(big.Int).Abs(diff)
-			passed := diffAbs.Cmp(big.NewInt(tolerance)) <= 0
-
 			outcomes = append(outcomes, Outcome{
 				Fingerprint: fingerprintFor("asset", asset, "account", addr),
-				Passed:      passed,
 				Evidence: map[string]any{
 					"asset":        asset,
 					"account":      addr,
@@ -255,9 +238,13 @@ func (t *SourceParity) evaluatePerAccount(
 						spec.Left.celTermForAccount(addr, celString(asset)),
 						spec.Right.celTermForAccount(addr, celString(asset)), tolerance),
 				},
-				PitPerSource: pitPerSource,
 			})
+			expressions = append(expressions, fmt.Sprintf(`abs((%s) - (%s)) <= %d`, leftVal.String(), rightVal.String(), tolerance))
 		}
 	}
-	return outcomes, nil
+	result.Outcomes = outcomes
+	if err := applyKernelVerdicts(ctx, eng, in, result, expressions); err != nil {
+		return result, err
+	}
+	return result, nil
 }

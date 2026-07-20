@@ -288,7 +288,8 @@ func (s *Storage) AssertEvaluationJobClaim(ctx context.Context, job *models.Eval
 	var revision int64
 	var enabled bool
 	if err := s.db.NewSelect().Model((*models.Rule)(nil)).
-		Column("revision", "enabled").Where("id = ?", job.RuleID).Scan(ctx, &revision, &enabled); err != nil {
+		Column("revision", "enabled").Where("id = ?", job.RuleID).
+		For("UPDATE").Scan(ctx, &revision, &enabled); err != nil {
 		return e("load rule revision", err)
 	}
 	if !enabled || revision != job.RuleRevision {

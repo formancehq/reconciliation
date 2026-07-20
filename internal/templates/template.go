@@ -36,12 +36,16 @@ type Outcome struct {
 	// incident's `evidence` jsonb column — the actual balances, accounts,
 	// drift, etc. examined to produce this outcome.
 	Evidence map[string]any
+}
 
-	// PitPerSource records which PIT each Source resolved at for this outcome,
-	// propagated up to the persisted Evaluation row. (Same Source can resolve
-	// at the same PIT across all outcomes in one evaluation; we still store
-	// per-outcome for audit clarity.)
+// EvaluationResult is the complete result of one template execution. Source
+// PITs belong to the evaluation, not to individual fingerprint outcomes; this
+// also lets zero-outcome evaluations record the snapshots they actually read.
+// CostUnits is the cumulative CEL runtime cost across every outcome.
+type EvaluationResult struct {
+	Outcomes     []Outcome
 	PitPerSource map[string]time.Time
+	CostUnits    int64
 }
 
 // Evaluator is the per-template contract.
@@ -61,7 +65,8 @@ type Evaluator interface {
 	Explain(spec json.RawMessage) (string, error)
 
 	// Evaluate runs the full template flow against live resolvers via the
-	// kernel. Returns one Outcome per fingerprint. Resolver / kernel errors
+	// kernel. Returns one Outcome per fingerprint plus evaluation-level PIT and
+	// CEL-cost metadata. Resolver / kernel errors
 	// are returned as a single non-nil error — the caller raises an
 	// engine.error meta-incident in that case.
 	Evaluate(
@@ -70,20 +75,14 @@ type Evaluator interface {
 		eng *engine.Engine,
 		resolvers engine.Resolvers,
 		in engine.EvalInput,
-	) ([]Outcome, error)
+	) (*EvaluationResult, error)
 
 	// SourceKeys returns the stable source keys ("<label>#<idx>") this template
 	// produces for spec, in evaluation order — the exact keys Evaluate records
-	// in each Outcome's PitPerSource. The service layer uses them to validate
+	// in EvaluationResult.PitPerSource. The service layer uses them to validate
 	// per-source PIT overrides (EvalInput.SourcePITs) and reject unknown keys,
 	// rather than silently ignoring a mistyped override.
 	SourceKeys(spec json.RawMessage) ([]string, error)
-
-	// SourcePITs returns the resolved PIT for each source key this template would
-	// contact for the given spec and evaluation input. The service uses this to
-	// preserve pit_per_source for zero-outcome evaluations, even when no Outcome
-	// objects are emitted.
-	SourcePITs(spec json.RawMessage, in engine.EvalInput) (map[string]time.Time, error)
 }
 
 // Registry indexes evaluators by template kind. Built once at startup and

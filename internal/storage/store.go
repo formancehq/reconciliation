@@ -38,6 +38,17 @@ func NewStorage(db *bun.DB) *Storage {
 	return &Storage{db: db, pool: db}
 }
 
+// MaxOpenConnections exposes the root pool's hard connection limit. A zero
+// value means database/sql is unbounded. The worker uses this to ensure its
+// long-lived advisory-lock sessions cannot consume every connection and starve
+// the independent lease heartbeats that fence those sessions.
+func (s *Storage) MaxOpenConnections() int {
+	if s == nil || s.pool == nil || s.pool.DB == nil {
+		return 0
+	}
+	return s.pool.DB.Stats().MaxOpenConnections
+}
+
 // WithPublisher returns a copy of the storage configured to emit alert events
 // through pub. Used by the fx wiring; tests can pass a fake (or leave it unset
 // for a silent no-op).

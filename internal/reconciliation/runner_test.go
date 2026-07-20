@@ -78,6 +78,7 @@ func (s *runnerStore) CompleteEvaluationJob(_ context.Context, id, token uuid.UU
 type testEvaluator struct {
 	err       error
 	wait      bool
+	costUnits int64
 	lastInput engine.EvalInput
 }
 
@@ -85,17 +86,17 @@ func (*testEvaluator) Kind() models.TemplateKind                    { return mod
 func (*testEvaluator) Validate(json.RawMessage) error               { return nil }
 func (*testEvaluator) Explain(json.RawMessage) (string, error)      { return "true", nil }
 func (*testEvaluator) SourceKeys(json.RawMessage) ([]string, error) { return []string{"source"}, nil }
-func (e *testEvaluator) SourcePITs(_ json.RawMessage, in engine.EvalInput) (map[string]time.Time, error) {
+func (e *testEvaluator) Evaluate(ctx context.Context, _ json.RawMessage, _ *engine.Engine, _ engine.Resolvers, in engine.EvalInput) (*templates.EvaluationResult, error) {
 	e.lastInput = in
-	return map[string]time.Time{"source": in.PIT.Add(-in.SafetyMargin)}, nil
-}
-func (e *testEvaluator) Evaluate(ctx context.Context, _ json.RawMessage, _ *engine.Engine, _ engine.Resolvers, in engine.EvalInput) ([]templates.Outcome, error) {
-	e.lastInput = in
+	result := &templates.EvaluationResult{
+		PitPerSource: map[string]time.Time{"source": in.PIT.Add(-in.SafetyMargin)},
+		CostUnits:    e.costUnits,
+	}
 	if e.wait {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	return nil, e.err
+	return result, e.err
 }
 
 type testLedgerResolver struct{}
@@ -160,4 +161,14 @@ func TestCancelledScheduledEvaluationDoesNotCommitEngineError(t *testing.T) {
 	require.Nil(t, store.evaluation)
 	require.False(t, store.completed)
 	require.False(t, store.engineErr)
+}
+
+func TestScheduledEvaluationPersistsCELRuntimeCost(t *testing.T) {
+	evaluator := &testEvaluator{costUnits: 17}
+	runner, store, job := newScheduledRunner(t, evaluator)
+
+	evaluation, _, err := runner.EvaluateScheduled(context.Background(), job)
+	require.NoError(t, err)
+	require.Equal(t, int64(17), evaluation.CostUnits)
+	require.Equal(t, int64(17), store.evaluation.CostUnits)
 }

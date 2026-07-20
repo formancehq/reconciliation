@@ -9,16 +9,14 @@ import (
 	"github.com/formancehq/reconciliation/internal/engine"
 )
 
-// TestKernelParity_Aggregate is the guarantee that the aggregate template paths
-// used to enforce inline on every production evaluation: the verdict a template
-// computes by direct math must equal the verdict of its rendered `compiledCEL`
-// run through the kernel. It is asserted here — against deterministic fakes —
-// rather than in the hot path, where a per-asset kernel re-resolve cost a
-// resolver round-trip per asset and, for pool `latest` sources, could diverge on
-// benign timing (see the templates that dropped the inline cross-check, PR #83).
+// TestKernelParity_Aggregate guarantees that the source-shaped `compiledCEL`
+// retained for explainability matches the authoritative snapshot-value CEL run
+// by production templates. The source-shaped version is asserted here against
+// deterministic fakes because running it in the hot path would repeat remote
+// reads and could diverge for a Payments `latest` source.
 //
 // For every outcome an aggregate template produces, we compile + evaluate the
-// `compiledCEL` it emitted into evidence and require kernel.Passed == direct.Passed.
+// `compiledCEL` it emitted into evidence and require kernel.Passed == outcome.Passed.
 // This exercises the kernel builtins (ledgerSet, pool, balance, abs, unary minus)
 // AND the template renderers, so any drift between the two implementations of an
 // invariant fails CI instead of shipping.
@@ -147,11 +145,14 @@ func TestKernelParity_Aggregate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)
 			}
-			if len(out) == 0 {
+			if len(out.Outcomes) == 0 {
 				t.Fatal("no outcomes produced — nothing to cross-check")
 			}
+			if out.CostUnits == 0 {
+				t.Fatal("template verdicts did not consume CEL runtime cost")
+			}
 
-			for _, o := range out {
+			for _, o := range out.Outcomes {
 				celExpr, ok := o.Evidence["compiledCEL"].(string)
 				if !ok || celExpr == "" {
 					t.Fatalf("outcome %s has no compiledCEL evidence", o.Fingerprint)
@@ -165,7 +166,7 @@ func TestKernelParity_Aggregate(t *testing.T) {
 					t.Fatalf("outcome %s: kernel eval of compiledCEL failed: %v\n%s", o.Fingerprint, err, celExpr)
 				}
 				if evalOut.Passed != o.Passed {
-					t.Errorf("kernel/direct divergence on %s: kernel=%v direct=%v\ncel=%s",
+					t.Errorf("source/snapshot CEL divergence on %s: source=%v snapshot=%v\ncel=%s",
 						o.Fingerprint, evalOut.Passed, o.Passed, celExpr)
 				}
 				if o.Passed {
@@ -203,19 +204,16 @@ func TestKernelParity_PitPerSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if len(out) == 0 {
+	if len(out.Outcomes) == 0 {
 		t.Fatal("no outcomes")
 	}
-	pps := out[0].PitPerSource
+	pps := out.PitPerSource
 	want := pit.Add(-margin)
-	for _, key := range []string{"ledger:main#0", "pool:acct#0"} {
-		got, ok := pps[key]
-		if !ok {
-			t.Fatalf("PitPerSource missing key %q: %v", key, pps)
-		}
-		if !got.Equal(want) {
-			t.Errorf("PitPerSource[%q] = %s, want margin-adjusted %s", key, got, want)
-		}
+	if got := pps["ledger:main#0"]; !got.Equal(want) {
+		t.Errorf("ledger PIT = %s, want margin-adjusted %s", got, want)
+	}
+	if got := pps["pool:acct#0"]; got.Before(pit) {
+		t.Errorf("latest pool observation time = %s, want at or after evaluation start %s", got, pit)
 	}
 	if len(pps) != 2 {
 		t.Errorf("expected exactly 2 source entries, got %d: %v", len(pps), pps)

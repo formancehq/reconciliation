@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -92,8 +93,9 @@ func sortedKeys[V any](m map[string]V) []string {
 // two terms on the same ledger get "ledger:x#0" and "ledger:x#1" rather than
 // colliding on one label. Keys are handed out in the order the template
 // presents its sources, and they key BOTH the EvalInput.SourcePITs override
-// lookup (input) and the per-Outcome PitPerSource map (output), so an auditor
-// can round-trip a prior evaluation's per-source instants back into a request.
+// lookup (input) and EvaluationResult.PitPerSource (output). Historical PITs
+// can therefore be replayed exactly; a Payments latest observation retains the
+// same key but has the replay limitation documented in ADR-002.
 type sourceKeyer struct{ seen map[string]int }
 
 func newSourceKeyer() *sourceKeyer { return &sourceKeyer{seen: map[string]int{}} }
@@ -104,26 +106,56 @@ func (k *sourceKeyer) key(label string) string {
 	return fmt.Sprintf("%s#%d", label, i)
 }
 
-// effectiveSourcePIT resolves the margin-adjusted instant a source reads at, and
+// effectiveSourcePIT resolves the effective instant a source reads at, and
 // whether that instant is an explicit historical PIT (vs the "as of now"
 // default). Precedence: a per-source override in EvalInput.SourcePITs wins over
 // the evaluation's default PIT. An override always counts as explicit; the
 // default is explicit only when the caller supplied `at` (EvalInput.PITExplicit).
-// The safety margin is subtracted from whichever PIT applies. The explicit bit
-// gates the payments-pool read (point-in-time vs latest — see SourceSpec.resolve
+// Per-source overrides are persisted effective PITs used for replay, so they
+// are returned unchanged. The safety margin is applied only to the default
+// evaluation PIT. The explicit bit gates the payments-pool read
+// (point-in-time vs latest — see SourceSpec.resolve
 // and engine.EvalInput); it is irrelevant to ledger sources, which always read
 // at the returned instant.
 func effectiveSourcePIT(in engine.EvalInput, key string) (time.Time, bool) {
-	pit := in.PIT
-	explicit := in.PITExplicit
 	if p, ok := in.SourcePITs[key]; ok {
-		pit = p
-		explicit = true
+		return p, true
 	}
+	pit := in.PIT
 	if in.SafetyMargin > 0 {
 		pit = pit.Add(-in.SafetyMargin)
 	}
-	return pit, explicit
+	return pit, in.PITExplicit
+}
+
+// applyKernelVerdicts makes CEL authoritative over values already fetched by
+// the template. The expressions contain snapshot values as integer literals,
+// so evaluating them cannot repeat remote Ledger or Payments reads. One batch
+// also gives every fingerprint a shared wall-clock and CEL-cost budget.
+func applyKernelVerdicts(ctx context.Context, eng *engine.Engine, in engine.EvalInput, result *EvaluationResult, expressions []string) error {
+	if len(result.Outcomes) != len(expressions) {
+		return fmt.Errorf("kernel expression count %d does not match outcome count %d", len(expressions), len(result.Outcomes))
+	}
+	compiled := make([]*engine.Compiled, 0, len(expressions))
+	for i, expression := range expressions {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		program, err := eng.Compile(expression)
+		if err != nil {
+			return fmt.Errorf("compile snapshot expression %d: %w", i, err)
+		}
+		compiled = append(compiled, program)
+	}
+	outputs, err := eng.EvaluateBatch(ctx, compiled, engine.EvalInput{PIT: in.PIT}, engine.Resolvers{})
+	if err != nil {
+		return err
+	}
+	for i, output := range outputs {
+		result.Outcomes[i].Passed = output.Passed
+		result.CostUnits += output.CostUnits
+	}
+	return nil
 }
 
 // unionAssets returns the lex-sorted union of asset codes across the input maps.

@@ -177,12 +177,8 @@ func (r *Runner) run(ctx context.Context, store Store, rule *models.Rule, evalua
 		defer cancel()
 	}
 	input := engine.EvalInput{PIT: req.PIT, PITExplicit: pitExplicit, SourcePITs: req.SourcePITs, SafetyMargin: req.SafetyMargin}
-	sourcePITs, err := evaluator.SourcePITs(rule.TemplateSpec, input)
-	if err != nil {
-		return nil, err
-	}
 	started := time.Now().UTC()
-	outcomes, evalErr := evaluator.Evaluate(evalCtx, rule.TemplateSpec, r.engine, r.resolvers, input)
+	templateResult, evalErr := evaluator.Evaluate(evalCtx, rule.TemplateSpec, r.engine, r.resolvers, input)
 	ended := time.Now().UTC()
 	// A cancellation from the caller is an infrastructure/lifecycle failure,
 	// not an engine result. In particular the worker cancels this context when
@@ -191,13 +187,17 @@ func (r *Runner) run(ctx context.Context, store Store, rule *models.Rule, evalua
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	pitPerSource, mergeErr := mergePitPerSource(outcomes, sourcePITs)
-	if mergeErr != nil {
-		evalErr = mergeErr
+	var outcomes []templates.Outcome
+	var pitPerSource map[string]time.Time
+	var costUnits int64
+	if templateResult != nil {
+		outcomes = templateResult.Outcomes
+		pitPerSource = templateResult.PitPerSource
+		costUnits = templateResult.CostUnits
 	}
 
 	evaluation := &models.Evaluation{
-		ID: uuid.New(), RuleID: rule.ID, StartedAt: started, EndedAt: ended, PitPerSource: pitPerSource,
+		ID: uuid.New(), RuleID: rule.ID, StartedAt: started, EndedAt: ended, PitPerSource: pitPerSource, CostUnits: costUnits,
 	}
 	if completion != nil {
 		scheduledAt := completion.job.ScheduledAt
@@ -205,6 +205,7 @@ func (r *Runner) run(ctx context.Context, store Store, rule *models.Rule, evalua
 		evaluation.RuleRevision = completion.revision
 	}
 
+	var err error
 	if evalErr != nil {
 		evaluation.Result = models.EvaluationError
 		evaluation.Error = evalErr.Error()
@@ -349,22 +350,6 @@ func openEngineErrorAlert(ctx context.Context, store Store, rule *models.Rule, e
 		return nil, err
 	}
 	return result.Alert, nil
-}
-
-func mergePitPerSource(outcomes []templates.Outcome, sourcePITs map[string]time.Time) (map[string]time.Time, error) {
-	merged := make(map[string]time.Time, len(sourcePITs))
-	for key, value := range sourcePITs {
-		merged[key] = value
-	}
-	for _, outcome := range outcomes {
-		for key, value := range outcome.PitPerSource {
-			if current, ok := merged[key]; ok && !current.Equal(value) {
-				return nil, fmt.Errorf("kernel/template contract violation: source %q reported PIT %s and %s", key, current, value)
-			}
-			merged[key] = value
-		}
-	}
-	return merged, nil
 }
 
 func marshalOutcomes(outcomes []templates.Outcome) (json.RawMessage, error) {

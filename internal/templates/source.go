@@ -37,8 +37,8 @@ func (s Scope) Valid() bool {
 
 // SourceKind discriminates where a balance source reads from. Both kinds map to
 // an existing resolver AND an existing kernel builtin (ledgerSet / pool), so a
-// template built on Source can both compute directly and cross-check against
-// the kernel. New kinds (e.g. an external bank/PSP account) slot in here once
+// template built on Source can resolve snapshots and render its explainable
+// kernel expression. New kinds (e.g. an external bank/PSP account) slot in here once
 // they have a resolver + builtin.
 type SourceKind string
 
@@ -46,10 +46,8 @@ const (
 	// SourceLedger reads the aggregate balance of a ledger account set
 	// (ledger + query) at the evaluation PIT.
 	SourceLedger SourceKind = "ledger"
-	// SourcePaymentsPool reads the latest balance of a payments pool. Pool
-	// balances are always "latest" — payments v3 has no faithful PIT read
-	// (see engine.PaymentsResolver); cross-system PIT skew is absorbed by the
-	// consuming template's tolerance.
+	// SourcePaymentsPool reads a historical balance when an explicit PIT is
+	// supplied, otherwise the latest payments-pool snapshot.
 	SourcePaymentsPool SourceKind = "payments_pool"
 )
 
@@ -102,30 +100,44 @@ func (s SourceSpec) resolverNeed() string {
 	return "ledger"
 }
 
-// resolve reads the per-asset balance map for this source at pit. The ledger
+// resolve reads the per-asset balance map for this source and returns the time
+// recorded for that read. The ledger
 // source always reads point-in-time at pit. The pool source reads point-in-time
 // at pit when explicit is true (an explicitly requested past instant), else
 // latest — a PIT read at ~now falls past the pool's last balance movement and
-// returns empty (the balance-window tail; see engine.PaymentsResolver).
-func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, pit time.Time, explicit bool) (map[string]*big.Int, error) {
+// returns empty (the balance-window tail; see engine.PaymentsResolver). Since
+// the latest endpoint exposes no snapshot timestamp, that path returns the
+// successful observation time rather than pretending it read at pit.
+func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, pit time.Time, explicit bool) (map[string]*big.Int, time.Time, error) {
 	switch s.Kind {
 	case SourceLedger:
-		return resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query, pit)
+		balances, err := resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query, pit)
+		return balances, pit, err
 	case SourcePaymentsPool:
 		var poolPIT *time.Time
 		if explicit {
 			poolPIT = &pit
 		}
-		return resolvers.Payments.PoolBalance(ctx, s.PoolID, poolPIT)
+		balances, err := resolvers.Payments.PoolBalance(ctx, s.PoolID, poolPIT)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		if poolPIT == nil {
+			// Payments' latest response has no snapshot timestamp. Record the
+			// successful observation time instead of claiming that the read used
+			// the margin-adjusted PIT.
+			return balances, time.Now().UTC(), nil
+		}
+		return balances, pit, nil
 	default:
-		return nil, fmt.Errorf("%w: cannot resolve source kind %q", ErrInvalidSpec, s.Kind)
+		return nil, time.Time{}, fmt.Errorf("%w: cannot resolve source kind %q", ErrInvalidSpec, s.Kind)
 	}
 }
 
 // celTerm renders the kernel expression that reads this source's balance for
 // assetExpr (already a CEL expression, e.g. `"USD/2"` or `<asset>`). Mirrors
-// the builtins the kernel exposes (ledgerSet / pool), so a template can compile
-// + run the rendered expression to cross-check its direct computation.
+// the builtins the kernel exposes (ledgerSet / pool), so a template can retain
+// the source-shaped invariant alongside the authoritative snapshot verdict.
 func (s SourceSpec) celTerm(assetExpr string) string {
 	switch s.Kind {
 	case SourceLedger:

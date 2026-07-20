@@ -108,24 +108,13 @@ func (t *AccountThreshold) SourceKeys(raw json.RawMessage) ([]string, error) {
 	return []string{newSourceKeyer().key(src.label())}, nil
 }
 
-func (t *AccountThreshold) SourcePITs(raw json.RawMessage, in engine.EvalInput) (map[string]time.Time, error) {
-	var spec ThresholdSpec
-	if err := unmarshalSpec(raw, &spec); err != nil {
-		return nil, err
-	}
-	src := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.Query}
-	srcKey := newSourceKeyer().key(src.label())
-	pit, _ := effectiveSourcePIT(in, srcKey)
-	return map[string]time.Time{srcKey: pit}, nil
-}
-
 func (t *AccountThreshold) Evaluate(
 	ctx context.Context,
 	raw json.RawMessage,
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
 	in engine.EvalInput,
-) ([]Outcome, error) {
+) (*EvaluationResult, error) {
 	var spec ThresholdSpec
 	if err := unmarshalSpec(raw, &spec); err != nil {
 		return nil, err
@@ -133,43 +122,32 @@ func (t *AccountThreshold) Evaluate(
 	if spec.Mode == "" {
 		spec.Mode = ThresholdAggregate
 	}
-	if err := requireResolvers(resolvers, "ledger"); err != nil {
-		return nil, err
-	}
-
 	src := SourceSpec{Kind: SourceLedger, Ledger: spec.Ledger, Query: spec.Query}
 	// Single ledger source — one key, one PIT (explicit is irrelevant to a
 	// ledger source, which always reads point-in-time at pit).
 	srcKey := newSourceKeyer().key(src.label())
 	pit, _ := effectiveSourcePIT(in, srcKey)
+	result := &EvaluationResult{PitPerSource: map[string]time.Time{}}
+	if err := requireResolvers(resolvers, "ledger"); err != nil {
+		return result, err
+	}
 
 	if spec.Mode == ThresholdPerAccount {
-		return t.evaluatePerAccount(ctx, &spec, src, eng, resolvers, srcKey, pit)
+		return t.evaluatePerAccount(ctx, &spec, src, eng, resolvers, result, srcKey, pit, in)
 	}
 
-	ledgerBalances, err := src.resolve(ctx, resolvers, pit, false)
+	ledgerBalances, resolvedAt, err := src.resolve(ctx, resolvers, pit, false)
 	if err != nil {
-		return nil, fmt.Errorf("scout ledger balances: %w", err)
+		return result, fmt.Errorf("scout ledger balances: %w", err)
 	}
+	result.PitPerSource[srcKey] = resolvedAt
 
-	pitPerSource := map[string]time.Time{srcKey: pit}
 	outcomes := make([]Outcome, 0, len(spec.Bounds))
+	expressions := make([]string, 0, len(spec.Bounds))
 	for _, asset := range sortedKeys(spec.Bounds) {
 		bounds := spec.Bounds[asset]
 		val := zeroIfNil(ledgerBalances[asset])
 
-		passed := true
-		if bounds.Min != nil && val.Cmp(big.NewInt(*bounds.Min)) < 0 {
-			passed = false
-		}
-		if bounds.Max != nil && val.Cmp(big.NewInt(*bounds.Max)) > 0 {
-			passed = false
-		}
-
-		// compiledCEL is rendered for evidence/explainability only, not run: the
-		// verdict is the direct bounds check above. Direct-math ≡ CEL is proven by
-		// TestKernelParity_Aggregate; the renderer↔grammar contract is checked once
-		// at rule-create time by the service's engine.Compile guard.
 		expr := buildThresholdExpression(&spec, asset)
 
 		evidence := map[string]any{
@@ -185,21 +163,22 @@ func (t *AccountThreshold) Evaluate(
 		}
 
 		outcomes = append(outcomes, Outcome{
-			Fingerprint:  fingerprintFor("asset", asset),
-			Passed:       passed,
-			Evidence:     evidence,
-			PitPerSource: pitPerSource,
+			Fingerprint: fingerprintFor("asset", asset),
+			Evidence:    evidence,
 		})
+		expressions = append(expressions, buildSnapshotThresholdExpression(val, bounds))
 	}
-	return outcomes, nil
+	result.Outcomes = outcomes
+	if err := applyKernelVerdicts(ctx, eng, in, result, expressions); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // evaluatePerAccount fans the rule out into one Outcome per (account, asset).
-// Unlike the aggregate path it reads each matched account's balance directly
-// via ListAccounts (volumes), so there is no kernel cross-check — the value
-// does not come from a balance(ledgerSet) CEL call, and re-querying every
-// account through the kernel would be N extra ledger round-trips comparing two
-// different SDK paths. The per-account CEL is still rendered into evidence for
+// It reads each matched account's balance directly via ListAccounts (volumes),
+// then makes CEL authoritative over those snapshot values without re-querying
+// every account. The source-shaped per-account CEL remains in evidence for
 // explainability. The accounts budget (eng.MaxAccountsScanned) bounds the
 // fan-out; the resolver errors rather than truncating past it.
 func (t *AccountThreshold) evaluatePerAccount(
@@ -208,28 +187,23 @@ func (t *AccountThreshold) evaluatePerAccount(
 	src SourceSpec,
 	eng *engine.Engine,
 	resolvers engine.Resolvers,
+	result *EvaluationResult,
 	srcKey string,
 	pit time.Time,
-) ([]Outcome, error) {
+	in engine.EvalInput,
+) (*EvaluationResult, error) {
 	accounts, err := src.resolveAccounts(ctx, resolvers, pit, eng.MaxAccountsScanned())
 	if err != nil {
-		return nil, fmt.Errorf("scout accounts on %s: %w", src.label(), err)
+		return result, fmt.Errorf("scout accounts on %s: %w", src.label(), err)
 	}
-	pitPerSource := map[string]time.Time{srcKey: pit}
+	result.PitPerSource[srcKey] = pit
 	assets := sortedKeys(spec.Bounds)
 	outcomes := make([]Outcome, 0, len(accounts)*len(assets))
+	expressions := make([]string, 0, len(accounts)*len(assets))
 	for _, acct := range accounts {
 		for _, asset := range assets {
 			bounds := spec.Bounds[asset]
 			val := zeroIfNil(acct.Balances[asset])
-
-			passed := true
-			if bounds.Min != nil && val.Cmp(big.NewInt(*bounds.Min)) < 0 {
-				passed = false
-			}
-			if bounds.Max != nil && val.Cmp(big.NewInt(*bounds.Max)) > 0 {
-				passed = false
-			}
 
 			evidence := map[string]any{
 				"asset":       asset,
@@ -245,14 +219,29 @@ func (t *AccountThreshold) evaluatePerAccount(
 			}
 
 			outcomes = append(outcomes, Outcome{
-				Fingerprint:  fingerprintFor("asset", asset, "account", acct.Address),
-				Passed:       passed,
-				Evidence:     evidence,
-				PitPerSource: pitPerSource,
+				Fingerprint: fingerprintFor("asset", asset, "account", acct.Address),
+				Evidence:    evidence,
 			})
+			expressions = append(expressions, buildSnapshotThresholdExpression(val, bounds))
 		}
 	}
-	return outcomes, nil
+	result.Outcomes = outcomes
+	if err := applyKernelVerdicts(ctx, eng, in, result, expressions); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func buildSnapshotThresholdExpression(value *big.Int, bounds ThresholdBounds) string {
+	term := "(" + value.String() + ")"
+	parts := []string{}
+	if bounds.Min != nil {
+		parts = append(parts, fmt.Sprintf("%s >= %d", term, *bounds.Min))
+	}
+	if bounds.Max != nil {
+		parts = append(parts, fmt.Sprintf("%s <= %d", term, *bounds.Max))
+	}
+	return strings.Join(parts, " && ")
 }
 
 // buildPerAccountExpression renders the single-account CEL form for evidence

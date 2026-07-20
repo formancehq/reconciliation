@@ -21,9 +21,11 @@ const (
 )
 
 // Evaluation is persisted on every rule execution — pass or fail — so the audit
-// trail and incident evidence stay reproducible. PitPerSource records the
-// resolved point-in-time each Source actually used; this is what makes a closed
-// incident replayable by an auditor at the original PIT (see ADR-002).
+// trail and incident evidence stay auditable. PitPerSource records the resolved
+// point-in-time each historical Source actually used. For a Payments `latest`
+// read it records the observation time because the upstream response exposes no
+// snapshot timestamp; evidence is frozen, but exact historical replay of that
+// latest snapshot is not guaranteed (see ADR-002).
 type Evaluation struct {
 	bun.BaseModel `bun:"reconciliations.evaluation" json:"-"`
 

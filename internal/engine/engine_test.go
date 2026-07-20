@@ -144,6 +144,37 @@ func TestEvaluate_DriftZero_Pass(t *testing.T) {
 	if !out.Passed {
 		t.Fatalf("expected pass, got fail (result=%v)", out.Result)
 	}
+	if out.CostUnits == 0 {
+		t.Fatal("expected actual CEL runtime cost to be recorded")
+	}
+}
+
+func TestEvaluateBatchSharesCELCostBudget(t *testing.T) {
+	resolvers := Resolvers{Ledger: &fakeLedger{}, Payments: &fakePayments{}}
+	eng, err := New(resolvers, DefaultLimits)
+	if err != nil {
+		t.Fatalf("engine.New: %v", err)
+	}
+	first, err := eng.Compile("1 == 1")
+	if err != nil {
+		t.Fatalf("compile first: %v", err)
+	}
+	second, err := eng.Compile("1 == 1")
+	if err != nil {
+		t.Fatalf("compile second: %v", err)
+	}
+	single, err := eng.Evaluate(context.Background(), first, EvalInput{PIT: time.Now()})
+	if err != nil {
+		t.Fatalf("single evaluate: %v", err)
+	}
+	if single.CostUnits == 0 {
+		t.Fatal("test expression unexpectedly had zero CEL cost")
+	}
+	eng.limits.MaxCELCost = uint64(single.CostUnits)
+	_, err = eng.EvaluateBatch(context.Background(), []*Compiled{first, second}, EvalInput{PIT: time.Now()}, Resolvers{})
+	if !errors.Is(err, ErrEvaluate) {
+		t.Fatalf("expected cumulative CEL cost error, got %v", err)
+	}
 }
 
 func TestEvaluate_DriftNonZero_Fail(t *testing.T) {

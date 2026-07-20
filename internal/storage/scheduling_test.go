@@ -295,6 +295,54 @@ func TestPatchRuleFencesAlreadyRunningJob(t *testing.T) {
 	}), ErrObsoleteJob)
 }
 
+func TestClaimValidationLocksRuleUntilScheduledCommitFinishes(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+	rule := makeRule("atomic-revision-fence")
+	require.NoError(t, store.CreateRule(ctx, rule))
+	now := time.Now().UTC()
+	job := &models.EvaluationJob{
+		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
+		ScheduledAt: now, Status: models.EvaluationJobPending, AvailableAt: now,
+	}
+	_, err := store.db.NewInsert().Model(job).Exec(ctx)
+	require.NoError(t, err)
+	claimed, err := store.ClaimEvaluationJob(ctx, time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	validated := make(chan struct{})
+	release := make(chan struct{})
+	txDone := make(chan error, 1)
+	go func() {
+		txDone <- store.RunInTx(ctx, func(ctx context.Context, scoped *Storage) error {
+			if err := scoped.AssertEvaluationJobClaim(ctx, claimed.Job); err != nil {
+				return err
+			}
+			close(validated)
+			<-release
+			return nil
+		})
+	}()
+	<-validated
+
+	name := "revised-after-claim"
+	patchDone := make(chan error, 1)
+	go func() { patchDone <- store.PatchRule(ctx, rule.ID, RulePatch{Name: &name}) }()
+	select {
+	case err := <-patchDone:
+		t.Fatalf("rule patch completed before the fenced transaction committed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	require.NoError(t, <-txDone)
+	require.NoError(t, <-patchDone)
+	updated, err := store.GetRule(ctx, rule.ID)
+	require.NoError(t, err)
+	require.Equal(t, rule.Revision+1, updated.Revision)
+}
+
 func TestInfrastructureFailurePersistsAttemptWhenStartDidNot(t *testing.T) {
 	store := newStore(t)
 	ctx := context.Background()

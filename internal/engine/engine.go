@@ -93,16 +93,14 @@ func (e *Engine) Compile(expression string) (*Compiled, error) {
 //     point-in-time (GET /v3/pools/{id}/balances?at=), while the "as of now"
 //     default reads latest — a PIT read at ~now falls past the pool's last
 //     balance movement and returns empty (the balance-window tail; see ADR-002).
-//   - SourcePITs: optional per-source overrides keyed by the template's stable
+//   - SourcePITs: optional effective per-source replay instants keyed by the template's stable
 //     source key ("ledger:<name>#<idx>", "pool:<id>#<idx>"). Lets one evaluation
 //     read each side at a different instant — the legacy reconciledAtLedger vs
 //     reconciledAtPayments contract, generalised to any multi-source template.
-//     Consumed by the template layer; a present override implies an explicit
-//     (point-in-time) read for that source.
-//   - SafetyMargin: the engine subtracts this from every PIT (default and
-//     overrides) before passing it to resolvers, avoiding races with in-flight
-//     commits whose timestamps could land at PIT-1ms. Default 0; templates
-//     default to a sane non-zero value.
+//     Consumed by the template layer; a present override is used exactly as
+//     supplied and implies an explicit point-in-time read for that source.
+//   - SafetyMargin: subtracted from the default PIT only. SourcePITs already
+//     contain effective replay instants and must not be adjusted a second time.
 type EvalInput struct {
 	PIT          time.Time
 	PITExplicit  bool
@@ -118,7 +116,7 @@ type EvalOutput struct {
 	Result       any                  // raw CEL eval result; useful for debugging templates
 	Evidence     map[string]any       // evaluator-supplied breakdown for incident.evidence
 	PitPerSource map[string]time.Time // resolved PIT per Source, by stable key
-	CostUnits    int64                // accounts scanned this eval (see budget)
+	CostUnits    int64                // actual CEL runtime cost reported by cel-go
 	Error        error                // engine-side runtime error; rule may still be valid
 }
 
@@ -126,8 +124,58 @@ type EvalOutput struct {
 // The caller's ctx is honoured for cancellation; the engine layers a wall-clock
 // deadline on top from Limits.MaxWallClock.
 func (e *Engine) Evaluate(ctx context.Context, c *Compiled, in EvalInput) (*EvalOutput, error) {
+	outputs, err := e.EvaluateBatch(ctx, []*Compiled{c}, in, e.resolvers)
+	if err != nil {
+		return nil, err
+	}
+	return outputs[0], nil
+}
+
+// EvaluateBatch evaluates a template's fingerprint expressions under one
+// wall-clock deadline and one cumulative CEL-cost budget. Callers can supply
+// the production resolvers for source-shaped expressions or no resolvers for
+// template expressions that already contain scouted snapshot values.
+func (e *Engine) EvaluateBatch(
+	ctx context.Context,
+	compiled []*Compiled,
+	in EvalInput,
+	resolvers Resolvers,
+) ([]*EvalOutput, error) {
+	if len(compiled) == 0 {
+		return []*EvalOutput{}, nil
+	}
+
+	evalCtxWithDeadline, cancel := context.WithTimeout(ctx, e.limits.MaxWallClock)
+	defer cancel()
+
+	remainingCost := e.limits.MaxCELCost
+	outputs := make([]*EvalOutput, 0, len(compiled))
+	for i, expression := range compiled {
+		if remainingCost == 0 {
+			return nil, fmt.Errorf("%w: cumulative CEL runtime cost exceeded after %d expressions", ErrEvaluate, i)
+		}
+		output, cost, err := e.evaluateOne(evalCtxWithDeadline, expression, in, resolvers, remainingCost)
+		if err != nil {
+			return nil, err
+		}
+		if cost > remainingCost {
+			return nil, fmt.Errorf("%w: CEL reported cost %d above remaining limit %d", ErrEvaluate, cost, remainingCost)
+		}
+		remainingCost -= cost
+		outputs = append(outputs, output)
+	}
+	return outputs, nil
+}
+
+func (e *Engine) evaluateOne(
+	ctx context.Context,
+	c *Compiled,
+	in EvalInput,
+	resolvers Resolvers,
+	costLimit uint64,
+) (*EvalOutput, uint64, error) {
 	if c == nil {
-		return nil, fmt.Errorf("%w: nil compiled program", ErrEvaluate)
+		return nil, 0, fmt.Errorf("%w: nil compiled program", ErrEvaluate)
 	}
 	pit := in.PIT
 	if in.SafetyMargin > 0 {
@@ -135,7 +183,7 @@ func (e *Engine) Evaluate(ctx context.Context, c *Compiled, in EvalInput) (*Eval
 	}
 
 	budget := newBudgetTracker(e.limits)
-	ec := newEvalCtx(ctx, pit, in.PITExplicit, e.resolvers, budget)
+	ec := newEvalCtx(ctx, pit, in.PITExplicit, resolvers, budget)
 
 	// Build a per-eval env that re-declares everything WITH bindings closed
 	// over ec. We re-parse the source here because cel-go programs are tied
@@ -143,30 +191,32 @@ func (e *Engine) Evaluate(ctx context.Context, c *Compiled, in EvalInput) (*Eval
 	// bindings, so we can't reuse its AST for eval.
 	env, err := cel.NewEnv(bindings(ec)...)
 	if err != nil {
-		return nil, translateRuntimeError(fmt.Errorf("build eval env: %w", err))
+		return nil, 0, translateRuntimeError(fmt.Errorf("build eval env: %w", err))
 	}
 	ast, issues := env.Compile(c.Source)
 	if issues != nil && issues.Err() != nil {
 		// Defensive: validation already passed, so this should not happen.
-		return nil, translateRuntimeError(issues.Err())
+		return nil, 0, translateRuntimeError(issues.Err())
 	}
-	program, err := env.Program(ast, cel.CostLimit(e.limits.MaxCELCost))
+	program, err := env.Program(ast, cel.CostLimit(costLimit))
 	if err != nil {
-		return nil, translateRuntimeError(fmt.Errorf("build program: %w", err))
+		return nil, 0, translateRuntimeError(fmt.Errorf("build program: %w", err))
 	}
 
-	evalCtxWithDeadline, cancel := context.WithTimeout(ctx, e.limits.MaxWallClock)
-	defer cancel()
-	ec.ctx = evalCtxWithDeadline // propagate the deadline into resolver calls
+	ec.ctx = ctx
 
-	result, _, err := program.ContextEval(evalCtxWithDeadline, map[string]any{})
+	result, details, err := program.ContextEval(ctx, map[string]any{})
 	if err != nil {
-		return nil, translateRuntimeError(err)
+		return nil, 0, translateRuntimeError(err)
 	}
 
 	passed, ok := result.Value().(bool)
 	if !ok {
-		return nil, translateRuntimeError(fmt.Errorf("expression returned %T, expected bool", result.Value()))
+		return nil, 0, translateRuntimeError(fmt.Errorf("expression returned %T, expected bool", result.Value()))
+	}
+	var actualCost uint64
+	if details != nil && details.ActualCost() != nil {
+		actualCost = *details.ActualCost()
 	}
 
 	return &EvalOutput{
@@ -174,6 +224,6 @@ func (e *Engine) Evaluate(ctx context.Context, c *Compiled, in EvalInput) (*Eval
 		Result:       result.Value(),
 		Evidence:     nil, // templates layer attaches richer evidence in task #4/#5
 		PitPerSource: ec.pitPerSource,
-		CostUnits:    budget.AccountsScanned(),
-	}, nil
+		CostUnits:    int64(actualCost),
+	}, actualCost, nil
 }

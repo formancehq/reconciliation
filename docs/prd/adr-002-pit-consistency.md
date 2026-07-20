@@ -66,8 +66,8 @@ Each adapter brings its own consistency semantics — NetSuite at a given period
 |---|---|
 | **Per-source PIT consistency** | Each `Source` resolves to a snapshot stable against subsequent writes on that source |
 | **Cross-source atomicity** | Not provided. Two sources resolved in the same evaluation may reflect different real-world instants |
-| **Auditability** | Every evaluation persists the resolved PIT per source, so an auditor can replay each side at the original PIT |
-| **Safety margin** | Engine subtracts a configurable safety margin from the requested PIT before passing it to resolvers, avoiding races with in-flight commits |
+| **Auditability** | Every evaluation persists the effective historical PIT per source. A Payments `latest` read instead records its observation time because the upstream response has no snapshot timestamp; its evidence is frozen but exact historical replay is not guaranteed |
+| **Safety margin** | Engine subtracts a configurable safety margin from the default requested PIT. Already-effective per-source replay overrides are not adjusted again |
 | **Tolerance** | The template's tolerance parameter is the mechanism for absorbing legitimate cross-source skew (settlement lag, FX revaluation timing, etc.) |
 
 ---
@@ -83,16 +83,16 @@ flowchart LR
     Eval --> Ledger["ledgerSet resolver:\nV2.GetBalancesAggregated(pit=T-30s)"]
     Eval --> Pool["pool resolver:\nV3.GetPoolBalances(at=T-30s) if explicit PIT\nelse V3.GetPoolBalancesLatest()"]
     Ledger --> Record[Record pit_per_source: { ledger_set:0 → T-30s }]
-    Pool --> Record2[Record pit_per_source: { payments_pool:0 → T-30s }]
+    Pool --> Record2[Record historical PIT, or latest observation time]
     Record --> Persist[INSERT evaluation]
     Record2 --> Persist
 ```
 
 **Key implementation details**
 
-- Engine reads `EvalInput.PIT`, `EvalInput.SafetyMargin`, and optional per-source overrides `EvalInput.SourcePITs` from the caller (the service layer; templates also subtract margin before any scout calls so the math matches). A source with no override resolves at the default PIT; each source's *effective* instant is recorded in `evaluation.pit_per_source`, keyed by its stable `"<label>#<idx>"` key — so an override can be round-tripped back into a later request.
+- Engine reads `EvalInput.PIT`, `EvalInput.SafetyMargin`, and optional per-source overrides `EvalInput.SourcePITs` from the caller. A source with no override resolves at the margin-adjusted default PIT. An override is already an effective replay instant and is used unchanged, preventing a second margin subtraction. Historical instants are recorded in `evaluation.pit_per_source`, keyed by the stable `"<label>#<idx>"` key.
 - `EvalInput.PITExplicit` marks a caller-supplied PIT (vs the service defaulting to now). It gates the payments-pool read: an explicit past instant reads `V3.GetPoolBalances(?at=)`; the "as of now" default reads `V3.GetPoolBalancesLatest` (a PIT read at ~now hits the empty balance-window tail from §3). An override always counts as explicit for its source.
-- The ledger resolver always reads point-in-time at its source's PIT. The recorded PIT is therefore the instant each side was **actually** read at, not a nominal value.
+- The ledger resolver always reads point-in-time at its source's PIT. Payments historical reads do the same. The Payments `latest` response has no snapshot timestamp, so V1 records the successful observation time and does not claim exact replay for that path.
 
 ---
 

@@ -92,10 +92,10 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 	return b
 }
 
-func findOutcome(out []Outcome, fp string) *Outcome {
-	for i := range out {
-		if out[i].Fingerprint == fp {
-			return &out[i]
+func findOutcome(result *EvaluationResult, fp string) *Outcome {
+	for i := range result.Outcomes {
+		if result.Outcomes[i].Fingerprint == fp {
+			return &result.Outcomes[i]
 		}
 	}
 	return nil
@@ -189,10 +189,10 @@ func TestDrift_Evaluate_AllZero_AllPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if len(out) != 2 {
-		t.Fatalf("expected 2 outcomes (USD/2, EUR/2), got %d", len(out))
+	if len(out.Outcomes) != 2 {
+		t.Fatalf("expected 2 outcomes (USD/2, EUR/2), got %d", len(out.Outcomes))
 	}
-	for _, o := range out {
+	for _, o := range out.Outcomes {
 		if !o.Passed {
 			t.Errorf("expected pass on %s, got fail (evidence=%v)", o.Fingerprint, o.Evidence)
 		}
@@ -596,7 +596,7 @@ func TestThreshold_DeterministicFingerprintOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	got := []string{out[0].Fingerprint, out[1].Fingerprint, out[2].Fingerprint}
+	got := []string{out.Outcomes[0].Fingerprint, out.Outcomes[1].Fingerprint, out.Outcomes[2].Fingerprint}
 	want := []string{"asset:EUR/2", "asset:GBP/2", "asset:USD/2"}
 	for i := range want {
 		if got[i] != want[i] {

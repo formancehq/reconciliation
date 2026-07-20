@@ -88,14 +88,14 @@ func TestDrift_PerSourcePITOverride(t *testing.T) {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
-	if got := l.gotPITs[`b|"q"`]; !got.Equal(ledgerAt.Add(-margin)) {
-		t.Errorf("ledger PIT = %s, want %s", got, ledgerAt.Add(-margin))
+	if got := l.gotPITs[`b|"q"`]; !got.Equal(ledgerAt) {
+		t.Errorf("ledger PIT = %s, want replay override %s without a second margin", got, ledgerAt)
 	}
 	poolGot := p.gotPITs["pool"]
 	if poolGot == nil {
 		t.Fatal("pool read latest, want point-in-time (an override implies an explicit PIT)")
 	}
-	if want := poolAt.Add(-margin); !poolGot.Equal(want) {
+	if want := poolAt; !poolGot.Equal(want) {
 		t.Errorf("pool PIT = %s, want %s", poolGot, want)
 	}
 }
@@ -136,7 +136,7 @@ func TestInvariant_SameLedgerTermsDistinctPITs(t *testing.T) {
 		t.Errorf("obligation term PIT = %s, want %s", got, obligationAt)
 	}
 	// Both keys must appear in the audit record.
-	pps := out[0].PitPerSource
+	pps := out.PitPerSource
 	for _, k := range []string{"ledger:buildr#0", "ledger:buildr#1"} {
 		if _, ok := pps[k]; !ok {
 			t.Errorf("pit_per_source missing key %q: %v", k, pps)

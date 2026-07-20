@@ -437,9 +437,8 @@ func (f *orchestrationLedger) ListAccounts(context.Context, string, json.RawMess
 
 type orchestrationPayments struct {
 	current map[string]*big.Int
-	// afterFirst, when non-nil, is returned by every PoolBalance call AFTER
-	// the first. Lets a test simulate a pool balance changing between the scout
-	// read and the kernel's live re-read — the pool-`latest` TOCTOU.
+	// afterFirst, when non-nil, is returned by every PoolBalance call after the
+	// first. Tests use it to prove snapshot CEL never repeats a pool read.
 	afterFirst map[string]*big.Int
 	calls      int
 }

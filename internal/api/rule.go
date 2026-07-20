@@ -178,11 +178,12 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 // evaluateRuleRequest is the API-shaped equivalent of service.EvaluateRuleRequest.
 // `at` defaults to "now". `safetyMargin` is honoured exactly (including "0s")
 // when supplied; defaultEvaluateSafetyMargin applies when the field is absent
-// from the JSON body. `sourcePITs` optionally overrides the PIT of individual
+// from the JSON body. `sourcePITs` supplies effective replay PITs for individual
 // sources, keyed by the template's stable source key ("<label>#<idx>", as
 // echoed in evaluation.pitPerSource) — the two-independent-timestamps contract
 // (e.g. ledger at one instant, payments pool at another). Every timestamp,
-// global or per-source, must be in the past.
+// global or per-source, must be in the past. The safety margin is not applied
+// again to these already-effective per-source values.
 type evaluateRuleRequest struct {
 	At           *time.Time           `json:"at,omitempty"`
 	SafetyMargin string               `json:"safetyMargin,omitempty"` // Go duration string ("30s", "1m", "0s")

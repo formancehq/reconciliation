@@ -115,8 +115,8 @@ func TestSourceParity_AssetUnion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if len(out) != 2 {
-		t.Fatalf("expected 2 outcomes (USD/2, EUR/2), got %d", len(out))
+	if len(out.Outcomes) != 2 {
+		t.Fatalf("expected 2 outcomes (USD/2, EUR/2), got %d", len(out.Outcomes))
 	}
 	if usd := findOutcome(out, "asset:USD/2"); usd == nil || !usd.Passed {
 		t.Errorf("USD/2 should pass (100 == 100), got %+v", usd)
