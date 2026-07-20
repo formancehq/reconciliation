@@ -33,6 +33,16 @@ func (s *runnerStore) GetRule(context.Context, uuid.UUID) (*models.Rule, error) 
 	return &copy, nil
 }
 
+func (s *runnerStore) AssertRuleRevision(_ context.Context, id uuid.UUID, revision int64) error {
+	if s.rule == nil {
+		return storage.ErrNotFound
+	}
+	if s.rule.ID != id || !s.rule.Enabled || s.rule.Revision != revision {
+		return storage.ErrObsoleteJob
+	}
+	return nil
+}
+
 func (s *runnerStore) CreateEvaluation(_ context.Context, evaluation *models.Evaluation) error {
 	copy := *evaluation
 	s.evaluation = &copy
@@ -80,6 +90,7 @@ type testEvaluator struct {
 	wait      bool
 	costUnits int64
 	lastInput engine.EvalInput
+	afterRead func()
 }
 
 func (*testEvaluator) Kind() models.TemplateKind                    { return models.TemplateKind("test") }
@@ -95,6 +106,9 @@ func (e *testEvaluator) Evaluate(ctx context.Context, _ json.RawMessage, _ *engi
 	if e.wait {
 		<-ctx.Done()
 		return nil, ctx.Err()
+	}
+	if e.afterRead != nil {
+		e.afterRead()
 	}
 	return result, e.err
 }
@@ -171,4 +185,18 @@ func TestScheduledEvaluationPersistsCELRuntimeCost(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(17), evaluation.CostUnits)
 	require.Equal(t, int64(17), store.evaluation.CostUnits)
+}
+
+func TestManualEvaluationRejectsResultAfterRuleRevisionChanges(t *testing.T) {
+	evaluator := &testEvaluator{}
+	runner, store, job := newScheduledRunner(t, evaluator)
+	evaluator.afterRead = func() {
+		store.rule.Revision++
+	}
+
+	evaluation, err := runner.Evaluate(context.Background(), job.RuleID, EvaluateRequest{PIT: time.Now().UTC()})
+	require.ErrorIs(t, err, ErrRuleChanged)
+	require.Nil(t, evaluation)
+	require.Nil(t, store.evaluation)
+	require.False(t, store.engineErr)
 }

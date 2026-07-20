@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/formancehq/go-libs/query"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -46,6 +47,44 @@ func TestRule_GetNotFound(t *testing.T) {
 	s := newStore(t)
 	_, err := s.GetRule(context.Background(), uuid.New())
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestRuleRevisionFenceBlocksConcurrentPatch(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	rule := makeRule("manual-evaluation-fence")
+	require.NoError(t, s.CreateRule(ctx, rule))
+
+	validated := make(chan struct{})
+	release := make(chan struct{})
+	txDone := make(chan error, 1)
+	go func() {
+		txDone <- s.RunInTx(ctx, func(ctx context.Context, scoped *Storage) error {
+			if err := scoped.AssertRuleRevision(ctx, rule.ID, rule.Revision); err != nil {
+				return err
+			}
+			close(validated)
+			<-release
+			return nil
+		})
+	}()
+	<-validated
+
+	name := "patched-during-evaluation"
+	patchDone := make(chan error, 1)
+	go func() { patchDone <- s.PatchRule(ctx, rule.ID, RulePatch{Name: &name}) }()
+	select {
+	case err := <-patchDone:
+		t.Fatalf("rule patch completed before the evaluation transaction committed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	require.NoError(t, <-txDone)
+	require.NoError(t, <-patchDone)
+	require.ErrorIs(t, s.RunInTx(ctx, func(ctx context.Context, scoped *Storage) error {
+		return scoped.AssertRuleRevision(ctx, rule.ID, rule.Revision)
+	}), ErrObsoleteJob)
 }
 
 func TestRule_DeleteCascadesAndNotFound(t *testing.T) {

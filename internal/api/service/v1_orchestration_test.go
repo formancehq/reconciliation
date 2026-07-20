@@ -75,6 +75,9 @@ func (f *fakeV1Store) CreateRule(_ context.Context, r *models.Rule) error {
 	if r.ID == uuid.Nil {
 		r.ID = uuid.New()
 	}
+	if r.Revision == 0 {
+		r.Revision = 1
+	}
 	now := time.Now().UTC()
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = now
@@ -93,6 +96,16 @@ func (f *fakeV1Store) GetRule(_ context.Context, id uuid.UUID) (*models.Rule, er
 	}
 	copy := *r
 	return &copy, nil
+}
+func (f *fakeV1Store) AssertRuleRevision(_ context.Context, id uuid.UUID, revision int64) error {
+	r, ok := f.rules[id]
+	if !ok {
+		return storage.ErrNotFound
+	}
+	if !r.Enabled || r.Revision != revision {
+		return storage.ErrObsoleteJob
+	}
+	return nil
 }
 func (f *fakeV1Store) DeleteRule(_ context.Context, id uuid.UUID) error {
 	if _, ok := f.rules[id]; !ok {
@@ -121,6 +134,7 @@ func (f *fakeV1Store) PatchRule(_ context.Context, id uuid.UUID, p storage.RuleP
 	if p.TemplateSpec != nil {
 		r.TemplateSpec = p.TemplateSpec
 	}
+	r.Revision++
 	r.UpdatedAt = time.Now().UTC()
 	return nil
 }

@@ -55,6 +55,25 @@ func (s *Storage) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, erro
 	return &rule, nil
 }
 
+// AssertRuleRevision locks the rule row and verifies that an evaluation still
+// targets the enabled revision it loaded before performing remote reads. It
+// must run in the same transaction as the evaluation and alert writes so a
+// concurrent patch, disable, or delete cannot commit between this fence and
+// those writes.
+func (s *Storage) AssertRuleRevision(ctx context.Context, id uuid.UUID, expected int64) error {
+	var revision int64
+	var enabled bool
+	if err := s.db.NewSelect().Model((*models.Rule)(nil)).
+		Column("revision", "enabled").Where("id = ?", id).
+		For("UPDATE").Scan(ctx, &revision, &enabled); err != nil {
+		return e("load rule revision", err)
+	}
+	if !enabled || revision != expected {
+		return ErrObsoleteJob
+	}
+	return nil
+}
+
 // DeleteRule cascades to evaluations + incidents via the FK ON DELETE CASCADE
 // declared in migration #4. Returns ErrNotFound if the rule didn't exist.
 func (s *Storage) DeleteRule(ctx context.Context, id uuid.UUID) error {

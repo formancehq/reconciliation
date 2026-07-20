@@ -26,6 +26,7 @@ const (
 	ErrMissingOrInvalidBody = "MISSING_OR_INVALID_BODY"
 	ErrValidation           = "VALIDATION"
 	ErrRuleBusy             = "RULE_BUSY"
+	ErrRuleChanged          = "RULE_CHANGED"
 )
 
 func healthCheckModule() fx.Option {
@@ -114,6 +115,8 @@ func handleServiceErrors(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, domain.ErrRuleBusy):
 		api.WriteErrorResponse(w, http.StatusConflict, ErrRuleBusy, err)
+	case errors.Is(err, domain.ErrRuleChanged):
+		api.WriteErrorResponse(w, http.StatusConflict, ErrRuleChanged, err)
 	case errors.Is(err, service.ErrValidation):
 		api.BadRequest(w, ErrValidation, err)
 	case errors.Is(err, service.ErrInvalidID):

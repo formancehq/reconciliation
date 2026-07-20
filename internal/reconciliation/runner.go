@@ -21,8 +21,9 @@ import (
 )
 
 var (
-	ErrValidation = errors.New("validation error")
-	ErrRuleBusy   = errors.New("rule evaluation already in progress")
+	ErrValidation  = errors.New("validation error")
+	ErrRuleBusy    = errors.New("rule evaluation already in progress")
+	ErrRuleChanged = errors.New("rule changed during evaluation")
 )
 
 const EngineErrorFingerprint = "engine.error"
@@ -42,6 +43,7 @@ type EvaluateRequest struct {
 
 type Store interface {
 	GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error)
+	AssertRuleRevision(ctx context.Context, id uuid.UUID, revision int64) error
 	CreateEvaluation(ctx context.Context, ev *models.Evaluation) error
 	OpenOrUpdateAlert(ctx context.Context, in storage.OpenAlertInput) (*storage.OpenAlertResult, error)
 	AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, fingerprint, periodID string, evaluationID uuid.UUID, at time.Time) (*models.Alert, error)
@@ -233,6 +235,11 @@ func (r *Runner) run(ctx context.Context, store Store, rule *models.Rule, evalua
 			if err := jobs.AssertEvaluationJobClaim(ctx, completion.job); err != nil {
 				return err
 			}
+		} else if err := txStore.AssertRuleRevision(ctx, rule.ID, rule.Revision); err != nil {
+			if errors.Is(err, storage.ErrObsoleteJob) {
+				return fmt.Errorf("%w: rule %s was revised or disabled", ErrRuleChanged, rule.ID)
+			}
+			return err
 		}
 		if err := txStore.CreateEvaluation(ctx, evaluation); err != nil {
 			return err

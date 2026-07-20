@@ -174,7 +174,8 @@ func (s *mockStore) CreateRule(context.Context, *models.Rule) error { return nil
 func (s *mockStore) GetRule(context.Context, uuid.UUID) (*models.Rule, error) {
 	return nil, nil
 }
-func (s *mockStore) DeleteRule(context.Context, uuid.UUID) error { return nil }
+func (s *mockStore) AssertRuleRevision(context.Context, uuid.UUID, int64) error { return nil }
+func (s *mockStore) DeleteRule(context.Context, uuid.UUID) error                { return nil }
 func (s *mockStore) PatchRule(context.Context, uuid.UUID, storage.RulePatch) error {
 	return nil
 }

@@ -34,6 +34,7 @@ type Store interface {
 	// V1 — Rule
 	CreateRule(ctx context.Context, rule *models.Rule) error
 	GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error)
+	AssertRuleRevision(ctx context.Context, id uuid.UUID, revision int64) error
 	DeleteRule(ctx context.Context, id uuid.UUID) error
 	PatchRule(ctx context.Context, id uuid.UUID, patch storage.RulePatch) error
 	ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error)

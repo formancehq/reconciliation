@@ -169,6 +169,23 @@ func TestEvaluateRule_BusyReturnsConflict(t *testing.T) {
 	require.EqualValues(t, ErrRuleBusy, response.ErrorCode)
 }
 
+func TestEvaluateRule_ChangedReturnsConflict(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	id := uuid.New()
+	mockSvc.EXPECT().EvaluateRule(gomock.Any(), id, gomock.Any()).Return(nil, domain.ErrRuleChanged)
+
+	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader([]byte(`{}`)))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	var response sharedapi.ErrorResponse
+	sharedapi.Decode(t, rec.Body, &response)
+	require.EqualValues(t, ErrRuleChanged, response.ErrorCode)
+}
+
 // A chunked request body (ContentLength == -1) must still be decoded — the
 // caller's at/safetyMargin must reach the service, not be silently dropped.
 func TestEvaluateRule_ChunkedBodyHonored(t *testing.T) {
