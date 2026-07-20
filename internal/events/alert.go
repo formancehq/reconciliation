@@ -125,11 +125,12 @@ func NewPublisher(p message.Publisher) *Publisher {
 	return &Publisher{publisher: p}
 }
 
-// PublishAlertEvent emits exactly one message for one alert_event row. Failures
-// are logged, never returned: the DB transition has already committed by the
-// time this runs, so a transient bus error must not surface as a request
-// error. Webhooks retries delivery on its side; the at-least-once gap (commit
-// succeeds, publish fails) is the accepted trade-off — same as the Ledger.
+// PublishAlertEvent makes one publish attempt for one alert_event row. Broker
+// retries may replay it. Failures are logged, never returned: the DB transition
+// has already committed by the time this runs, so a transient bus error must
+// not surface as a request error. Webhooks retries delivery on its side; the
+// at-least-once gap (commit succeeds, publish fails) is the accepted trade-off
+// — same as the Ledger.
 func (pub *Publisher) PublishAlertEvent(ctx context.Context, alert *models.Alert, event *models.AlertEvent) {
 	if pub == nil || pub.publisher == nil {
 		return
@@ -142,6 +143,10 @@ func (pub *Publisher) PublishAlertEvent(ctx context.Context, alert *models.Alert
 		return
 	}
 	msg := publish.NewMessage(ctx, NewAlertEventMessage(eventType, alert, event))
+	// Keep the transport-level message identifier stable across publisher
+	// replays and across pods. The payload idempotency key carries the same
+	// value for consumers that deduplicate at the event-envelope layer.
+	msg.UUID = event.ID.String()
 	logging.FromContext(ctx).WithFields(map[string]any{
 		"alert":      alert.ID,
 		"alertEvent": event.ID,

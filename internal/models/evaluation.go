@@ -36,5 +36,10 @@ type Evaluation struct {
 	Evidence     json.RawMessage      `bun:",type:jsonb"                  json:"evidence,omitempty"`
 	Error        string               `bun:",nullzero"                    json:"error,omitempty"`
 	CostUnits    int64                `bun:"cost_units,notnull"           json:"costUnits"`
-	CreatedAt    time.Time            `bun:"created_at,notnull,nullzero"  json:"createdAt"`
+	// ScheduledAt and RuleRevision are internal occurrence identity fields.
+	// They remain outside the public response while the partial unique index on
+	// them fences duplicate committed effects after a job row is cleaned up.
+	ScheduledAt  *time.Time `bun:"scheduled_at,nullzero"         json:"-"`
+	RuleRevision *int64     `bun:"rule_revision,nullzero"        json:"-"`
+	CreatedAt    time.Time  `bun:"created_at,notnull,nullzero"  json:"createdAt"`
 }

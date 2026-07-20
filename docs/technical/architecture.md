@@ -207,7 +207,7 @@ erDiagram
 - **Per-eval CEL env** is built fresh per `Engine.Evaluate` call — no shared state between concurrent evaluations.
 - **Budget tracker** uses `atomic.Int64` for `accountsScanned`.
 - **Resolvers** cache feature flags but are otherwise stateless per call.
-- **Alert dedup** relies on the UNIQUE constraint on `(rule_id, fingerprint, period_id)`, not application-level locking. Concurrent failing evaluations attempting to insert the same triple will race; one succeeds, the loser retries and falls into the update path. Separately, same-rule evaluations serialize their whole read+persist window via a Postgres advisory lock (`storage.WithRuleLock`) so a slower older evaluation can't commit after a newer one. See [storage/alert.go](../../internal/storage/alert.go), [storage/rule_lock.go](../../internal/storage/rule_lock.go), and the concurrency regression tests.
+- **Alert dedup** relies on the UNIQUE constraint on `(rule_id, fingerprint, period_id)`. Same-rule evaluations also guard their complete read-and-commit window with `storage.TryWithRuleLock`: a concurrent API request receives HTTP 409 and a worker requeues without consuming an attempt. Different rules remain independent. See [storage/alert.go](../../internal/storage/alert.go), [storage/rule_lock.go](../../internal/storage/rule_lock.go), and the concurrency regression tests.
 - **Alert event appends** happen in the same transaction as the alert UPDATE/INSERT — the log can never reflect a state the alert table doesn't.
 
 ---
@@ -225,8 +225,8 @@ erDiagram
 
 ## What's not in this diagram (yet)
 
-- **Scheduler** (in-process cron loop) — ✅ shipped, single-instance MVP ([scheduler.md](./scheduler.md)); advisory-lock / Temporal multi-replica leasing ⏳.
-- **Webhook event publisher** — ✅ shipped ([internal/events/](../../internal/events/), [api.md §Events](./api.md)); alert transitions publish to the bus after commit. A durable transactional outbox for cross-replica delivery recovery is the tracked follow-up.
+- **Scheduler worker** — PostgreSQL-backed planner, durable jobs, leases, fencing tokens, bounded catch-up, and multi-replica execution ([scheduler.md](./scheduler.md)).
+- **Webhook event publisher** — alert transitions publish after commit through the `go-libs` PostgreSQL circuit breaker. This is intentionally not a transactional outbox; the crash gap and duplicate replay limits are documented in [scheduler.md](./scheduler.md).
 - **Email digest** — ⏳ (owned in-module, ships separately at V1 GA).
 - **fctl wiring** — ⏳.
 - **EE gating + usage metering** — ⏳.

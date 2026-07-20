@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 	"github.com/uptrace/bun"
 )
 
@@ -190,6 +191,24 @@ func (s *Schedule) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Next returns the next occurrence strictly after the supplied instant. Cron
+// schedules are evaluated in their declared timezone (UTC by default), while
+// on-demand schedules have no next occurrence.
+func (s *Schedule) Next(after time.Time) (time.Time, error) {
+	if s == nil || s.Kind != ScheduleCron || s.Expr == "" {
+		return time.Time{}, nil
+	}
+	tz := s.TZ
+	if tz == "" {
+		tz = "UTC"
+	}
+	parsed, err := cron.ParseStandard(fmt.Sprintf("CRON_TZ=%s %s", tz, s.Expr))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse cron %q (%s): %w", s.Expr, tz, err)
+	}
+	return parsed.Next(after).UTC(), nil
+}
+
 // Rule is the customer-facing entity: a template + spec + schedule + delivery.
 // The compiled CEL is persisted for explainability and to support post-GA raw
 // expression mode without recompiling on every load.
@@ -207,6 +226,11 @@ type Rule struct {
 	Schedule      *Schedule         `bun:",type:jsonb"            json:"schedule,omitempty"`
 	Notifications []string          `bun:",type:jsonb"            json:"notifications,omitempty"`
 	Labels        map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`
-	CreatedAt     time.Time         `bun:"created_at,notnull,nullzero" json:"createdAt"`
-	UpdatedAt     time.Time         `bun:"updated_at,notnull,nullzero" json:"updatedAt"`
+	// Revision is incremented for every material rule update. Scheduled jobs
+	// capture it and are fenced at commit time so work computed from an old rule
+	// definition can never overwrite results from the current one.
+	Revision  int64      `bun:",notnull"               json:"-"`
+	NextRunAt *time.Time `bun:"next_run_at,nullzero"   json:"-"`
+	CreatedAt time.Time  `bun:"created_at,notnull,nullzero" json:"createdAt"`
+	UpdatedAt time.Time  `bun:"updated_at,notnull,nullzero" json:"updatedAt"`
 }

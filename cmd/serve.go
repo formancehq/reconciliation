@@ -23,7 +23,6 @@ import (
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	v5logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/api"
-	"github.com/formancehq/reconciliation/internal/scheduler"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
@@ -80,10 +79,13 @@ func newServeCommand(version string) *cobra.Command {
 	iam.AddFlags(cmd.Flags())
 	service.AddFlags(cmd.Flags())
 	licence.AddFlags(cmd.Flags())
-	publish.AddFlags(ServiceName, cmd.Flags())
-	scheduler.AddFlags(cmd.Flags())
+	publish.AddFlags(ServiceName, cmd.Flags(), reconciliationPublisherDefaults)
 
 	return cmd
+}
+
+func reconciliationPublisherDefaults(config *publish.ConfigDefault) {
+	config.PublisherCircuitBreakerEnabled = true
 }
 
 func runServer(version string) func(cmd *cobra.Command, args []string) error {
@@ -123,7 +125,6 @@ func serverOptions(cmd *cobra.Command, version string) ([]fx.Option, error) {
 		}, listen),
 		messagingfx.PublishModuleFromFlags(cmd, service.IsDebug(cmd)),
 		licence.FXModuleFromFlags(cmd, ServiceName),
-		scheduler.FXModuleFromFlags(cmd),
 	)
 
 	return options, nil

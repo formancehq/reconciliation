@@ -410,5 +410,76 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// V3: durable, multi-replica-safe cron scheduling.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					ALTER TABLE reconciliations.rule
+						ADD COLUMN IF NOT EXISTS revision bigint NOT NULL DEFAULT 1,
+						ADD COLUMN IF NOT EXISTS next_run_at timestamp with time zone;
+
+					CREATE INDEX IF NOT EXISTS rule_schedule_due_idx
+						ON reconciliations.rule (next_run_at, id)
+						WHERE enabled AND next_run_at IS NOT NULL
+						  AND schedule->>'kind' = 'cron';
+
+					CREATE TABLE IF NOT EXISTS reconciliations.evaluation_job (
+						id            uuid NOT NULL,
+						rule_id       uuid NOT NULL,
+						rule_revision bigint NOT NULL,
+						scheduled_at  timestamp with time zone NOT NULL,
+						status        text NOT NULL DEFAULT 'PENDING',
+						attempts      integer NOT NULL DEFAULT 0,
+						available_at  timestamp with time zone NOT NULL DEFAULT now(),
+						lease_until   timestamp with time zone,
+						claim_token   uuid,
+						last_error    text,
+						created_at    timestamp with time zone NOT NULL DEFAULT now(),
+						updated_at    timestamp with time zone NOT NULL DEFAULT now(),
+						CONSTRAINT evaluation_job_pk PRIMARY KEY (id),
+						CONSTRAINT evaluation_job_rule_fk FOREIGN KEY (rule_id)
+							REFERENCES reconciliations.rule(id) ON DELETE CASCADE,
+						CONSTRAINT evaluation_job_occurrence_unique
+							UNIQUE (rule_id, rule_revision, scheduled_at),
+						CONSTRAINT evaluation_job_status_chk CHECK
+							(status IN ('PENDING','RUNNING','SUCCEEDED','FAILED','CANCELLED')),
+						CONSTRAINT evaluation_job_attempts_chk CHECK (attempts >= 0),
+						CONSTRAINT evaluation_job_claim_chk CHECK (
+							(status = 'RUNNING' AND claim_token IS NOT NULL AND lease_until IS NOT NULL) OR
+							(status <> 'RUNNING' AND claim_token IS NULL AND lease_until IS NULL)
+						)
+					);
+					CREATE INDEX IF NOT EXISTS evaluation_job_claim_idx
+						ON reconciliations.evaluation_job (available_at, scheduled_at)
+						WHERE status = 'PENDING';
+					CREATE INDEX IF NOT EXISTS evaluation_job_expired_lease_idx
+						ON reconciliations.evaluation_job (lease_until)
+						WHERE status = 'RUNNING';
+					CREATE INDEX IF NOT EXISTS evaluation_job_active_status_idx
+						ON reconciliations.evaluation_job (status)
+						WHERE status IN ('PENDING','RUNNING','FAILED');
+					DROP TRIGGER IF EXISTS evaluation_job_touch_updated_at
+						ON reconciliations.evaluation_job;
+					CREATE TRIGGER evaluation_job_touch_updated_at
+						BEFORE UPDATE ON reconciliations.evaluation_job
+						FOR EACH ROW EXECUTE FUNCTION reconciliations.touch_updated_at();
+
+					ALTER TABLE reconciliations.evaluation
+						ADD COLUMN IF NOT EXISTS scheduled_at timestamp with time zone,
+						ADD COLUMN IF NOT EXISTS rule_revision bigint;
+					ALTER TABLE reconciliations.evaluation
+						DROP CONSTRAINT IF EXISTS evaluation_schedule_identity_chk;
+					ALTER TABLE reconciliations.evaluation
+						ADD CONSTRAINT evaluation_schedule_identity_chk CHECK (
+							(scheduled_at IS NULL AND rule_revision IS NULL) OR
+							(scheduled_at IS NOT NULL AND rule_revision IS NOT NULL)
+						);
+					CREATE UNIQUE INDEX IF NOT EXISTS evaluation_scheduled_occurrence_unique
+						ON reconciliations.evaluation (rule_id, rule_revision, scheduled_at)
+						WHERE scheduled_at IS NOT NULL;
+				`)
+				return err
+			},
+		},
 	)
 }

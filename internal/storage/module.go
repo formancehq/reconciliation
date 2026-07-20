@@ -3,8 +3,9 @@ package storage
 import (
 	"context"
 
-	"github.com/formancehq/go-libs/bun/bunconnect"
+	legacyconnect "github.com/formancehq/go-libs/bun/bunconnect"
 	"github.com/formancehq/go-libs/logging"
+	v5connect "github.com/formancehq/go-libs/v5/pkg/storage/bun/connect"
 	"github.com/formancehq/reconciliation/internal/storage/migrations"
 	"github.com/pkg/errors"
 	"github.com/uptrace/bun"
@@ -20,12 +21,25 @@ type storageParams struct {
 	Publisher AlertEventPublisher `optional:"true"`
 }
 
-func Module(connectionOptions bunconnect.ConnectionOptions, debug bool) fx.Option {
+func Module(connectionOptions legacyconnect.ConnectionOptions, debug bool) fx.Option {
 	return fx.Options(
-		fx.Provide(func() *bunconnect.ConnectionOptions {
+		fx.Provide(func() *legacyconnect.ConnectionOptions {
 			return &connectionOptions
 		}),
-		bunconnect.Module(connectionOptions, debug),
+		// go-libs v5's PostgreSQL circuit breaker owns a separate connection
+		// pool and consumes the v5 connection-options type. Keep the service's
+		// legacy Bun module for now, but expose the same DSN and pool bounds to
+		// the publisher so the breaker is actually wired on API and worker.
+		fx.Provide(func() *v5connect.ConnectionOptions {
+			return &v5connect.ConnectionOptions{
+				DatabaseSourceName: connectionOptions.DatabaseSourceName,
+				MaxIdleConns:       connectionOptions.MaxIdleConns,
+				MaxOpenConns:       connectionOptions.MaxOpenConns,
+				ConnMaxIdleTime:    connectionOptions.ConnMaxIdleTime,
+				Connector:          connectionOptions.Connector,
+			}
+		}),
+		legacyconnect.Module(connectionOptions, debug),
 		fx.Provide(func(p storageParams) *Storage {
 			return NewStorage(p.DB).WithPublisher(p.Publisher)
 		}),

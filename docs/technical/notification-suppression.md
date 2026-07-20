@@ -5,7 +5,7 @@
 
 ## The problem
 
-Before the in-process [scheduler](./scheduler.md) landed, evaluation was
+Before the durable [scheduler worker](./scheduler.md) landed, evaluation was
 on-demand: an alert re-failed only when a human (or a script) re-ran the rule,
 so the `reconciliation.alert.updated` event was rare and meaningful.
 

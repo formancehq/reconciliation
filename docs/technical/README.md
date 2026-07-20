@@ -12,7 +12,7 @@ Engineering reference for the V1 reconciliation work. Start with the diff doc if
 | [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate → alert → resolve / accept, plus reopen and engine-error paths. |
 | [templates.md](./templates.md) | The V1 GA template catalog — spec shapes, validation rules, what each compiles to, evidence format. |
 | [alert-period-model.md](./alert-period-model.md) | Why alerts are scoped by reconciliation period (cadence), and how it's implemented. |
-| [scheduler.md](./scheduler.md) | The in-process cron scheduler — how rules fire automatically, and the single-instance caveat. |
+| [scheduler.md](./scheduler.md) | The PostgreSQL-backed worker scheduler, multi-pod claims, catch-up, retries, and delivery guarantees. |
 | [notification-suppression.md](./notification-suppression.md) | Why a still-broken alert stops re-paging on every scheduler tick — the `notify` flag, and "suppress the message, not the record". |
 
 ## Status legend used throughout

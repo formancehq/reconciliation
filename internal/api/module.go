@@ -15,6 +15,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/events"
+	domain "github.com/formancehq/reconciliation/internal/reconciliation"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"go.uber.org/fx"
@@ -24,6 +25,7 @@ const (
 	ErrInvalidID            = "INVALID_ID"
 	ErrMissingOrInvalidBody = "MISSING_OR_INVALID_BODY"
 	ErrValidation           = "VALIDATION"
+	ErrRuleBusy             = "RULE_BUSY"
 )
 
 func healthCheckModule() fx.Option {
@@ -70,7 +72,7 @@ func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
 		fx.Provide(provideEngine),
 		fx.Provide(templates.DefaultRegistry),
 
-		// NB: the v5 observe/log.Logger the messaging + scheduler modules consume
+		// NB: the v5 observe/log.Logger the messaging modules consume
 		// is supplied at the serve level (cmd.messagingLoggingModule), not here —
 		// providing it in both places makes fx reject a duplicate provider.
 
@@ -110,6 +112,8 @@ func provideEngine(resolvers engine.Resolvers) (*engine.Engine, error) {
 
 func handleServiceErrors(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, domain.ErrRuleBusy):
+		api.WriteErrorResponse(w, http.StatusConflict, ErrRuleBusy, err)
 	case errors.Is(err, service.ErrValidation):
 		api.BadRequest(w, ErrValidation, err)
 	case errors.Is(err, service.ErrInvalidID):

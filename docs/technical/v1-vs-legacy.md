@@ -10,7 +10,7 @@ This document describes the diff between the legacy reconciliation behaviour (wh
 |---|---|---|
 | **Entity model** | `Policy` (config) + `Reconciliation` (one-shot result) | `Rule` + `Evaluation` (every run) + `Alert` (stable per rule+fingerprint) + `AlertEvent` (append-only history) + `Resolution` (auditable closure) |
 | **Surface** | Single hardcoded comparison: ledger query vs payments pool | Four typed templates over an internal CEL kernel; resolvers per `Source` kind |
-| **Schedule** | Manual `POST /policies/{id}/reconciliation` | On-demand (`POST /rules/{id}/evaluate`) + in-process cron scheduler (single-instance MVP) |
+| **Schedule** | Manual `POST /policies/{id}/reconciliation` | On-demand (`POST /rules/{id}/evaluate`) + PostgreSQL-backed worker scheduler |
 | **Asset handling** | One pass/fail per request; "different number of assets" hard fails | Per-asset outcomes, fingerprint-dedup'd; one alert per asset |
 | **Drift convention** | Implicit (`ledgerBalance + poolBalance == 0`) — only **negative** drift flags `NOT_OK` (legacy bug) | Same arithmetic; templates treat **any** drift outside tolerance as failure |
 | **Tolerance** | Strict zero only | Per-asset tolerance, configurable per template |

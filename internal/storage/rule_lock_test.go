@@ -91,3 +91,27 @@ func TestWithRuleLock_DifferentRulesDoNotContend(t *testing.T) {
 	}
 	close(release)
 }
+
+func TestTryWithRuleLockReturnsImmediatelyWhenBusy(t *testing.T) {
+	s := newStore(t)
+	ruleID := uuid.New()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		require.NoError(t, s.WithRuleLock(context.Background(), ruleID, func(context.Context) error {
+			close(entered)
+			<-release
+			return nil
+		}))
+	}()
+	<-entered
+	started := time.Now()
+	acquired, err := s.TryWithRuleLock(context.Background(), ruleID, func(context.Context, *Storage) error {
+		t.Fatal("busy rule lock callback must not run")
+		return nil
+	})
+	require.NoError(t, err)
+	require.False(t, acquired)
+	require.Less(t, time.Since(started), time.Second)
+	close(release)
+}

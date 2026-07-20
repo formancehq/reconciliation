@@ -56,6 +56,13 @@ func (s *Storage) WithTx(tx bun.Tx) *Storage {
 	return &Storage{db: tx, pool: s.pool, publisher: s.publisher}
 }
 
+// WithConn returns a storage view rooted on one dedicated database session.
+// It is used by rule evaluation so the advisory lock and the final transaction
+// live on the same connection.
+func (s *Storage) WithConn(conn bun.Conn) *Storage {
+	return &Storage{db: conn, pool: s.pool, publisher: s.publisher}
+}
+
 // RunInTx exposes the underlying bun transaction loop so the service layer can
 // orchestrate multi-method atomic units (e.g. persist evaluation + drive
 // alert transitions). The callback receives a tx-scoped Storage so it
@@ -64,8 +71,8 @@ func (s *Storage) WithTx(tx bun.Tx) *Storage {
 //
 // It is also the boundary that makes alert-event publication transactional:
 // the OUTERMOST RunInTx owns a collector (stashed in ctx) onto which every
-// nested transition buffers its event, and flushes it — publishing to the
-// message bus — only after the transaction has actually committed. A
+// nested transition buffers its event, and flushes each buffered publish
+// attempt only after the transaction has actually committed. A
 // rolled-back unit (e.g. a mid-loop failure in driveAlerts) therefore emits
 // nothing. Nested RunInTx calls (bun savepoints) defer to the outer owner.
 func (s *Storage) RunInTx(ctx context.Context, fn func(ctx context.Context, store *Storage) error) error {
@@ -97,8 +104,8 @@ type pendingAlertEvent struct {
 }
 
 // alertEventCollector buffers events produced inside an outer transaction so
-// they publish exactly once — after the OUTERMOST commit — rather than after
-// each inner savepoint releases.
+// each transition produces one post-commit publish attempt rather than one per
+// nested savepoint. Broker replay semantics remain at-least-once.
 type alertEventCollector struct {
 	mu      sync.Mutex
 	pending []pendingAlertEvent

@@ -10,6 +10,7 @@ import (
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
+	domain "github.com/formancehq/reconciliation/internal/reconciliation"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
@@ -64,7 +65,7 @@ type Service struct {
 	client    SDKFormance
 	engine    *engine.Engine
 	templates *templates.Registry
-	resolvers engine.Resolvers
+	runner    *domain.Runner
 }
 
 // NewService constructs the service with all collaborators. V1 work requires
@@ -76,45 +77,8 @@ func NewService(store Store, client SDKFormance, eng *engine.Engine, reg *templa
 		client:    client,
 		engine:    eng,
 		templates: reg,
-		resolvers: res,
+		runner:    domain.NewRunner(store, eng, reg, res),
 	}
-}
-
-// inTx runs fn under a single transaction when the underlying store
-// supports it (the real *storage.Storage does), and forwards the store
-// through unchanged otherwise. Test fakes typically skip the transaction —
-// their in-memory state already gives all-or-nothing semantics naturally,
-// so they don't need to implement bun.RunInTx.
-//
-// The type assertion is defined inline rather than as a named interface
-// because keeping it here avoids dragging storage internals (sql.TxOptions
-// etc.) into the Store interface — Store stays purely about data shapes.
-func (s *Service) inTx(ctx context.Context, fn func(ctx context.Context, store Store) error) error {
-	type runner interface {
-		RunInTx(ctx context.Context, fn func(ctx context.Context, scoped *storage.Storage) error) error
-	}
-	if tx, ok := s.store.(runner); ok {
-		return tx.RunInTx(ctx, func(ctx context.Context, scoped *storage.Storage) error {
-			return fn(ctx, scoped)
-		})
-	}
-	return fn(ctx, s.store)
-}
-
-// withRuleLock serialises the read+persist window of an evaluation against
-// other evaluations of the same rule when the store supports it (the real
-// *storage.Storage takes a Postgres advisory lock keyed on the rule id). Test
-// fakes that don't implement it run fn directly — their in-memory state and the
-// test's own goroutine discipline stand in for the lock. Kept as an inline type
-// assertion, like inTx, so the Store interface stays purely about data shapes.
-func (s *Service) withRuleLock(ctx context.Context, ruleID uuid.UUID, fn func(ctx context.Context) error) error {
-	type locker interface {
-		WithRuleLock(ctx context.Context, ruleID uuid.UUID, fn func(ctx context.Context) error) error
-	}
-	if l, ok := s.store.(locker); ok {
-		return l.WithRuleLock(ctx, ruleID, fn)
-	}
-	return fn(ctx)
 }
 
 // SDKFormance is the SDK surface the service layer + engine consume. It

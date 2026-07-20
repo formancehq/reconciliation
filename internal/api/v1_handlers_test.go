@@ -16,6 +16,7 @@ import (
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
+	domain "github.com/formancehq/reconciliation/internal/reconciliation"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -149,6 +150,23 @@ func TestEvaluateRule_Nominal(t *testing.T) {
 	var got sharedapi.BaseResponse[evaluationResponse]
 	sharedapi.Decode(t, rec.Body, &got)
 	require.Equal(t, string(models.EvaluationPass), got.Data.Result)
+}
+
+func TestEvaluateRule_BusyReturnsConflict(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	id := uuid.New()
+	mockSvc.EXPECT().EvaluateRule(gomock.Any(), id, gomock.Any()).Return(nil, domain.ErrRuleBusy)
+
+	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader([]byte(`{}`)))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	var response sharedapi.ErrorResponse
+	sharedapi.Decode(t, rec.Body, &response)
+	require.EqualValues(t, ErrRuleBusy, response.ErrorCode)
 }
 
 // A chunked request body (ContentLength == -1) must still be decoded — the

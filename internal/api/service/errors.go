@@ -3,10 +3,12 @@ package service
 import (
 	"errors"
 	"fmt"
+
+	domain "github.com/formancehq/reconciliation/internal/reconciliation"
 )
 
 var (
-	ErrValidation = errors.New("validation error")
+	ErrValidation = domain.ErrValidation
 	ErrInvalidID  = errors.New("invalid id")
 )
 

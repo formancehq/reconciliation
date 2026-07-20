@@ -1,60 +1,49 @@
-# Cron scheduler
+# Durable cron scheduler
 
-> Runs rule evaluations automatically on a schedule — the counterpart to the
-> on-demand `POST /rules/{id}/evaluate`.
+Cron rules are executed by the separate `reconciliation worker` process. API
+pods are stateless and never run a scheduling loop.
 
-## What it does
+## PostgreSQL coordination
 
-A rule can declare a **cron schedule** (`schedule.kind = "cron"`, with a cron
-`expr`, optional `tz`, and `safetyMargin`). When the scheduler is enabled, it
-fires `EvaluateRule` for each such rule at its scheduled times — the same code
-path a manual evaluation takes, so detection, the period model, the alert
-lifecycle, and webhooks all behave identically.
+PostgreSQL stores the durable cursor (`rule.next_run_at`) and one
+`evaluation_job` per `(rule, revision, scheduled_at)` occurrence. Every worker
+pod may run both planner and executor loops:
 
-The cron expression is **validated at rule-create time** (`POST /rules`) — a bad
-expression is rejected up front, not discovered silently at run time.
+1. Planners lock due rule rows with `FOR UPDATE SKIP LOCKED`, insert jobs with a
+   unique occurrence constraint, and advance the cursor atomically.
+2. Executors claim pending or expired jobs with `FOR UPDATE SKIP LOCKED`, a
+   two-minute lease, and a fresh fencing token.
+3. Evaluations of the same rule take the existing PostgreSQL advisory lock.
+   Different rules may run in parallel.
+4. The final transaction validates the job token and rule revision before it
+   writes the evaluation, alert transitions, alert events, and job success.
 
-**Safety margin.** A scheduled evaluation reads at `tick − safetyMargin`. When the
-schedule omits `safetyMargin` it defaults to **30s** (same default the manual
-`POST /rules/{id}/evaluate` applies), so scheduled runs stay off in-flight ledger
-writes near a period boundary rather than reading exactly at the tick instant. An
-explicit positive value on the schedule is honoured as-is.
+This provides at-least-once execution attempts and exactly one committed set of
+database effects per occurrence. Ledger and Payments reads can be repeated when
+a worker dies after reading but before committing.
 
-## How it works (V1 — in-process)
+## Catch-up and retries
 
-A single goroutine ([internal/scheduler/](../../internal/scheduler/)) ticks once a
-minute (cron is minute-granular):
+- Scheduled evaluations use the occurrence time as their explicit PIT and then
+  subtract the configured safety margin (30 seconds by default).
+- After downtime, only occurrences from the last 24 hours are considered and
+  only the most recent 100 per rule are materialized.
+- Infrastructure failures are retried five times with exponential backoff.
+  A persisted `ERROR` evaluation is a completed job, not an infrastructure
+  retry.
+- Terminal job rows are retained for 30 days. The scheduled occurrence identity
+  is also stored on `evaluation`, so cleanup cannot remove the deduplication
+  barrier.
 
-1. List enabled rules with a cron schedule.
-2. For each, check whether its cron expression came due in the last tick window
-   (`dueInWindow`: the schedule's next firing after the previous tick is `<= now`).
-3. Fire the due ones via `EvaluateRule` (each in its own goroutine; failures are
-   logged and never stop the loop — engine-side errors still raise the
-   `engine.error` meta-alert).
+## Scaling and delivery semantics
 
-**Timezone:** the rule's `schedule.tz` when set, else **UTC** (deterministic —
-never the host's local zone).
+The Operator initially deploys one worker with four concurrent evaluations, but
+multiple worker pods and rolling-update overlap are safe. `replicas: 1` is a
+capacity choice, not a correctness mechanism.
 
-**Enabling it:** off by default. `--scheduler-enabled` turns it on;
-`--scheduler-interval` (default `1m`) sets the tick granularity.
-
-## ⚠️ Single-active-instance assumption
-
-This scheduler fires on **every process it runs in**. With multiple replicas it
-would fire each schedule N times (N× evaluations, N× webhooks). For V1 it must
-run on **exactly one instance** (or stay disabled). Reconciliation evaluations
-are largely idempotent within a period — duplicate runs dedup onto the same
-alert — but **webhooks would be delivered multiple times**, so don't scale the
-scheduler out as-is.
-
-## Planned follow-up (multi-replica safety)
-
-Per [PRD §8](../prd/README.md), the scheduler host is a deliberate open
-decision. The in-process MVP is the lean V1 start; the path to running safely on
-N replicas is one of:
-- a **Postgres advisory lock** so only one replica's loop fires, or
-- moving schedules to **Temporal** (already in the stack) for durable,
-  exactly-once, observable scheduling.
-
-Both reuse the same "list cron rules → fire due ones" core; only the
-fire-exactly-once mechanism changes.
+Alert events still use the PostgreSQL-backed publisher circuit breaker from
+`go-libs`. It retries messages that reach the publisher while the broker is
+unavailable, but it is not a transactional outbox: a crash between the business
+commit and `Publish` can lose a notification, and multiple publishers can replay
+the same message. The stable `alert_event` UUID is the downstream idempotency
+key; delivery is not described as exactly once.

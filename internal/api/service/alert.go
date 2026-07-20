@@ -7,6 +7,7 @@ import (
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/models"
+	"github.com/formancehq/reconciliation/internal/reconciliation"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/google/uuid"
 )
@@ -151,4 +152,4 @@ func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q stor
 // openEngineErrorAlert in evaluation.go). Promoted to a package-level
 // constant so the value lives in one place — anywhere we route or filter
 // engine-health alerts can match on this literal.
-const engineErrorFingerprint = "engine.error"
+const engineErrorFingerprint = reconciliation.EngineErrorFingerprint

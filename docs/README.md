@@ -49,6 +49,6 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | 5 | Service layer — Rule / Evaluation / Alert orchestration + resolution paths + event-log append | ✅ shipped |
 | 6 | API endpoints + legacy `/policies` facade + OpenAPI | ✅ shipped |
 | 7 | End-to-end demo UI ([poc-reconciliation-demo](../../poc-reconciliation-demo)) — replaces the planned dockertest harness | ✅ shipped |
-| 8 | V1 GA additions — webhook events ✅ · in-process cron scheduler ✅ (single-instance) · email digest / fctl / EE gating / metering 🚧 | 🚧 in progress |
+| 8 | V1 GA additions — webhook events ✅ · durable PostgreSQL scheduler worker ✅ · email digest / fctl / EE gating / metering 🚧 | 🚧 in progress |
 
 Filed upstream: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416) — `/aggregate/balances` PIT + metadata silently returns empty under `ACCOUNT_METADATA_HISTORY: DISABLED`.

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/query"
@@ -20,6 +21,22 @@ func (s *Storage) CreateRule(ctx context.Context, rule *models.Rule) error {
 	// if a caller skipped the service-layer default.
 	if rule.Cadence == "" {
 		rule.Cadence = models.CadenceContinuous
+	}
+	if rule.Revision == 0 {
+		rule.Revision = 1
+	}
+	if rule.Enabled && rule.Schedule != nil && rule.Schedule.Kind == models.ScheduleCron {
+		var now time.Time
+		if err := s.db.NewSelect().ColumnExpr("now()").Scan(ctx, &now); err != nil {
+			return e("read database time for rule schedule", err)
+		}
+		next, err := rule.Schedule.Next(now)
+		if err != nil {
+			return err
+		}
+		if !next.IsZero() {
+			rule.NextRunAt = &next
+		}
 	}
 	_, err := s.db.NewInsert().Model(rule).Exec(ctx)
 	if err != nil {
@@ -71,6 +88,12 @@ type RulePatch struct {
 // The updated_at column advances automatically via the touch_updated_at trigger
 // (migration #4).
 func (s *Storage) PatchRule(ctx context.Context, id uuid.UUID, patch RulePatch) error {
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return s.WithTx(tx).patchRule(ctx, id, patch)
+	})
+}
+
+func (s *Storage) patchRule(ctx context.Context, id uuid.UUID, patch RulePatch) error {
 	q := s.db.NewUpdate().Model((*models.Rule)(nil)).Where("id = ?", id)
 	touched := false
 	if patch.Name != nil {
@@ -125,6 +148,32 @@ func (s *Storage) PatchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 		}
 		return nil
 	}
+
+	var current models.Rule
+	if err := s.db.NewSelect().Model(&current).Where("id = ?", id).For("UPDATE").Scan(ctx); err != nil {
+		return e("load rule for patch", err)
+	}
+	effectiveSchedule := current.Schedule
+	if patch.Schedule != nil {
+		effectiveSchedule = patch.Schedule
+	}
+	effectiveEnabled := current.Enabled
+	if patch.Enabled != nil {
+		effectiveEnabled = *patch.Enabled
+	}
+	var nextRunAt any
+	if effectiveEnabled && effectiveSchedule != nil && effectiveSchedule.Kind == models.ScheduleCron {
+		var now time.Time
+		if err := s.db.NewSelect().ColumnExpr("now()").Scan(ctx, &now); err != nil {
+			return e("read database time for patched schedule", err)
+		}
+		next, err := effectiveSchedule.Next(now)
+		if err != nil {
+			return err
+		}
+		nextRunAt = nullTime(next)
+	}
+	q = q.Set("revision = revision + 1").Set("next_run_at = ?", nextRunAt)
 	res, err := q.Exec(ctx)
 	if err != nil {
 		return e("failed to patch rule", err)
@@ -132,6 +181,13 @@ func (s *Storage) PatchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return e("patch rule", ErrNotFound)
+	}
+	if _, err := s.db.NewUpdate().Model((*models.EvaluationJob)(nil)).
+		Set("status = ?", models.EvaluationJobCancelled).
+		Set("last_error = ?", "rule revised").
+		Where("rule_id = ? AND rule_revision <= ? AND status = ?", id, current.Revision, models.EvaluationJobPending).
+		Exec(ctx); err != nil {
+		return e("cancel superseded evaluation jobs", err)
 	}
 	return nil
 }

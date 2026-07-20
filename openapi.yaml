@@ -219,6 +219,7 @@ paths:
             schema: { $ref: '#/components/schemas/EvaluateRuleRequest' }
       responses:
         '200': { $ref: '#/components/responses/Evaluation' }
+        '409': { $ref: '#/components/responses/ErrorResponse' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]

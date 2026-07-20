@@ -115,6 +115,7 @@ func TestPublisher_PublishAlertEvent(t *testing.T) {
 
 	require.Len(t, rec.msgs, 1, "exactly one message per event row")
 	require.Equal(t, []string{Topic}, rec.topics)
+	require.Equal(t, event.ID.String(), rec.msgs[0].UUID)
 
 	// The envelope round-trips and carries app/version/type + full alert+event.
 	var env publish.EventMessage

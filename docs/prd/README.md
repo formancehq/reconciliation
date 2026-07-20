@@ -177,7 +177,7 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 
 - **Product name.** Ledger Clarity (lean) vs Ledger Transparency.
 - **Acceptance expiry behaviour.** Alert reopens **in place** (same id, status → OPEN) — the prior acceptance is preserved as an `alert_event` row, the alert row's current `resolution` is cleared. Flapping stays visible via the event timeline.
-- **Scheduler host.** In-process vs Temporal. Lean Temporal; needs architecture review.
+- **Scheduler host.** Separate worker with PostgreSQL durable jobs and multi-pod fencing.
 - **CEL builtin naming review** before any post-GA exposure to customers.
 - **Notification fatigue** is the biggest product risk. Mitigation: stable alert per (rule, fingerprint), severity-aware delivery, digest mode default for low/medium.
 
@@ -192,8 +192,8 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 - ✅ API endpoints + legacy `/policies` facade + OpenAPI
 - ✅ End-to-end demo UI ([poc-reconciliation-demo](../../../poc-reconciliation-demo)) — replaces the planned dockertest harness
 - ✅ Period-scoped alert identity (rule `cadence`: continuous / daily / weekly / monthly) + webhook event publication on alert transitions
-- ✅ In-process cron scheduler (single-instance MVP — see [scheduler.md](../technical/scheduler.md))
-- 🚧 Remaining V1 GA additions: email digest, fctl, EE gating, usage metering · scheduler multi-replica safety (advisory-lock / Temporal)
+- ✅ PostgreSQL-backed cron worker with multi-replica safety — see [scheduler.md](../technical/scheduler.md)
+- 🚧 Remaining V1 GA additions: email digest, fctl, EE gating, usage metering
 
 ---
 
