@@ -67,6 +67,10 @@ func listEvaluationsHandler(b backend.Backend) http.HandlerFunc {
 				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param", QueryKeyCursor))
 				return
 			}
+			if err := validateCursorPageSize(q.PageSize); err != nil {
+				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param: %w", QueryKeyCursor, err))
+				return
+			}
 		} else {
 			options, err := getPaginatedQueryOptionsEvaluations(r)
 			if err != nil {

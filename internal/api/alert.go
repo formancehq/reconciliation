@@ -120,6 +120,10 @@ func listAlertsHandler(b backend.Backend) http.HandlerFunc {
 				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param", QueryKeyCursor))
 				return
 			}
+			if err := validateCursorPageSize(q.PageSize); err != nil {
+				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param: %w", QueryKeyCursor, err))
+				return
+			}
 		} else {
 			options, err := getPaginatedQueryOptionsAlerts(r)
 			if err != nil {
@@ -153,6 +157,10 @@ func listAlertEventsHandler(b backend.Backend) http.HandlerFunc {
 		if r.URL.Query().Get(QueryKeyCursor) != "" {
 			if err := bunpaginate.UnmarshalCursor(r.URL.Query().Get(QueryKeyCursor), &q); err != nil {
 				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param", QueryKeyCursor))
+				return
+			}
+			if err := validateCursorPageSize(q.PageSize); err != nil {
+				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid '%s' query param: %w", QueryKeyCursor, err))
 				return
 			}
 		} else {
