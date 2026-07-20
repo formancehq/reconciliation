@@ -46,7 +46,7 @@ func TestAlertMetadataRoundTrip(t *testing.T) {
 	acct := &commonpb.Account{
 		Address:  schema.AlertItemAccount(ruleID.String(), orig.PeriodID, schema.FingerprintHash(orig.Fingerprint)),
 		Metadata: md,
-		Volumes:  map[string]*commonpb.VolumesWithBalance{schema.AssetOcc: {Balance: "3"}},
+		Volumes:  []*commonpb.AccountVolume{{Asset: schema.AssetOcc, Volumes: &commonpb.VolumesWithBalance{Balance: "3"}}},
 	}
 
 	got, err := alertFromAccount(acct)

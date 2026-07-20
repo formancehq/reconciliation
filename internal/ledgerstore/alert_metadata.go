@@ -3,7 +3,6 @@ package ledgerstore
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
@@ -147,16 +146,16 @@ func alertFromAccount(acct *commonpb.Account) (*models.Alert, error) {
 	return a, nil
 }
 
-// occurrenceCount reads the alert's OCC balance (a decimal big.Int string).
+// occurrenceCount reads the alert's OCC balance, summing across colors since
+// volumes are now reported per (asset, color). BalancesByAsset does the summing
+// (and the input−output fallback) so color handling lives in one place.
 func occurrenceCount(acct *commonpb.Account) int64 {
-	v := acct.GetVolumes()[schema.AssetOcc]
-	if v == nil {
+	occ := commonpb.BalancesByAsset(acct)[schema.AssetOcc]
+	if occ == nil {
 		return 0
 	}
 
-	n, _ := strconv.ParseInt(v.GetBalance(), 10, 64)
-
-	return n
+	return occ.Int64()
 }
 
 // marshalOptional JSON-encodes a possibly-nil pointer; returns "" for nil.
