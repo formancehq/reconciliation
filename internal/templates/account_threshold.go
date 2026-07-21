@@ -171,6 +171,7 @@ func (t *AccountThreshold) Evaluate(
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
 			Evidence:    evidence,
+			Proof:       map[string]string{"balance": val.String()},
 		})
 		expressions = append(expressions, buildSnapshotThresholdExpression(val, bounds))
 	}
@@ -227,6 +228,7 @@ func (t *AccountThreshold) evaluatePerAccount(
 			outcomes = append(outcomes, Outcome{
 				Fingerprint: fingerprintFor("asset", asset, "account", acct.Address),
 				Evidence:    evidence,
+				Proof:       map[string]string{"balance": val.String()},
 			})
 			expressions = append(expressions, buildSnapshotThresholdExpression(val, bounds))
 		}

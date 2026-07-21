@@ -200,3 +200,51 @@ func TestManualEvaluationRejectsResultAfterRuleRevisionChanges(t *testing.T) {
 	require.Nil(t, store.evaluation)
 	require.False(t, store.engineErr)
 }
+
+// marshalOutcomes records the full per-fingerprint roster — passing AND failing.
+// A PASS stores only the compact Proof (balance integers); a FAIL stores the
+// full Evidence breakdown. So a green tick is a light self-contained proof, not
+// an empty [] nor the heavy fail-shaped map.
+func TestMarshalOutcomes_PassProofFailEvidence(t *testing.T) {
+	raw, err := marshalOutcomes([]templates.Outcome{
+		{
+			Fingerprint: "asset:USD/2", Passed: true,
+			Proof:    map[string]string{"balance": "523500"},
+			Evidence: map[string]any{"balance": "523500", "compiledCEL": "…", "min": 100000}, // must NOT be stored on PASS
+		},
+		{
+			Fingerprint: "asset:EUR/2", Passed: false,
+			Evidence: map[string]any{"drift": "50", "compiledCEL": "…"},
+		},
+	})
+	require.NoError(t, err)
+
+	var got []struct {
+		Fingerprint string            `json:"fingerprint"`
+		Passed      bool              `json:"passed"`
+		Proof       map[string]string `json:"proof"`
+		Evidence    map[string]any    `json:"evidence"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &got))
+	require.Len(t, got, 2)
+
+	// PASS: compact proof only, no heavy evidence map.
+	require.Equal(t, "asset:USD/2", got[0].Fingerprint)
+	require.True(t, got[0].Passed)
+	require.Equal(t, "523500", got[0].Proof["balance"])
+	require.Empty(t, got[0].Evidence, "PASS must not store the full evidence map")
+
+	// FAIL: full evidence, no proof.
+	require.Equal(t, "asset:EUR/2", got[1].Fingerprint)
+	require.False(t, got[1].Passed)
+	require.Equal(t, "50", got[1].Evidence["drift"])
+	require.Empty(t, got[1].Proof, "FAIL carries evidence, not proof")
+}
+
+// An evaluation that produced no outcomes (no assets matched) still serialises
+// to an empty array, never null.
+func TestMarshalOutcomes_NoOutcomesIsEmptyArray(t *testing.T) {
+	raw, err := marshalOutcomes(nil)
+	require.NoError(t, err)
+	require.JSONEq(t, `[]`, string(raw))
+}

@@ -71,7 +71,7 @@ sequenceDiagram
     Res-->>Eng: int64
     Eng-->>Reg: pass/fail + pitPerSource
     Reg-->>Svc: []Outcome  (one per fingerprint axis)
-    Svc->>DB: INSERT evaluation (PASS/FAIL/ERROR + pit_per_source + evidence)
+    Svc->>DB: INSERT evaluation (PASS/FAIL/ERROR + pit_per_source + proof on PASS / evidence on FAIL)
     DB-->>Svc: evaluationId
     loop For each failing outcome
         Svc->>Alr: OpenOrUpdateAlert(rule, outcome, evaluationId)

@@ -136,13 +136,23 @@ func (t *LedgerInvariant) Evaluate(
 	for _, asset := range sortedKeys(spec.Tolerance) {
 		tolerance := spec.Tolerance[asset]
 
-		// Direct math.
+		// Direct math. grossPos / grossNeg accumulate the positive- and
+		// negative-signed contributions — the two sides that should net (e.g. the
+		// held(+) vs obligation(-) totals) — so the green proof carries the real
+		// balances checked, not just the ~0 sum.
 		signedSum := big.NewInt(0)
+		grossPos := big.NewInt(0)
+		grossNeg := big.NewInt(0)
 		termValues := make([]string, 0, len(spec.Terms))
 		for i, term := range spec.Terms {
 			v := zeroIfNil(termBalances[i][asset])
 			signed := new(big.Int).Mul(big.NewInt(int64(term.Sign)), v)
 			signedSum.Add(signedSum, signed)
+			if signed.Sign() < 0 {
+				grossNeg.Add(grossNeg, signed)
+			} else {
+				grossPos.Add(grossPos, signed)
+			}
 			termValues = append(termValues, signed.String())
 		}
 		driftAbs := new(big.Int).Abs(signedSum)
@@ -158,6 +168,8 @@ func (t *LedgerInvariant) Evaluate(
 				"termValues":  termValues,
 				"compiledCEL": expr,
 			},
+			// Green proof: the two netting sides. residual is positive+negative.
+			Proof: map[string]string{"positive": grossPos.String(), "negative": grossNeg.String()},
 		})
 		expressions = append(expressions, fmt.Sprintf(`abs(%s) <= %d`, strings.Join(termValues, " + "), tolerance))
 	}

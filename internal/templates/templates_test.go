@@ -368,6 +368,10 @@ func TestDrift_Evaluate_ToleranceAbsorbs(t *testing.T) {
 	if o == nil || !o.Passed {
 		t.Fatalf("expected pass within tolerance, got %v", o)
 	}
+	// Proof carries both raw sides; the 5 residual is visible as ledger(100) vs pool(-95).
+	if o.Proof["ledger"] != "100" || o.Proof["pool"] != "-95" {
+		t.Errorf("proof = %v, want {ledger:100, pool:-95}", o.Proof)
+	}
 }
 
 func TestDrift_Explain_HasShape(t *testing.T) {
@@ -436,6 +440,12 @@ func TestInvariant_Evaluate_SumsToZero(t *testing.T) {
 	if o == nil || !o.Passed {
 		t.Fatalf("expected pass, got %v", o)
 	}
+	// obligation holds a NEGATIVE balance with sign +1, so its contribution
+	// (1×-350) buckets into `negative`. The proof reflects the netting sides,
+	// not the configured signs.
+	if o.Proof["positive"] != "350" || o.Proof["negative"] != "-350" {
+		t.Errorf("proof = %v, want {positive:350, negative:-350}", o.Proof)
+	}
 }
 
 func TestInvariant_Evaluate_NegativeSign(t *testing.T) {
@@ -461,6 +471,11 @@ func TestInvariant_Evaluate_NegativeSign(t *testing.T) {
 	o := findOutcome(out, "asset:USD/2")
 	if o == nil || !o.Passed {
 		t.Fatalf("expected pass with opposing signs, got %v", o)
+	}
+	// Same proof as the SumsToZero case via the opposite modelling (positive
+	// balance + sign -1) — the proof is invariant to the sign convention.
+	if o.Proof["positive"] != "350" || o.Proof["negative"] != "-350" {
+		t.Errorf("proof = %v, want {positive:350, negative:-350}", o.Proof)
 	}
 }
 
@@ -552,6 +567,9 @@ func TestThreshold_Evaluate_InBounds(t *testing.T) {
 	o := findOutcome(out, "asset:USD/2")
 	if o == nil || !o.Passed {
 		t.Fatalf("expected pass (500 in [100,1000]), got %v", o)
+	}
+	if o.Proof["balance"] != "500" {
+		t.Errorf("proof.balance = %q, want 500", o.Proof["balance"])
 	}
 }
 

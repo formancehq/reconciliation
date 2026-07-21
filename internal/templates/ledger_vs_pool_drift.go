@@ -225,6 +225,10 @@ func (t *LedgerVsPoolDrift) Evaluate(
 				"signedDrift":   drift.String(),
 				"compiledCEL":   expr,
 			},
+			// Green proof: both observed sides — the raw ledger balance
+			// (UI-matching) and the pool balance. The residual is left−right
+			// derivable; consumers read the figures directly.
+			Proof: map[string]string{"ledger": rawLedger.String(), "pool": poolVal.String()},
 		})
 		expressions = append(expressions, fmt.Sprintf(`abs((%s) + (%s)) <= %d`, ledgerVal.String(), poolVal.String(), tolerance))
 	}

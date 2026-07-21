@@ -174,6 +174,8 @@ func (t *SourceParity) Evaluate(
 				"tolerance":    tolerance,
 				"compiledCEL":  expr,
 			},
+			// Green proof: both observed sides. The residual is left−right derivable.
+			Proof: map[string]string{"left": leftVal.String(), "right": rightVal.String()},
 		})
 		expressions = append(expressions, fmt.Sprintf(`abs((%s) - (%s)) <= %d`, leftVal.String(), rightVal.String(), tolerance))
 	}
@@ -243,6 +245,7 @@ func (t *SourceParity) evaluatePerAccount(
 						spec.Left.celTermForAccount(addr, celString(asset)),
 						spec.Right.celTermForAccount(addr, celString(asset)), tolerance),
 				},
+				Proof: map[string]string{"left": leftVal.String(), "right": rightVal.String()},
 			})
 			expressions = append(expressions, fmt.Sprintf(`abs((%s) - (%s)) <= %d`, leftVal.String(), rightVal.String(), tolerance))
 		}

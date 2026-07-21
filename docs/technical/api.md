@@ -145,13 +145,26 @@ Returns `200` + the evaluation record:
   "endedAt":      "…",
   "result":       "PASS" | "FAIL" | "ERROR",
   "pitPerSource": { "ledger:buildr#0": "…", "pool:0eb4a31f-…#0": "…" },
-  "evidence":     [ { "fingerprint": "asset:USD/2", "passed": false, "evidence": {…} }, … ],
+  "evidence":     [ { "fingerprint": "asset:USD/2", "passed": true, "proof": { "ledger": "523500", "pool": "-523500" } }, { "fingerprint": "asset:EUR/2", "passed": false, "evidence": {…} } ],
   "costUnits":    12,
   "error":        ""
 }
 ```
 
-`evidence` records **only the failing fingerprints** — the overall `result` (`PASS`/`FAIL`/`ERROR`) carries the verdict, and persisting the full passing roster every tick is pure write amplification for wide rules. An all-`PASS` evaluation therefore has `"evidence": []`. The failing detail you'd query lives here and (per-fingerprint, with lifecycle) on the alerts.
+`evidence` is the per-fingerprint roster — passing *and* failing — but the two verdicts store different weight:
+
+- **PASS** → a compact `proof`: the observed balances that make the check hold, with self-describing keys — **both sides** where two are compared, so under tolerance the residual is visible directly (no recompute, no need to know the rule's sign):
+  - `account_threshold`: `{ "balance": "523500" }` — single-sided vs `[min, max]`.
+  - `ledger_vs_pool_drift`: `{ "ledger": "523500", "pool": "-523500" }`.
+  - `source_parity`: `{ "left": "100", "right": "100" }`.
+  - `ledger_invariant`: `{ "positive": "5000", "negative": "-5000" }` — the two netting sides (e.g. held vs obligation totals).
+  
+  These reuse the balance keys the FAIL `evidence` uses, so a consumer reads the figures the same way on either verdict. The residual (drift) is just `left − right`, derivable when wanted. Kept light — no compiled CEL, no derived/redundant fields.
+- **FAIL** → the full `evidence` breakdown (balances, drift, tolerance, compiled CEL), the same shape carried on the alert.
+
+An evaluation that produced no outcomes (no assets matched either side) has `"evidence": []`. Per-fingerprint *failing* detail also lives, with full lifecycle, on the alerts.
+
+> Reproducibility note: the PASS `proof` freezes the observed balances, and `pitPerSource` records the instant each source was read — so a green run is provable both by its frozen proof and by replaying the PITs. Replay reconstructs ledger-source balances faithfully; the one gap is Payments `latest` (no snapshot timestamp — see the caveat above), which the stored proof covers.
 
 #### `GET /evaluations` — cursor-paginated list
 

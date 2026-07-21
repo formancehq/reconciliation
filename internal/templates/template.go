@@ -34,8 +34,21 @@ type Outcome struct {
 
 	// Evidence is the breakdown the template wants to expose on the resulting
 	// incident's `evidence` jsonb column — the actual balances, accounts,
-	// drift, etc. examined to produce this outcome.
+	// drift, etc. examined to produce this outcome. Written to the alert on a
+	// failing outcome, and to the evaluation record on FAIL.
 	Evidence map[string]any
+
+	// Proof is the compact green-proof for a PASSING outcome: the observed
+	// balances that make the check hold, as decimal strings. Where two sides are
+	// compared it carries both, with self-describing keys (ledger/pool,
+	// left/right, positive/negative) so a consumer reads the actual figures
+	// without recomputing from a residual or knowing the rule's sign convention —
+	// and the same balance keys the FAIL Evidence uses. It is what the evaluation
+	// record stores on PASS: a light, self-contained record without the full
+	// Evidence map (compiled CEL, drift/derived fields). Templates set both; the
+	// runner picks Proof for PASS and Evidence for FAIL. See
+	// runner.marshalOutcomes.
+	Proof map[string]string
 }
 
 // EvaluationResult is the complete result of one template execution. Source

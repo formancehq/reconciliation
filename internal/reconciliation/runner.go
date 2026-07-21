@@ -359,17 +359,39 @@ func openEngineErrorAlert(ctx context.Context, store Store, rule *models.Rule, e
 	return result.Alert, nil
 }
 
+// marshalOutcomes serialises the per-fingerprint roster into the
+// evaluation.evidence column — one entry per outcome, passing AND failing. The
+// two verdicts carry different weight:
+//
+//   - PASS → a compact Proof: the observed balances that make the check hold —
+//     both sides where two are compared (e.g. {"ledger":"…","pool":"…"} for drift,
+//     {"balance":"…"} for the single-sided account_threshold). Green ticks are
+//     frequent, so this keeps the stored record light — a self-contained proof of
+//     what was checked without the full Evidence map (compiled CEL, derived/
+//     redundant fields, all recomputable or already on the rule).
+//   - FAIL → the full Evidence breakdown (balances, drift, tolerance, compiled
+//     CEL). Fails are rare and the detail is worth the bytes for triage; it is
+//     the same shape driveAlerts writes onto the alert.
+//
+// The balances are already computed in-memory by the template, so this adds no
+// reads. Per-asset granularity (per-account is parked) bounds the roster to the
+// asset count regardless of a rule query's account fan-out.
 func marshalOutcomes(outcomes []templates.Outcome) (json.RawMessage, error) {
 	type encoded struct {
-		Fingerprint string         `json:"fingerprint"`
-		Passed      bool           `json:"passed"`
-		Evidence    map[string]any `json:"evidence,omitempty"`
+		Fingerprint string            `json:"fingerprint"`
+		Passed      bool              `json:"passed"`
+		Proof       map[string]string `json:"proof,omitempty"`
+		Evidence    map[string]any    `json:"evidence,omitempty"`
 	}
 	values := make([]encoded, 0, len(outcomes))
 	for _, outcome := range outcomes {
-		if !outcome.Passed {
-			values = append(values, encoded{Fingerprint: outcome.Fingerprint, Passed: false, Evidence: outcome.Evidence})
+		enc := encoded{Fingerprint: outcome.Fingerprint, Passed: outcome.Passed}
+		if outcome.Passed {
+			enc.Proof = outcome.Proof
+		} else {
+			enc.Evidence = outcome.Evidence
 		}
+		values = append(values, enc)
 	}
 	if len(values) == 0 {
 		return json.RawMessage("[]"), nil

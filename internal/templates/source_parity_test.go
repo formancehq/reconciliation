@@ -71,8 +71,18 @@ func TestSourceParity_LedgerVsPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate (tol 50): %v", err)
 	}
-	if usd := findOutcome(out, "asset:USD/2"); usd == nil || !usd.Passed {
+	usd = findOutcome(out, "asset:USD/2")
+	if usd == nil || !usd.Passed {
 		t.Fatalf("expected USD/2 to pass at tolerance 50, got %+v", out)
+	}
+	// PASS proof stays faithful under tolerance: BOTH observed sides, not a claim
+	// they were equal. This is the accountA=X / accountB=X+tolerance case — the
+	// 30 residual is visible as left(100) vs right(130), no recompute needed.
+	if usd.Proof["left"] != "100" {
+		t.Errorf("proof.left = %q, want 100", usd.Proof["left"])
+	}
+	if usd.Proof["right"] != "130" {
+		t.Errorf("proof.right = %q, want 130", usd.Proof["right"])
 	}
 }
 
