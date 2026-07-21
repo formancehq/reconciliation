@@ -44,7 +44,9 @@ type ThresholdBounds struct {
 
 // AccountThreshold implements Evaluator for both threshold modes: aggregate
 // (one outcome per asset) and per_account (one outcome per resolved account ×
-// asset). Validate accepts both; Evaluate dispatches on spec.Mode.
+// asset). V1 exposes aggregate only — per_account is parked at Validate (see
+// perAccountParkedMsg); its Evaluate path is retained for re-introduction.
+// Evaluate dispatches on spec.Mode.
 type AccountThreshold struct{}
 
 func NewAccountThreshold() *AccountThreshold { return &AccountThreshold{} }
@@ -66,10 +68,14 @@ func (t *AccountThreshold) Validate(raw json.RawMessage) error {
 		spec.Mode = ThresholdAggregate
 	}
 	switch spec.Mode {
-	case ThresholdAggregate, ThresholdPerAccount:
+	case ThresholdAggregate:
 		// ok
+	case ThresholdPerAccount:
+		// Parked in V1 — creation is blocked here, but evaluatePerAccount below
+		// is retained and still tested via the Evaluate path. See perAccountParkedMsg.
+		return fmt.Errorf("%w: %s", ErrInvalidSpec, perAccountParkedMsg)
 	default:
-		return fmt.Errorf("%w: mode must be 'aggregate' or 'per_account' (got %q)", ErrInvalidSpec, spec.Mode)
+		return fmt.Errorf("%w: mode must be 'aggregate' (got %q)", ErrInvalidSpec, spec.Mode)
 	}
 	if len(spec.Bounds) == 0 {
 		return fmt.Errorf("%w: bounds must contain at least one asset", ErrInvalidSpec)

@@ -35,6 +35,31 @@ func (s Scope) Valid() bool {
 	}
 }
 
+// perAccountParkedMsg gates per-account granularity out of the V1 public API.
+//
+// Per-account fan-out (account_threshold mode "per_account" and source_parity
+// scope "per_account") is intentionally *parked* — not removed. The whole
+// implementation below and in the two templates (ScopePerAccount, the
+// resolveAccounts / accountsByAddress / celTermForAddress helpers, and each
+// template's evaluatePerAccount) is retained, compiles, and stays covered by the
+// Evaluate-path unit tests in per_account_test.go. Only rule *creation* is
+// blocked, via the guards in AccountThreshold.Validate and SourceParity.Validate.
+//
+// Why: a rule whose query matches a large account set fans out to one Outcome
+// (and, once PASS-evidence is stored, one evidence object) per (account, asset).
+// A too-broad filter would bloat evaluation evidence. V1 keeps granularity at
+// per-asset (aggregate), which bounds evidence to the asset count regardless of
+// how many accounts the query matches.
+//
+// To re-introduce per-account in a later version:
+//  1. delete the two `spec.Mode == ThresholdPerAccount` / `spec.Scope ==
+//     ScopePerAccount` rejection guards in the two Validate methods;
+//  2. restore the doc sections marked "parked (post-V1)" in
+//     docs/technical/templates.md and the status rows in docs/README.md,
+//     docs/prd/README.md, docs/technical/v1-vs-legacy.md;
+//  3. re-decide the PASS-evidence retention story for wide fan-out.
+const perAccountParkedMsg = "per_account granularity is parked in V1 (per-asset/aggregate only); see docs/technical/templates.md"
+
 // SourceKind discriminates where a balance source reads from. Both kinds map to
 // an existing resolver AND an existing kernel builtin (ledgerSet / pool), so a
 // template built on Source can resolve snapshots and render its explainable
@@ -159,7 +184,7 @@ func (s SourceSpec) supportsPerAccount() bool { return s.Kind == SourceLedger }
 // is the evaluation's accounts budget — the resolver errors rather than
 // silently truncating past it.
 func (s SourceSpec) resolveAccounts(ctx context.Context, resolvers engine.Resolvers, pit time.Time, limit int) ([]engine.Account, error) {
-	if s.Kind != SourceLedger {
+	if !s.supportsPerAccount() {
 		return nil, fmt.Errorf("%w: per-account scope is not supported for source kind %q (pools are aggregate-only)", ErrInvalidSpec, s.Kind)
 	}
 	return resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, pit, limit)

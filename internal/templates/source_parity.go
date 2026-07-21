@@ -24,9 +24,10 @@ type ParitySpec struct {
 	Left  SourceSpec `json:"left"`
 	Right SourceSpec `json:"right"`
 
-	// Scope is aggregate (default) or per_account. per_account compares the two
-	// sources account-by-account (aligned by address) and emits one Outcome per
-	// (account, asset); it requires both sides to be ledger sources.
+	// Scope is aggregate (default). per_account (compare the two sources
+	// account-by-account, aligned by address, one Outcome per (account, asset))
+	// is parked in V1 — rejected at Validate; see perAccountParkedMsg. The
+	// evaluatePerAccount implementation is retained for re-introduction.
 	Scope Scope `json:"scope,omitempty"`
 
 	// Tolerance is the per-asset acceptable absolute difference. Missing assets
@@ -54,10 +55,14 @@ func (t *SourceParity) Validate(raw json.RawMessage) error {
 		return err
 	}
 	if !spec.Scope.Valid() {
-		return fmt.Errorf("%w: scope must be 'aggregate' or 'per_account' (got %q)", ErrInvalidSpec, spec.Scope)
+		return fmt.Errorf("%w: scope must be 'aggregate' (got %q)", ErrInvalidSpec, spec.Scope)
 	}
-	if spec.Scope == ScopePerAccount && (!spec.Left.supportsPerAccount() || !spec.Right.supportsPerAccount()) {
-		return fmt.Errorf("%w: per_account scope requires both sources to be ledger sources (pools are aggregate-only)", ErrInvalidSpec)
+	if spec.Scope == ScopePerAccount {
+		// Parked in V1 — creation is blocked here, but evaluatePerAccount below
+		// is retained and still tested via the Evaluate path. See perAccountParkedMsg.
+		// When lifting the park, restore the both-sides-must-be-ledger guard
+		// (also enforced at evaluation time by SourceSpec.resolveAccounts).
+		return fmt.Errorf("%w: %s", ErrInvalidSpec, perAccountParkedMsg)
 	}
 	for asset, tol := range spec.Tolerance {
 		if tol < 0 {

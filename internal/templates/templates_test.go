@@ -491,16 +491,18 @@ func TestInvariant_Evaluate_ExceedsTolerance_Fails(t *testing.T) {
 
 // --- account_threshold ------------------------------------------------------
 
-// per_account is now a shipped mode — Validate must accept it.
-func TestThreshold_Validate_PerAccount_Accepted(t *testing.T) {
+// per_account is parked in V1 — Validate must reject it at rule-create, even
+// though an otherwise-valid spec would pass. The evaluatePerAccount impl remains
+// and is exercised via the Evaluate path in per_account_test.go.
+func TestThreshold_Validate_PerAccount_Parked(t *testing.T) {
 	tmpl := NewAccountThreshold()
 	one := int64(1)
 	spec := mustJSON(t, ThresholdSpec{
 		Ledger: "l", Query: json.RawMessage(`{}`), Mode: ThresholdPerAccount,
 		Bounds: map[string]ThresholdBounds{"USD/2": {Min: &one}},
 	})
-	if err := tmpl.Validate(spec); err != nil {
-		t.Fatalf("expected per_account to validate, got %v", err)
+	if err := tmpl.Validate(spec); !errors.Is(err, ErrInvalidSpec) {
+		t.Fatalf("expected per_account to be rejected as parked, got %v", err)
 	}
 }
 

@@ -142,7 +142,7 @@ See [docs/technical/architecture.md](../technical/architecture.md) for the imple
 | ----------------------- | -------------------------------------------------------- | ---- |
 | `ledger_vs_pool_drift`  | Port of today's drift check                              | ✅ [ledger_vs_pool_drift.go](../../internal/templates/ledger_vs_pool_drift.go) |
 | `ledger_invariant`      | Σ signed balances ≤ tolerance                            | ✅ [ledger_invariant.go](../../internal/templates/ledger_invariant.go) |
-| `account_threshold`     | Each / aggregate balance within `[lo, hi]`               | ✅ [account_threshold.go](../../internal/templates/account_threshold.go) (aggregate + per-account scope) |
+| `account_threshold`     | Aggregate balance within `[lo, hi]` (per-account parked post-V1) | ✅ [account_threshold.go](../../internal/templates/account_threshold.go) (aggregate; per-account impl retained but rejected at rule-create) |
 | `source_parity`         | Two balance sources agree within tolerance (post-spec addition; built on the shared `Source` primitive) | ✅ [source_parity.go](../../internal/templates/source_parity.go) |
 
 ### 6.2 V1.1 fast-follow catalog

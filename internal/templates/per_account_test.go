@@ -16,6 +16,13 @@ func acct(addr string, asset string, amount int64) engine.Account {
 	return engine.Account{Address: addr, Balances: map[string]*big.Int{asset: big.NewInt(amount)}}
 }
 
+// NOTE: per_account is parked out of the V1 public API — rule creation is
+// rejected at Validate (see perAccountParkedMsg in source.go). The tests below
+// call Evaluate directly, which does NOT re-run Validate, so they keep the
+// preserved evaluatePerAccount implementation compiling and covered for the day
+// the park is lifted. Validate-level rejection is asserted in
+// TestThreshold_Validate_PerAccount_Parked and TestSourceParity_Validate_PerAccount_Parked.
+
 // account_threshold per_account fans out one Outcome per (account, asset).
 func TestThreshold_PerAccount_FansOut(t *testing.T) {
 	tmpl := NewAccountThreshold()
@@ -160,15 +167,18 @@ func TestSourceParity_PerAccountSharesAccountBudgetAcrossSources(t *testing.T) {
 	}
 }
 
-// per_account requires both sources to be ledger — a pool side is rejected.
-func TestSourceParity_PerAccount_RejectsPool(t *testing.T) {
+// per_account scope is parked in V1 — Validate rejects it even for two valid
+// ledger sources (the case that would pass once the park is lifted). The
+// both-sides-must-be-ledger constraint stays enforced at evaluation time by
+// SourceSpec.resolveAccounts for the preserved Evaluate path.
+func TestSourceParity_Validate_PerAccount_Parked(t *testing.T) {
 	tmpl := NewSourceParity()
 	spec := mustJSON(t, ParitySpec{
-		Left:  ledgerSource("l", `{}`),
-		Right: poolSource("p"),
+		Left:  ledgerSource("a", `{}`),
+		Right: ledgerSource("b", `{}`),
 		Scope: ScopePerAccount,
 	})
 	if err := tmpl.Validate(spec); !errors.Is(err, ErrInvalidSpec) {
-		t.Fatalf("expected ErrInvalidSpec (pool can't be per-account), got %v", err)
+		t.Fatalf("expected per_account scope to be rejected as parked, got %v", err)
 	}
 }

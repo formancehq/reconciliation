@@ -2,7 +2,7 @@
 
 Templates are the **entire public V1 GA surface** — raw CEL is internal-only (see [ADR-001](../prd/adr-001-cel-kernel.md)). Each template is a typed spec, a validator, an explainer (for the persisted `explanation_cel`), and an end-to-end evaluator that produces one `Outcome` per fingerprint axis (per-asset for V1 GA).
 
-> Status: all four templates are ✅ shipped in [internal/templates/](../../internal/templates/), including `account_threshold` per-account mode.
+> Status: all four templates are ✅ shipped in [internal/templates/](../../internal/templates/). **Per-account granularity is parked (post-V1)** — `account_threshold` mode `per_account` and `source_parity` scope `per_account` are rejected at rule-create; V1 is per-asset / aggregate only. The implementation is retained and unit-tested for re-introduction (see `perAccountParkedMsg` in [source.go](../../internal/templates/source.go)).
 
 ---
 
@@ -38,8 +38,8 @@ The source-shaped CEL saved in `evidence.compiledCEL` remains the explainable in
 Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` and `ledger_vs_pool_drift` both compose sources through it, so there is one code path for "read a balance source".
 
 **Scope.** A ledger source can be read in one of two scopes, a native capability of the Source primitive:
-- **aggregate** (default): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
-- **per_account**: the source fans out — each matched account is evaluated individually, producing one Outcome per (account, asset) with the account address as the fingerprint axis. Available only where every source involved is a ledger source (a payments pool has no per-account breakdown, so it stays aggregate-only). The account address is the alignment key when two ledger sources are compared per account. Fan-out is bounded by the engine's `MaxAccountsScanned` budget.
+- **aggregate** (default — the only scope available in V1): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
+- **per_account** *(parked — post-V1)*: the source fans out — each matched account is evaluated individually, producing one Outcome per (account, asset) with the account address as the fingerprint axis. **Rejected at rule-create in V1** to keep evaluation evidence bounded to the asset count — a broad query could otherwise fan out to thousands of fingerprints (and, once PASS-evidence is stored, one evidence object each). The implementation is retained and unit-tested. When live it is available only where every source involved is a ledger source (a payments pool has no per-account breakdown, so it stays aggregate-only); the account address is the alignment key when two ledger sources are compared per account, and fan-out is bounded by the engine's `MaxAccountsScanned` budget.
 
 ---
 
@@ -162,9 +162,9 @@ abs(balance(ledgerSet("buildr", "<held query>"), "USD/2")
 
 ---
 
-### 3. `account_threshold` (✅ shipped — aggregate + per_account)
+### 3. `account_threshold` (✅ shipped — aggregate; `per_account` parked post-V1)
 
-Per-asset min/max bounds on a ledger account set, either aggregated or per account.
+Per-asset min/max bounds on a ledger account set, aggregated across the matched set. (A `per_account` mode exists in code but is parked post-V1 — see below.)
 
 **Spec**
 
@@ -172,7 +172,7 @@ Per-asset min/max bounds on a ledger account set, either aggregated or per accou
 {
   "ledger": "acme",
   "query":  { "$match": { "address": "treasury:operating:" } },
-  "mode":   "aggregate",                          // "aggregate" (default) | "per_account"
+  "mode":   "aggregate",                          // "aggregate" (default). "per_account" is parked (post-V1) — rejected at rule-create.
   "bounds": {
     "USD/2": { "min": 100000, "max": 5000000 },
     "EUR/2": { "min": 50000 }                     // one-sided: only min
@@ -183,12 +183,12 @@ Per-asset min/max bounds on a ledger account set, either aggregated or per accou
 **Validation**
 
 - `ledger` and `query` required
-- `mode` must be `"aggregate"` (default) or `"per_account"`
+- `mode` must be `"aggregate"` (default). `"per_account"` is parked (post-V1) and rejected at rule-create with `ErrInvalidSpec`
 - `bounds` must be non-empty; each entry needs at least one of `min` or `max`; if both set, `min <= max`
 
 **Scope (`mode`)** — see [the scope model](#how-templates-work):
-- `aggregate`: bounds are checked against the summed balance of the matched set (one query matching one account is the degenerate single-account case). One Outcome per asset.
-- `per_account`: bounds are checked against **each** matched account individually — one Outcome per (account, asset). Accounts are read via `ListAccounts` (volumes), bounded by the engine's `MaxAccountsScanned` budget (the resolver errors rather than truncating). As on the aggregate path, CEL evaluates the scouted snapshot values and the source-shaped expression is retained in evidence.
+- `aggregate` (V1): bounds are checked against the summed balance of the matched set (one query matching one account is the degenerate single-account case). One Outcome per asset.
+- `per_account` *(parked — post-V1)*: bounds would be checked against **each** matched account individually — one Outcome per (account, asset), read via `ListAccounts` (volumes) and bounded by the engine's `MaxAccountsScanned` budget. Rejected at rule-create in V1; implementation retained and tested via the Evaluate path.
 
 **Asset universe**
 
@@ -201,9 +201,9 @@ balance(ledgerSet("acme", "<query>"), "USD/2") >= 100000
   && balance(ledgerSet("acme", "<query>"), "USD/2") <= 5000000
 ```
 
-If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(...) <= 5000000`. In `per_account` mode the ledgerSet query is narrowed to a single account address.
+If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(...) <= 5000000`. (In the parked `per_account` mode the ledgerSet query is narrowed to a single account address.)
 
-**Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account)
+**Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account, parked post-V1)
 
 **Evidence**
 
@@ -231,7 +231,7 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 {
   "left":      { "kind": "ledger",        "ledger": "main", "query": { "$match": { "address": "stripe-clearing" } } },
   "right":     { "kind": "payments_pool", "poolID": "0eb4a31f-…" },
-  "scope":     "aggregate",                  // "aggregate" (default) | "per_account"
+  "scope":     "aggregate",                  // "aggregate" (default). "per_account" is parked (post-V1) — rejected at rule-create.
   "tolerance": { "USD/2": 0, "EUR/2": 50 }   // optional; defaults to 0 per asset
 }
 ```
@@ -242,9 +242,9 @@ A `SourceSpec` is `{ "kind": "ledger" | "payments_pool", ... }`:
 
 Each source resolves at its own PIT: the evaluation's default `at`, or a per-source override supplied in `sourcePITs` (keyed by the source's stable `"<label>#<idx>"` key). This is the two-independent-timestamps contract — e.g. ledger and pool read a settlement cycle apart — and it applies to every multi-source template. Residual cross-system skew is still absorbed by `tolerance`.
 
-**Scope** — `aggregate` (default) compares the two sources' summed balances. `per_account` compares them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B. It requires **both** sides to be ledger sources (a pool is aggregate-only); see [the scope model](#how-templates-work).
+**Scope** — `aggregate` (default — the only V1 scope) compares the two sources' summed balances. `per_account` *(parked — post-V1)* would compare them **account-by-account, aligned by address**, emitting one Outcome per (account, asset) — e.g. reconcile each merchant's balance on ledger A against ledger B; it requires **both** sides to be ledger sources (a pool is aggregate-only). Rejected at rule-create in V1; implementation retained. See [the scope model](#how-templates-work).
 
-**Validation** — each side: known `kind` with its required fields; `tolerance` values ≥ 0; `per_account` scope requires both sides to be ledger sources.
+**Validation** — each side: known `kind` with its required fields; `tolerance` values ≥ 0; `per_account` scope is parked (post-V1) and rejected at rule-create.
 
 **Asset universe** — `union(leftBalances, rightBalances)`; every asset on either side is checked, missing-side defaults to 0.
 
@@ -254,7 +254,7 @@ Each source resolves at its own PIT: the evaluation's default `at`, or a per-sou
 abs(balance(ledgerSet("main", "<query json>"), "USD/2") - balance(pool("0eb4a31f-…"), "USD/2")) <= 0
 ```
 
-**Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account)
+**Fingerprint** — `asset:<asset>` (aggregate) · `asset:<asset>|account:<address>` (per_account, parked post-V1)
 
 **Evidence** — `{ asset, leftSource, leftBalance, rightSource, rightBalance, difference (abs), signedDiff, tolerance, compiledCEL }` (`leftSource`/`rightSource` are labels like `ledger:main` / `pool:…`; the matching `pit_per_source` keys carry the `#idx` suffix, e.g. `ledger:main#0`; per_account also carries `account`).
 
