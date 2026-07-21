@@ -63,7 +63,7 @@ sequenceDiagram
 
     Trig->>Svc: evaluate(rule)
     Svc->>Reg: Get(rule.templateKind).Evaluate(spec, eng, resolvers, in)
-    Reg->>Res: AggregateBalance / PoolBalanceLatest  (per source)
+    Reg->>Res: AggregateBalance / PoolBalance  (per source)
     Res-->>Reg: balances (per asset)
     Reg->>Eng: Compile(per-asset CEL)
     Reg->>Eng: Evaluate(compiled, in)
@@ -236,7 +236,7 @@ flowchart LR
     Sub --> PIT["PIT = T - 30s"]
     PIT --> Sources["Each Source.PIT = T - 30s"]
     Sources --> Eng[Engine.Evaluate]
-    Eng --> Persist["INSERT evaluation<br/>pit_per_source = { 'ledger:<name>': T-30s, 'pool:<id>': T-30s, … }"]
+    Eng --> Persist["INSERT evaluation<br/>pit_per_source = { 'ledger:<name>#0': T-30s, 'pool:<id>#0': T-30s, … }"]
     Persist --> Audit[Replayable at the same PIT]
 ```
 

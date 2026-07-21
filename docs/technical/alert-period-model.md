@@ -75,7 +75,7 @@ buckets to April).
 
 ### 2. Evaluation derives and threads the period
 
-[`EvaluateRule`](../../internal/api/service/evaluation.go) computes
+The evaluation runner ([`(*Runner).run`](../../internal/reconciliation/runner.go)) computes
 `periodID = rule.Cadence.PeriodID(req.PIT − req.SafetyMargin)` once and threads
 it through `driveAlerts` into every alert write. The period is bucketed from the
 **margin-adjusted** instant — the *same* one the resolvers read at — not the raw
@@ -149,6 +149,6 @@ payload, so consumers can route/aggregate by period. `reopened` now means a
 | Cadence + `PeriodID` derivation | [internal/models/rule.go](../../internal/models/rule.go) |
 | `period_id` on the alert | [internal/models/alert.go](../../internal/models/alert.go) |
 | Period-scoped dedup / sweep / status | [internal/storage/alert.go](../../internal/storage/alert.go) |
-| Period derivation + threading | [internal/api/service/evaluation.go](../../internal/api/service/evaluation.go) |
+| Period derivation + threading | [internal/reconciliation/runner.go](../../internal/reconciliation/runner.go) (`(*Runner).run` + `driveAlerts`) |
 | Cadence on create | [internal/api/service/rule.go](../../internal/api/service/rule.go) |
-| Schema | migration #7 in [internal/storage/migrations/migrations.go](../../internal/storage/migrations/migrations.go) |
+| Schema | migration #8 in [internal/storage/migrations/migrations.go](../../internal/storage/migrations/migrations.go) |

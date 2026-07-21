@@ -132,13 +132,13 @@ Originally recorded here as "payments v3 has no PIT read." Corrected: `V3.GetPoo
 
 When `ACCOUNT_METADATA_HISTORY: DISABLED` on a ledger, `/aggregate/balances?pit=…` with a metadata filter returns `{}` silently — the same call without `pit` works, the same call with an address filter works, and `/accounts` with `pit + metadata` returns matches. Endpoint-specific inconsistency.
 
-Filed: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416). V1 mitigation: `SDKLedgerResolver.Features()` caches the flag; the service layer (task #5) will refuse metadata-based templates against history-off ledgers with a clear error.
+Filed: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416). **Fixed upstream in ledger v2.4.11** — the version V1 targets (see the compose stack), so this is resolved for supported deployments. `SDKLedgerResolver` reads PIT + metadata directly; [`internal/engine/resolvers.go`](../../internal/engine/resolvers.go) notes the read is safe on ledger ≥ v2.4.11. A create-time version-gate guard against older ledgers would be an optional workaround (story B03), not a live requirement — there is no `Features()` flag cache or service-layer refusal in the code.
 
 ---
 
 ## 9. What this commits us to
 
-1. **Every Evaluation stores per-source PITs.** Already shipped on the schema ([migration #4](../../internal/storage/migrations/migrations.go)) and the model ([Evaluation.PitPerSource](../../internal/models/evaluation.go)).
+1. **Every Evaluation stores per-source PITs.** Already shipped on the schema (the V1 "Ledger Clarity tables" [migration](../../internal/storage/migrations/migrations.go)) and the model ([Evaluation.PitPerSource](../../internal/models/evaluation.go)).
 2. **The Engine never offers a "global PIT" abstraction.** If a future template needs cross-source PIT alignment, the alignment happens at the template layer (it owns the resolvers), not in the kernel.
 3. **Templates that compare cross-source must accept a tolerance.** Strictly-zero comparisons across heterogeneous sources are a footgun and are documented as such.
 4. **Customer-facing language is precise.** Marketing and docs say *PIT-consistent invariants over heterogeneous sources*, never *atomic cross-source consistency*.

@@ -16,7 +16,6 @@ Documented in the main PRD ([§6.2 fast-follow catalog](../prd/README.md#62-v11-
 | `posting_rate` template             | `postings(source).count` builtin |
 | `metadata_invariant` template       | `accounts(source).all(a, has(a.metadata.X))` |
 | `cross_account_ratio` template      | Per-account iteration + multi-source comparison |
-| Snooze + flap suppression           | Alert-layer feature; new state + lifecycle transitions |
 | Daily digest                        | Per-recipient aggregation owned in-module |
 | fctl `rules explain` command        | Pretty-print `rule.explanation_cel` with spec context |
 

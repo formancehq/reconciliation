@@ -51,4 +51,4 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | 7 | End-to-end demo UI ([poc-reconciliation-demo](../../poc-reconciliation-demo)) — replaces the planned dockertest harness | ✅ shipped |
 | 8 | V1 GA additions — webhook events ✅ · durable PostgreSQL scheduler worker ✅ · email digest / fctl / EE gating / metering 🚧 | 🚧 in progress |
 
-Filed upstream: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416) — `/aggregate/balances` PIT + metadata silently returns empty under `ACCOUNT_METADATA_HISTORY: DISABLED`.
+Filed upstream: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416) — `/aggregate/balances` PIT + metadata silently returned empty under `ACCOUNT_METADATA_HISTORY: DISABLED`. **Fixed in ledger v2.4.11** (the version V1 targets); only older ledgers are affected.

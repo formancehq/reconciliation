@@ -303,6 +303,12 @@ func (*MyTemplate) Evaluate(ctx, spec, eng, resolvers, in) (*EvaluationResult, e
 	// 3. Evaluate the snapshot expressions through Engine.EvaluateBatch.
 	// 4. Return outcomes, actual source PITs, and cumulative CEL cost.
 }
+
+func (*MyTemplate) SourceKeys(spec json.RawMessage) ([]string, error) {
+	// Return the stable "<label>#<idx>" source keys this template records in
+	// EvaluationResult.PitPerSource, in evaluation order. The service layer uses
+	// them to validate per-source PIT overrides. Required by the Evaluator interface.
+}
 ```
 
 Register it in `templates.DefaultRegistry()` ([internal/templates/template.go](../../internal/templates/template.go)) and add its `TemplateKind` constant in [internal/models/rule.go](../../internal/models/rule.go).

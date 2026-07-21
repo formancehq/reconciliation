@@ -19,7 +19,7 @@ internal/
 │   ├── engine.go           Compile + Evaluate
 │   ├── budget.go           Limits + budgetTracker
 │   ├── errors.go           ErrCompile / ErrEvaluate translation
-│   └── sdk_resolvers.go    SDK-backed resolver impls (V2.GetLedger, V2.GetBalancesAggregated, V3.GetPoolBalances{,Latest})
+│   └── sdk_resolvers.go    SDK-backed resolver impls (V2.GetBalancesAggregated, V2.ListAccounts, V3.GetPoolBalances{,Latest})
 ├── templates/              ✅ V1 GA template catalog
 │   ├── template.go         Evaluator interface, Outcome, Registry
 │   ├── helpers.go          CEL string rendering, fingerprint, sorted-keys, zeroIfNil
@@ -61,14 +61,14 @@ flowchart TB
 | **Service** ✅ | Validation, state changes, alert dedup, resolution lifecycle, event log append | Methods on `Service` (rule.go / evaluation.go / alert.go) |
 | **Templates** ✅ | Typed specs → CEL; per-fingerprint outcomes | `Evaluator`, `Outcome`, `Registry` |
 | **Engine** ✅ | CEL evaluation, budget, PIT propagation, resolver dispatch | `Engine`, `Source`, `Resolvers`, `Limits` |
-| **Resolvers** ✅ | SDK calls; feature-flag cache; data shaping | `SDKLedgerResolver`, `SDKPaymentsResolver` |
+| **Resolvers** ✅ | SDK calls; data shaping | `SDKLedgerResolver`, `SDKPaymentsResolver` |
 | **Storage** ✅ | bun CRUD; unique constraint per (rule, fingerprint, period); append-only `alert_event` log; cascade deletes | `Storage`, models |
 
 ---
 
 ## The kernel — one-paragraph view
 
-A `Source` is an opaque CEL value that names a backend dataset (`LedgerSet(ledger, query)`, `PaymentsPool(id)`, `LedgerPostings(...)` — last one V1.1). Builtins like `balance(Source)` and `balances(Source)` consume sources and call the matching resolver. Each evaluation builds a fresh CEL env whose bindings close over the current context (ctx, resolvers, budget, PIT). The validation env at construction time has *declarations only* — used for type-checking at rule-create time without exercising resolvers.
+A `Source` is an opaque CEL value that names a backend dataset (`ledgerSet(ledger, query)`, `pool(id)`, `LedgerPostings(...)` — last one V1.1). Builtins like `balance(Source)` and `balances(Source)` consume sources and call the matching resolver. Each evaluation builds a fresh CEL env whose bindings close over the current context (ctx, resolvers, budget, PIT). The validation env at construction time has *declarations only* — used for type-checking at rule-create time without exercising resolvers.
 
 ```mermaid
 flowchart LR
@@ -91,7 +91,7 @@ A template owns its own end-to-end evaluation. It scouts the asset universe by c
 
 ```mermaid
 flowchart LR
-    Spec[templateSpec] --> Scout[resolver.AggregateBalance / PoolBalanceLatest]
+    Spec[templateSpec] --> Scout[resolver.AggregateBalance / PoolBalance]
     Scout --> Universe[Union of assets]
     Universe --> ForEach[For each asset]
     ForEach --> SnapshotCEL[CEL over scouted snapshot values]
@@ -206,7 +206,7 @@ erDiagram
 - **Engine** is concurrency-safe; a single instance is the long-lived dep injected at startup.
 - **Per-eval CEL env** is built fresh per `Engine.Evaluate` call — no shared state between concurrent evaluations.
 - **Budget tracker** uses `atomic.Int64` for `accountsScanned`.
-- **Resolvers** cache feature flags but are otherwise stateless per call.
+- **Resolvers** are stateless SDK adapters — one call per read, no cached state.
 - **Alert dedup** relies on the UNIQUE constraint on `(rule_id, fingerprint, period_id)`. Same-rule evaluations also guard their complete read-and-commit window with `storage.TryWithRuleLock`: a concurrent API request receives HTTP 409 and a worker requeues without consuming an attempt. Different rules remain independent. See [storage/alert.go](../../internal/storage/alert.go), [storage/rule_lock.go](../../internal/storage/rule_lock.go), and the concurrency regression tests.
 - **Alert event appends** happen in the same transaction as the alert UPDATE/INSERT — the log can never reflect a state the alert table doesn't.
 

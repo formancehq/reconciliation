@@ -56,7 +56,7 @@ History of previous runs.
 
 - `status` is `OK` even when drift is positive (legacy convention — only negative drift flags). Tracked in [v1-vs-legacy.md §4](./v1-vs-legacy.md#4-drift-status-logic-the-legacy-bug).
 - `reconciledAtPayments` reads the pool point-in-time (`/v3/pools/{id}/balances?at=`). The one caveat: a read strictly *after* the pool's last balance movement returns empty (the balance-window tail) — supply a timestamp within the settled history, not a bleeding-edge instant. Details in [v1-vs-legacy.md §5](./v1-vs-legacy.md#5-payments-side-read).
-- Ledger-side PIT + metadata filter silently returns empty when `ACCOUNT_METADATA_HISTORY: DISABLED` ([ledger#1416](https://github.com/formancehq/ledger/issues/1416)).
+- Ledger-side PIT + metadata filter silently returned empty when `ACCOUNT_METADATA_HISTORY: DISABLED` ([ledger#1416](https://github.com/formancehq/ledger/issues/1416)) — **fixed in ledger v2.4.11** (the version V1 targets); only older ledgers are affected.
 
 ---
 
@@ -97,13 +97,18 @@ See [templates.md](./templates.md) for per-template spec schemas.
 
 #### `GET /rules` — cursor-paginated list
 
-Filterable via query builder: `?type=ledger_invariant`, `?ledger=buildr`, `?enabled=true`, `?label.team=treasury`.
+Filtered via the **query builder** — a JSON expression sent as the request body *or* the URL-encoded `?query=` parameter (not flat `?field=value` params). Supported keys:
+
+- `id`, `name`, `templateKind`, `enabled` — `$match` (equality) only
+- `createdAt`, `updatedAt` — comparison operators (`$gt` / `$gte` / `$lt` / `$lte`)
+
+Example: `{"$match":{"templateKind":"ledger_invariant"}}`, or composed with `$and`/`$or`, e.g. `{"$and":[{"$match":{"enabled":true}},{"$gte":{"createdAt":"2026-06-01T00:00:00Z"}}]}`. Any other key returns `400 VALIDATION`. Note there is **no** `ledger` or `label.*` filter — `ledger` lives inside `templateSpec` and labels aren't indexed for query; filter by `templateKind` / `name` (or client-side) instead.
 
 #### `GET /rules/{id}` — fetch one
 
 #### `PATCH /rules/{id}` — partial update
 
-Toggle `enabled`, change `severity`, edit `schedule`, replace `notifications` / `labels`. `templateSpec` edits require re-validation; the API rejects changes that would invalidate active alerts.
+Toggle `enabled`, change `severity`, edit `schedule`, replace `notifications` / `labels`. `templateSpec` edits are re-validated and re-derive `explanationCEL`; a concurrent revision conflict is rejected with `409 RULE_CHANGED`.
 
 #### `DELETE /rules/{id}` — cascade
 
@@ -148,9 +153,14 @@ Returns `200` + the evaluation record:
 
 `evidence` records **only the failing fingerprints** — the overall `result` (`PASS`/`FAIL`/`ERROR`) carries the verdict, and persisting the full passing roster every tick is pure write amplification for wide rules. An all-`PASS` evaluation therefore has `"evidence": []`. The failing detail you'd query lives here and (per-fingerprint, with lifecycle) on the alerts.
 
-#### `GET /rules/{id}/evaluations` — history
+#### `GET /evaluations` — cursor-paginated list
 
-Cursor-paginated, ordered by `created_at DESC`.
+Ordered by `created_at DESC`. Filtered via the **query builder** (JSON body or URL-encoded `?query=`, as for `GET /rules`). Supported keys:
+
+- `id`, `result`, `ruleID` — `$match` (equality) only — e.g. a rule's history with `{"$match":{"ruleID":"…"}}`, or just failures with `{"$match":{"result":"FAIL"}}`
+- `createdAt`, `startedAt`, `endedAt` — comparison operators (`$gt` / `$gte` / `$lt` / `$lte`)
+
+#### `GET /evaluations/{evaluationID}` — fetch one
 
 ### Alerts
 
@@ -158,7 +168,12 @@ An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)`
 
 #### `GET /alerts` — list
 
-Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?periodID=2026-03`, `?since=2026-06-01T00:00:00Z`. Filtering by `periodID` answers "is this period reconciled?" — a period with no OPEN/ACKNOWLEDGED alerts is green.
+Filtered via the **query builder** (JSON body or URL-encoded `?query=`, as for `GET /rules`). Supported keys:
+
+- `id`, `status`, `severity`, `fingerprint`, `ruleID`, `periodID` — `$match` (equality) only
+- `firstSeenAt`, `lastSeenAt` — comparison operators (`$gt` / `$gte` / `$lt` / `$lte`)
+
+Example: `{"$match":{"status":"OPEN"}}`, or `{"$and":[{"$match":{"periodID":"2026-03"}},{"$match":{"status":"OPEN"}}]}`. Any other key returns `400 VALIDATION`. Filtering by `periodID` answers "is this period reconciled?" — a period with no OPEN/ACKNOWLEDGED alerts is green.
 
 #### `GET /alerts/{id}` — fetch
 
@@ -334,11 +349,12 @@ All endpoints share the existing `ErrorResponse` shape:
 
 | HTTP | `errorCode` | When |
 |---|---|---|
-| 400 | `VALIDATION`         | Bad request body, unknown templateKind, invalid spec |
-| 400 | `INVALID_ID`         | Path UUID malformed |
-| 401 | `UNAUTHORIZED`       | Missing/invalid token |
-| 403 | `FORBIDDEN`          | Token lacks the required scope |
-| 404 | `NOT_FOUND`          | Resource doesn't exist |
-| 409 | `CONFLICT`           | Concurrent first-open race rejected by unique constraint (the retry path catches this automatically — surfaced only when retries are exhausted) |
-| 422 | `BUSINESS_RULE`      | E.g. accept-without-note, resolve-on-already-resolved |
-| 500 | `INTERNAL`           | Engine error, resolver timeout — also raises an `engine.error` meta-alert |
+| 400 | `VALIDATION`              | Unknown templateKind, invalid spec, unsupported query key/operator, or accept without a note |
+| 400 | `MISSING_OR_INVALID_BODY`| Request body missing or not decodable JSON |
+| 400 | `INVALID_ID`             | Path UUID malformed |
+| 401 | `UNAUTHORIZED`           | Missing/invalid token |
+| 403 | `FORBIDDEN`              | Token lacks the required scope (enforced at the gateway) |
+| 404 | `NOT_FOUND`              | Resource doesn't exist (incl. resolve/accept on an already-resolved alert) |
+| 409 | `RULE_BUSY`              | An evaluation of this rule is already in progress (lock contention) |
+| 409 | `RULE_CHANGED`           | Rule revised or disabled during evaluation, or a PATCH lost a revision race |
+| 500 | `INTERNAL`               | Engine error, resolver timeout — also raises an `engine.error` meta-alert |
