@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
@@ -156,6 +157,7 @@ func (t *SourceParity) Evaluate(
 		rightVal := zeroIfNil(rightBalances[asset])
 		diff := new(big.Int).Sub(leftVal, rightVal)
 		diffAbs := new(big.Int).Abs(diff)
+		passed := diffAbs.Cmp(big.NewInt(tolerance)) <= 0
 		expr := fmt.Sprintf(
 			`abs(%s - %s) <= %d`,
 			spec.Left.celTerm(celString(asset)), spec.Right.celTerm(celString(asset)), tolerance,
@@ -163,6 +165,7 @@ func (t *SourceParity) Evaluate(
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
+			Passed:      passed,
 			Evidence: map[string]any{
 				"asset":        asset,
 				"leftSource":   spec.Left.label(),
@@ -175,9 +178,12 @@ func (t *SourceParity) Evaluate(
 				"compiledCEL":  expr,
 			},
 			// Green proof: both observed sides. The residual is left−right derivable.
-			Proof: map[string]string{"left": leftVal.String(), "right": rightVal.String()},
+			Proof: map[string]string{"left": leftVal.String(), "right": rightVal.String(), "tolerance": strconv.FormatInt(tolerance, 10)},
 		})
-		expressions = append(expressions, fmt.Sprintf(`abs((%s) - (%s)) <= %d`, leftVal.String(), rightVal.String(), tolerance))
+		expressions = append(expressions, snapshotVerdictExpression(
+			fmt.Sprintf(`abs((%s) - (%s)) <= %d`, leftVal.String(), rightVal.String(), tolerance),
+			passed, leftVal, rightVal, diff, diffAbs,
+		))
 	}
 	result.Outcomes = outcomes
 	if err := applyKernelVerdicts(ctx, eng, in, result, expressions); err != nil {
@@ -229,8 +235,10 @@ func (t *SourceParity) evaluatePerAccount(
 			rightVal := zeroIfNil(rBal[asset])
 			diff := new(big.Int).Sub(leftVal, rightVal)
 			diffAbs := new(big.Int).Abs(diff)
+			passed := diffAbs.Cmp(big.NewInt(tolerance)) <= 0
 			outcomes = append(outcomes, Outcome{
 				Fingerprint: fingerprintFor("asset", asset, "account", addr),
+				Passed:      passed,
 				Evidence: map[string]any{
 					"asset":        asset,
 					"account":      addr,
@@ -245,9 +253,12 @@ func (t *SourceParity) evaluatePerAccount(
 						spec.Left.celTermForAccount(addr, celString(asset)),
 						spec.Right.celTermForAccount(addr, celString(asset)), tolerance),
 				},
-				Proof: map[string]string{"left": leftVal.String(), "right": rightVal.String()},
+				Proof: map[string]string{"left": leftVal.String(), "right": rightVal.String(), "tolerance": strconv.FormatInt(tolerance, 10)},
 			})
-			expressions = append(expressions, fmt.Sprintf(`abs((%s) - (%s)) <= %d`, leftVal.String(), rightVal.String(), tolerance))
+			expressions = append(expressions, snapshotVerdictExpression(
+				fmt.Sprintf(`abs((%s) - (%s)) <= %d`, leftVal.String(), rightVal.String(), tolerance),
+				passed, leftVal, rightVal, diff, diffAbs,
+			))
 		}
 	}
 	result.Outcomes = outcomes

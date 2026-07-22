@@ -368,9 +368,36 @@ func TestDrift_Evaluate_ToleranceAbsorbs(t *testing.T) {
 	if o == nil || !o.Passed {
 		t.Fatalf("expected pass within tolerance, got %v", o)
 	}
-	// Proof carries both raw sides; the 5 residual is visible as ledger(100) vs pool(-95).
+	// Proof carries the observed sides and the immutable predicate inputs.
 	if o.Proof["ledger"] != "100" || o.Proof["pool"] != "-95" {
 		t.Errorf("proof = %v, want {ledger:100, pool:-95}", o.Proof)
+	}
+	if o.Proof["ledgerSign"] != "1" || o.Proof["tolerance"] != "10" {
+		t.Errorf("proof predicate = %v, want ledgerSign=1 tolerance=10", o.Proof)
+	}
+}
+
+func TestDrift_Evaluate_AmountsBeyondInt64(t *testing.T) {
+	tmpl := NewLedgerVsPoolDrift()
+	huge := new(big.Int).Lsh(big.NewInt(1), 80)
+	l := &fakeLedger{balances: map[string]map[string]*big.Int{
+		`b|"q"`: {"USD/18": new(big.Int).Set(huge)},
+	}}
+	p := &fakePayments{pools: map[string]map[string]*big.Int{
+		"pool": {"USD/18": new(big.Int).Neg(new(big.Int).Set(huge))},
+	}}
+	eng, res := newTestEngine(t, l, p)
+	spec := mustJSON(t, DriftSpec{
+		Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: "pool",
+	})
+
+	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
+	if err != nil {
+		t.Fatalf("Evaluate amount beyond int64: %v", err)
+	}
+	o := findOutcome(out, "asset:USD/18")
+	if o == nil || !o.Passed {
+		t.Fatalf("expected arbitrary-precision amounts to pass, got %v", o)
 	}
 }
 

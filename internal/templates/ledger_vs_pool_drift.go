@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
@@ -203,6 +204,7 @@ func (t *LedgerVsPoolDrift) Evaluate(
 		poolVal := zeroIfNil(poolBalances[asset])
 		drift := new(big.Int).Add(ledgerVal, poolVal)
 		driftAbs := new(big.Int).Abs(drift)
+		passed := driftAbs.Cmp(big.NewInt(tolerance)) <= 0
 		expr := fmt.Sprintf(
 			`abs(%s + %s) <= %d`,
 			signedLedgerTerm(sign, spec.Ledger, spec.LedgerQuery, celString(asset)),
@@ -211,6 +213,7 @@ func (t *LedgerVsPoolDrift) Evaluate(
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
+			Passed:      passed,
 			Evidence: map[string]any{
 				"asset": asset,
 				// Raw value as fetched from the resolver, before LedgerSign.
@@ -228,9 +231,15 @@ func (t *LedgerVsPoolDrift) Evaluate(
 			// Green proof: both observed sides — the raw ledger balance
 			// (UI-matching) and the pool balance. The residual is left−right
 			// derivable; consumers read the figures directly.
-			Proof: map[string]string{"ledger": rawLedger.String(), "pool": poolVal.String()},
+			Proof: map[string]string{
+				"ledger": rawLedger.String(), "ledgerSign": strconv.Itoa(sign),
+				"pool": poolVal.String(), "tolerance": strconv.FormatInt(tolerance, 10),
+			},
 		})
-		expressions = append(expressions, fmt.Sprintf(`abs((%s) + (%s)) <= %d`, ledgerVal.String(), poolVal.String(), tolerance))
+		expressions = append(expressions, snapshotVerdictExpression(
+			fmt.Sprintf(`abs((%s) + (%s)) <= %d`, ledgerVal.String(), poolVal.String(), tolerance),
+			passed, rawLedger, ledgerVal, poolVal, drift, driftAbs,
+		))
 	}
 	result.Outcomes = outcomes
 	if err := applyKernelVerdicts(ctx, eng, in, result, expressions); err != nil {

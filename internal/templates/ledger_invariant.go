@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -144,6 +145,8 @@ func (t *LedgerInvariant) Evaluate(
 		grossPos := big.NewInt(0)
 		grossNeg := big.NewInt(0)
 		termValues := make([]string, 0, len(spec.Terms))
+		celValues := make([]*big.Int, 0, len(spec.Terms)*2+2)
+		runningSum := big.NewInt(0)
 		for i, term := range spec.Terms {
 			v := zeroIfNil(termBalances[i][asset])
 			signed := new(big.Int).Mul(big.NewInt(int64(term.Sign)), v)
@@ -154,12 +157,17 @@ func (t *LedgerInvariant) Evaluate(
 				grossPos.Add(grossPos, signed)
 			}
 			termValues = append(termValues, signed.String())
+			celValues = append(celValues, signed)
+			runningSum = new(big.Int).Add(runningSum, signed)
+			celValues = append(celValues, new(big.Int).Set(runningSum))
 		}
 		driftAbs := new(big.Int).Abs(signedSum)
+		passed := driftAbs.Cmp(big.NewInt(tolerance)) <= 0
 		expr := buildInvariantExpression(&spec, asset)
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
+			Passed:      passed,
 			Evidence: map[string]any{
 				"asset":       asset,
 				"signedSum":   signedSum.String(),
@@ -169,9 +177,16 @@ func (t *LedgerInvariant) Evaluate(
 				"compiledCEL": expr,
 			},
 			// Green proof: the two netting sides. residual is positive+negative.
-			Proof: map[string]string{"positive": grossPos.String(), "negative": grossNeg.String()},
+			Proof: map[string]string{
+				"positive": grossPos.String(), "negative": grossNeg.String(),
+				"tolerance": strconv.FormatInt(tolerance, 10),
+			},
 		})
-		expressions = append(expressions, fmt.Sprintf(`abs(%s) <= %d`, strings.Join(termValues, " + "), tolerance))
+		celValues = append(celValues, signedSum, driftAbs)
+		expressions = append(expressions, snapshotVerdictExpression(
+			fmt.Sprintf(`abs(%s) <= %d`, strings.Join(termValues, " + "), tolerance),
+			passed, celValues...,
+		))
 	}
 	result.Outcomes = outcomes
 	if err := applyKernelVerdicts(ctx, eng, in, result, expressions); err != nil {

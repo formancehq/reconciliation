@@ -109,7 +109,7 @@ func (r *Runner) EvaluateScheduled(ctx context.Context, job *models.EvaluationJo
 			return err
 		}
 		margin := 30 * time.Second
-		if rule.Schedule != nil && rule.Schedule.SafetyMargin > 0 {
+		if rule.Schedule != nil && (rule.Schedule.SafetyMarginWasProvided || rule.Schedule.SafetyMargin != 0) {
 			margin = rule.Schedule.SafetyMargin
 		}
 		revision := job.RuleRevision

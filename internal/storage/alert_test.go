@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -52,6 +53,38 @@ func allAlertEvents(t *testing.T, s *Storage, alertID uuid.UUID) []models.AlertE
 		NewGetAlertEventsQuery(NewPaginatedQueryOptions(AlertEventsFilters{}).WithPageSize(1000)))
 	require.NoError(t, err)
 	return cur.Data
+}
+
+func TestListAlertEvents_MissingParentReturnsNotFound(t *testing.T) {
+	s := newStore(t)
+	_, err := s.ListAlertEvents(context.Background(), uuid.New(),
+		NewGetAlertEventsQuery(NewPaginatedQueryOptions(AlertEventsFilters{})))
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestListAlerts_UsesIDAsStableTieBreaker(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	ruleID, evID := seedRuleAndEval(t, s)
+	at := time.Date(2026, 7, 22, 9, 0, 0, 0, time.UTC)
+
+	expected := make([]uuid.UUID, 0, 3)
+	for _, fingerprint := range []string{"asset:USD/2", "asset:EUR/2", "asset:GBP/2"} {
+		input := defaultOpenInput(t, ruleID, evID)
+		input.Fingerprint = fingerprint
+		input.OccurredAt = at
+		result, err := s.OpenOrUpdateAlert(ctx, input)
+		require.NoError(t, err)
+		expected = append(expected, result.Alert.ID)
+	}
+	sort.Slice(expected, func(i, j int) bool { return expected[i].String() > expected[j].String() })
+
+	cursor, err := s.ListAlerts(ctx, NewGetAlertsQuery(NewPaginatedQueryOptions(AlertsFilters{}).WithPageSize(10)))
+	require.NoError(t, err)
+	require.Len(t, cursor.Data, len(expected))
+	for i := range expected {
+		require.Equal(t, expected[i], cursor.Data[i].ID)
+	}
 }
 
 func defaultOpenInput(t *testing.T, ruleID, evID uuid.UUID) OpenAlertInput {

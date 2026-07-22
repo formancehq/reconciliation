@@ -39,10 +39,10 @@ type Outcome struct {
 	Evidence map[string]any
 
 	// Proof is the compact green-proof for a PASSING outcome: the observed
-	// balances that make the check hold, as decimal strings. Where two sides are
-	// compared it carries both, with self-describing keys (ledger/pool,
+	// balances and predicate inputs that make the check hold, as decimal strings.
+	// Where two sides are compared it carries both, with self-describing keys (ledger/pool,
 	// left/right, positive/negative) so a consumer reads the actual figures
-	// without recomputing from a residual or knowing the rule's sign convention —
+	// together with tolerance/bounds and any sign convention required to verify it —
 	// and the same balance keys the FAIL Evidence uses. It is what the evaluation
 	// record stores on PASS: a light, self-contained record without the full
 	// Evidence map (compiled CEL, drift/derived fields). Templates set both; the

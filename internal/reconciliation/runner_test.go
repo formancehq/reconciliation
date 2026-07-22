@@ -162,6 +162,19 @@ func TestScheduledEngineErrorIsPersistedAndCompletesJob(t *testing.T) {
 	require.Equal(t, job.ScheduledAt.Add(-30*time.Second), store.evaluation.PitPerSource["source"])
 }
 
+func TestScheduledEvaluationPreservesExplicitZeroSafetyMargin(t *testing.T) {
+	evaluator := &testEvaluator{}
+	runner, store, job := newScheduledRunner(t, evaluator)
+	store.rule.Schedule.SafetyMargin = 0
+	store.rule.Schedule.SafetyMarginWasProvided = true
+
+	evaluation, _, err := runner.EvaluateScheduled(context.Background(), job)
+	require.NoError(t, err)
+	require.NotNil(t, evaluation)
+	require.Zero(t, evaluator.lastInput.SafetyMargin)
+	require.Equal(t, job.ScheduledAt, store.evaluation.PitPerSource["source"])
+}
+
 func TestCancelledScheduledEvaluationDoesNotCommitEngineError(t *testing.T) {
 	evaluator := &testEvaluator{wait: true}
 	runner, store, job := newScheduledRunner(t, evaluator)

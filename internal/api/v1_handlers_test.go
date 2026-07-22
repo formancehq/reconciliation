@@ -17,6 +17,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
 	domain "github.com/formancehq/reconciliation/internal/reconciliation"
+	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/formancehq/reconciliation/internal/templates"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -474,6 +475,21 @@ func TestListAlertEvents_Nominal(t *testing.T) {
 	// First event was a reopen — predicate must propagate to the response.
 	require.True(t, got.Cursor.Data[0].IsReopen)
 	require.False(t, got.Cursor.Data[1].IsReopen)
+}
+
+func TestListAlertEvents_MissingAlertReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	mockSvc.EXPECT().ListAlertEvents(gomock.Any(), id, gomock.Any()).Return(nil, storage.ErrNotFound)
+
+	r := httptest.NewRequest(http.MethodGet, "/alerts/"+id.String()+"/events", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // --- Evaluation handler tests -----------------------------------------------

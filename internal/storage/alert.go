@@ -638,6 +638,13 @@ func appendAlertEvent(
 // keeps early pages cheap. (Keyset on (at, id) would scale better for very deep
 // pages — a future refinement, deferred for cross-endpoint consistency.)
 func (s *Storage) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
+	exists, err := s.db.NewSelect().Model((*models.Alert)(nil)).Where("id = ?", alertID).Exists(ctx)
+	if err != nil {
+		return nil, e("check alert before listing events", err)
+	}
+	if !exists {
+		return nil, e("list alert events", ErrNotFound)
+	}
 	return paginateWithOffset[PaginatedQueryOptions[AlertEventsFilters], models.AlertEvent](s, ctx,
 		(*bunpaginate.OffsetPaginatedQuery[PaginatedQueryOptions[AlertEventsFilters]])(&q),
 		func(query *bun.SelectQuery) *bun.SelectQuery {
@@ -659,7 +666,7 @@ func NewGetAlertEventsQuery(opts PaginatedQueryOptions[AlertEventsFilters]) GetA
 }
 
 func (s *Storage) buildAlertListQuery(selectQuery *bun.SelectQuery, where string, args []any) *bun.SelectQuery {
-	selectQuery = selectQuery.Order("last_seen_at DESC")
+	selectQuery = selectQuery.Order("last_seen_at DESC", "id DESC")
 	if where != "" {
 		return selectQuery.Where(where, args...)
 	}

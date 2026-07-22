@@ -43,6 +43,23 @@ func TestRule_CreateGet(t *testing.T) {
 	require.Equal(t, rule.UpdatedAt, got.UpdatedAt)
 }
 
+func TestRule_CreateGetPreservesExplicitZeroSafetyMargin(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	rule := makeRule("zero-safety-margin")
+	rule.Schedule = &models.Schedule{
+		Kind: models.ScheduleCron, Expr: "@daily",
+		SafetyMargin: 0, SafetyMarginWasProvided: true,
+	}
+
+	require.NoError(t, s.CreateRule(ctx, rule))
+	got, err := s.GetRule(ctx, rule.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Schedule)
+	require.Zero(t, got.Schedule.SafetyMargin)
+	require.True(t, got.Schedule.SafetyMarginWasProvided)
+}
+
 func TestRule_GetNotFound(t *testing.T) {
 	s := newStore(t)
 	_, err := s.GetRule(context.Background(), uuid.New())
@@ -139,8 +156,10 @@ func TestRule_DeleteCascadesAndNotFound(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound, "evaluation must be cascaded away with the rule")
 	_, err = s.GetAlert(ctx, res.Alert.ID)
 	require.ErrorIs(t, err, ErrNotFound)
-	events := allAlertEvents(t, s, res.Alert.ID)
-	require.Empty(t, events, "alert_event rows must be cascaded away with the rule")
+	eventCount, err := s.db.NewSelect().Model((*models.AlertEvent)(nil)).
+		Where("alert_id = ?", res.Alert.ID).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, eventCount, "alert_event rows must be cascaded away with the rule")
 }
 
 func TestRule_PatchFields(t *testing.T) {

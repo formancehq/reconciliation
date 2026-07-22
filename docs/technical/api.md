@@ -153,13 +153,13 @@ Returns `200` + the evaluation record:
 
 `evidence` is the per-fingerprint roster — passing *and* failing — but the two verdicts store different weight:
 
-- **PASS** → a compact `proof`: the observed balances that make the check hold, with self-describing keys — **both sides** where two are compared, so under tolerance the residual is visible directly (no recompute, no need to know the rule's sign):
-  - `account_threshold`: `{ "balance": "523500" }` — single-sided vs `[min, max]`.
-  - `ledger_vs_pool_drift`: `{ "ledger": "523500", "pool": "-523500" }`.
-  - `source_parity`: `{ "left": "100", "right": "100" }`.
-  - `ledger_invariant`: `{ "positive": "5000", "negative": "-5000" }` — the two netting sides (e.g. held vs obligation totals).
-  
-  These reuse the balance keys the FAIL `evidence` uses, so a consumer reads the figures the same way on either verdict. The residual (drift) is just `left − right`, derivable when wanted. Kept light — no compiled CEL, no derived/redundant fields.
+- **PASS** → a compact, self-contained `proof`: the observed balances plus the predicate inputs needed to verify the historical verdict after the rule changes:
+  - `account_threshold`: `{ "balance": "523500", "min": "500000", "max": "600000" }` (unset bounds are omitted).
+  - `ledger_vs_pool_drift`: `{ "ledger": "523500", "ledgerSign": "1", "pool": "-523500", "tolerance": "0" }`.
+  - `source_parity`: `{ "left": "100", "right": "100", "tolerance": "0" }`.
+  - `ledger_invariant`: `{ "positive": "5000", "negative": "-5000", "tolerance": "0" }`.
+
+  These reuse the balance keys the FAIL `evidence` uses and retain only the inputs to the predicate — no compiled CEL or derived/redundant fields.
 - **FAIL** → the full `evidence` breakdown (balances, drift, tolerance, compiled CEL), the same shape carried on the alert.
 
 An evaluation that produced no outcomes (no assets matched either side) has `"evidence": []`. Per-fingerprint *failing* detail also lives, with full lifecycle, on the alerts.

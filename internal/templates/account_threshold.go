@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,6 +154,7 @@ func (t *AccountThreshold) Evaluate(
 	for _, asset := range sortedKeys(spec.Bounds) {
 		bounds := spec.Bounds[asset]
 		val := zeroIfNil(ledgerBalances[asset])
+		passed := thresholdPassed(val, bounds)
 
 		expr := buildThresholdExpression(&spec, asset)
 
@@ -170,10 +172,13 @@ func (t *AccountThreshold) Evaluate(
 
 		outcomes = append(outcomes, Outcome{
 			Fingerprint: fingerprintFor("asset", asset),
+			Passed:      passed,
 			Evidence:    evidence,
-			Proof:       map[string]string{"balance": val.String()},
+			Proof:       thresholdProof(val, bounds),
 		})
-		expressions = append(expressions, buildSnapshotThresholdExpression(val, bounds))
+		expressions = append(expressions, snapshotVerdictExpression(
+			buildSnapshotThresholdExpression(val, bounds), passed, val,
+		))
 	}
 	result.Outcomes = outcomes
 	if err := applyKernelVerdicts(ctx, eng, in, result, expressions); err != nil {
@@ -211,6 +216,7 @@ func (t *AccountThreshold) evaluatePerAccount(
 		for _, asset := range assets {
 			bounds := spec.Bounds[asset]
 			val := zeroIfNil(acct.Balances[asset])
+			passed := thresholdPassed(val, bounds)
 
 			evidence := map[string]any{
 				"asset":       asset,
@@ -227,10 +233,13 @@ func (t *AccountThreshold) evaluatePerAccount(
 
 			outcomes = append(outcomes, Outcome{
 				Fingerprint: fingerprintFor("asset", asset, "account", acct.Address),
+				Passed:      passed,
 				Evidence:    evidence,
-				Proof:       map[string]string{"balance": val.String()},
+				Proof:       thresholdProof(val, bounds),
 			})
-			expressions = append(expressions, buildSnapshotThresholdExpression(val, bounds))
+			expressions = append(expressions, snapshotVerdictExpression(
+				buildSnapshotThresholdExpression(val, bounds), passed, val,
+			))
 		}
 	}
 	result.Outcomes = outcomes
@@ -238,6 +247,27 @@ func (t *AccountThreshold) evaluatePerAccount(
 		return result, err
 	}
 	return result, nil
+}
+
+func thresholdPassed(value *big.Int, bounds ThresholdBounds) bool {
+	if bounds.Min != nil && value.Cmp(big.NewInt(*bounds.Min)) < 0 {
+		return false
+	}
+	if bounds.Max != nil && value.Cmp(big.NewInt(*bounds.Max)) > 0 {
+		return false
+	}
+	return true
+}
+
+func thresholdProof(value *big.Int, bounds ThresholdBounds) map[string]string {
+	proof := map[string]string{"balance": value.String()}
+	if bounds.Min != nil {
+		proof["min"] = strconv.FormatInt(*bounds.Min, 10)
+	}
+	if bounds.Max != nil {
+		proof["max"] = strconv.FormatInt(*bounds.Max, 10)
+	}
+	return proof
 }
 
 func buildSnapshotThresholdExpression(value *big.Int, bounds ThresholdBounds) string {

@@ -65,11 +65,10 @@ sequenceDiagram
     Svc->>Reg: Get(rule.templateKind).Evaluate(spec, eng, resolvers, in)
     Reg->>Res: AggregateBalance / PoolBalance  (per source)
     Res-->>Reg: balances (per asset)
-    Reg->>Eng: Compile(per-asset CEL)
-    Reg->>Eng: Evaluate(compiled, in)
-    Eng->>Res: balance(source, asset) via builtin
-    Res-->>Eng: int64
-    Eng-->>Reg: pass/fail + pitPerSource
+    Reg->>Reg: Build immutable per-fingerprint snapshots (big.Int)
+    Reg->>Eng: Compile(snapshot predicate or arbitrary-precision frozen verdict)
+    Reg->>Eng: EvaluateBatch(compiled snapshots, no resolvers)
+    Eng-->>Reg: pass/fail + CEL cost
     Reg-->>Svc: []Outcome  (one per fingerprint axis)
     Svc->>DB: INSERT evaluation (PASS/FAIL/ERROR + pit_per_source + proof on PASS / evidence on FAIL)
     DB-->>Svc: evaluationId

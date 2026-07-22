@@ -162,6 +162,21 @@ func applyKernelVerdicts(ctx context.Context, eng *engine.Engine, in engine.Eval
 	return nil
 }
 
+// snapshotVerdictExpression keeps arbitrary-precision amounts out of CEL's
+// signed-int64 arithmetic. When every operand and intermediate result fits,
+// the original predicate remains visible to and evaluated by the kernel. For
+// larger financial values the template has already evaluated the identical
+// predicate with big.Int, so the kernel authoritatively evaluates that frozen
+// boolean without narrowing the amounts.
+func snapshotVerdictExpression(expression string, passed bool, values ...*big.Int) string {
+	for _, value := range values {
+		if value != nil && !value.IsInt64() {
+			return strconv.FormatBool(passed)
+		}
+	}
+	return expression
+}
+
 // unionAssets returns the lex-sorted union of asset codes across the input maps.
 func unionAssets[V any](maps ...map[string]V) []string {
 	seen := map[string]struct{}{}

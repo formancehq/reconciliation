@@ -144,10 +144,11 @@ func (k ScheduleKind) Valid() bool {
 // methods handle the translation; `json:"-"` keeps the default encoder from
 // leaking nanoseconds into the JSON output.
 type Schedule struct {
-	Kind         ScheduleKind  `json:"kind"`
-	Expr         string        `json:"expr,omitempty"`
-	TZ           string        `json:"tz,omitempty"`
-	SafetyMargin time.Duration `json:"-"`
+	Kind                    ScheduleKind  `json:"kind"`
+	Expr                    string        `json:"expr,omitempty"`
+	TZ                      string        `json:"tz,omitempty"`
+	SafetyMargin            time.Duration `json:"-"`
+	SafetyMarginWasProvided bool          `json:"-"`
 }
 
 // scheduleWire is the on-the-wire representation: SafetyMargin is a string in
@@ -156,7 +157,7 @@ type scheduleWire struct {
 	Kind         ScheduleKind `json:"kind"`
 	Expr         string       `json:"expr,omitempty"`
 	TZ           string       `json:"tz,omitempty"`
-	SafetyMargin string       `json:"safetyMargin,omitempty"`
+	SafetyMargin *string      `json:"safetyMargin,omitempty"`
 }
 
 func (s Schedule) MarshalJSON() ([]byte, error) {
@@ -165,8 +166,9 @@ func (s Schedule) MarshalJSON() ([]byte, error) {
 		Expr: s.Expr,
 		TZ:   s.TZ,
 	}
-	if s.SafetyMargin != 0 {
-		w.SafetyMargin = s.SafetyMargin.String()
+	if s.SafetyMarginWasProvided || s.SafetyMargin != 0 {
+		margin := s.SafetyMargin.String()
+		w.SafetyMargin = &margin
 	}
 	return json.Marshal(w)
 }
@@ -179,15 +181,17 @@ func (s *Schedule) UnmarshalJSON(data []byte) error {
 	s.Kind = w.Kind
 	s.Expr = w.Expr
 	s.TZ = w.TZ
-	if w.SafetyMargin == "" {
+	if w.SafetyMargin == nil {
 		s.SafetyMargin = 0
+		s.SafetyMarginWasProvided = false
 		return nil
 	}
-	d, err := time.ParseDuration(w.SafetyMargin)
+	d, err := time.ParseDuration(*w.SafetyMargin)
 	if err != nil {
 		return fmt.Errorf("schedule.safetyMargin: %w", err)
 	}
 	s.SafetyMargin = d
+	s.SafetyMarginWasProvided = true
 	return nil
 }
 

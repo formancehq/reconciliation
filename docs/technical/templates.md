@@ -35,16 +35,16 @@ Every template:
 
 The source-shaped CEL saved in `evidence.compiledCEL` remains the explainable invariant. At runtime the template substitutes the balances it just read into an equivalent snapshot expression and executes that through `Engine.EvaluateBatch`. This makes CEL authoritative and enforces its cost limit without the TOCTOU and remote-call cost of resolving every source again. `TestKernelParity_Aggregate` verifies that the source-shaped expression and snapshot verdict remain equivalent.
 
-**Proof vs evidence.** Each `Outcome` carries a full `Evidence` map *and* a compact `Proof` (the observed balance integer(s), as decimal strings). The evaluation record stores the **`Proof` on a PASS** and the **full `Evidence` on a FAIL** — so the per-template *Evidence* shapes documented below are what you get on a **failing** outcome and on the alert; a green outcome stores only the lighter proof. FAIL is per-fingerprint failing detail; PASS is a self-contained "these balances held" record. The per-template proof keys:
+**Proof vs evidence.** Each `Outcome` carries a full `Evidence` map *and* a compact `Proof` (the observed balance integers and predicate inputs, as decimal strings). The evaluation record stores the **`Proof` on a PASS** and the **full `Evidence` on a FAIL** — so the per-template *Evidence* shapes documented below are what you get on a **failing** outcome and on the alert; a green outcome stores only the lighter proof. FAIL is per-fingerprint failing detail; PASS remains independently verifiable after a rule edit. The per-template proof keys:
 
 | Template | PASS `proof` keys |
 |---|---|
-| `account_threshold` | `balance` (single-sided vs `[min,max]`) |
-| `ledger_vs_pool_drift` | `ledger`, `pool` |
-| `source_parity` | `left`, `right` |
-| `ledger_invariant` | `positive`, `negative` (the netting sides; bucketed by contribution sign `signᵢ × balanceᵢ`) |
+| `account_threshold` | `balance`, plus configured `min` and/or `max` |
+| `ledger_vs_pool_drift` | `ledger`, `ledgerSign`, `pool`, `tolerance` |
+| `source_parity` | `left`, `right`, `tolerance` |
+| `ledger_invariant` | `positive`, `negative`, `tolerance` (the netting sides are bucketed by contribution sign `signᵢ × balanceᵢ`) |
 
-Both sides are stored raw (not one side + a residual): under a non-zero tolerance the two sides genuinely differ, and raw sides need no recompute and reuse the FAIL balance keys. See [api.md](./api.md) for the wire shape.
+Both sides are stored raw (not one side + a residual), together with the sign and tolerance needed to reconstruct the predicate. See [api.md](./api.md) for the wire shape.
 
 Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` and `ledger_vs_pool_drift` both compose sources through it, so there is one code path for "read a balance source".
 

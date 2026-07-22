@@ -46,6 +46,18 @@ func TestSchedule_JSON_WireFormat(t *testing.T) {
 		err := json.Unmarshal([]byte(`{"kind":"on_demand"}`), &s)
 		require.NoError(t, err)
 		require.Equal(t, time.Duration(0), s.SafetyMargin)
+		require.False(t, s.SafetyMarginWasProvided)
+	})
+
+	t.Run("explicit zero safety margin survives round trip", func(t *testing.T) {
+		var s Schedule
+		require.NoError(t, json.Unmarshal([]byte(`{"kind":"cron","expr":"@daily","safetyMargin":"0s"}`), &s))
+		require.Zero(t, s.SafetyMargin)
+		require.True(t, s.SafetyMarginWasProvided)
+
+		b, err := json.Marshal(s)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"kind":"cron","expr":"@daily","safetyMargin":"0s"}`, string(b))
 	})
 
 	t.Run("malformed safety margin returns a clear error", func(t *testing.T) {
@@ -61,6 +73,8 @@ func TestSchedule_JSON_WireFormat(t *testing.T) {
 		require.NoError(t, err)
 		var decoded Schedule
 		require.NoError(t, json.Unmarshal(b, &decoded))
-		require.Equal(t, original, decoded)
+		require.Equal(t, original.Kind, decoded.Kind)
+		require.Equal(t, original.SafetyMargin, decoded.SafetyMargin)
+		require.True(t, decoded.SafetyMarginWasProvided)
 	})
 }
