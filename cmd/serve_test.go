@@ -40,9 +40,14 @@ func TestWorkerOptionsAreValid(t *testing.T) {
 	require.NoError(t, fx.ValidateApp(options...))
 }
 
-func TestPublisherCircuitBreakerDefaultsEnabledOnAPIAndWorker(t *testing.T) {
+func TestPublisherCircuitBreakerIsOptInOnAPIAndWorker(t *testing.T) {
 	for _, command := range []*cobra.Command{newServeCommand("test"), newWorkerCommand("test")} {
 		enabled, err := command.Flags().GetBool(publish.PublisherCircuitBreakerEnabledFlag)
+		require.NoError(t, err)
+		require.False(t, enabled)
+
+		require.NoError(t, command.Flags().Set(publish.PublisherCircuitBreakerEnabledFlag, "true"))
+		enabled, err = command.Flags().GetBool(publish.PublisherCircuitBreakerEnabledFlag)
 		require.NoError(t, err)
 		require.True(t, enabled)
 	}

@@ -54,7 +54,7 @@ func newWorkerCommand(version string) *cobra.Command {
 	bunconnect.AddFlags(cmd.Flags())
 	iam.AddFlags(cmd.Flags())
 	service.AddFlags(cmd.Flags())
-	publish.AddFlags(ServiceName, cmd.Flags(), reconciliationPublisherDefaults)
+	publish.AddFlags(ServiceName, cmd.Flags())
 	return cmd
 }
 
