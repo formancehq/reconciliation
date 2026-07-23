@@ -351,7 +351,11 @@ func openEngineErrorAlert(ctx context.Context, store Store, rule *models.Rule, e
 		labels[key] = value
 	}
 	labels["kind"] = EngineErrorFingerprint
-	evidence, err := json.Marshal(map[string]any{"error": evalErr.Error(), "evaluationId": evaluation.ID.String()})
+	// Keep notification-comparison evidence deterministic across repeated runs.
+	// The evaluation identity already travels separately on OpenAlertInput and
+	// alert_event; embedding it here would make identical errors look different
+	// and defeat repeat-notification suppression.
+	evidence, err := json.Marshal(map[string]any{"error": evalErr.Error()})
 	if err != nil {
 		return nil, err
 	}

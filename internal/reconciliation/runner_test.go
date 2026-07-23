@@ -17,12 +17,13 @@ import (
 )
 
 type runnerStore struct {
-	rule       *models.Rule
-	evaluation *models.Evaluation
-	job        *models.EvaluationJob
-	attempts   int
-	completed  bool
-	engineErr  bool
+	rule        *models.Rule
+	evaluation  *models.Evaluation
+	job         *models.EvaluationJob
+	attempts    int
+	completed   bool
+	engineErr   bool
+	alertInputs []storage.OpenAlertInput
 }
 
 func (s *runnerStore) GetRule(context.Context, uuid.UUID) (*models.Rule, error) {
@@ -49,8 +50,9 @@ func (s *runnerStore) CreateEvaluation(_ context.Context, evaluation *models.Eva
 	return nil
 }
 
-func (s *runnerStore) OpenOrUpdateAlert(context.Context, storage.OpenAlertInput) (*storage.OpenAlertResult, error) {
+func (s *runnerStore) OpenOrUpdateAlert(_ context.Context, input storage.OpenAlertInput) (*storage.OpenAlertResult, error) {
 	s.engineErr = true
+	s.alertInputs = append(s.alertInputs, input)
 	return &storage.OpenAlertResult{Alert: &models.Alert{}}, nil
 }
 
@@ -160,6 +162,24 @@ func TestScheduledEngineErrorIsPersistedAndCompletesJob(t *testing.T) {
 	require.Equal(t, job.ScheduledAt, evaluator.lastInput.PIT)
 	require.Equal(t, 30*time.Second, evaluator.lastInput.SafetyMargin)
 	require.Equal(t, job.ScheduledAt.Add(-30*time.Second), store.evaluation.PitPerSource["source"])
+}
+
+func TestEngineErrorEvidenceIsStableAcrossEvaluations(t *testing.T) {
+	store := &runnerStore{}
+	rule := &models.Rule{ID: uuid.New(), Labels: map[string]string{"customer": "acme"}}
+	errUpstream := errors.New("ledger upstream timeout")
+
+	for range 2 {
+		_, err := openEngineErrorAlert(context.Background(), store, rule, &models.Evaluation{
+			ID: uuid.New(), EndedAt: time.Now().UTC(),
+		}, errUpstream)
+		require.NoError(t, err)
+	}
+
+	require.Len(t, store.alertInputs, 2)
+	require.NotEqual(t, store.alertInputs[0].EvaluationID, store.alertInputs[1].EvaluationID)
+	require.JSONEq(t, string(store.alertInputs[0].Evidence), string(store.alertInputs[1].Evidence))
+	require.JSONEq(t, `{"error":"ledger upstream timeout"}`, string(store.alertInputs[0].Evidence))
 }
 
 func TestScheduledEvaluationPreservesExplicitZeroSafetyMargin(t *testing.T) {
