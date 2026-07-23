@@ -214,6 +214,18 @@ func TestManualEvaluationRejectsResultAfterRuleRevisionChanges(t *testing.T) {
 	require.False(t, store.engineErr)
 }
 
+func TestManualEvaluationRejectsSourcePITsWithoutCanonicalPIT(t *testing.T) {
+	evaluator := &testEvaluator{}
+	runner, _, job := newScheduledRunner(t, evaluator)
+
+	evaluation, err := runner.Evaluate(context.Background(), job.RuleID, EvaluateRequest{
+		SourcePITs: map[string]time.Time{"source": time.Now().Add(-time.Hour)},
+	})
+	require.ErrorIs(t, err, ErrValidation)
+	require.ErrorContains(t, err, "at is required when sourcePITs are provided")
+	require.Nil(t, evaluation)
+}
+
 // marshalOutcomes records the full per-fingerprint roster — passing AND failing.
 // A PASS stores only the compact Proof (balance integers); a FAIL stores the
 // full Evidence breakdown. So a green tick is a light self-contained proof, not

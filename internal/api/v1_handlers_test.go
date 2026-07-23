@@ -263,7 +263,7 @@ func TestEvaluateRule_SourcePITsThreaded(t *testing.T) {
 			return &models.Evaluation{ID: uuid.New(), RuleID: id, Result: models.EvaluationPass}, nil
 		})
 
-	body := []byte(`{"sourcePITs":{"pool:acct#0":"` + poolAt.Format(time.RFC3339) + `"}}`)
+	body := []byte(`{"at":"` + poolAt.Format(time.RFC3339) + `","sourcePITs":{"pool:acct#0":"` + poolAt.Format(time.RFC3339) + `"}}`)
 	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
@@ -271,6 +271,23 @@ func TestEvaluateRule_SourcePITsThreaded(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.True(t, got.SourcePITs["pool:acct#0"].Equal(poolAt),
 		"per-source override must reach the service unchanged, got %v", got.SourcePITs)
+	require.True(t, got.PIT.Equal(poolAt), "canonical alert-period PIT must reach the service")
+}
+
+func TestEvaluateRule_SourcePITsRequireAt(t *testing.T) {
+	t.Parallel()
+	b, _ := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	sourceAt := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	body := []byte(`{"sourcePITs":{"pool:acct#0":"` + sourceAt + `"}}`)
+	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "at is required when sourcePITs are provided")
 }
 
 // A future `at` is meaningless for reconciliation (always reads history) — 400.

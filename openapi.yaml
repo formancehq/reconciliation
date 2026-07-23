@@ -914,7 +914,7 @@ components:
     EvaluateRuleRequest:
       type: object
       properties:
-        at: { type: string, format: date-time, description: "Default PIT for every source. Defaults to now. Must be in the past. A supplied `at` is read point-in-time on the payments pool; the default (now) reads the pool's latest snapshot." }
+        at: { type: string, format: date-time, description: "Default PIT for every source and canonical PIT for alert-period scoping. Defaults to now, but is required when `sourcePITs` is provided. Must be in the past. A supplied `at` is read point-in-time on the payments pool; the default (now) reads the pool's latest snapshot." }
         safetyMargin: { type: string, example: "30s", description: "Go duration string subtracted from the default `at` PIT. Defaults to 30s. It is not subtracted from already-effective `sourcePITs` replay values." }
         sourcePITs:
           type: object
@@ -926,8 +926,10 @@ components:
             `at` (the safety margin is not applied again); this
             expresses the two-independent-timestamps contract (ledger at one
             instant, payments pool at another, to absorb inter-system settlement
-            lag). Every value must be in the past. A key that names no source of
-            the rule's template is rejected with 400 (it is not silently ignored).
+            lag). `at` is required whenever this object is supplied so the
+            evaluation has an unambiguous PIT for daily/monthly alert-period
+            scoping. Every value must be in the past. A key that names no source
+            of the rule's template is rejected with 400 (it is not silently ignored).
           additionalProperties: { type: string, format: date-time }
           example: { "ledger:main#0": "2026-06-30T23:59:59Z", "pool:acct#0": "2026-06-30T23:00:00Z" }
     Evaluation:

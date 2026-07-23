@@ -229,6 +229,10 @@ func evaluateRuleHandler(b backend.Backend) http.HandlerFunc {
 				return
 			}
 		}
+		if len(req.SourcePITs) > 0 && req.At == nil {
+			api.BadRequest(w, ErrValidation, errors.New("at is required when sourcePITs are provided"))
+			return
+		}
 
 		svcReq := service.EvaluateRuleRequest{SafetyMargin: defaultEvaluateSafetyMargin, SourcePITs: req.SourcePITs}
 		if req.At != nil {

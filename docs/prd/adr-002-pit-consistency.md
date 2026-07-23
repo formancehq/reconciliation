@@ -90,7 +90,7 @@ flowchart LR
 
 **Key implementation details**
 
-- Engine reads `EvalInput.PIT`, `EvalInput.SafetyMargin`, and optional per-source overrides `EvalInput.SourcePITs` from the caller. A source with no override resolves at the margin-adjusted default PIT. An override is already an effective replay instant and is used unchanged, preventing a second margin subtraction. Historical instants are recorded in `evaluation.pit_per_source`, keyed by the stable `"<label>#<idx>"` key.
+- Engine reads `EvalInput.PIT`, `EvalInput.SafetyMargin`, and optional per-source overrides `EvalInput.SourcePITs` from the caller. When overrides are supplied, the caller must provide an explicit `PIT`; it is the canonical instant used for daily/monthly alert-period scoping, while overrides control only individual source reads. A source with no override resolves at the margin-adjusted default PIT. An override is already an effective replay instant and is used unchanged, preventing a second margin subtraction. Historical instants are recorded in `evaluation.pit_per_source`, keyed by the stable `"<label>#<idx>"` key.
 - `EvalInput.PITExplicit` marks a caller-supplied PIT (vs the service defaulting to now). It gates the payments-pool read: an explicit past instant reads `V3.GetPoolBalances(?at=)`; the "as of now" default reads `V3.GetPoolBalancesLatest` (a PIT read at ~now hits the empty balance-window tail from §3). An override always counts as explicit for its source.
 - The ledger resolver always reads point-in-time at its source's PIT. Payments historical reads do the same. The Payments `latest` response has no snapshot timestamp, so V1 records the successful observation time and does not claim exact replay for that path.
 

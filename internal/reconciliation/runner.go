@@ -62,6 +62,13 @@ func NewRunner(store Store, eng *engine.Engine, registry *templates.Registry, re
 }
 
 func (r *Runner) Evaluate(ctx context.Context, ruleID uuid.UUID, req EvaluateRequest) (*models.Evaluation, error) {
+	// Per-source replay instants say when each source was read, but they do not
+	// define the evaluation's alert period when sources differ. Require the
+	// caller to provide the canonical evaluation PIT explicitly so a historical
+	// replay cannot mutate the current daily/monthly alert period.
+	if len(req.SourcePITs) > 0 && req.PIT.IsZero() {
+		return nil, fmt.Errorf("%w: at is required when sourcePITs are provided", ErrValidation)
+	}
 	var evaluation *models.Evaluation
 	acquired, err := r.withRuleLock(ctx, ruleID, func(ctx context.Context, store Store) error {
 		rule, evaluator, err := r.loadRule(ctx, store, ruleID, nil)
