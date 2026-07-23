@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -45,6 +47,23 @@ func TestEvaluate_SumList(t *testing.T) {
 	}
 	if !out.Passed {
 		t.Fatalf("expected sum==0 to pass, got fail (result=%v)", out.Result)
+	}
+}
+
+func TestEvaluate_SumListOverflowErrors(t *testing.T) {
+	eng := newTestEngine(t, nil, nil)
+	for _, expression := range []string{
+		fmt.Sprintf(`sum([%d, 1]) == 0`, int64(math.MaxInt64)),
+		fmt.Sprintf(`sum([%d, -1]) == 0`, int64(math.MinInt64)),
+	} {
+		compiled, err := eng.Compile(expression)
+		if err != nil {
+			t.Fatalf("Compile(%q): %v", expression, err)
+		}
+		_, err = eng.Evaluate(context.Background(), compiled, EvalInput{PIT: time.Now()})
+		if !errors.Is(err, ErrEvaluate) {
+			t.Fatalf("expected ErrEvaluate from overflowing %q, got %v", expression, err)
+		}
 	}
 }
 

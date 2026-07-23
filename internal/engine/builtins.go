@@ -320,6 +320,9 @@ func sumList(list ref.Val) ref.Val {
 		if !ok {
 			return types.NewErr("sum: list element %d is not int (got %T)", i, item.Value())
 		}
+		if (v > 0 && total > math.MaxInt64-v) || (v < 0 && total < math.MinInt64-v) {
+			return types.NewErr("sum: adding list element %d (%d) to %d overflows int64", i, v, total)
+		}
 		total += v
 	}
 	return types.Int(total)
