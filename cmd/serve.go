@@ -22,6 +22,7 @@ import (
 	"github.com/formancehq/go-libs/v5/pkg/fx/messagingfx"
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	v5logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
+	v5connect "github.com/formancehq/go-libs/v5/pkg/storage/bun/connect"
 	"github.com/formancehq/reconciliation/internal/api"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/spf13/cobra"
@@ -79,13 +80,9 @@ func newServeCommand(version string) *cobra.Command {
 	iam.AddFlags(cmd.Flags())
 	service.AddFlags(cmd.Flags())
 	licence.AddFlags(cmd.Flags())
-	publish.AddFlags(ServiceName, cmd.Flags(), reconciliationPublisherDefaults)
+	publish.AddFlags(ServiceName, cmd.Flags())
 
 	return cmd
-}
-
-func reconciliationPublisherDefaults(config *publish.ConfigDefault) {
-	config.PublisherCircuitBreakerEnabled = true
 }
 
 func runServer(version string) func(cmd *cobra.Command, args []string) error {
@@ -141,10 +138,15 @@ func messagingLoggingModule(cmd *cobra.Command) fx.Option {
 }
 
 func prepareDatabaseOptions(cmd *cobra.Command) (fx.Option, error) {
-	connectionOptions, err := bunconnect.ConnectionOptionsFromFlags(cmd)
+	legacyConnectionOptions, err := bunconnect.ConnectionOptionsFromFlags(cmd)
 	if err != nil {
 		return nil, err
 	}
 
-	return storage.Module(*connectionOptions, service.IsDebug(cmd)), nil
+	publisherConnectionOptions, err := v5connect.ConnectionOptionsFromFlags(cmd.Flags(), cmd.Context())
+	if err != nil {
+		return nil, err
+	}
+
+	return storage.Module(*legacyConnectionOptions, *publisherConnectionOptions, service.IsDebug(cmd)), nil
 }
