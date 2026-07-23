@@ -28,6 +28,7 @@ func NewRootCommand() *cobra.Command {
 	serveCmd := newServeCommand(Version)
 	addAutoMigrateCommand(serveCmd)
 	cmd.AddCommand(serveCmd)
+	cmd.AddCommand(newWorkerCommand(Version))
 	versionCmd := newVersionCommand()
 	cmd.AddCommand(versionCmd)
 	migrate := newMigrate()

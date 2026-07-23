@@ -8,46 +8,12 @@ import (
 	"time"
 
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
-	"golang.org/x/mod/semver"
 )
 
-type Version interface {
-	GetVersion() string
-}
-
-func isVersionSupported(
-	version Version,
-	minSupportedVersion string,
-) bool {
-	v := "v" + version.GetVersion()
-	if !semver.IsValid(v) {
-		// If semver is not valid, we assume it's a commit hash, so last version
-		return true
-	}
-
-	switch semver.Compare(v, minSupportedVersion) {
-	case 0, 1:
-		// Higher or equal, nothing to do
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName string, ledgerAggregatedBalanceQuery map[string]interface{}, at time.Time) (map[string]*big.Int, error) {
-	infoResponse, err := s.client.V2GetInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ledger info: %w", err)
-	}
-
-	if infoResponse.StatusCode != 200 {
-		return nil, errors.New("failed to get ledger info")
-	}
-
-	if !isVersionSupported(infoResponse.V2ConfigInfoResponse, "v2.0.0-beta.1") {
-		return nil, errors.New("ledger version not supported")
-	}
-
+	// Note: the historical V2GetInfo version gate was removed when we bumped the
+	// SDK to v3.7.2 — the global ledger-info endpoint has been replaced by
+	// per-ledger info and the minimum-version assertion no longer applies.
 	balances, err := s.client.V2GetBalancesAggregated(
 		ctx,
 		operations.V2GetBalancesAggregatedRequest{
@@ -77,25 +43,21 @@ func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName s
 }
 
 func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID string, at time.Time) (map[string]*big.Int, error) {
-	response, err := s.client.PaymentsgetServerInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get payments info: %w", err)
-	}
-
-	if response.StatusCode != 200 {
-		return nil, errors.New("failed to get payments info")
-	}
-
-	if !isVersionSupported(response.ServerInfo, "v1.0.0-rc.4") {
-		return nil, errors.New("payments version not supported")
-	}
-
-	balances, err := s.client.GetPoolBalances(
+	// Read the pool balance point-in-time at `at` (the request's
+	// reconciledAtPayments, which ReconciliationRequest.Validate guarantees is a
+	// non-zero past instant). Payments v3 GET /v3/pools/{id}/balances?at= returns
+	// the balance valid at that instant — verified against payments v3.3.1.
+	//
+	// This corrects a prior workaround that read V3GetPoolBalancesLatest and
+	// discarded `at`: it rested on the belief that no payments-v3 PIT read
+	// existed, which is not true. The one real caveat is the balance-window tail
+	// (a read strictly after the pool's last balance movement is empty on the PIT
+	// route) — but the legacy contract requires `at` in the past precisely to
+	// reconcile against a settled historical instant, so PIT is the faithful read
+	// here. See ADR-002.
+	balances, err := s.client.V3GetPoolBalances(
 		ctx,
-		operations.GetPoolBalancesRequest{
-			At:     at,
-			PoolID: paymentPoolID,
-		},
+		operations.V3GetPoolBalancesRequest{PoolID: paymentPoolID, At: &at},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pool balances: %w", err)
@@ -105,13 +67,16 @@ func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID strin
 		return nil, errors.New("failed to get pool balances")
 	}
 
-	if balances.PoolBalancesResponse == nil {
+	if balances.V3PoolBalancesResponse == nil {
 		return nil, errors.New("no pool balance")
 	}
 
 	balanceMap := make(map[string]*big.Int)
-	for _, balance := range balances.PoolBalancesResponse.Data.Balances {
-		balanceMap[balance.GetAsset()] = balance.GetAmount()
+	for _, balance := range balances.V3PoolBalancesResponse.Data {
+		if balance.Amount == nil {
+			continue
+		}
+		balanceMap[balance.Asset] = balance.Amount
 	}
 
 	return balanceMap, nil

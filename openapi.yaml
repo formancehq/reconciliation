@@ -144,6 +144,262 @@ paths:
       security:
         - Authorization:
             - reconciliation:read
+
+  # --- V1 Ledger Clarity surface ---------------------------------------------
+
+  /rules:
+    post:
+      summary: Create a rule
+      operationId: createRule
+      tags: [reconciliation.v1]
+      requestBody: { $ref: '#/components/requestBodies/Rule' }
+      responses:
+        '201': { $ref: '#/components/responses/Rule' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+    get:
+      summary: List rules
+      operationId: listRules
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryBuilder' }
+      responses:
+        '200': { $ref: '#/components/responses/Rules' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /rules/{ruleID}:
+    parameters: [{ $ref: '#/components/parameters/RuleID' }]
+    get:
+      summary: Get a rule
+      operationId: getRule
+      tags: [reconciliation.v1]
+      responses:
+        '200': { $ref: '#/components/responses/Rule' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+    patch:
+      summary: Patch a rule (partial update)
+      operationId: patchRule
+      tags: [reconciliation.v1]
+      requestBody: { $ref: '#/components/requestBodies/RulePatch' }
+      responses:
+        '200': { $ref: '#/components/responses/Rule' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+    delete:
+      summary: Delete a rule (cascades to evaluations + alerts + alert events)
+      operationId: deleteRule
+      tags: [reconciliation.v1]
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /rules/{ruleID}/evaluate:
+    post:
+      summary: Evaluate a rule now
+      operationId: evaluateRule
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/RuleID' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvaluateRuleRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Evaluation' }
+        '409': { $ref: '#/components/responses/ErrorResponse' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /evaluations:
+    get:
+      summary: List evaluations
+      operationId: listEvaluations
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryBuilder' }
+      responses:
+        '200': { $ref: '#/components/responses/Evaluations' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /evaluations/{evaluationID}:
+    get:
+      summary: Get an evaluation
+      operationId: getEvaluation
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/EvaluationID' }]
+      responses:
+        '200': { $ref: '#/components/responses/Evaluation' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /alerts:
+    get:
+      summary: List alerts
+      operationId: listAlerts
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryBuilder' }
+      responses:
+        '200': { $ref: '#/components/responses/Alerts' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /alerts/{alertID}:
+    parameters: [{ $ref: '#/components/parameters/AlertID' }]
+    get:
+      summary: Get an alert
+      operationId: getAlert
+      tags: [reconciliation.v1]
+      responses:
+        '200': { $ref: '#/components/responses/Alert' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /alerts/{alertID}/events:
+    parameters: [{ $ref: '#/components/parameters/AlertID' }]
+    get:
+      summary: List alert events (append-only timeline)
+      operationId: listAlertEvents
+      description: |
+        Returns a page of the events recorded for this alert — every evaluation
+        that touched it plus every manual transition. The list is append-only;
+        events are never modified or deleted. Ordered most-recent-first and
+        cursor-paginated: a long-lived alert's timeline is unbounded (one row per
+        failing evaluation), so callers must page through it.
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200': { $ref: '#/components/responses/AlertEvents' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /alerts/{alertID}/ack:
+    post:
+      summary: Acknowledge an alert
+      operationId: ackAlert
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AckAlertRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Alert' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /alerts/{alertID}/resolve:
+    post:
+      summary: Resolve an alert (fixed_by_booking)
+      operationId: resolveAlert
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveAlertRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Alert' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /alerts/{alertID}/accept:
+    post:
+      summary: Accept an alert (accepted_by_business)
+      operationId: acceptAlert
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptAlertRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Alert' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /alerts/{alertID}/snooze:
+    post:
+      summary: Snooze an alert's notifications until a future instant
+      description: |
+        Mutes the alert's webhook notifications until `until`. The alert keeps
+        failing, keeps its status, and keeps counting against period-green —
+        only its notifications are suppressed, even if the discrepancy changes.
+        The first failing evaluation at or after `until` clears the snooze and
+        notifies once. Re-snoozing overwrites the window. Rejects RESOLVED
+        alerts and a non-future `until`.
+      operationId: snoozeAlert
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SnoozeAlertRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Alert' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /alerts/{alertID}/unsnooze:
+    post:
+      summary: Lift a snooze early
+      description: |
+        Clears an active snooze before its window elapses. Idempotent —
+        unsnoozing an alert that is not snoozed returns it unchanged.
+      operationId: unsnoozeAlert
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UnsnoozeAlertRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Alert' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
 components:
   parameters:
     PageSize:
@@ -184,6 +440,24 @@ components:
       description: The reconciliation ID.
       example: XXX
       required: true
+    RuleID:
+      name: ruleID
+      in: path
+      required: true
+      description: The rule ID.
+      schema: { type: string, format: uuid }
+    EvaluationID:
+      name: evaluationID
+      in: path
+      required: true
+      description: The evaluation ID.
+      schema: { type: string, format: uuid }
+    AlertID:
+      name: alertID
+      in: path
+      required: true
+      description: The alert ID.
+      schema: { type: string, format: uuid }
   responses:
     NoContent:
       description: No content
@@ -223,6 +497,41 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Rule:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RuleResponse' }
+    Rules:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RulesCursorResponse' }
+    Evaluation:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EvaluationResponse' }
+    Evaluations:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EvaluationsCursorResponse' }
+    Alert:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AlertResponse' }
+    Alerts:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AlertsCursorResponse' }
+    AlertEvents:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AlertEventsCursorResponse' }
   requestBodies:
     Policy:
       required: true
@@ -236,6 +545,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ReconciliationRequest'
+    Rule:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RuleRequest' }
+    RulePatch:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/RulePatchRequest' }
   schemas:
     QueryBuilder:
       type: object
@@ -450,3 +769,374 @@ components:
           type: string
         details:
           type: string
+
+    # --- V1 Ledger Clarity schemas -----------------------------------------
+
+    Severity:
+      type: string
+      enum: [info, low, medium, high, critical]
+    TemplateKind:
+      type: string
+      enum: [ledger_vs_pool_drift, ledger_invariant, account_threshold, source_parity]
+    Cadence:
+      type: string
+      description: |
+        Reconciliation rhythm. Scopes each failing fingerprint into a period so a
+        March break and an April break are distinct, independently-closable cases.
+        `continuous` (default) is a single unbounded period (live monitoring).
+      enum: [continuous, daily, weekly, monthly]
+      default: continuous
+    Schedule:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [on_demand, cron] }
+        expr: { type: string, example: "*/15 * * * *" }
+        tz: { type: string, example: "UTC" }
+        safetyMargin: { type: string, example: "30s", description: "Go duration string" }
+    Ack:
+      type: object
+      required: [by, at]
+      properties:
+        by: { type: string, example: "ops@buildr.com" }
+        at: { type: string, format: date-time }
+        note: { type: string }
+    Resolution:
+      type: object
+      required: [kind, by, at]
+      properties:
+        kind: { type: string, enum: [auto, fixed_by_booking, accepted_by_business] }
+        by: { type: string }
+        at: { type: string, format: date-time }
+        note: { type: string }
+        transactionRefs:
+          type: array
+          items: { type: string }
+        evidenceSnapshot:
+          type: object
+          additionalProperties: true
+    Snooze:
+      type: object
+      description: |
+        A time-boxed, operator-initiated mute of an alert's notifications. While
+        `until` is in the future the alert keeps failing and keeps counting
+        against period-green — only its notifications are suppressed.
+      required: [until, by, at]
+      properties:
+        until: { type: string, format: date-time }
+        by: { type: string, example: "ops@buildr.com" }
+        at: { type: string, format: date-time }
+        note: { type: string }
+
+    Rule:
+      type: object
+      required: [id, name, templateKind, templateSpec, enabled, severity, cadence, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        templateKind: { $ref: '#/components/schemas/TemplateKind' }
+        templateSpec:
+          type: object
+          additionalProperties: true
+        explanationCEL:
+          type: string
+          description: Representative CEL for human explanation; not the runtime program.
+        enabled: { type: boolean }
+        severity: { $ref: '#/components/schemas/Severity' }
+        cadence: { $ref: '#/components/schemas/Cadence' }
+        schedule: { $ref: '#/components/schemas/Schedule' }
+        notifications:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    RuleRequest:
+      type: object
+      required: [name, templateKind, templateSpec]
+      properties:
+        name: { type: string }
+        templateKind: { $ref: '#/components/schemas/TemplateKind' }
+        templateSpec:
+          type: object
+          additionalProperties: true
+        severity: { $ref: '#/components/schemas/Severity' }
+        cadence: { $ref: '#/components/schemas/Cadence' }
+        schedule: { $ref: '#/components/schemas/Schedule' }
+        notifications:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        enabled: { type: boolean }
+    RulePatchRequest:
+      type: object
+      description: Partial update — only fields supplied are applied.
+      properties:
+        name: { type: string }
+        templateKind: { $ref: '#/components/schemas/TemplateKind' }
+        templateSpec:
+          type: object
+          additionalProperties: true
+        enabled: { type: boolean }
+        severity: { $ref: '#/components/schemas/Severity' }
+        schedule: { $ref: '#/components/schemas/Schedule' }
+        notifications:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+    RuleResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Rule' }
+    RulesCursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Rule' }
+
+    EvaluateRuleRequest:
+      type: object
+      properties:
+        at: { type: string, format: date-time, description: "Default PIT for every source and canonical PIT for alert-period scoping. Defaults to now, but is required when `sourcePITs` is provided. Must be in the past. A supplied `at` is read point-in-time on the payments pool; the default (now) reads the pool's latest snapshot." }
+        safetyMargin: { type: string, example: "30s", description: "Go duration string subtracted from the default `at` PIT. Defaults to 30s. It is not subtracted from already-effective `sourcePITs` replay values." }
+        sourcePITs:
+          type: object
+          description: >-
+            Optional per-source PIT overrides, keyed by the template's stable
+            source key ("<label>#<idx>", as echoed back in
+            Evaluation.pitPerSource — e.g. "ledger:main#0", "pool:acct#0"). A
+            source with an override reads at exactly that instant instead of
+            `at` (the safety margin is not applied again); this
+            expresses the two-independent-timestamps contract (ledger at one
+            instant, payments pool at another, to absorb inter-system settlement
+            lag). `at` is required whenever this object is supplied so the
+            evaluation has an unambiguous PIT for daily/monthly alert-period
+            scoping. Every value must be in the past. A key that names no source
+            of the rule's template is rejected with 400 (it is not silently ignored).
+          additionalProperties: { type: string, format: date-time }
+          example: { "ledger:main#0": "2026-06-30T23:59:59Z", "pool:acct#0": "2026-06-30T23:00:00Z" }
+    Evaluation:
+      type: object
+      required: [id, ruleID, startedAt, endedAt, result, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        ruleID: { type: string, format: uuid }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        pitPerSource:
+          type: object
+          description: >-
+            Effective historical PITs used by sources. For a Payments `latest`
+            read, the value is the successful observation time because the
+            upstream response has no snapshot timestamp; the evaluation evidence
+            is frozen, but exact historical replay of that latest snapshot is not guaranteed.
+          additionalProperties: { type: string, format: date-time }
+        result: { type: string, enum: [PASS, FAIL, ERROR] }
+        evidence:
+          description: >-
+            For PASS/FAIL: the per-fingerprint roster. Each PASS entry carries a
+            compact `proof`: the observed balances that make the check hold, with
+            self-describing keys — both sides where two are compared, e.g.
+            {"ledger":"523500","pool":"-523500"} (drift), {"left":…,"right":…}
+            (source_parity), {"positive":…,"negative":…} (ledger_invariant), or
+            {"balance":…} (account_threshold). These reuse the FAIL balance keys,
+            so under tolerance the residual (left−right) is visible without
+            recomputation. Each FAIL entry carries the full `evidence` breakdown
+            (balances, drift, tolerance, compiled CEL). Bounded by asset count
+            (per-asset granularity; per-account is parked). An empty array means no
+            outcomes were produced (no assets matched). For ERROR: an object
+            describing the engine failure.
+          oneOf:
+            - type: array
+              items:
+                type: object
+                properties:
+                  fingerprint: { type: string }
+                  passed: { type: boolean }
+                  proof:
+                    type: object
+                    additionalProperties: { type: string }
+                    description: Compact green-proof (observed balance integers as strings). Present on PASS entries.
+                  evidence:
+                    type: object
+                    additionalProperties: true
+                    description: Full breakdown. Present on FAIL entries.
+                additionalProperties: true
+            - type: object
+              additionalProperties: true
+        error: { type: string }
+        costUnits: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+    EvaluationResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Evaluation' }
+    EvaluationsCursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Evaluation' }
+
+    Alert:
+      type: object
+      description: |
+        An Alert is the stable, dedup'd record of a failing fingerprint within a
+        reconciliation period. There is exactly one Alert per
+        (ruleID, fingerprint, periodID) — within a period, re-opens after resolve
+        flip the status back to OPEN in place; the same fingerprint failing in a
+        new period is a separate Alert. For a `continuous`-cadence rule there is
+        one unbounded period, so it behaves as one Alert per (ruleID, fingerprint).
+        The full history of transitions lives in alert_event
+        (see /alerts/{alertID}/events).
+      required: [id, ruleID, fingerprint, periodID, status, severity, firstSeenAt, lastSeenAt, occurrenceCount, lastEvaluationID, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        ruleID: { type: string, format: uuid }
+        fingerprint: { type: string, example: "asset:USD/2" }
+        periodID: { type: string, example: "2026-03", description: "Reconciliation period this alert is scoped to ('continuous' for live-monitoring rules)." }
+        status: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
+        severity: { $ref: '#/components/schemas/Severity' }
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        occurrenceCount: { type: integer, format: int64, description: "Count of FAIL events on this alert across reopen cycles within its period (lifetime, for a continuous-cadence rule)." }
+        lastEvaluationID: { type: string, format: uuid }
+        evidence:
+          type: object
+          additionalProperties: true
+        ack: { $ref: '#/components/schemas/Ack' }
+        resolution: { $ref: '#/components/schemas/Resolution' }
+        snooze: { $ref: '#/components/schemas/Snooze' }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AlertResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Alert' }
+    AlertsCursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Alert' }
+
+    AlertEvent:
+      type: object
+      description: |
+        One row of the alert's append-only event log. Captures every
+        evaluation that touched the alert plus every manual transition
+        (ack / resolve / accept / snooze / unsnooze). `prevStatus` is null
+        only for the inaugural event of an alert. `isReopen` is a derived
+        predicate — true when a FAIL event lands on a previously-RESOLVED alert.
+        `notify` is the notification decision recorded for the row: false marks
+        a transition kept for audit but deliberately not published (a repeated
+        identical fail, or a fail muted by an active snooze).
+      required: [id, alertID, type, newStatus, at, isReopen, notify]
+      properties:
+        id: { type: string, format: uuid }
+        alertID: { type: string, format: uuid }
+        evaluationID: { type: string, format: uuid, nullable: true }
+        type: { type: string, enum: [fail, pass, ack, resolve, accept, snooze, unsnooze] }
+        prevStatus: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED], nullable: true }
+        newStatus: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
+        payload:
+          description: Event-type-specific payload (evidence for fail, resolution for resolve/accept, ack object for ack, snooze object for snooze).
+          type: object
+          additionalProperties: true
+        at: { type: string, format: date-time }
+        isReopen: { type: boolean }
+        notify: { type: boolean, description: "Whether this transition was published to the message bus. false = recorded for audit but suppressed." }
+    AlertEventsCursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor:
+          type: object
+          required: [pageSize, hasMore, data]
+          properties:
+            pageSize: { type: integer, format: int64 }
+            hasMore: { type: boolean }
+            previous: { type: string }
+            next: { type: string }
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/AlertEvent' }
+
+    AckAlertRequest:
+      type: object
+      required: [by]
+      properties:
+        by: { type: string, example: "ops@buildr.com" }
+        note: { type: string }
+    ResolveAlertRequest:
+      type: object
+      required: [by]
+      description: |
+        Mark an alert resolved. When `transactionRefs` is non-empty the
+        resolution kind is recorded as `fixed_by_booking`.
+      properties:
+        by: { type: string }
+        note: { type: string }
+        transactionRefs:
+          type: array
+          items: { type: string }
+    AcceptAlertRequest:
+      type: object
+      required: [by, note]
+      description: Business acceptance. `note` is required and the evidence is snapshotted onto the resolution.
+      properties:
+        by: { type: string }
+        note: { type: string, minLength: 1 }
+    SnoozeAlertRequest:
+      type: object
+      required: [by, until]
+      description: Mute an alert's notifications until `until` (which must be in the future).
+      properties:
+        by: { type: string, example: "ops@buildr.com" }
+        until: { type: string, format: date-time }
+        note: { type: string }
+    UnsnoozeAlertRequest:
+      type: object
+      required: [by]
+      properties:
+        by: { type: string, example: "ops@buildr.com" }

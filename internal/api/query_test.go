@@ -14,8 +14,78 @@ import (
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/golang/mock/gomock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
+
+func TestV1ListEndpointsRejectForgedCursorPageSizes(t *testing.T) {
+	t.Parallel()
+
+	type endpoint struct {
+		name   string
+		path   string
+		cursor func(uint64) string
+	}
+	endpoints := []endpoint{
+		{
+			name: "rules",
+			path: "/rules",
+			cursor: func(pageSize uint64) string {
+				return bunpaginate.EncodeCursor(storage.NewGetRulesQuery(
+					storage.NewPaginatedQueryOptions(storage.RulesFilters{}).WithPageSize(pageSize),
+				))
+			},
+		},
+		{
+			name: "evaluations",
+			path: "/evaluations",
+			cursor: func(pageSize uint64) string {
+				return bunpaginate.EncodeCursor(storage.NewGetEvaluationsQuery(
+					storage.NewPaginatedQueryOptions(storage.EvaluationsFilters{}).WithPageSize(pageSize),
+				))
+			},
+		},
+		{
+			name: "alerts",
+			path: "/alerts",
+			cursor: func(pageSize uint64) string {
+				return bunpaginate.EncodeCursor(storage.NewGetAlertsQuery(
+					storage.NewPaginatedQueryOptions(storage.AlertsFilters{}).WithPageSize(pageSize),
+				))
+			},
+		},
+		{
+			name: "alert events",
+			path: "/alerts/" + uuid.NewString() + "/events",
+			cursor: func(pageSize uint64) string {
+				return bunpaginate.EncodeCursor(storage.NewGetAlertEventsQuery(
+					storage.NewPaginatedQueryOptions(storage.AlertEventsFilters{}).WithPageSize(pageSize),
+				))
+			},
+		},
+	}
+
+	for _, endpoint := range endpoints {
+		endpoint := endpoint
+		for _, pageSize := range []uint64{0, MaxPageSize + 1} {
+			pageSize := pageSize
+			t.Run(fmt.Sprintf("%s/pageSize=%d", endpoint.name, pageSize), func(t *testing.T) {
+				t.Parallel()
+
+				backend, _ := newTestingBackend(t)
+				router := newRouter(backend, sharedapi.ServiceInfo{
+					Debug: testing.Verbose(),
+				}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{Enabled: true})
+
+				req := httptest.NewRequest(http.MethodGet, endpoint.path+"?cursor="+endpoint.cursor(pageSize), nil)
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, req)
+
+				require.Equal(t, http.StatusBadRequest, rec.Code)
+			})
+		}
+	}
+}
 
 func TestListReconciliationsPageSize(t *testing.T) {
 	t.Parallel()

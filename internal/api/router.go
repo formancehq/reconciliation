@@ -47,6 +47,26 @@ func newRouter(
 		r.Delete("/policies/{policyID}", deletePolicyHandler(b))
 		r.Get("/policies/{policyID}", getPolicyHandler(b))
 		r.Post("/policies/{policyID}/reconciliation", reconciliationHandler(b))
+
+		// V1 — Rule / Evaluation / Alert
+		r.Post("/rules", createRuleHandler(b))
+		r.Get("/rules", listRulesHandler(b))
+		r.Get("/rules/{ruleID}", getRuleHandler(b))
+		r.Patch("/rules/{ruleID}", patchRuleHandler(b))
+		r.Delete("/rules/{ruleID}", deleteRuleHandler(b))
+		r.Post("/rules/{ruleID}/evaluate", evaluateRuleHandler(b))
+
+		r.Get("/evaluations", listEvaluationsHandler(b))
+		r.Get("/evaluations/{evaluationID}", getEvaluationHandler(b))
+
+		r.Get("/alerts", listAlertsHandler(b))
+		r.Get("/alerts/{alertID}", getAlertHandler(b))
+		r.Get("/alerts/{alertID}/events", listAlertEventsHandler(b))
+		r.Post("/alerts/{alertID}/ack", ackAlertHandler(b))
+		r.Post("/alerts/{alertID}/resolve", resolveAlertHandler(b))
+		r.Post("/alerts/{alertID}/accept", acceptAlertHandler(b))
+		r.Post("/alerts/{alertID}/snooze", snoozeAlertHandler(b))
+		r.Post("/alerts/{alertID}/unsnooze", unsnoozeAlertHandler(b))
 	})
 
 	return r

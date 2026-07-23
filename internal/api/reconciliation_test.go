@@ -21,7 +21,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )

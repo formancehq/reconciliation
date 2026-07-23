@@ -1,0 +1,155 @@
+package service
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/formancehq/go-libs/bun/bunpaginate"
+	"github.com/formancehq/reconciliation/internal/models"
+	"github.com/formancehq/reconciliation/internal/reconciliation"
+	"github.com/formancehq/reconciliation/internal/storage"
+	"github.com/google/uuid"
+)
+
+// AckAlertRequest is the body of POST /alerts/{id}/ack.
+type AckAlertRequest struct {
+	By   string `json:"by"`
+	Note string `json:"note,omitempty"`
+}
+
+// ResolveAlertRequest is the body of POST /alerts/{id}/resolve. This endpoint
+// always records a manual `fixed_by_booking` resolution; TransactionRefs is
+// optional audit metadata (the corrective bookings), not a mode switch. System
+// auto-resolution is driven by the evaluation loop on PASS
+// (storage.AutoResolveAlert), and `accepted_by_business` is a separate endpoint
+// (AcceptAlert).
+type ResolveAlertRequest struct {
+	By              string   `json:"by"`
+	Note            string   `json:"note,omitempty"`
+	TransactionRefs []string `json:"transactionRefs,omitempty"`
+}
+
+// AcceptAlertRequest is the body of POST /alerts/{id}/accept. The note field
+// is required by spec — see PRD §6.4 (Resolution model).
+type AcceptAlertRequest struct {
+	By   string `json:"by"`
+	Note string `json:"note"`
+}
+
+// SnoozeAlertRequest is the body of POST /alerts/{id}/snooze. `until` is the
+// instant the mute lifts; it must be in the future. The alert stays OPEN and
+// keeps counting against period-green — only its notifications are silenced.
+type SnoozeAlertRequest struct {
+	By    string    `json:"by"`
+	Until time.Time `json:"until"`
+	Note  string    `json:"note,omitempty"`
+}
+
+// UnsnoozeAlertRequest is the body of POST /alerts/{id}/unsnooze. `by`
+// attributes the action in the append-only log.
+type UnsnoozeAlertRequest struct {
+	By string `json:"by"`
+}
+
+// AckAlert transitions an OPEN alert to ACKNOWLEDGED. Idempotent at the
+// storage layer — a second ack on an already-ACKNOWLEDGED alert preserves the
+// original metadata and does NOT append a new event.
+func (s *Service) AckAlert(ctx context.Context, id uuid.UUID, req *AckAlertRequest) (*models.Alert, error) {
+	if req == nil || req.By == "" {
+		return nil, fmt.Errorf("%w: ack: 'by' is required", ErrValidation)
+	}
+	ack := &models.Ack{
+		By:   req.By,
+		At:   time.Now().UTC(),
+		Note: req.Note,
+	}
+	return s.store.AckAlert(ctx, id, ack)
+}
+
+// ResolveAlert applies a manual `fixed_by_booking` resolution. The system
+// `auto` path lives at the storage layer (AutoResolveAlert), invoked by the
+// evaluation loop on PASS.
+func (s *Service) ResolveAlert(ctx context.Context, id uuid.UUID, req *ResolveAlertRequest) (*models.Alert, error) {
+	if req == nil || req.By == "" {
+		return nil, fmt.Errorf("%w: resolve: 'by' is required", ErrValidation)
+	}
+	resolution := &models.Resolution{
+		Kind:            models.ResolutionFixedByBooking,
+		By:              req.By,
+		At:              time.Now().UTC(),
+		Note:            req.Note,
+		TransactionRefs: req.TransactionRefs,
+	}
+	return s.store.ResolveAlertManual(ctx, id, resolution)
+}
+
+// AcceptAlert applies the `accepted_by_business` resolution. The alert's current
+// evidence is frozen onto the resolution so the audit trail is reproducible even
+// after the underlying balances change — the snapshot is captured inside
+// AcceptAlert's locked transaction (see storage.applyResolution), so it reflects
+// exactly the state being accepted even under a concurrent evaluation.
+func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAlertRequest) (*models.Alert, error) {
+	if req == nil || req.By == "" {
+		return nil, fmt.Errorf("%w: accept: 'by' is required", ErrValidation)
+	}
+	if req.Note == "" {
+		return nil, fmt.Errorf("%w: accept: 'note' is required for business acceptance", ErrValidation)
+	}
+	resolution := &models.Resolution{
+		Kind: models.ResolutionAcceptedByBusiness,
+		By:   req.By,
+		At:   time.Now().UTC(),
+		Note: req.Note,
+	}
+	return s.store.AcceptAlert(ctx, id, resolution)
+}
+
+// SnoozeAlert mutes an alert's notifications until req.Until. The alert keeps
+// failing and stays counted against period-green; only its webhooks go quiet.
+func (s *Service) SnoozeAlert(ctx context.Context, id uuid.UUID, req *SnoozeAlertRequest) (*models.Alert, error) {
+	if req == nil || req.By == "" {
+		return nil, fmt.Errorf("%w: snooze: 'by' is required", ErrValidation)
+	}
+	if req.Until.IsZero() {
+		return nil, fmt.Errorf("%w: snooze: 'until' is required", ErrValidation)
+	}
+	if !req.Until.After(time.Now().UTC()) {
+		return nil, fmt.Errorf("%w: snooze: 'until' must be in the future", ErrValidation)
+	}
+	return s.store.SnoozeAlert(ctx, id, req.Until, req.By, req.Note)
+}
+
+// UnsnoozeAlert lifts a snooze early. Idempotent — unsnoozing an alert that is
+// not snoozed returns it unchanged.
+func (s *Service) UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *UnsnoozeAlertRequest) (*models.Alert, error) {
+	if req == nil || req.By == "" {
+		return nil, fmt.Errorf("%w: unsnooze: 'by' is required", ErrValidation)
+	}
+	return s.store.UnsnoozeAlert(ctx, id, req.By)
+}
+
+// GetAlert returns the alert or storage.ErrNotFound.
+func (s *Service) GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error) {
+	return s.store.GetAlert(ctx, id)
+}
+
+// ListAlerts is a passthrough — filters live in storage.
+func (s *Service) ListAlerts(ctx context.Context, q storage.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
+	return s.store.ListAlerts(ctx, q)
+}
+
+// ListAlertEvents returns a page of one alert's append-only history,
+// most-recent-first. Paginated because a long-lived alert's timeline is
+// unbounded (one row per failing evaluation). This is the API surface for the
+// "timeline" view and any future audit-export tooling.
+func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
+	return s.store.ListAlertEvents(ctx, alertID, q)
+}
+
+// engineErrorFingerprint is the synthetic fingerprint used by the evaluation
+// orchestrator when a kernel/resolver failure raises a meta-alert (see
+// openEngineErrorAlert in evaluation.go). Promoted to a package-level
+// constant so the value lives in one place — anywhere we route or filter
+// engine-health alerts can match on this literal.
+const engineErrorFingerprint = reconciliation.EngineErrorFingerprint

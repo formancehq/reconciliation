@@ -1,0 +1,228 @@
+package templates
+
+import (
+	"context"
+	"fmt"
+	"math/big"
+	"time"
+
+	"encoding/json"
+
+	"github.com/formancehq/reconciliation/internal/engine"
+)
+
+// Scope selects how a template reads the accounts a source matches:
+//   - aggregate  (default): sum the matched set into one balance per asset.
+//     A query matching a single account is the degenerate case.
+//   - per_account: fan out — evaluate each matched account individually,
+//     producing one Outcome per (account, asset). Only available when every
+//     source involved is a ledger source (pools have no per-account
+//     breakdown); the account address is the alignment key and fingerprint axis.
+type Scope string
+
+const (
+	ScopeAggregate  Scope = "aggregate"
+	ScopePerAccount Scope = "per_account"
+)
+
+// Valid reports whether s is a recognised scope (empty defaults to aggregate).
+func (s Scope) Valid() bool {
+	switch s {
+	case "", ScopeAggregate, ScopePerAccount:
+		return true
+	default:
+		return false
+	}
+}
+
+// perAccountParkedMsg gates per-account granularity out of the V1 public API.
+//
+// Per-account fan-out (account_threshold mode "per_account" and source_parity
+// scope "per_account") is intentionally *parked* — not removed. The whole
+// implementation below and in the two templates (ScopePerAccount, the
+// resolveAccounts / accountsByAddress / celTermForAddress helpers, and each
+// template's evaluatePerAccount) is retained, compiles, and stays covered by the
+// Evaluate-path unit tests in per_account_test.go. Only rule *creation* is
+// blocked, via the guards in AccountThreshold.Validate and SourceParity.Validate.
+//
+// Why: a rule whose query matches a large account set fans out to one Outcome
+// (and, once PASS-evidence is stored, one evidence object) per (account, asset).
+// A too-broad filter would bloat evaluation evidence. V1 keeps granularity at
+// per-asset (aggregate), which bounds evidence to the asset count regardless of
+// how many accounts the query matches.
+//
+// To re-introduce per-account in a later version:
+//  1. delete the two `spec.Mode == ThresholdPerAccount` / `spec.Scope ==
+//     ScopePerAccount` rejection guards in the two Validate methods;
+//  2. restore the doc sections marked "parked (post-V1)" in
+//     docs/technical/templates.md and the status rows in docs/README.md,
+//     docs/prd/README.md, docs/technical/v1-vs-legacy.md;
+//  3. re-decide the PASS-evidence retention story for wide fan-out.
+const perAccountParkedMsg = "per_account granularity is parked in V1 (per-asset/aggregate only); see docs/technical/templates.md"
+
+// SourceKind discriminates where a balance source reads from. Both kinds map to
+// an existing resolver AND an existing kernel builtin (ledgerSet / pool), so a
+// template built on Source can resolve snapshots and render its explainable
+// kernel expression. New kinds (e.g. an external bank/PSP account) slot in here once
+// they have a resolver + builtin.
+type SourceKind string
+
+const (
+	// SourceLedger reads the aggregate balance of a ledger account set
+	// (ledger + query) at the evaluation PIT.
+	SourceLedger SourceKind = "ledger"
+	// SourcePaymentsPool reads a historical balance when an explicit PIT is
+	// supplied, otherwise the latest payments-pool snapshot.
+	SourcePaymentsPool SourceKind = "payments_pool"
+)
+
+// SourceSpec is a reusable, typed descriptor of "where to read a per-asset
+// balance from". It is the shared primitive under source_parity (and, after the
+// reshape, ledger_vs_pool_drift): a template composes one or more sources and
+// expresses its invariant over their resolved balances. Only the fields
+// relevant to Kind are populated.
+type SourceSpec struct {
+	Kind SourceKind `json:"kind"`
+
+	// Ledger source fields.
+	Ledger string          `json:"ledger,omitempty"`
+	Query  json.RawMessage `json:"query,omitempty"`
+
+	// Payments-pool source field.
+	PoolID string `json:"poolID,omitempty"`
+}
+
+// Validate checks the source is internally consistent: a known kind with its
+// required fields present. Returns ErrInvalidSpec-wrapped errors so the API
+// surfaces them as 400 VALIDATION. `field` prefixes messages so a caller with
+// multiple sources (left/right) can point at the offending one.
+func (s SourceSpec) Validate(field string) error {
+	switch s.Kind {
+	case SourceLedger:
+		if s.Ledger == "" {
+			return fmt.Errorf("%w: %s.ledger is required for kind %q", ErrInvalidSpec, field, s.Kind)
+		}
+		if !hasMeaningfulJSON(s.Query) {
+			return fmt.Errorf("%w: %s.query is required for kind %q", ErrInvalidSpec, field, s.Kind)
+		}
+	case SourcePaymentsPool:
+		if s.PoolID == "" {
+			return fmt.Errorf("%w: %s.poolID is required for kind %q", ErrInvalidSpec, field, s.Kind)
+		}
+	case "":
+		return fmt.Errorf("%w: %s.kind is required", ErrInvalidSpec, field)
+	default:
+		return fmt.Errorf("%w: %s.kind %q must be one of %q, %q", ErrInvalidSpec, field, s.Kind, SourceLedger, SourcePaymentsPool)
+	}
+	return nil
+}
+
+// resolverNeed names the resolver this source requires, for requireResolvers.
+func (s SourceSpec) resolverNeed() string {
+	if s.Kind == SourcePaymentsPool {
+		return "payments"
+	}
+	return "ledger"
+}
+
+// resolve reads the per-asset balance map for this source and returns the time
+// recorded for that read. The ledger
+// source always reads point-in-time at pit. The pool source reads point-in-time
+// at pit when explicit is true (an explicitly requested past instant), else
+// latest — a PIT read at ~now falls past the pool's last balance movement and
+// returns empty (the balance-window tail; see engine.PaymentsResolver). Since
+// the latest endpoint exposes no snapshot timestamp, that path returns the
+// successful observation time rather than pretending it read at pit.
+func (s SourceSpec) resolve(ctx context.Context, resolvers engine.Resolvers, pit time.Time, explicit bool) (map[string]*big.Int, time.Time, error) {
+	switch s.Kind {
+	case SourceLedger:
+		balances, err := resolvers.Ledger.AggregateBalance(ctx, s.Ledger, s.Query, pit)
+		return balances, pit, err
+	case SourcePaymentsPool:
+		var poolPIT *time.Time
+		if explicit {
+			poolPIT = &pit
+		}
+		balances, err := resolvers.Payments.PoolBalance(ctx, s.PoolID, poolPIT)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		if poolPIT == nil {
+			// Payments' latest response has no snapshot timestamp. Record the
+			// successful observation time instead of claiming that the read used
+			// the margin-adjusted PIT.
+			return balances, time.Now().UTC(), nil
+		}
+		return balances, pit, nil
+	default:
+		return nil, time.Time{}, fmt.Errorf("%w: cannot resolve source kind %q", ErrInvalidSpec, s.Kind)
+	}
+}
+
+// celTerm renders the kernel expression that reads this source's balance for
+// assetExpr (already a CEL expression, e.g. `"USD/2"` or `<asset>`). Mirrors
+// the builtins the kernel exposes (ledgerSet / pool), so a template can retain
+// the source-shaped invariant alongside the authoritative snapshot verdict.
+func (s SourceSpec) celTerm(assetExpr string) string {
+	switch s.Kind {
+	case SourceLedger:
+		return fmt.Sprintf("balance(ledgerSet(%s, %s), %s)", celString(s.Ledger), celJSON(s.Query), assetExpr)
+	case SourcePaymentsPool:
+		return fmt.Sprintf("balance(pool(%s), %s)", celString(s.PoolID), assetExpr)
+	default:
+		return ""
+	}
+}
+
+// supportsPerAccount reports whether this source can fan out per account. Only
+// ledger sources can — a payments pool exposes a single aggregate balance with
+// no per-account breakdown keyed to ledger addresses.
+func (s SourceSpec) supportsPerAccount() bool { return s.Kind == SourceLedger }
+
+// resolveAccounts fans the source out into one balance map per matched account.
+// Ledger sources only; pools are aggregate-only (returns ErrInvalidSpec). limit
+// is the evaluation's accounts budget — the resolver errors rather than
+// silently truncating past it.
+func (s SourceSpec) resolveAccounts(ctx context.Context, resolvers engine.Resolvers, pit time.Time, limit int) ([]engine.Account, error) {
+	if !s.supportsPerAccount() {
+		return nil, fmt.Errorf("%w: per-account scope is not supported for source kind %q (pools are aggregate-only)", ErrInvalidSpec, s.Kind)
+	}
+	return resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, pit, limit)
+}
+
+// accountAddressQuery renders the metadata-query JSON selecting exactly one
+// account by address. json.Marshal escapes the address safely.
+func accountAddressQuery(address string) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"$match": map[string]any{"address": address}})
+	return b
+}
+
+// celTermForAccount renders the kernel term reading one account's balance:
+// balance(ledgerSet(ledger, {address: addr}), asset). Used for the per-account
+// evidence.compiledCEL (explainability). Ledger sources only.
+func (s SourceSpec) celTermForAccount(address, assetExpr string) string {
+	return fmt.Sprintf("balance(ledgerSet(%s, %s), %s)", celString(s.Ledger), celJSON(accountAddressQuery(address)), assetExpr)
+}
+
+// accountsByAddress indexes resolved accounts by address → per-asset balances,
+// so two per-account sources can be aligned by address for comparison.
+func accountsByAddress(accts []engine.Account) map[string]map[string]*big.Int {
+	out := make(map[string]map[string]*big.Int, len(accts))
+	for _, a := range accts {
+		out[a.Address] = a.Balances
+	}
+	return out
+}
+
+// label is a short, human-readable identifier for this source, used in evidence
+// so an operator can tell which side of a comparison a balance came from.
+func (s SourceSpec) label() string {
+	switch s.Kind {
+	case SourceLedger:
+		return "ledger:" + s.Ledger
+	case SourcePaymentsPool:
+		return "pool:" + s.PoolID
+	default:
+		return string(s.Kind)
+	}
+}

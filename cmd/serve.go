@@ -79,9 +79,13 @@ func newServeCommand(version string) *cobra.Command {
 	iam.AddFlags(cmd.Flags())
 	service.AddFlags(cmd.Flags())
 	licence.AddFlags(cmd.Flags())
-	publish.AddFlags(ServiceName, cmd.Flags())
+	publish.AddFlags(ServiceName, cmd.Flags(), reconciliationPublisherDefaults)
 
 	return cmd
+}
+
+func reconciliationPublisherDefaults(config *publish.ConfigDefault) {
+	config.PublisherCircuitBreakerEnabled = true
 }
 
 func runServer(version string) func(cmd *cobra.Command, args []string) error {
@@ -90,7 +94,6 @@ func runServer(version string) func(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-
 		return service.New(cmd.OutOrStdout(), options...).Run(cmd)
 	}
 }

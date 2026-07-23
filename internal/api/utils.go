@@ -61,3 +61,58 @@ func getPaginatedQueryOptionsPolicies(r *http.Request) (*storage.PaginatedQueryO
 		WithQueryBuilder(qb).
 		WithPageSize(pageSize)), nil
 }
+
+// V1 query parsers — mirror the legacy pattern.
+
+func getPaginatedQueryOptionsRules(r *http.Request) (*storage.PaginatedQueryOptions[storage.RulesFilters], error) {
+	qb, err := getQueryBuilder(r)
+	if err != nil {
+		return nil, err
+	}
+	pageSize, err := getPageSize(r)
+	if err != nil {
+		return nil, err
+	}
+	return pointer.For(storage.NewPaginatedQueryOptions(storage.RulesFilters{}).
+		WithQueryBuilder(qb).
+		WithPageSize(pageSize)), nil
+}
+
+func getPaginatedQueryOptionsEvaluations(r *http.Request) (*storage.PaginatedQueryOptions[storage.EvaluationsFilters], error) {
+	qb, err := getQueryBuilder(r)
+	if err != nil {
+		return nil, err
+	}
+	pageSize, err := getPageSize(r)
+	if err != nil {
+		return nil, err
+	}
+	return pointer.For(storage.NewPaginatedQueryOptions(storage.EvaluationsFilters{}).
+		WithQueryBuilder(qb).
+		WithPageSize(pageSize)), nil
+}
+
+func getPaginatedQueryOptionsAlerts(r *http.Request) (*storage.PaginatedQueryOptions[storage.AlertsFilters], error) {
+	qb, err := getQueryBuilder(r)
+	if err != nil {
+		return nil, err
+	}
+	pageSize, err := getPageSize(r)
+	if err != nil {
+		return nil, err
+	}
+	return pointer.For(storage.NewPaginatedQueryOptions(storage.AlertsFilters{}).
+		WithQueryBuilder(qb).
+		WithPageSize(pageSize)), nil
+}
+
+func getPaginatedQueryOptionsAlertEvents(r *http.Request) (*storage.PaginatedQueryOptions[storage.AlertEventsFilters], error) {
+	pageSize, err := getPageSize(r)
+	if err != nil {
+		return nil, err
+	}
+	// The alert id comes from the path, not a query builder — events have no
+	// user-facing filter surface, so only page size is read here.
+	return pointer.For(storage.NewPaginatedQueryOptions(storage.AlertEventsFilters{}).
+		WithPageSize(pageSize)), nil
+}

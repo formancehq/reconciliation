@@ -3,11 +3,14 @@ package service
 import (
 	"errors"
 	"fmt"
+
+	domain "github.com/formancehq/reconciliation/internal/reconciliation"
 )
 
 var (
-	ErrValidation = errors.New("validation error")
-	ErrInvalidID  = errors.New("invalid id")
+	ErrValidation  = domain.ErrValidation
+	ErrRuleChanged = domain.ErrRuleChanged
+	ErrInvalidID   = errors.New("invalid id")
 )
 
 type storageError struct {
