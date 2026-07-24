@@ -186,6 +186,57 @@ func (c *Client) GetLedgerInfo(ctx context.Context, name string) (*commonpb.Ledg
 	return info, nil
 }
 
+// ListLedgers streams every ledger in the cluster and collects the names of the
+// live ones — soft-deleted ledgers (DeletedAt set) are skipped — paging
+// internally via the stream's x-next-cursor trailer (ListLedgers is
+// server-streaming, like ListAccounts). Backs the standalone UI's rule-builder
+// ledger picker, sourced through this module's ledger gRPC connection (UI
+// federation) rather than a browser→ledger connection.
+func (c *Client) ListLedgers(ctx context.Context) ([]string, error) {
+	var (
+		names  []string
+		cursor string
+	)
+
+	for {
+		stream, err := c.service.ListLedgers(ctx, &servicepb.ListLedgersRequest{
+			Options: &commonpb.ListOptions{
+				PageSize: queryPageSize,
+				Cursor:   cursor,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list ledgers: %w", err)
+		}
+
+		for {
+			info, rerr := stream.Recv()
+			if errors.Is(rerr, io.EOF) {
+				break
+			}
+
+			if rerr != nil {
+				return nil, fmt.Errorf("recv ledger: %w", rerr)
+			}
+
+			// Soft-deleted ledgers keep their row (an unaudited ledger still
+			// streams here) — skip them so the picker only offers live ledgers.
+			if info.GetDeletedAt() != nil {
+				continue
+			}
+
+			if name := info.GetName(); name != "" {
+				names = append(names, name)
+			}
+		}
+
+		cursor = nextCursorFromTrailer(stream.Trailer())
+		if cursor == "" {
+			return names, nil
+		}
+	}
+}
+
 // DeleteLedger removes a ledger. Ignores NotFound so cleanup is idempotent.
 // Primarily a test-hygiene helper — the reconciliation control ledger is never
 // deleted at runtime.

@@ -39,7 +39,7 @@ func healthCheckModule() fx.Option {
 	)
 }
 
-func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
+func HTTPModule(serviceInfo api.ServiceInfo, moduleInfo ModuleInfo, bind string) fx.Option {
 	return fx.Options(
 		healthCheckModule(),
 		fx.Invoke(func(m *chi.Mux, lc fx.Lifecycle) {
@@ -50,6 +50,9 @@ func HTTPModule(serviceInfo api.ServiceInfo, bind string) fx.Option {
 		// event sink (RFC §4.4, Phase 3) — the ledger-native store does not
 		// publish to the message bus.
 		fx.Supply(serviceInfo),
+		// moduleInfo is served at /_info and advertises this module's standalone
+		// UI for the console shell to discover and embed (UI federation).
+		fx.Supply(moduleInfo),
 
 		// V1 engine + templates wiring. Reconciliation is strictly ledger↔ledger:
 		// balances are read from the data ledgers live through the gRPC
