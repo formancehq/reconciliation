@@ -41,6 +41,22 @@ var ErrAuditChainNotConfigured = errors.New("audit chain not configured")
 
 // lockAuditChain serialises the chain for the rest of the caller's transaction.
 //
+// LOCK-ORDER INVARIANT: this lock is acquired BEFORE any alert row lock, in
+// every path. Violating it deadlocks.
+//
+// The evaluation path necessarily takes the chain lock first — it journals the
+// evaluation before driving any alert, and driving an alert takes that alert's
+// row lock. The manual paths (ack, resolve, accept, snooze, unsnooze) used to do
+// the opposite: SELECT ... FOR UPDATE on the alert row, then reach the chain lock
+// on their way through appendAlertEvent. Two concurrent transactions in opposite
+// orders is a deadlock, which Postgres resolves by aborting one — surfacing as a
+// 500 on whichever operator lost.
+//
+// So every alert-mutating transaction now takes this lock as its first act. The
+// cost is a slightly longer hold on a lock those transactions were all going to
+// take anyway, since each of them ends in an append; the benefit is that the
+// deadlock is impossible by construction rather than merely unlikely.
+//
 // Exported through this helper rather than inlined in AppendAuditEntry because
 // two callers need the lock *before* they decide whether to append at all: the
 // alert-transition and evaluation paths check whether the target period is

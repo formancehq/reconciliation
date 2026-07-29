@@ -91,6 +91,11 @@ func (s *Storage) OpenOrUpdateAlert(ctx context.Context, in OpenAlertInput) (*Op
 func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) (*OpenAlertResult, error) {
 	var result *OpenAlertResult
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock-order invariant: chain lock BEFORE any alert row lock. See
+		// Storage.lockAuditChain.
+		if err := s.WithTx(tx).lockAuditChain(ctx); err != nil {
+			return err
+		}
 		var current models.Alert
 		err := tx.NewSelect().
 			Model(&current).
@@ -271,6 +276,11 @@ func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, finger
 		event    *models.AlertEvent
 	)
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock-order invariant: chain lock BEFORE any alert row lock. See
+		// Storage.lockAuditChain.
+		if err := s.WithTx(tx).lockAuditChain(ctx); err != nil {
+			return err
+		}
 		var current models.Alert
 		serr := tx.NewSelect().
 			Model(&current).
@@ -325,6 +335,11 @@ func (s *Storage) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (
 		event *models.AlertEvent
 	)
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock-order invariant: chain lock BEFORE any alert row lock. See
+		// Storage.lockAuditChain.
+		if err := s.WithTx(tx).lockAuditChain(ctx); err != nil {
+			return err
+		}
 		if err := tx.NewSelect().
 			Model(&alert).
 			Where("id = ?", id).
@@ -394,6 +409,11 @@ func (s *Storage) applyResolution(ctx context.Context, id uuid.UUID, resolution 
 		event *models.AlertEvent
 	)
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock-order invariant: chain lock BEFORE any alert row lock. See
+		// Storage.lockAuditChain.
+		if err := s.WithTx(tx).lockAuditChain(ctx); err != nil {
+			return err
+		}
 		if err := tx.NewSelect().
 			Model(&alert).
 			Where("id = ?", id).
@@ -460,6 +480,11 @@ func (s *Storage) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.Time
 		event *models.AlertEvent
 	)
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock-order invariant: chain lock BEFORE any alert row lock. See
+		// Storage.lockAuditChain.
+		if err := s.WithTx(tx).lockAuditChain(ctx); err != nil {
+			return err
+		}
 		if err := tx.NewSelect().
 			Model(&alert).
 			Where("id = ?", id).
@@ -503,6 +528,11 @@ func (s *Storage) UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string) (*
 		event *models.AlertEvent
 	)
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Lock-order invariant: chain lock BEFORE any alert row lock. See
+		// Storage.lockAuditChain.
+		if err := s.WithTx(tx).lockAuditChain(ctx); err != nil {
+			return err
+		}
 		if err := tx.NewSelect().
 			Model(&alert).
 			Where("id = ?", id).

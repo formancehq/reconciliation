@@ -884,3 +884,29 @@ func TestEnsureAuditChainRepublishesAMissingSigningKey(t *testing.T) {
 	require.Equal(t, before[0].KeyID, after[0].KeyID)
 	require.Equal(t, before[0].PublicKey, after[0].PublicKey)
 }
+
+// Losing the key material while keeping the journal is reachable without an
+// attacker — a partial restore, or a cleanup script that truncates the wrong
+// table. Minting a fresh key then would orphan every existing entry and make the
+// damage indistinguishable from tampering, so boot must refuse instead.
+//
+// key_check cannot catch this on its own: it is regenerated with the new salt, so
+// it agrees with itself.
+func TestEnsureAuditChainRefusesToRekeyANonEmptyJournal(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	auditTestRule(t, store, ctx, models.CadenceMonthly)
+	head, _, err := store.ChainHead(ctx)
+	require.NoError(t, err)
+	require.Positive(t, head)
+
+	// The journal survives; its key material does not.
+	_, err = store.db.NewRaw("DELETE FROM reconciliations.audit_chain_config").Exec(ctx)
+	require.NoError(t, err)
+
+	_, err = EnsureAuditChain(ctx, NewStorage(store.pool), AuditChainSettings{Pepper: "test-pepper"})
+	require.ErrorIs(t, err, ErrAuditChainKeyLost)
+	require.ErrorContains(t, err, "unverifiable")
+}

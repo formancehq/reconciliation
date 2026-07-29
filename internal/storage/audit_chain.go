@@ -14,6 +14,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/formancehq/reconciliation/internal/audit"
+	"github.com/formancehq/reconciliation/internal/models"
 )
 
 // AuditChainSettings is the operator-supplied half of the chain's key material.
@@ -128,7 +129,36 @@ func EnsureAuditChain(ctx context.Context, s *Storage, settings AuditChainSettin
 	}
 }
 
+// ErrAuditChainKeyLost is returned when a journal exists but its key material
+// does not.
+//
+// key_check catches a wrong pepper against a surviving salt. It cannot catch the
+// reverse — a replaced salt with surviving entries — because the check value is
+// regenerated alongside the new salt, so it agrees with itself. Boot would
+// succeed and every pre-existing entry would be permanently unverifiable, with
+// the breakage surfacing only later, at verification time, looking exactly like
+// tampering.
+//
+// Reachable without an attacker: a partial restore that brings back the entry
+// table but not the config row, a cleanup script that truncates the wrong table,
+// a migration run against a half-restored database.
+var ErrAuditChainKeyLost = errors.New("audit chain key material is missing but the journal is not empty")
+
 func initAuditChain(ctx context.Context, s *Storage, settings AuditChainSettings) (*Storage, error) {
+	// Minting fresh key material is only safe when there is nothing to verify.
+	// With entries already present, a new salt silently orphans all of them.
+	existing, err := s.db.NewSelect().Model((*models.AuditEntry)(nil)).Count(ctx)
+	if err != nil {
+		return nil, e("count existing audit entries", err)
+	}
+	if existing > 0 {
+		return nil, fmt.Errorf(
+			"%w: %d entries are present but reconciliations.audit_chain_config is empty. "+
+				"Generating a new key would leave every one of them unverifiable and indistinguishable from tampering. "+
+				"Restore the config row from the same backup as the journal, or drop the journal deliberately if this is meant to be a fresh start",
+			ErrAuditChainKeyLost, existing)
+	}
+
 	salt, err := audit.NewSalt()
 	if err != nil {
 		return nil, err
