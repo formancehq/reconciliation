@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -148,17 +149,17 @@ type AuditEntry struct {
 type RuleRevision struct {
 	bun.BaseModel `bun:"reconciliations.rule_revision" json:"-"`
 
-	RuleID         uuid.UUID       `bun:"rule_id,pk"                    json:"ruleID"`
-	Revision       int64           `bun:"revision,pk"                   json:"revision"`
-	Name           string          `bun:"name,notnull"                  json:"name"`
-	TemplateKind   TemplateKind    `bun:"template_kind,notnull"         json:"templateKind"`
-	TemplateSpec   json.RawMessage `bun:"template_spec,type:jsonb"      json:"templateSpec"`
-	ExplanationCEL string          `bun:"explanation_cel,nullzero"      json:"explanationCEL,omitempty"`
-	Severity       Severity        `bun:"severity,notnull"              json:"severity"`
-	Cadence        Cadence         `bun:"cadence,notnull"               json:"cadence"`
-	Enabled        bool            `bun:"enabled,notnull"               json:"enabled"`
-	Schedule       *Schedule       `bun:"schedule,type:jsonb"           json:"schedule,omitempty"`
-	Notifications  []string        `bun:"notifications,type:jsonb"      json:"notifications,omitempty"`
+	RuleID         uuid.UUID         `bun:"rule_id,pk"                    json:"ruleID"`
+	Revision       int64             `bun:"revision,pk"                   json:"revision"`
+	Name           string            `bun:"name,notnull"                  json:"name"`
+	TemplateKind   TemplateKind      `bun:"template_kind,notnull"         json:"templateKind"`
+	TemplateSpec   json.RawMessage   `bun:"template_spec,type:jsonb"      json:"templateSpec"`
+	ExplanationCEL string            `bun:"explanation_cel,nullzero"      json:"explanationCEL,omitempty"`
+	Severity       Severity          `bun:"severity,notnull"              json:"severity"`
+	Cadence        Cadence           `bun:"cadence,notnull"               json:"cadence"`
+	Enabled        bool              `bun:"enabled,notnull"               json:"enabled"`
+	Schedule       *Schedule         `bun:"schedule,type:jsonb"           json:"schedule,omitempty"`
+	Notifications  []string          `bun:"notifications,type:jsonb"      json:"notifications,omitempty"`
 	Labels         map[string]string `bun:"labels,type:jsonb"           json:"labels,omitempty"`
 	// AuditSequence links the revision to the chain entry that recorded it.
 	AuditSequence int64     `bun:"audit_sequence,notnull" json:"auditSequence"`
@@ -226,6 +227,29 @@ func (p *PeriodSeal) Status() PeriodSealStatus {
 		return PeriodOpen
 	}
 	return PeriodSealed
+}
+
+// periodIDFormats are the exact shapes Cadence.PeriodID produces. Anything else
+// is a typo, and a typo here is not recoverable: sealing advances a global
+// boundary and the seal itself is immutable, so "2026-5" would consume the range
+// that belonged to 2026-05 and leave those entries attested under a label nobody
+// will ever look up. Neither seal can be corrected afterwards.
+var periodIDFormats = []*regexp.Regexp{
+	regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`), // daily   — 2026-05-15
+	regexp.MustCompile(`^\d{4}-W\d{2}$`),      // weekly  — 2026-W12
+	regexp.MustCompile(`^\d{4}-\d{2}$`),       // monthly — 2026-05
+}
+
+// ValidPeriodID reports whether id is a period a supported cadence can actually
+// produce. ContinuousPeriod is excluded deliberately: it is a real period id but
+// not a sealable one, and the caller rejects it with a more specific error.
+func ValidPeriodID(id string) bool {
+	for _, format := range periodIDFormats {
+		if format.MatchString(id) {
+			return true
+		}
+	}
+	return false
 }
 
 // ChainViolationType names the ways a chain walk can fail. The set is closed:

@@ -62,6 +62,13 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 	if in.PeriodID == "" {
 		return nil, fmt.Errorf("seal period: empty period id")
 	}
+	if !models.ValidPeriodID(in.PeriodID) && in.PeriodID != string(models.CadenceContinuous) {
+		return nil, fmt.Errorf(
+			"%w: %q is not a period any cadence produces (expected 2026-05, 2026-W12 or 2026-05-15). "+
+				"Sealing it would advance the boundary and permanently consume the range belonging to the period you meant, "+
+				"and neither seal could be corrected afterwards",
+			ErrPeriodNotSealable, in.PeriodID)
+	}
 	if in.PeriodID == string(models.CadenceContinuous) {
 		return nil, fmt.Errorf(
 			"%w: %q has no end — a continuous rule's alerts would be frozen with no successor period to move to",

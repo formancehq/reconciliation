@@ -356,6 +356,7 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 	// extends past the head must NOT be silently shrunk to fit: shrinking is
 	// exactly what would turn "the last entries were deleted" into a clean bill
 	// of health.
+	requestedTo := toSeq
 	if toSeq <= 0 {
 		toSeq = head
 	}
@@ -380,8 +381,26 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 		return result, nil
 	}
 
-	if head == 0 || fromSeq > toSeq {
-		// An empty journal is intact, and saying so beats inventing a violation.
+	if fromSeq > toSeq {
+		// A genuinely empty range is intact by definition.
+		return result, nil
+	}
+	if head == 0 {
+		// An empty journal is intact — but only as an answer to "verify whatever
+		// is there". A caller who explicitly asked for entries that are now
+		// absent must be told they are missing, not handed a clean bill of
+		// health: a journal truncated to nothing is the most complete tampering
+		// there is, and it would otherwise verify best of all.
+		if requestedTo > 0 || fromSeq > 1 {
+			missing := fromSeq
+			result.OK = false
+			result.Violation = models.ChainViolationSequenceGap
+			result.AtSequence = &missing
+			result.Detail = fmt.Sprintf(
+				"the journal is empty but sequences %d..%d were requested: every entry in that range is missing",
+				fromSeq, toSeq)
+			return result, nil
+		}
 		result.LastSequence = head
 		return result, nil
 	}

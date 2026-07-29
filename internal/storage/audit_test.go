@@ -910,3 +910,131 @@ func TestEnsureAuditChainRefusesToRekeyANonEmptyJournal(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditChainKeyLost)
 	require.ErrorContains(t, err, "unverifiable")
 }
+
+// A typo'd period id is not recoverable: sealing advances a global boundary and
+// the seal is immutable, so "2026-5" would consume the range belonging to
+// "2026-05" and leave those entries attested under a label nobody looks up.
+// Neither seal could be corrected afterwards, so the only safe place to catch it
+// is before the first one is written.
+func TestSealPeriodRejectsMalformedPeriodIDs(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	for _, bad := range []string{"2026-5", "26-05", "2026-05-", "may", "2026_05", "2026-W1", "  2026-05"} {
+		err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
+			_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: bad})
+			return err
+		})
+		require.ErrorIs(t, err, ErrPeriodNotSealable, "should have rejected %q", bad)
+	}
+
+	// The three shapes the cadences actually produce are accepted.
+	for _, good := range []string{"2026-05", "2026-W12", "2026-05-15"} {
+		require.NotPanics(t, func() {
+			sealPeriod(t, store, ctx, good, models.Subject{Subject: "controller"})
+		}, "should have accepted %q", good)
+	}
+}
+
+// An empty journal is intact as an answer to "verify whatever is there". It is
+// NOT intact as an answer to "verify sequences 1..10" — a journal truncated to
+// nothing is the most complete tampering possible, and would otherwise verify
+// best of all.
+func TestVerifyChainDoesNotPassAnExplicitRangeAgainstAnEmptyJournal(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	// No range asked for: nothing to verify, so intact.
+	open, err := store.VerifyChain(ctx, 0, 0)
+	require.NoError(t, err)
+	require.True(t, open.OK)
+
+	// A specific range asked for: those entries are absent, and that is a gap.
+	explicit, err := store.VerifyChain(ctx, 1, 10)
+	require.NoError(t, err)
+	require.False(t, explicit.OK, "detail: %s", explicit.Detail)
+	require.Equal(t, models.ChainViolationSequenceGap, explicit.Violation)
+	require.Contains(t, explicit.Detail, "journal is empty")
+}
+
+// Rotation must retire the previous key without orphaning the seals it signed —
+// an auditor holding a two-year-old seal still has to be able to look its key up.
+func TestSigningKeyRotationKeepsPriorKeysVerifiable(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	before, err := store.ListVerificationKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+	originalID := before[0].KeyID
+
+	// Seal something with the original key.
+	auditTestRule(t, store, ctx, models.CadenceMonthly)
+	first := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	require.Equal(t, originalID, first.SigningKeyID)
+
+	// Rotate by supplying a different seed out-of-band.
+	fresh, err := audit.GenerateSigningKey()
+	require.NoError(t, err)
+	rotated, err := EnsureAuditChain(ctx, NewStorage(store.pool), AuditChainSettings{
+		Pepper:         "test-pepper",
+		SigningKeySeed: fresh.SeedBase64(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, fresh.ID, rotated.SigningKey().ID)
+
+	keys, err := rotated.ListVerificationKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, keys, 2, "the retired key must still be published")
+
+	byID := map[string]VerificationKey{}
+	for _, k := range keys {
+		byID[k.KeyID] = k
+	}
+	require.True(t, byID[fresh.ID].Active)
+	require.False(t, byID[originalID].Active, "the previous key is retired")
+	require.NotNil(t, byID[originalID].RetiredAt)
+
+	// And the seal signed by the retired key still verifies.
+	ok, reason, err := rotated.VerifySealSignature(ctx, first)
+	require.NoError(t, err)
+	require.True(t, ok, reason)
+
+	// A seal signed after the rotation uses the new key.
+	second := sealPeriod(t, rotated, ctx, "2026-06", models.Subject{Subject: "controller"})
+	require.Equal(t, fresh.ID, second.SigningKeyID)
+	ok, reason, err = rotated.VerifySealSignature(ctx, second)
+	require.NoError(t, err)
+	require.True(t, ok, reason)
+}
+
+// The thumbprint is rendered for a blob the schema does not length-constrain, so
+// a short value from a manual insert or a restored dump must not panic the
+// endpoint an auditor calls.
+func TestVerificationKeyThumbprintToleratesShortBlobs(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "", thumbprintOf(nil))
+	require.Equal(t, "ab", thumbprintOf([]byte{0xab}))
+	require.Len(t, thumbprintOf(make([]byte, 32)), 16, "long keys are truncated to 8 bytes")
+}
+
+func TestListPeriodSealsOrdersMostRecentFirst(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+	sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationPass)
+	sealPeriod(t, store, ctx, "2026-06", models.Subject{Subject: "controller"})
+
+	seals, err := store.ListPeriodSeals(ctx)
+	require.NoError(t, err)
+	require.Len(t, seals, 2)
+	require.Equal(t, "2026-06", seals[0].PeriodID, "most recently sealed first")
+	require.Equal(t, "2026-05", seals[1].PeriodID)
+}

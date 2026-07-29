@@ -221,11 +221,18 @@ func initAuditChain(ctx context.Context, s *Storage, settings AuditChainSettings
 	}).Infof("reconciliation: audit journal initialised")
 
 	if generated {
+		// Deliberately NOT logging the seed. Logs usually have broader read
+		// access and longer retention than the database, so writing the private
+		// key there would invert the key-separation property this feature exists
+		// to provide: anyone with log access could forge period seals. The seed is
+		// in audit_chain_config.signing_private_seed for an operator to retrieve
+		// deliberately, once, when they are ready to move it into configuration.
 		log.WithFields(map[string]any{
-			"signingKeyID":   signingKey.ID,
-			"signingKeySeed": signingKey.SeedBase64(),
-		}).Infof("reconciliation: generated a period-seal signing key and stored it in the database; " +
-			"move this seed into configuration (--audit-signing-key-seed) so the private key no longer lives next to the data it signs")
+			"signingKeyID": signingKey.ID,
+			"publicKey":    signingKey.PublicKeyBase64(),
+		}).Infof("reconciliation: generated a period-seal signing key and stored it in the database. " +
+			"Move it into configuration (--audit-signing-key-seed) so the private key no longer lives next to the data it signs; " +
+			"read the seed from reconciliations.audit_chain_config.signing_private_seed, then it can be cleared")
 	}
 	if !row.HasPepper {
 		log.Infof("reconciliation: audit chain running without a pepper; the key is derived from database-resident salt alone, " +
@@ -325,6 +332,18 @@ type VerificationKey struct {
 	Thumbprint string     `json:"thumbprint"`
 }
 
+// thumbprintOf renders a short fingerprint without assuming a length. The
+// public_key column is NOT NULL but has no length constraint, so a manual
+// migration, a restored dump, or a future writer could store a shorter blob —
+// and a slice-bounds panic in the endpoint an auditor calls is a poor trade for
+// four saved characters.
+func thumbprintOf(pub []byte) string {
+	if len(pub) > 8 {
+		pub = pub[:8]
+	}
+	return hex.EncodeToString(pub)
+}
+
 // ListVerificationKeys returns every key this installation has signed seals
 // with, active first. Retired keys are kept and served: a seal from two years
 // ago must stay checkable.
@@ -343,7 +362,7 @@ func (s *Storage) ListVerificationKeys(ctx context.Context) ([]VerificationKey, 
 			Active:     r.RetiredAt == nil,
 			CreatedAt:  r.CreatedAt,
 			RetiredAt:  r.RetiredAt,
-			Thumbprint: hex.EncodeToString(r.PublicKey[:8]),
+			Thumbprint: thumbprintOf(r.PublicKey),
 		})
 	}
 	return out, nil
