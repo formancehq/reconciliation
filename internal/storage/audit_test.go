@@ -681,3 +681,35 @@ func TestEnsureAuditChainRejectsAChangedPepper(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, reopened.HasAuditChain())
 }
+
+// A timestamp is hashed, so the value hashed has to be the value Postgres can
+// store. timestamptz keeps microseconds while time.Now() on Linux carries
+// nanoseconds, so an un-truncated hash would make every entry verify as
+// tampered — in production only, since macOS wall-clock readings are already
+// microsecond-granular. This test pins the behaviour with an explicit
+// sub-microsecond timestamp so it fails on either platform.
+func TestAuditEntryTimestampSurvivesPostgresPrecision(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	withNanos := time.Date(2026, 5, 15, 12, 0, 0, 123456789, time.UTC)
+	err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
+		_, err := tx.AppendAuditEntry(ctx, AppendAuditInput{
+			At:      withNanos,
+			Kind:    models.AuditRuleCreated,
+			Memento: []byte(`{"probe":true}`),
+		})
+		return err
+	})
+	require.NoError(t, err)
+
+	entry, err := store.GetAuditEntry(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, withNanos.Truncate(time.Microsecond), entry.At.UTC(),
+		"the stored timestamp must equal the truncated one, not the nanosecond original")
+
+	verification, err := store.VerifyChain(ctx, 0, 0)
+	require.NoError(t, err)
+	require.True(t, verification.OK, "detail: %s", verification.Detail)
+}

@@ -96,7 +96,17 @@ func (s *Storage) AppendAuditEntry(ctx context.Context, in AppendAuditInput) (*m
 	if at.IsZero() {
 		at = time.Now()
 	}
-	at = at.UTC()
+	// Truncate to what Postgres can actually store before hashing it.
+	//
+	// timestamptz keeps microseconds; time.Now() on Linux carries nanoseconds. A
+	// hash taken over the un-truncated value can never be reproduced from the
+	// stored row, so every entry would verify as tampered — and only on Linux,
+	// because macOS wall-clock readings are already microsecond-granular. That is
+	// a bug the unit tests structurally cannot catch: they run on the developer's
+	// host while production runs in a container, so the two platforms disagree
+	// about whether the bug exists. Truncating here makes the hashed value equal
+	// to the persisted value on every platform.
+	at = at.UTC().Truncate(time.Microsecond)
 
 	subject := audit.NormalizeSubject(in.Subject)
 	fields := audit.Fields{

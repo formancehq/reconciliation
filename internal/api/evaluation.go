@@ -25,21 +25,30 @@ type evaluationResponse struct {
 	Evidence     json.RawMessage      `json:"evidence,omitempty"`
 	Error        string               `json:"error,omitempty"`
 	CostUnits    int64                `json:"costUnits"`
-	CreatedAt    time.Time            `json:"createdAt"`
+	// PeriodID is the reconciliation period this execution belongs to, which is
+	// how "the evidence for May" is queried without going through May's alerts —
+	// those miss every passing check, i.e. most of what proves the controls ran.
+	PeriodID string `json:"periodID,omitempty"`
+	// AuditSequence links the record to the journal entry that witnessed it.
+	// Without it the evidence exists but is not attached to anything verifiable.
+	AuditSequence *int64    `json:"auditSequence,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 func renderEvaluation(ev *models.Evaluation) *evaluationResponse {
 	return &evaluationResponse{
-		ID:           ev.ID.String(),
-		RuleID:       ev.RuleID.String(),
-		StartedAt:    ev.StartedAt,
-		EndedAt:      ev.EndedAt,
-		PitPerSource: ev.PitPerSource,
-		Result:       string(ev.Result),
-		Evidence:     ev.Evidence,
-		Error:        ev.Error,
-		CostUnits:    ev.CostUnits,
-		CreatedAt:    ev.CreatedAt,
+		ID:            ev.ID.String(),
+		RuleID:        ev.RuleID.String(),
+		StartedAt:     ev.StartedAt,
+		EndedAt:       ev.EndedAt,
+		PitPerSource:  ev.PitPerSource,
+		Result:        string(ev.Result),
+		Evidence:      ev.Evidence,
+		Error:         ev.Error,
+		CostUnits:     ev.CostUnits,
+		PeriodID:      ev.PeriodID,
+		AuditSequence: ev.AuditSequence,
+		CreatedAt:     ev.CreatedAt,
 	}
 }
 

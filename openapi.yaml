@@ -400,6 +400,331 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
+  /audit-entries:
+    get:
+      summary: Walk the audit journal
+      operationId: listAuditEntries
+      description: |
+        Returns a page of the module's append-only, hash-chained journal in chain
+        order. Every state-bearing operation is here: controls created, revised
+        and deleted, every evaluation (passing ones included — those are what
+        prove a control ran on the days nothing was wrong), every alert
+        transition including the ones whose notification was suppressed, and
+        every period seal.
+
+        The `sequence` is dense: consecutive entries have consecutive numbers, so
+        a removed entry leaves a hole that `POST /audit-entries/verify` reports.
+        Page with `after=<sequence>`; `head` tells you where the journal
+        currently ends, so you know how much is left without a second call.
+
+        `actor=system` and `actor=human` split machine-run controls from human
+        intervention. That distinction is bound into each entry's hash rather
+        than declared in a field, so it is worth relying on.
+
+        Payloads are omitted here — read a single entry to get its memento.
+      tags: [reconciliation.v1]
+      parameters:
+        - name: kind
+          in: query
+          description: Comma-separated operation kinds to include.
+          schema:
+            type: string
+            example: evaluation.committed,alert.transition
+        - { name: ruleID, in: query, schema: { type: string, format: uuid } }
+        - { name: alertID, in: query, schema: { type: string, format: uuid } }
+        - { name: evaluationID, in: query, schema: { type: string, format: uuid } }
+        - name: periodID
+          in: query
+          description: Reconciliation period, e.g. `2026-05`.
+          schema: { type: string }
+        - name: subject
+          in: query
+          description: Exact match on the acting principal's token subject.
+          schema: { type: string }
+        - name: actor
+          in: query
+          description: Restrict to machine-run or human-initiated entries.
+          schema: { type: string, enum: [system, human] }
+        - { name: fromSequence, in: query, schema: { type: integer, format: int64 } }
+        - { name: toSequence, in: query, schema: { type: integer, format: int64 } }
+        - name: from
+          in: query
+          description: RFC3339 lower bound on the entry timestamp.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: RFC3339 upper bound on the entry timestamp.
+          schema: { type: string, format: date-time }
+        - name: after
+          in: query
+          description: Resume after this sequence.
+          schema: { type: integer, format: int64 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+      responses:
+        '200':
+          description: A page of the journal.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditEntriesResponse' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /audit-entries/{sequence}:
+    parameters:
+      - name: sequence
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      summary: Read one journal entry
+      operationId: getAuditEntry
+      description: |
+        Returns one entry including its memento — the exact canonical bytes that
+        were hashed. `memento` is base64 and is the authoritative form for
+        recomputing `mementoDigest` yourself; `mementoJSON` is the same bytes
+        parsed, for reading.
+
+        The canonical form is JCS-inspired and has four rules, so a client in any
+        language can reproduce it: object keys sorted by UTF-8 byte sequence, no
+        insignificant whitespace, number literals preserved exactly as written
+        (never re-parsed through a float), and standard JSON string escaping with
+        HTML escaping disabled.
+      tags: [reconciliation.v1]
+      responses:
+        '200':
+          description: The entry, with its payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditEntry' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /audit-entries/verify:
+    post:
+      summary: Verify the journal's integrity
+      operationId: verifyAuditChain
+      description: |
+        Recomputes a range of the chain and reports whether it is intact. An
+        empty body verifies everything, which is usually the request you want.
+        Pass `periodID` to verify exactly the range a period seal covers — the
+        short path to "prove May was not touched after we closed it".
+
+        The walk stops at the first violation: past a break, every downstream
+        comparison is meaningless. Violations are `HASH_MISMATCH` (a hashed field
+        was altered), `SEQUENCE_GAP` (an entry was removed), `BROKEN_LINK`
+        (entries were reordered or spliced) and `MEMENTO_DIGEST_MISMATCH` (a
+        payload was edited).
+
+        One limitation worth knowing: past the most recent seal, deletion of the
+        journal's tail is not detectable from the journal alone, because the head
+        is derived from the same table. Sealing periods is what closes that
+        window — a seal commits to a boundary, so anything removed below it is
+        caught.
+      tags: [reconciliation.v1]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerifyChainRequest' }
+      responses:
+        '200':
+          description: |
+            The verification result. Note that a detected violation is still a
+            200 — the request succeeded, and the answer is that the journal is
+            broken.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChainVerification' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /audit-signing-keys:
+    get:
+      summary: Public keys that verify period seals
+      operationId: listAuditSigningKeys
+      description: |
+        Returns the Ed25519 public keys this installation signs period seals
+        with. This is the only value an auditor needs from us in order to check a
+        seal independently: recompute the sealing hash from the seal's own
+        published fields, then verify the signature against the key whose id the
+        seal names.
+
+        Retired keys stay listed. A seal signed two years ago has to remain
+        checkable after a rotation.
+      tags: [reconciliation.v1]
+      responses:
+        '200':
+          description: The published verification keys, active first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/VerificationKey' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /periods:
+    get:
+      summary: List sealed periods
+      operationId: listPeriods
+      description: |
+        Returns every period that has been closed, most recent first. Open
+        periods have no row — absence is the open state.
+      tags: [reconciliation.v1]
+      responses:
+        '200':
+          description: The sealed periods.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PeriodSeal' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /periods/{periodID}:
+    parameters:
+      - { name: periodID, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Get a period's seal
+      operationId: getPeriod
+      description: |
+        Returns the period's seal, or `status: OPEN` when it has not been closed.
+        An unsealed period is a legitimate answer rather than a missing
+        resource, so this does not 404 — you would otherwise have to guess
+        whether the period is open or the id was wrong.
+      tags: [reconciliation.v1]
+      responses:
+        '200':
+          description: The seal, or an open period.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PeriodSeal' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /periods/{periodID}/seal:
+    parameters:
+      - { name: periodID, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Close a reconciliation period
+      operationId: sealPeriod
+      description: |
+        Closes the period: freezes the journal range that has accumulated since
+        the previous seal, hashes the period's resulting alert state, and signs
+        the result. What comes back is one value — the sealing hash — standing
+        for a whole period of controls.
+
+        Sealing also raises a write barrier. Alerts scoped to a sealed period
+        stop accepting transitions, so acknowledging or resolving one afterwards
+        fails with 409. Under a periodic cadence the next period opens a fresh
+        case for the same fingerprint, so ordinary monitoring is unaffected;
+        what is refused is editing closed books.
+
+        The operator is taken from the request's token, not from a payload field.
+        Not idempotent: a second seal on the same period is a 409, because
+        sealing twice would either contradict the first seal or silently do
+        nothing.
+
+        The `continuous` pseudo-period of a live-monitoring rule cannot be
+        sealed — it has no end, and its alerts would be frozen with no successor
+        period to move to.
+      tags: [reconciliation.v1]
+      responses:
+        '201':
+          description: The period is closed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PeriodSeal' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /periods/{periodID}/verify:
+    parameters:
+      - { name: periodID, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Verify a period seal's signature
+      operationId: verifyPeriodSeal
+      description: |
+        Re-derives the seal's sealing hash from its stored fields and checks the
+        signature against the key that signed it, including a retired one.
+
+        An auditor can and should do this themselves — everything needed is
+        published. The endpoint exists so they can confirm their own tooling
+        agrees with ours before relying on it.
+      tags: [reconciliation.v1]
+      responses:
+        '200':
+          description: The verification result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SealVerification' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /rules/{ruleID}/revisions:
+    parameters: [{ $ref: '#/components/parameters/RuleID' }]
+    get:
+      summary: List a control's frozen definitions
+      operationId: listRuleRevisions
+      description: |
+        Returns every revision of the control, newest first. The rule itself only
+        ever holds its latest definition, so without these an evaluation
+        referencing revision 3 of a control now at revision 7 could not be
+        explained — you would have the verdict but not what was checked.
+      tags: [reconciliation.v1]
+      responses:
+        '200':
+          description: The control's revisions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/RuleRevision' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /rules/{ruleID}/revisions/{revision}:
+    parameters:
+      - { $ref: '#/components/parameters/RuleID' }
+      - { name: revision, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      summary: Get one frozen control definition
+      operationId: getRuleRevision
+      description: |
+        Returns the control exactly as it stood at that revision — what an
+        evaluation recording this revision actually evaluated.
+      tags: [reconciliation.v1]
+      responses:
+        '200':
+          description: The frozen definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuleRevision' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
 components:
   parameters:
     PageSize:
@@ -556,6 +881,138 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/RulePatchRequest' }
   schemas:
+
+    AuditSubject:
+      type: object
+      description: |
+        Who performed the operation, derived from the verified bearer token — not
+        from a client-supplied field. `source` names which identifier
+        `sourceValue` holds, and it enters the hash as a distinct tag, so a
+        machine-run control and a caller-less request are cryptographically
+        distinguishable rather than distinguishable by convention.
+      properties:
+        actor: { type: string, description: 'Human-readable form, e.g. `system:scheduler` or the token subject.' }
+        subject: { type: string, description: 'OIDC `sub`, or the client id for a machine-to-machine token. Empty for a system component.' }
+        source: { type: string, enum: [issuer, client_id, system_component] }
+        sourceValue: { type: string, description: 'The issuer URL, the client id, or the component name.' }
+        scopes: { type: array, items: { type: string }, description: 'Token scopes, stored sorted so the hash does not depend on emission order.' }
+        system: { type: boolean, description: 'True when the module itself acted rather than an authenticated caller.' }
+
+    AuditEntry:
+      type: object
+      description: One link of the hash chain.
+      properties:
+        sequence: { type: integer, format: int64, description: 'Dense logical position. Consecutive by construction, so a gap means an entry was removed.' }
+        at: { type: string, format: date-time }
+        kind:
+          type: string
+          enum: [rule.created, rule.revised, rule.deleted, evaluation.committed, alert.transition, period.sealed]
+        ruleID: { type: string, format: uuid }
+        ruleRevision: { type: integer, format: int64 }
+        alertID: { type: string, format: uuid }
+        evaluationID: { type: string, format: uuid }
+        periodID: { type: string }
+        subject: { $ref: '#/components/schemas/AuditSubject' }
+        mementoDigest: { type: string, description: 'Hex BLAKE3 digest of the canonical payload. Unkeyed, so you can check it yourself.' }
+        prevHash: { type: string, description: 'Hex hash of the preceding entry. Absent on the first entry.' }
+        hash: { type: string, description: 'Hex keyed BLAKE3 over the previous hash and every field above. Keyed with an installation secret, so it cannot be recomputed from a database dump alone.' }
+        hashVersion: { type: integer }
+        memento: { type: string, description: 'Base64 of the exact canonical bytes that were hashed. Single-entry reads only.' }
+        mementoJSON: { type: object, description: 'The same bytes parsed, for reading. Single-entry reads only.' }
+        createdAt: { type: string, format: date-time }
+
+    AuditEntriesResponse:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+        next: { type: integer, format: int64, description: 'Pass as `after` to continue. Absent on the last page.' }
+        head: { type: integer, format: int64, description: 'Where the journal ends right now.' }
+        headHash: { type: string, description: 'Hex hash at the head.' }
+
+    VerifyChainRequest:
+      type: object
+      description: |
+        An empty body verifies the whole journal. Give either a sequence range or
+        a `periodID`, not both.
+      properties:
+        fromSequence: { type: integer, format: int64 }
+        toSequence: { type: integer, format: int64 }
+        periodID: { type: string, description: 'Verify exactly the range this period''s seal covers.' }
+
+    ChainVerification:
+      type: object
+      properties:
+        ok: { type: boolean }
+        firstSequence: { type: integer, format: int64 }
+        lastSequence: { type: integer, format: int64 }
+        entriesWalked: { type: integer, format: int64 }
+        violation:
+          type: string
+          enum: [HASH_MISMATCH, SEQUENCE_GAP, BROKEN_LINK, MEMENTO_DIGEST_MISMATCH]
+        atSequence: { type: integer, format: int64, description: 'Where the walk stopped.' }
+        detail: { type: string, description: 'What went wrong, in terms an auditor can quote.' }
+        sealsCrossed: { type: array, items: { type: string }, description: 'Period seals traversed and re-derived during the walk.' }
+
+    PeriodSeal:
+      type: object
+      description: |
+        A closed reconciliation period. Seals partition the journal at sequence
+        boundaries: `firstSequence` continues from the previous seal, with no gap
+        and no overlap.
+      properties:
+        periodID: { type: string }
+        status: { type: string, enum: [OPEN, SEALED] }
+        firstSequence: { type: integer, format: int64 }
+        lastSequence: { type: integer, format: int64 }
+        entryCount: { type: integer, format: int64 }
+        lastAuditHash: { type: string, description: 'Hex chain head at seal time. Verification resumes across the boundary from here.' }
+        stateHash: { type: string, description: 'Hex digest of the period''s resulting alert state, so the seal commits to the outcome as well as the journal.' }
+        sealingHash: { type: string, description: 'Hex. The single value standing for the whole period. Unkeyed, so it is reproducible from the fields above by anyone.' }
+        signature: { type: string, description: 'Base64 Ed25519 signature over `sealingHash`. This is what makes the seal verifiable without trusting this service.' }
+        signingKeyID: { type: string, description: 'Which published key verifies the signature.' }
+        sealedBy: { $ref: '#/components/schemas/AuditSubject' }
+        alertCount: { type: integer, format: int64 }
+        unresolvedCount: { type: integer, format: int64, description: 'How many discrepancies were still open when the period closed — usually the first figure an auditor asks for.' }
+        sealedAt: { type: string, format: date-time }
+        auditSequence: { type: integer, format: int64, description: 'The journal entry recording this seal. It lands after the boundary it describes, so it belongs to the following period.' }
+
+    SealVerification:
+      type: object
+      properties:
+        periodID: { type: string }
+        ok: { type: boolean }
+        reason: { type: string, description: 'Why verification failed, when it did.' }
+        seal: { $ref: '#/components/schemas/PeriodSeal' }
+
+    VerificationKey:
+      type: object
+      properties:
+        keyID: { type: string }
+        publicKey: { type: string, description: 'Base64 Ed25519 public key.' }
+        algorithm: { type: string, example: Ed25519 }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        retiredAt: { type: string, format: date-time }
+        thumbprint: { type: string }
+
+    RuleRevision:
+      type: object
+      description: An immutable snapshot of a control definition at one revision.
+      properties:
+        ruleID: { type: string, format: uuid }
+        revision: { type: integer, format: int64 }
+        name: { type: string }
+        templateKind: { type: string }
+        templateSpec: { type: object }
+        explanationCEL: { type: string }
+        severity: { type: string }
+        cadence: { type: string }
+        enabled: { type: boolean }
+        schedule: { type: object }
+        notifications: { type: array, items: { type: string } }
+        labels: { type: object, additionalProperties: { type: string } }
+        auditSequence: { type: integer, format: int64, description: 'The journal entry that witnessed this revision. Zero for definitions recovered when the journal was introduced — recovered, not witnessed, and the distinction is left visible.' }
+        createdAt: { type: string, format: date-time }
     QueryBuilder:
       type: object
       additionalProperties: true
