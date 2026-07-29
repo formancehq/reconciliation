@@ -14,6 +14,7 @@ Engineering reference for the V1 reconciliation work. Start with the diff doc if
 | [alert-period-model.md](./alert-period-model.md) | Why alerts are scoped by reconciliation period (cadence), and how it's implemented. |
 | [scheduler.md](./scheduler.md) | The PostgreSQL-backed worker scheduler, multi-pod claims, catch-up, retries, and delivery guarantees. |
 | [notification-suppression.md](./notification-suppression.md) | Why a still-broken alert stops re-paging on every scheduler tick — the `notify` flag, and "suppress the message, not the record". |
+| [audit-chain.md](./audit-chain.md) | The tamper-evident journal: what is hashed and why, period seals and their Ed25519 signatures, what tampering it detects and the one thing it cannot, plus what Ledger V3 subsumes. |
 
 ## Status legend used throughout
 

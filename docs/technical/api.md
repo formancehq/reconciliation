@@ -289,6 +289,45 @@ Clears an active snooze before its window elapses. Idempotent — unsnoozing an 
 
 ---
 
+## Audit journal (✅ shipped)
+
+The tamper-evident record of everything above. Full rationale — what is hashed,
+what tampering is detected, and the one thing that is not — lives in
+[audit-chain.md](./audit-chain.md); this is the surface.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`  | `/audit-entries` | Walk the journal in chain order. Filters: `kind`, `ruleID`, `alertID`, `evaluationID`, `periodID`, `subject`, `actor=system\|human`, `fromSequence`, `toSequence`, `from`, `to`, `after`, `pageSize`. |
+| `GET`  | `/audit-entries/{sequence}` | One entry with its memento — the exact canonical bytes that were hashed. |
+| `POST` | `/audit-entries/verify` | Recompute a range. Empty body verifies everything; `{"periodID":"2026-05"}` verifies exactly what that period's seal covers. |
+| `GET`  | `/audit-signing-keys` | The Ed25519 public keys that verify period seals. Retired keys included. |
+| `GET`  | `/periods` | Sealed periods, most recent first. |
+| `GET`  | `/periods/{periodID}` | A seal, or `status: OPEN` — absence of a seal *is* the open state, so this does not 404. |
+| `POST` | `/periods/{periodID}/seal` | Close a period. Raises the write barrier on its alerts. |
+| `POST` | `/periods/{periodID}/verify` | Re-derive the sealing hash and check the signature. |
+| `GET`  | `/rules/{ruleID}/revisions` | A control's frozen definitions, newest first. |
+| `GET`  | `/rules/{ruleID}/revisions/{revision}` | What was actually being checked at that revision. |
+
+`auditSequence` is also returned on evaluations, alerts and alert events, and
+`periodID` on evaluations — the links that attach the evidence to the verifiable
+record.
+
+**The three calls an audit takes.** Fetch the period's seal (one hash standing
+for the month), pull the dense journal for that period, verify the chain. The
+auditor checks one hash and then samples inside a journal whose integrity is
+already established, instead of reading every row.
+
+Two behaviours that surprise people the first time:
+
+- **`actor=system` vs `actor=human` is trustworthy.** The distinction is bound
+  into each entry's hash via a source tag, not declared in a field, so a
+  scheduled run cannot be passed off as a human decision or vice versa. Anything
+  not provably a machine counts as human — the conservative direction.
+- **A detected violation is still HTTP 200.** The request succeeded; the answer
+  is that the journal is broken. Check the `ok` field, not the status code.
+
+---
+
 ## Events (✅ implemented)
 
 Every *notifying* alert state transition publishes one message to the Formance
@@ -370,4 +409,5 @@ All endpoints share the existing `ErrorResponse` shape:
 | 404 | `NOT_FOUND`              | Resource doesn't exist (incl. resolve/accept on an already-resolved alert) |
 | 409 | `RULE_BUSY`              | An evaluation of this rule is already in progress (lock contention) |
 | 409 | `RULE_CHANGED`           | Rule revised or disabled during evaluation, or a PATCH lost a revision race |
+| 409 | `PERIOD_SEALED`          | A write into a closed period (ack/resolve/accept/snooze, or an evaluation whose alerts fall in it), or sealing a period twice |
 | 500 | `INTERNAL`               | Engine error, resolver timeout — also raises an `engine.error` meta-alert |
