@@ -183,7 +183,7 @@ Sealing is **not idempotent**: a second seal is a 409, since it would either con
 
 ## 6. Moving to Ledger V3
 
-The [ledger-native storage RFC](../drafts/rfc-ledger-native-storage.md) makes reconciliation a stateless service whose state lives as account metadata in a `_recon` control ledger, with no Postgres. Most of this document's machinery is then **subsumed by the ledger itself** — which is the outcome to want, not a loss.
+The [ledger-native storage RFC](https://github.com/formancehq/reconciliation/blob/feat/reconciliation-ledger-v3/docs/drafts/rfc-ledger-native-storage.md) — which lives on `feat/reconciliation-ledger-v3`, not here — makes reconciliation a stateless service whose state lives as account metadata in a `_recon` control ledger, with no Postgres. Most of this document's machinery is then **subsumed by the ledger itself** — which is the outcome to want, not a loss.
 
 | Built here | On V3 | Why |
 |---|---|---|
