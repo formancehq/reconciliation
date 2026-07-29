@@ -42,7 +42,9 @@ func newWorkerStore(t *testing.T) (*storage.Storage, *bun.DB) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, migrations.Migrate(context.Background(), db))
-	return storage.NewStorage(db), db
+	store, err := storage.EnsureAuditChain(context.Background(), storage.NewStorage(db), storage.AuditChainSettings{Pepper: "test-pepper"})
+	require.NoError(t, err)
+	return store, db
 }
 
 type rollingEvaluator struct {

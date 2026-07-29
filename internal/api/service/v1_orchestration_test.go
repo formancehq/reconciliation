@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
@@ -26,6 +27,10 @@ import (
 //   - Reopen happens IN PLACE on the same alert id (no parent chain)
 //   - Every transition appends one row to alert_event
 type fakeV1Store struct {
+	auditEntries  []models.AuditEntry
+	ruleRevisions []models.RuleRevision
+	periodSeals   []models.PeriodSeal
+
 	rules       map[uuid.UUID]*models.Rule
 	evaluations map[uuid.UUID]*models.Evaluation
 	alerts      map[uuid.UUID]*models.Alert // keyed by alert id
@@ -378,6 +383,91 @@ func (f *fakeV1Store) ListAlertEvents(_ context.Context, alertID uuid.UUID, _ st
 		}
 	}
 	return &bunpaginate.Cursor[models.AlertEvent]{Data: out}, nil
+}
+
+// Audit journal read paths. Sealing is not faked: it needs a real transaction.
+func (f *fakeV1Store) ListAuditEntries(_ context.Context, filters storage.AuditEntryFilters, afterSeq int64, limit int) ([]models.AuditEntry, int64, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	out := []models.AuditEntry{}
+	for _, entry := range f.auditEntries {
+		if entry.Sequence <= afterSeq {
+			continue
+		}
+		if len(filters.Kinds) > 0 && !slices.Contains(filters.Kinds, entry.Kind) {
+			continue
+		}
+		if filters.PeriodID != "" && entry.PeriodID != filters.PeriodID {
+			continue
+		}
+		out = append(out, entry)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, 0, nil
+}
+
+func (f *fakeV1Store) GetAuditEntry(_ context.Context, sequence int64) (*models.AuditEntry, error) {
+	for i := range f.auditEntries {
+		if f.auditEntries[i].Sequence == sequence {
+			return &f.auditEntries[i], nil
+		}
+	}
+	return nil, storage.ErrNotFound
+}
+
+func (f *fakeV1Store) ChainHead(context.Context) (int64, []byte, error) {
+	if len(f.auditEntries) == 0 {
+		return 0, nil, nil
+	}
+	last := f.auditEntries[len(f.auditEntries)-1]
+	return last.Sequence, last.Hash, nil
+}
+
+func (f *fakeV1Store) VerifyChain(_ context.Context, fromSeq, toSeq int64) (*models.ChainVerification, error) {
+	return &models.ChainVerification{OK: true, FirstSequence: fromSeq, LastSequence: toSeq}, nil
+}
+
+func (f *fakeV1Store) ListRuleRevisions(_ context.Context, ruleID uuid.UUID) ([]models.RuleRevision, error) {
+	out := []models.RuleRevision{}
+	for _, rev := range f.ruleRevisions {
+		if rev.RuleID == ruleID {
+			out = append(out, rev)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeV1Store) GetRuleRevision(_ context.Context, ruleID uuid.UUID, revision int64) (*models.RuleRevision, error) {
+	for i := range f.ruleRevisions {
+		if f.ruleRevisions[i].RuleID == ruleID && f.ruleRevisions[i].Revision == revision {
+			return &f.ruleRevisions[i], nil
+		}
+	}
+	return nil, storage.ErrNotFound
+}
+
+func (f *fakeV1Store) ListPeriodSeals(context.Context) ([]models.PeriodSeal, error) {
+	return f.periodSeals, nil
+}
+
+func (f *fakeV1Store) GetPeriodSeal(_ context.Context, periodID string) (*models.PeriodSeal, error) {
+	for i := range f.periodSeals {
+		if f.periodSeals[i].PeriodID == periodID {
+			return &f.periodSeals[i], nil
+		}
+	}
+	return nil, storage.ErrNotFound
+}
+
+func (f *fakeV1Store) VerifySealSignature(context.Context, *models.PeriodSeal) (bool, string, error) {
+	return true, "", nil
+}
+
+func (f *fakeV1Store) ListVerificationKeys(context.Context) ([]storage.VerificationKey, error) {
+	return nil, nil
 }
 
 func (f *fakeV1Store) ListActiveAlertFingerprints(_ context.Context, ruleID uuid.UUID, periodID string) ([]string, error) {

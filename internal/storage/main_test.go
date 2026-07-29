@@ -55,5 +55,13 @@ func newStore(t *testing.T) *Storage {
 	err = migrations.Migrate(context.Background(), db)
 	require.NoError(t, err)
 
-	return NewStorage(db)
+	// Tests get a real chain rather than a nil one. A storage without a chain
+	// fails every journalled write by design, so wiring it here keeps that
+	// failure mode meaningful in production instead of something tests routinely
+	// tolerate.
+	store, err := EnsureAuditChain(ctx, NewStorage(db), AuditChainSettings{
+		Pepper: "test-pepper",
+	})
+	require.NoError(t, err)
+	return store
 }

@@ -75,6 +75,22 @@ func (mr *MockServiceMockRecorder) AckAlert(ctx, id, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckAlert", reflect.TypeOf((*MockService)(nil).AckAlert), ctx, id, req)
 }
 
+// ChainHead mocks base method.
+func (m *MockService) ChainHead(ctx context.Context) (int64, []byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ChainHead", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].([]byte)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ChainHead indicates an expected call of ChainHead.
+func (mr *MockServiceMockRecorder) ChainHead(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ChainHead", reflect.TypeOf((*MockService)(nil).ChainHead), ctx)
+}
+
 // CreatePolicy mocks base method.
 func (m *MockService) CreatePolicy(ctx context.Context, req *service.CreatePolicyRequest) (*models.Policy, error) {
 	m.ctrl.T.Helper()
@@ -163,6 +179,21 @@ func (mr *MockServiceMockRecorder) GetAlert(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAlert", reflect.TypeOf((*MockService)(nil).GetAlert), ctx, id)
 }
 
+// GetAuditEntry mocks base method.
+func (m *MockService) GetAuditEntry(ctx context.Context, sequence int64) (*models.AuditEntry, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAuditEntry", ctx, sequence)
+	ret0, _ := ret[0].(*models.AuditEntry)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAuditEntry indicates an expected call of GetAuditEntry.
+func (mr *MockServiceMockRecorder) GetAuditEntry(ctx, sequence any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAuditEntry", reflect.TypeOf((*MockService)(nil).GetAuditEntry), ctx, sequence)
+}
+
 // GetEvaluation mocks base method.
 func (m *MockService) GetEvaluation(ctx context.Context, id uuid.UUID) (*models.Evaluation, error) {
 	m.ctrl.T.Helper()
@@ -176,6 +207,21 @@ func (m *MockService) GetEvaluation(ctx context.Context, id uuid.UUID) (*models.
 func (mr *MockServiceMockRecorder) GetEvaluation(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEvaluation", reflect.TypeOf((*MockService)(nil).GetEvaluation), ctx, id)
+}
+
+// GetPeriodSeal mocks base method.
+func (m *MockService) GetPeriodSeal(ctx context.Context, periodID string) (*models.PeriodSeal, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPeriodSeal", ctx, periodID)
+	ret0, _ := ret[0].(*models.PeriodSeal)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetPeriodSeal indicates an expected call of GetPeriodSeal.
+func (mr *MockServiceMockRecorder) GetPeriodSeal(ctx, periodID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPeriodSeal", reflect.TypeOf((*MockService)(nil).GetPeriodSeal), ctx, periodID)
 }
 
 // GetPolicy mocks base method.
@@ -223,6 +269,21 @@ func (mr *MockServiceMockRecorder) GetRule(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRule", reflect.TypeOf((*MockService)(nil).GetRule), ctx, id)
 }
 
+// GetRuleRevision mocks base method.
+func (m *MockService) GetRuleRevision(ctx context.Context, ruleID uuid.UUID, revision int64) (*models.RuleRevision, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRuleRevision", ctx, ruleID, revision)
+	ret0, _ := ret[0].(*models.RuleRevision)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetRuleRevision indicates an expected call of GetRuleRevision.
+func (mr *MockServiceMockRecorder) GetRuleRevision(ctx, ruleID, revision any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRuleRevision", reflect.TypeOf((*MockService)(nil).GetRuleRevision), ctx, ruleID, revision)
+}
+
 // ListAlertEvents mocks base method.
 func (m *MockService) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q storage.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
 	m.ctrl.T.Helper()
@@ -253,6 +314,22 @@ func (mr *MockServiceMockRecorder) ListAlerts(ctx, q any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAlerts", reflect.TypeOf((*MockService)(nil).ListAlerts), ctx, q)
 }
 
+// ListAuditEntries mocks base method.
+func (m *MockService) ListAuditEntries(ctx context.Context, f storage.AuditEntryFilters, afterSeq int64, limit int) ([]models.AuditEntry, int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListAuditEntries", ctx, f, afterSeq, limit)
+	ret0, _ := ret[0].([]models.AuditEntry)
+	ret1, _ := ret[1].(int64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListAuditEntries indicates an expected call of ListAuditEntries.
+func (mr *MockServiceMockRecorder) ListAuditEntries(ctx, f, afterSeq, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListAuditEntries", reflect.TypeOf((*MockService)(nil).ListAuditEntries), ctx, f, afterSeq, limit)
+}
+
 // ListEvaluations mocks base method.
 func (m *MockService) ListEvaluations(ctx context.Context, q storage.GetEvaluationsQuery) (*bunpaginate.Cursor[models.Evaluation], error) {
 	m.ctrl.T.Helper()
@@ -266,6 +343,21 @@ func (m *MockService) ListEvaluations(ctx context.Context, q storage.GetEvaluati
 func (mr *MockServiceMockRecorder) ListEvaluations(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEvaluations", reflect.TypeOf((*MockService)(nil).ListEvaluations), ctx, q)
+}
+
+// ListPeriodSeals mocks base method.
+func (m *MockService) ListPeriodSeals(ctx context.Context) ([]models.PeriodSeal, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListPeriodSeals", ctx)
+	ret0, _ := ret[0].([]models.PeriodSeal)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListPeriodSeals indicates an expected call of ListPeriodSeals.
+func (mr *MockServiceMockRecorder) ListPeriodSeals(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPeriodSeals", reflect.TypeOf((*MockService)(nil).ListPeriodSeals), ctx)
 }
 
 // ListPolicies mocks base method.
@@ -298,6 +390,21 @@ func (mr *MockServiceMockRecorder) ListReconciliations(ctx, q any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReconciliations", reflect.TypeOf((*MockService)(nil).ListReconciliations), ctx, q)
 }
 
+// ListRuleRevisions mocks base method.
+func (m *MockService) ListRuleRevisions(ctx context.Context, ruleID uuid.UUID) ([]models.RuleRevision, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListRuleRevisions", ctx, ruleID)
+	ret0, _ := ret[0].([]models.RuleRevision)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListRuleRevisions indicates an expected call of ListRuleRevisions.
+func (mr *MockServiceMockRecorder) ListRuleRevisions(ctx, ruleID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListRuleRevisions", reflect.TypeOf((*MockService)(nil).ListRuleRevisions), ctx, ruleID)
+}
+
 // ListRules mocks base method.
 func (m *MockService) ListRules(ctx context.Context, q storage.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
 	m.ctrl.T.Helper()
@@ -311,6 +418,21 @@ func (m *MockService) ListRules(ctx context.Context, q storage.GetRulesQuery) (*
 func (mr *MockServiceMockRecorder) ListRules(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListRules", reflect.TypeOf((*MockService)(nil).ListRules), ctx, q)
+}
+
+// ListVerificationKeys mocks base method.
+func (m *MockService) ListVerificationKeys(ctx context.Context) ([]storage.VerificationKey, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListVerificationKeys", ctx)
+	ret0, _ := ret[0].([]storage.VerificationKey)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListVerificationKeys indicates an expected call of ListVerificationKeys.
+func (mr *MockServiceMockRecorder) ListVerificationKeys(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListVerificationKeys", reflect.TypeOf((*MockService)(nil).ListVerificationKeys), ctx)
 }
 
 // PatchRule mocks base method.
@@ -357,6 +479,21 @@ func (mr *MockServiceMockRecorder) ResolveAlert(ctx, id, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveAlert", reflect.TypeOf((*MockService)(nil).ResolveAlert), ctx, id, req)
 }
 
+// SealPeriod mocks base method.
+func (m *MockService) SealPeriod(ctx context.Context, periodID string) (*models.PeriodSeal, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SealPeriod", ctx, periodID)
+	ret0, _ := ret[0].(*models.PeriodSeal)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SealPeriod indicates an expected call of SealPeriod.
+func (mr *MockServiceMockRecorder) SealPeriod(ctx, periodID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealPeriod", reflect.TypeOf((*MockService)(nil).SealPeriod), ctx, periodID)
+}
+
 // SnoozeAlert mocks base method.
 func (m *MockService) SnoozeAlert(ctx context.Context, id uuid.UUID, req *service.SnoozeAlertRequest) (*models.Alert, error) {
 	m.ctrl.T.Helper()
@@ -385,6 +522,38 @@ func (m *MockService) UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *serv
 func (mr *MockServiceMockRecorder) UnsnoozeAlert(ctx, id, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnsnoozeAlert", reflect.TypeOf((*MockService)(nil).UnsnoozeAlert), ctx, id, req)
+}
+
+// VerifyChain mocks base method.
+func (m *MockService) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*models.ChainVerification, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "VerifyChain", ctx, fromSeq, toSeq)
+	ret0, _ := ret[0].(*models.ChainVerification)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// VerifyChain indicates an expected call of VerifyChain.
+func (mr *MockServiceMockRecorder) VerifyChain(ctx, fromSeq, toSeq any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifyChain", reflect.TypeOf((*MockService)(nil).VerifyChain), ctx, fromSeq, toSeq)
+}
+
+// VerifySealSignature mocks base method.
+func (m *MockService) VerifySealSignature(ctx context.Context, periodID string) (*models.PeriodSeal, bool, string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "VerifySealSignature", ctx, periodID)
+	ret0, _ := ret[0].(*models.PeriodSeal)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(string)
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
+}
+
+// VerifySealSignature indicates an expected call of VerifySealSignature.
+func (mr *MockServiceMockRecorder) VerifySealSignature(ctx, periodID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifySealSignature", reflect.TypeOf((*MockService)(nil).VerifySealSignature), ctx, periodID)
 }
 
 // MockBackend is a mock of Backend interface.

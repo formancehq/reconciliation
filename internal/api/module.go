@@ -27,6 +27,9 @@ const (
 	ErrValidation           = "VALIDATION"
 	ErrRuleBusy             = "RULE_BUSY"
 	ErrRuleChanged          = "RULE_CHANGED"
+	// ErrPeriodSealed covers both directions of the closing barrier: writing into
+	// a closed period, and closing one twice.
+	ErrPeriodSealed = "PERIOD_SEALED"
 )
 
 func healthCheckModule() fx.Option {
@@ -125,6 +128,16 @@ func handleServiceErrors(w http.ResponseWriter, r *http.Request, err error) {
 		api.BadRequest(w, ErrValidation, err)
 	case errors.Is(err, storage.ErrNotFound):
 		api.NotFound(w, err)
+	// A write into closed books, and a double seal, are both conflicts rather
+	// than bad requests: the request was well-formed, the books moved on.
+	case errors.Is(err, storage.ErrPeriodSealed):
+		api.WriteErrorResponse(w, http.StatusConflict, ErrPeriodSealed, err)
+	case errors.Is(err, storage.ErrPeriodAlreadySealed):
+		api.WriteErrorResponse(w, http.StatusConflict, ErrPeriodSealed, err)
+	case errors.Is(err, storage.ErrPeriodNotSealable):
+		api.BadRequest(w, ErrValidation, err)
+	case errors.Is(err, storage.ErrAuditChainNotConfigured):
+		api.InternalServerError(w, r, err)
 	// V1 error classes
 	case errors.Is(err, templates.ErrInvalidSpec):
 		api.BadRequest(w, ErrValidation, err)

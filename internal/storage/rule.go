@@ -7,6 +7,7 @@ import (
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/query"
+	"github.com/formancehq/reconciliation/internal/audit"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
@@ -17,6 +18,12 @@ import (
 // the service layer (template Explain output) — the storage layer doesn't
 // render or compile it.
 func (s *Storage) CreateRule(ctx context.Context, rule *models.Rule) error {
+	return s.RunInTx(ctx, func(ctx context.Context, store *Storage) error {
+		return store.createRule(ctx, rule)
+	})
+}
+
+func (s *Storage) createRule(ctx context.Context, rule *models.Rule) error {
 	// Storage invariant: cadence is never empty in the DB (the rule_cadence_chk
 	// CHECK rejects ''). Default the zero value so direct inserts are safe even
 	// if a caller skipped the service-layer default.
@@ -43,13 +50,45 @@ func (s *Storage) CreateRule(ctx context.Context, rule *models.Rule) error {
 	if err != nil {
 		return e("failed to create rule", err)
 	}
-	return nil
+	return s.journalRuleDefinition(ctx, rule, models.AuditRuleCreated)
+}
+
+// journalRuleDefinition records a control definition in the chain and freezes it
+// as a revision. Both happen in the caller's transaction, so a rule that exists
+// always has a chain entry and a retrievable definition — there is no window in
+// which a control could run without the journal knowing what it was.
+func (s *Storage) journalRuleDefinition(ctx context.Context, rule *models.Rule, kind models.AuditEntryKind) error {
+	memento, err := audit.NewRuleMemento(rule)
+	if err != nil {
+		return err
+	}
+	raw, err := audit.BuildMemento(memento)
+	if err != nil {
+		return err
+	}
+	revision := rule.Revision
+	entry, err := s.AppendAuditEntry(ctx, AppendAuditInput{
+		Kind:         kind,
+		RuleID:       &rule.ID,
+		RuleRevision: &revision,
+		Subject:      audit.SubjectFrom(ctx),
+		Memento:      raw,
+	})
+	if err != nil {
+		return err
+	}
+	return s.insertRuleRevision(ctx, rule, entry.Sequence)
 }
 
 // GetRule returns the rule by id, or wrapping ErrNotFound when missing.
+//
+// A tombstoned rule reads as absent: deletion still means "gone" to every
+// caller. What changed is that the history it produced survives, and the
+// deletion itself is in the journal.
 func (s *Storage) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error) {
 	var rule models.Rule
-	err := s.db.NewSelect().Model(&rule).Where("id = ?", id).Scan(ctx)
+	err := s.db.NewSelect().Model(&rule).
+		Where("id = ?", id).Where("deleted_at IS NULL").Scan(ctx)
 	if err != nil {
 		return nil, e("failed to get rule", err)
 	}
@@ -75,18 +114,66 @@ func (s *Storage) AssertRuleRevision(ctx context.Context, id uuid.UUID, expected
 	return nil
 }
 
-// DeleteRule cascades to evaluations + incidents via the FK ON DELETE CASCADE
-// declared in migration #4. Returns ErrNotFound if the rule didn't exist.
+// DeleteRule tombstones a rule and records the deletion in the chain.
+//
+// This used to be a hard DELETE that cascaded away every evaluation, alert and
+// transition the rule had produced. With a journal that is worse than it was
+// before: the chain would keep referring to rows that no longer exist, so the
+// one artefact meant to survive would be the one pointing at nothing. The
+// audit-bearing children are now pinned by ON DELETE RESTRICT as well, so no
+// future code path can quietly reintroduce the cascade.
+//
+// The rule disappears from every read path; its history does not. Returns
+// ErrNotFound if the rule didn't exist or was already deleted.
 func (s *Storage) DeleteRule(ctx context.Context, id uuid.UUID) error {
-	res, err := s.db.NewDelete().Model((*models.Rule)(nil)).Where("id = ?", id).Exec(ctx)
-	if err != nil {
-		return e("failed to delete rule", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return e("delete rule", ErrNotFound)
-	}
-	return nil
+	return s.RunInTx(ctx, func(ctx context.Context, store *Storage) error {
+		var rule models.Rule
+		if err := store.db.NewSelect().Model(&rule).
+			Where("id = ?", id).Where("deleted_at IS NULL").
+			For("UPDATE").Scan(ctx); err != nil {
+			return e("load rule for deletion", err)
+		}
+
+		res, err := store.db.NewUpdate().Model((*models.Rule)(nil)).
+			Set("deleted_at = now()").
+			Set("enabled = false").
+			Set("next_run_at = NULL").
+			Set("revision = revision + 1").
+			Where("id = ?", id).Where("deleted_at IS NULL").Exec(ctx)
+		if err != nil {
+			return e("failed to delete rule", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return e("delete rule", ErrNotFound)
+		}
+
+		// Stop scheduled work for a control that no longer exists.
+		if _, err := store.db.NewUpdate().Model((*models.EvaluationJob)(nil)).
+			Set("status = ?", models.EvaluationJobCancelled).
+			Set("last_error = ?", "rule deleted").
+			Where("rule_id = ? AND status = ?", id, models.EvaluationJobPending).
+			Exec(ctx); err != nil {
+			return e("cancel jobs of deleted rule", err)
+		}
+
+		memento, err := audit.BuildMemento(audit.RuleDeletedMemento{
+			RuleID:   rule.ID,
+			Revision: rule.Revision + 1,
+			Name:     rule.Name,
+		})
+		if err != nil {
+			return err
+		}
+		revision := rule.Revision + 1
+		_, err = store.AppendAuditEntry(ctx, AppendAuditInput{
+			Kind:         models.AuditRuleDeleted,
+			RuleID:       &rule.ID,
+			RuleRevision: &revision,
+			Subject:      audit.SubjectFrom(ctx),
+			Memento:      memento,
+		})
+		return err
+	})
 }
 
 // RulePatch is the partial-update payload accepted by PatchRule. Nil fields are
@@ -117,7 +204,7 @@ func (s *Storage) PatchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 }
 
 func (s *Storage) patchRule(ctx context.Context, id uuid.UUID, patch RulePatch) error {
-	q := s.db.NewUpdate().Model((*models.Rule)(nil)).Where("id = ?", id)
+	q := s.db.NewUpdate().Model((*models.Rule)(nil)).Where("id = ?", id).Where("deleted_at IS NULL")
 	touched := false
 	if patch.Name != nil {
 		q = q.Set("name = ?", *patch.Name)
@@ -162,6 +249,7 @@ func (s *Storage) patchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 		exists, err := s.db.NewSelect().
 			Model((*models.Rule)(nil)).
 			Where("id = ?", id).
+			Where("deleted_at IS NULL").
 			Exists(ctx)
 		if err != nil {
 			return e("patch rule existence check", err)
@@ -173,7 +261,9 @@ func (s *Storage) patchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 	}
 
 	var current models.Rule
-	if err := s.db.NewSelect().Model(&current).Where("id = ?", id).For("UPDATE").Scan(ctx); err != nil {
+	if err := s.db.NewSelect().Model(&current).
+		Where("id = ?", id).Where("deleted_at IS NULL").
+		For("UPDATE").Scan(ctx); err != nil {
 		return e("load rule for patch", err)
 	}
 	if patch.ExpectedRevision != nil && current.Revision != *patch.ExpectedRevision {
@@ -215,11 +305,20 @@ func (s *Storage) patchRule(ctx context.Context, id uuid.UUID, patch RulePatch) 
 		Exec(ctx); err != nil {
 		return e("cancel superseded evaluation jobs", err)
 	}
-	return nil
+
+	// Re-read rather than reconstruct: the row now carries the incremented
+	// revision and any database-side defaults, and the journal must record what
+	// was actually stored, not what we intended to store.
+	var updated models.Rule
+	if err := s.db.NewSelect().Model(&updated).
+		Where("id = ?", id).Where("deleted_at IS NULL").Scan(ctx); err != nil {
+		return e("reload rule after patch", err)
+	}
+	return s.journalRuleDefinition(ctx, &updated, models.AuditRuleRevised)
 }
 
 func (s *Storage) buildRuleListQuery(selectQuery *bun.SelectQuery, where string, args []any, filters RulesFilters) *bun.SelectQuery {
-	selectQuery = selectQuery.Order("created_at DESC")
+	selectQuery = selectQuery.Where("deleted_at IS NULL").Order("created_at DESC")
 	if where != "" {
 		selectQuery = selectQuery.Where(where, args...)
 	}

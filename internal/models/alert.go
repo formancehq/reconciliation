@@ -114,8 +114,11 @@ type Alert struct {
 	Resolution       *Resolution       `bun:",type:jsonb"                    json:"resolution,omitempty"`
 	Snooze           *Snooze           `bun:",type:jsonb"                    json:"snooze,omitempty"`
 	Labels           map[string]string `bun:",type:jsonb"                    json:"labels,omitempty"`
-	CreatedAt        time.Time         `bun:"created_at,notnull,nullzero"    json:"createdAt"`
-	UpdatedAt        time.Time         `bun:"updated_at,notnull,nullzero"    json:"updatedAt"`
+	// AuditSequence is the journal entry for this alert's most recent
+	// transition. Null only for alerts that predate the journal.
+	AuditSequence *int64    `bun:"audit_sequence,nullzero"        json:"auditSequence,omitempty"`
+	CreatedAt     time.Time `bun:"created_at,notnull,nullzero"    json:"createdAt"`
+	UpdatedAt     time.Time `bun:"updated_at,notnull,nullzero"    json:"updatedAt"`
 }
 
 // AlertEventType discriminates the trigger of an event row. Reopen is not a
@@ -165,9 +168,13 @@ type AlertEvent struct {
 	// paged. Only repeated, materially-identical fails are suppressed (see
 	// Storage.recordAlertEvent and docs/technical/notification-suppression.md);
 	// opens, reopens, evidence changes, and every manual transition stay true.
-	Notify    bool      `bun:"notify,notnull"              json:"notify"`
-	At        time.Time `bun:",notnull,nullzero"          json:"at"`
-	CreatedAt time.Time `bun:"created_at,notnull,nullzero" json:"createdAt"`
+	Notify bool      `bun:"notify,notnull"              json:"notify"`
+	At     time.Time `bun:",notnull,nullzero"          json:"at"`
+	// AuditSequence is the journal entry that witnessed this transition. It is
+	// how a reader gets from "this alert was resolved" to the chained, verifiable
+	// record of it.
+	AuditSequence *int64    `bun:"audit_sequence,nullzero"     json:"auditSequence,omitempty"`
+	CreatedAt     time.Time `bun:"created_at,notnull,nullzero" json:"createdAt"`
 }
 
 // IsReopen returns true when this fail event lands on a previously-resolved

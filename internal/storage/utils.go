@@ -2,12 +2,23 @@ package storage
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/query"
 	"github.com/uptrace/bun"
 )
+
+// hexOf renders a digest for logs, comparisons and API responses. Hex rather
+// than base64 because these values get pasted into audit reports and compared by
+// eye.
+func hexOf(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
 
 func paginateWithOffset[FILTERS any, RETURN any](s *Storage, ctx context.Context,
 	q *bunpaginate.OffsetPaginatedQuery[FILTERS], builders ...func(query *bun.SelectQuery) *bun.SelectQuery) (*bunpaginate.Cursor[RETURN], error) {

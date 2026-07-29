@@ -81,6 +81,7 @@ func newServeCommand(version string) *cobra.Command {
 	service.AddFlags(cmd.Flags())
 	licence.AddFlags(cmd.Flags())
 	publish.AddFlags(ServiceName, cmd.Flags())
+	addAuditChainFlags(cmd)
 
 	return cmd
 }
@@ -148,5 +149,6 @@ func prepareDatabaseOptions(cmd *cobra.Command) (fx.Option, error) {
 		return nil, err
 	}
 
-	return storage.Module(*legacyConnectionOptions, *publisherConnectionOptions, service.IsDebug(cmd)), nil
+	return storage.Module(*legacyConnectionOptions, *publisherConnectionOptions,
+		service.IsDebug(cmd), auditChainSettings(cmd)), nil
 }

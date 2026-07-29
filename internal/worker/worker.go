@@ -9,6 +9,7 @@ import (
 	"time"
 
 	logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
+	"github.com/formancehq/reconciliation/internal/audit"
 	"github.com/formancehq/reconciliation/internal/models"
 	domain "github.com/formancehq/reconciliation/internal/reconciliation"
 	"github.com/formancehq/reconciliation/internal/storage"
@@ -118,6 +119,7 @@ func (w *Worker) plannerLoop(ctx context.Context) {
 }
 
 func (w *Worker) plan(ctx context.Context) {
+	ctx = audit.WithSystemSubject(ctx, audit.ComponentScheduler)
 	var total storage.PlanResult
 	for ctx.Err() == nil {
 		result, err := w.store.PlanScheduledJobs(ctx, catchUpWindow, maxCatchUpPerRule, plannerBatchSize)
@@ -190,6 +192,11 @@ func (w *Worker) process(parent context.Context, claimed *storage.ClaimedEvaluat
 		return
 	}
 	token := *job.ClaimToken
+	// Everything this job journals is attributed to the scheduler. A system
+	// component hashes distinctly from a caller-less request, so "no human was
+	// involved in this control run" is a checkable property of the record rather
+	// than an inference from a blank field.
+	parent = audit.WithSystemSubject(parent, audit.ComponentScheduler)
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	heartbeatErr := make(chan error, 1)

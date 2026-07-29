@@ -37,6 +37,10 @@ func newRouter(
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(authenticator))
+		// Must sit inside this group, after the authenticator: it reads the
+		// caller's identity out of a token that has already been verified. See
+		// subjectMiddleware.
+		r.Use(subjectMiddleware)
 		r.Use(service.OTLPMiddleware("reconciliation", serviceInfo.Debug))
 
 		r.Get("/reconciliations/{reconciliationID}", getReconciliationHandler(b))
@@ -67,6 +71,20 @@ func newRouter(
 		r.Post("/alerts/{alertID}/accept", acceptAlertHandler(b))
 		r.Post("/alerts/{alertID}/snooze", snoozeAlertHandler(b))
 		r.Post("/alerts/{alertID}/unsnooze", unsnoozeAlertHandler(b))
+
+		// Audit journal
+		r.Get("/audit-entries", listAuditEntriesHandler(b))
+		r.Get("/audit-entries/{sequence}", getAuditEntryHandler(b))
+		r.Post("/audit-entries/verify", verifyChainHandler(b))
+		r.Get("/audit-signing-keys", listVerificationKeysHandler(b))
+
+		r.Get("/periods", listPeriodSealsHandler(b))
+		r.Get("/periods/{periodID}", getPeriodSealHandler(b))
+		r.Post("/periods/{periodID}/seal", sealPeriodHandler(b))
+		r.Post("/periods/{periodID}/verify", verifyPeriodSealHandler(b))
+
+		r.Get("/rules/{ruleID}/revisions", listRuleRevisionsHandler(b))
+		r.Get("/rules/{ruleID}/revisions/{revision}", getRuleRevisionHandler(b))
 	})
 
 	return r

@@ -11,6 +11,7 @@ import (
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/query"
+	"github.com/formancehq/reconciliation/internal/audit"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/google/uuid"
 	pkgErrors "github.com/pkg/errors"
@@ -119,7 +120,7 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 				return e("insert alert", ierr)
 			}
 			// A first open always notifies.
-			event, aerr := appendAlertEvent(ctx, tx, fresh.ID, models.AlertEventFail, nil, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt, true)
+			event, aerr := s.appendAlertEvent(ctx, tx, fresh, models.AlertEventFail, nil, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt, true)
 			if aerr != nil {
 				return aerr
 			}
@@ -211,7 +212,7 @@ func (s *Storage) openOrUpdateAlertOnce(ctx context.Context, in OpenAlertInput) 
 			notify = true
 		}
 
-		event, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventFail, &prev, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt, notify)
+		event, aerr := s.appendAlertEvent(ctx, tx, &current, models.AlertEventFail, &prev, models.AlertOpen, &in.EvaluationID, in.Evidence, in.OccurredAt, notify)
 		if aerr != nil {
 			return aerr
 		}
@@ -299,7 +300,7 @@ func (s *Storage) AutoResolveAlert(ctx context.Context, ruleID uuid.UUID, finger
 		// note in openOrUpdateAlertOnce).
 		current.Snooze = nil
 		payload, _ := json.Marshal(resolution)
-		ev, aerr := appendAlertEvent(ctx, tx, current.ID, models.AlertEventPass, &prev, models.AlertResolved, &evaluationID, payload, at, true)
+		ev, aerr := s.appendAlertEvent(ctx, tx, &current, models.AlertEventPass, &prev, models.AlertResolved, &evaluationID, payload, at, true)
 		if aerr != nil {
 			return aerr
 		}
@@ -348,7 +349,7 @@ func (s *Storage) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (
 			return e("ack alert", err)
 		}
 		payload, _ := json.Marshal(ack)
-		ev, err := appendAlertEvent(ctx, tx, alert.ID, models.AlertEventAck, &prev, models.AlertAcknowledged, nil, payload, ack.At, true)
+		ev, err := s.appendAlertEvent(ctx, tx, &alert, models.AlertEventAck, &prev, models.AlertAcknowledged, nil, payload, ack.At, true)
 		if err != nil {
 			return err
 		}
@@ -427,7 +428,7 @@ func (s *Storage) applyResolution(ctx context.Context, id uuid.UUID, resolution 
 		// A closed alert carries no snooze (see the Returning quirk note).
 		alert.Snooze = nil
 		payload, _ := json.Marshal(resolution)
-		ev, err := appendAlertEvent(ctx, tx, alert.ID, eventType, &prev, models.AlertResolved, nil, payload, resolution.At, true)
+		ev, err := s.appendAlertEvent(ctx, tx, &alert, eventType, &prev, models.AlertResolved, nil, payload, resolution.At, true)
 		if err != nil {
 			return err
 		}
@@ -479,7 +480,7 @@ func (s *Storage) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.Time
 		payload, _ := json.Marshal(snooze)
 		// Status-neutral transition: prev == new. Always notifies — the mute
 		// itself is a one-off operator action worth surfacing.
-		ev, aerr := appendAlertEvent(ctx, tx, alert.ID, models.AlertEventSnooze, &status, status, nil, payload, snooze.At, true)
+		ev, aerr := s.appendAlertEvent(ctx, tx, &alert, models.AlertEventSnooze, &status, status, nil, payload, snooze.At, true)
 		if aerr != nil {
 			return aerr
 		}
@@ -524,7 +525,7 @@ func (s *Storage) UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string) (*
 		}
 		alert.Snooze = nil // mirror the SET ... = NULL (see Returning quirk note)
 		payload, _ := json.Marshal(map[string]string{"by": by})
-		ev, aerr := appendAlertEvent(ctx, tx, alert.ID, models.AlertEventUnsnooze, &status, status, nil, payload, at, true)
+		ev, aerr := s.appendAlertEvent(ctx, tx, &alert, models.AlertEventUnsnooze, &status, status, nil, payload, at, true)
 		if aerr != nil {
 			return aerr
 		}
@@ -588,16 +589,23 @@ func canonicalJSON(raw json.RawMessage) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// appendAlertEvent is the single insertion point for the alert_event log.
-// Centralised so every transition writes exactly the same shape and so a
-// future hash-chain implementation only needs to instrument this one func.
+// appendAlertEvent is the single insertion point for the alert_event log — and,
+// now, the single point at which an alert transition enters the hash chain and
+// the single point at which the sealed-period barrier is enforced. The comment
+// this replaces anticipated exactly that: centralised so a future hash-chain
+// implementation only needs to instrument this one func.
+//
+// Being the only door is what makes both guarantees hold. There is no code path
+// that can transition an alert without being journalled, and none that can write
+// into a closed period, because there is no second way in.
+//
 // `at` is the timestamp the event represents (evaluation end time, ack time);
 // `created_at` is a DB-side DEFAULT so it can't drift from the row's actual
 // commit time.
-func appendAlertEvent(
+func (s *Storage) appendAlertEvent(
 	ctx context.Context,
-	tx bun.IDB,
-	alertID uuid.UUID,
+	tx bun.Tx,
+	alert *models.Alert,
 	eventType models.AlertEventType,
 	prevStatus *models.AlertStatus,
 	newStatus models.AlertStatus,
@@ -606,12 +614,29 @@ func appendAlertEvent(
 	at time.Time,
 	notify bool,
 ) (*models.AlertEvent, error) {
+	store := s.WithTx(tx)
+
+	// The closing barrier. A sealed period's cases do not move — that is what
+	// "closed" means to an auditor, and it is the one property a journal alone
+	// cannot provide. Under a periodic cadence the successor period opens a fresh
+	// case, so this rejects only genuine writes-into-closed-books: a late
+	// evaluation backdated into a sealed period, or an operator editing history.
+	sealed, err := store.IsPeriodSealed(ctx, alert.PeriodID)
+	if err != nil {
+		return nil, err
+	}
+	if sealed {
+		return nil, fmt.Errorf(
+			"%w: period %q was closed, so alert %s can no longer transition (%s)",
+			ErrPeriodSealed, alert.PeriodID, alert.ID, eventType)
+	}
+
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 	event := &models.AlertEvent{
 		ID:           uuid.New(),
-		AlertID:      alertID,
+		AlertID:      alert.ID,
 		EvaluationID: evaluationID,
 		Type:         eventType,
 		PrevStatus:   prevStatus,
@@ -623,7 +648,69 @@ func appendAlertEvent(
 	if _, err := tx.NewInsert().Model(event).Returning("*").Exec(ctx); err != nil {
 		return nil, e("append alert event", err)
 	}
+
+	// The alert struct the caller holds reflects the post-transition row, so the
+	// memento records the status and occurrence count as of this event rather
+	// than as of some later read.
+	snapshot := *alert
+	snapshot.Status = newStatus
+	memento, err := audit.NewAlertTransitionMemento(&snapshot, event)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := audit.BuildMemento(memento)
+	if err != nil {
+		return nil, err
+	}
+
+	entry, err := store.AppendAuditEntry(ctx, AppendAuditInput{
+		At:           at,
+		Kind:         models.AuditAlertTransition,
+		RuleID:       &alert.RuleID,
+		AlertID:      &alert.ID,
+		EvaluationID: evaluationID,
+		PeriodID:     alert.PeriodID,
+		Subject:      subjectForTransition(ctx, eventType),
+		Memento:      raw,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.NewUpdate().Model((*models.AlertEvent)(nil)).
+		Set("audit_sequence = ?", entry.Sequence).
+		Where("id = ?", event.ID).Exec(ctx); err != nil {
+		return nil, e("link alert event to audit entry", err)
+	}
+	if _, err := tx.NewUpdate().Model((*models.Alert)(nil)).
+		Set("audit_sequence = ?", entry.Sequence).
+		Where("id = ?", alert.ID).Exec(ctx); err != nil {
+		return nil, e("link alert to audit entry", err)
+	}
+	event.AuditSequence = &entry.Sequence
+	alert.AuditSequence = &entry.Sequence
 	return event, nil
+}
+
+// subjectForTransition attributes a transition.
+//
+// An engine-driven fail or pass with no caller on the context is the scheduler
+// acting, and is recorded as a system component — which hashes differently from
+// a caller-less request, so "the machine did this" is a cryptographic claim
+// rather than a convention. When a caller IS present, even on a fail or pass,
+// they get the attribution: a human who triggered an evaluation owns its
+// consequences.
+func subjectForTransition(ctx context.Context, eventType models.AlertEventType) models.Subject {
+	subject := audit.SubjectFrom(ctx)
+	if subject.Subject != "" || subject.Source != models.SubjectSourceUnknown {
+		return subject
+	}
+	switch eventType {
+	case models.AlertEventFail, models.AlertEventPass:
+		return models.SystemSubject(audit.ComponentEngine)
+	default:
+		return subject
+	}
 }
 
 // ListAlertEvents returns a page of an alert's append-only history, most recent

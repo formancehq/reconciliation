@@ -205,8 +205,15 @@ func (r *Runner) run(ctx context.Context, store Store, rule *models.Rule, evalua
 		costUnits = templateResult.CostUnits
 	}
 
+	// One period for the whole unit of work: the evaluation record, its journal
+	// entry, and every alert it drives. Derived from the point-in-time actually
+	// read rather than the wall clock, so a run that straddles midnight files its
+	// evidence in the period it examined.
+	periodID := rule.Cadence.PeriodID(req.PIT.Add(-req.SafetyMargin))
+
 	evaluation := &models.Evaluation{
 		ID: uuid.New(), RuleID: rule.ID, StartedAt: started, EndedAt: ended, PitPerSource: pitPerSource, CostUnits: costUnits,
+		PeriodID: periodID,
 	}
 	if completion != nil {
 		scheduledAt := completion.job.ScheduledAt
@@ -256,7 +263,6 @@ func (r *Runner) run(ctx context.Context, store Store, rule *models.Rule, evalua
 				return err
 			}
 		} else {
-			periodID := rule.Cadence.PeriodID(req.PIT.Add(-req.SafetyMargin))
 			if err := driveAlerts(ctx, txStore, rule, evaluation, outcomes, periodID, ended); err != nil {
 				return err
 			}

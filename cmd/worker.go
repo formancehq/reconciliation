@@ -55,6 +55,7 @@ func newWorkerCommand(version string) *cobra.Command {
 	iam.AddFlags(cmd.Flags())
 	service.AddFlags(cmd.Flags())
 	publish.AddFlags(ServiceName, cmd.Flags())
+	addAuditChainFlags(cmd)
 	return cmd
 }
 

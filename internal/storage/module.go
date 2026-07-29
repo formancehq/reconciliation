@@ -21,7 +21,7 @@ type storageParams struct {
 	Publisher AlertEventPublisher `optional:"true"`
 }
 
-func Module(connectionOptions legacyconnect.ConnectionOptions, publisherConnectionOptions v5connect.ConnectionOptions, debug bool) fx.Option {
+func Module(connectionOptions legacyconnect.ConnectionOptions, publisherConnectionOptions v5connect.ConnectionOptions, debug bool, auditChain AuditChainSettings) fx.Option {
 	return fx.Options(
 		fx.Provide(func() *legacyconnect.ConnectionOptions {
 			return &connectionOptions
@@ -55,6 +55,18 @@ func Module(connectionOptions legacyconnect.ConnectionOptions, publisherConnecti
 					}
 					if !upToDate {
 						return errors.New("database is not up to date, please run migrations")
+					}
+
+					// Bootstrap or validate the audit journal's key material.
+					// Deliberately fatal on mismatch: starting under a key that
+					// cannot verify the existing chain would produce a journal
+					// that reports itself broken forever, from a configuration
+					// mistake rather than from tampering — and a tamper signal
+					// that fires for benign reasons is a tamper signal nobody
+					// will act on.
+					logging.FromContext(ctx).Debug("Initialising audit journal...")
+					if err := repo.InitAuditChain(ctx, auditChain); err != nil {
+						return errors.Wrap(err, "failed to initialise the audit journal")
 					}
 
 					return nil

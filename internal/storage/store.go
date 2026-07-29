@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
+	"github.com/formancehq/reconciliation/internal/audit"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/uptrace/bun"
 )
@@ -25,6 +26,18 @@ type Storage struct {
 	// transition commits. nil when messaging is not configured (the service
 	// then runs without emitting events) — see recordAlertEvent.
 	publisher AlertEventPublisher
+	// chain hashes audit entries under this installation's key. Unlike
+	// publisher, a nil chain is not a degraded mode that keeps working: every
+	// append fails with ErrAuditChainNotConfigured, which fails the operation
+	// that was trying to record itself. That is deliberate — a write that
+	// cannot be journalled must not happen, and the alternative (skip the
+	// journal, keep the write) is exactly the silent hole this feature exists
+	// to close. Production wiring calls EnsureAuditChain at boot.
+	chain *audit.Chain
+	// signingKey signs period seals so a third party can verify them without
+	// trusting this service. Verify-only or absent keys are tolerated: sealing
+	// still works, the seal simply carries no signature.
+	signingKey audit.SigningKey
 }
 
 // AlertEventPublisher dispatches an alert lifecycle transition to the message
@@ -58,20 +71,41 @@ func (s *Storage) WithPublisher(pub AlertEventPublisher) *Storage {
 	return &cp
 }
 
+// WithAuditChain returns a copy of the storage that journals every state-bearing
+// write into the hash chain. Callers normally get this from EnsureAuditChain,
+// which also bootstraps the installation's key material.
+func (s *Storage) WithAuditChain(chain *audit.Chain, signingKey audit.SigningKey) *Storage {
+	cp := *s
+	cp.chain = chain
+	cp.signingKey = signingKey
+	return &cp
+}
+
+// SigningKey exposes the seal signing key so the API can publish its public half
+// — the one value an external auditor needs.
+func (s *Storage) SigningKey() audit.SigningKey { return s.signingKey }
+
+// HasAuditChain reports whether the journal is wired.
+func (s *Storage) HasAuditChain() bool { return s != nil && s.chain != nil }
+
 // WithTx returns a Storage rooted on the supplied transaction. All subsequent
 // calls on the returned value participate in that tx instead of the root pool.
 // Nested calls to RunInTx on a bun.Tx create savepoints, so methods that open
 // their own inner transactions (OpenOrUpdateAlert, AckAlert) keep their
 // rollback semantics under an outer tx.
 func (s *Storage) WithTx(tx bun.Tx) *Storage {
-	return &Storage{db: tx, pool: s.pool, publisher: s.publisher}
+	cp := *s
+	cp.db = tx
+	return &cp
 }
 
 // WithConn returns a storage view rooted on one dedicated database session.
 // It is used by rule evaluation so the advisory lock and the final transaction
 // live on the same connection.
 func (s *Storage) WithConn(conn bun.Conn) *Storage {
-	return &Storage{db: conn, pool: s.pool, publisher: s.publisher}
+	cp := *s
+	cp.db = conn
+	return &cp
 }
 
 // RunInTx exposes the underlying bun transaction loop so the service layer can

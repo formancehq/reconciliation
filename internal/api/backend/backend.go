@@ -44,6 +44,19 @@ type Service interface {
 	AcceptAlert(ctx context.Context, id uuid.UUID, req *service.AcceptAlertRequest) (*models.Alert, error)
 	SnoozeAlert(ctx context.Context, id uuid.UUID, req *service.SnoozeAlertRequest) (*models.Alert, error)
 	UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *service.UnsnoozeAlertRequest) (*models.Alert, error)
+
+	// Audit journal — the tamper-evident record of everything above.
+	ListAuditEntries(ctx context.Context, f storage.AuditEntryFilters, afterSeq int64, limit int) ([]models.AuditEntry, int64, error)
+	GetAuditEntry(ctx context.Context, sequence int64) (*models.AuditEntry, error)
+	ChainHead(ctx context.Context) (int64, []byte, error)
+	VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*models.ChainVerification, error)
+	ListRuleRevisions(ctx context.Context, ruleID uuid.UUID) ([]models.RuleRevision, error)
+	GetRuleRevision(ctx context.Context, ruleID uuid.UUID, revision int64) (*models.RuleRevision, error)
+	ListPeriodSeals(ctx context.Context) ([]models.PeriodSeal, error)
+	GetPeriodSeal(ctx context.Context, periodID string) (*models.PeriodSeal, error)
+	SealPeriod(ctx context.Context, periodID string) (*models.PeriodSeal, error)
+	VerifySealSignature(ctx context.Context, periodID string) (*models.PeriodSeal, bool, string, error)
+	ListVerificationKeys(ctx context.Context) ([]storage.VerificationKey, error)
 }
 
 type Backend interface {

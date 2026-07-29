@@ -34,14 +34,22 @@ type Evaluation struct {
 	StartedAt    time.Time            `bun:"started_at,notnull,nullzero"  json:"startedAt"`
 	EndedAt      time.Time            `bun:"ended_at,notnull,nullzero"    json:"endedAt"`
 	PitPerSource map[string]time.Time `bun:"pit_per_source,type:jsonb,notnull" json:"pitPerSource"`
-	Result       EvaluationResult     `bun:",notnull"                     json:"result"`
-	Evidence     json.RawMessage      `bun:",type:jsonb"                  json:"evidence,omitempty"`
-	Error        string               `bun:",nullzero"                    json:"error,omitempty"`
-	CostUnits    int64                `bun:"cost_units,notnull"           json:"costUnits"`
+	// PeriodID is the reconciliation period this execution belongs to, computed
+	// from the rule's cadence and the point-in-time actually read — the same
+	// value the resulting alerts are scoped by, so evidence and cases never
+	// straddle a period boundary differently.
+	PeriodID  string           `bun:"period_id,nullzero"           json:"periodID,omitempty"`
+	Result    EvaluationResult `bun:",notnull"                     json:"result"`
+	Evidence  json.RawMessage  `bun:",type:jsonb"                  json:"evidence,omitempty"`
+	Error     string           `bun:",nullzero"                    json:"error,omitempty"`
+	CostUnits int64            `bun:"cost_units,notnull"           json:"costUnits"`
 	// ScheduledAt and RuleRevision are internal occurrence identity fields.
 	// They remain outside the public response while the partial unique index on
 	// them fences duplicate committed effects after a job row is cleaned up.
 	ScheduledAt  *time.Time `bun:"scheduled_at,nullzero"         json:"-"`
 	RuleRevision *int64     `bun:"rule_revision,nullzero"        json:"-"`
 	CreatedAt    time.Time  `bun:"created_at,notnull,nullzero"  json:"createdAt"`
+	// AuditSequence is the journal entry that witnessed this execution. Null for
+	// evaluations recorded before the journal existed.
+	AuditSequence *int64 `bun:"audit_sequence,nullzero" json:"auditSequence,omitempty"`
 }

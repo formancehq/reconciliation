@@ -496,5 +496,264 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// Audit journal: a tamper-evident hash chain over every state-bearing
+		// operation, the versioned control definitions the chain refers to, and
+		// the period seals that close ranges of it.
+		//
+		// Three things this migration deliberately does NOT do:
+		//
+		//  1. It does not compute any hash in SQL. The Ledger V2 log put its
+		//     hashing in a PL/pgSQL trigger that reproduced Go's json.Marshal
+		//     output by hand; the two implementations drifted, which is why that
+		//     repository carries a migration named "Fix hashing function". Here
+		//     the encoding has one implementation, in internal/audit, and the
+		//     database's only job is to refuse rewrites.
+		//  2. It gives audit_entry no foreign keys. The journal must not depend
+		//     on the continued existence of any row it describes — that is the
+		//     whole point of a journal.
+		//  3. It does not pretend REVOKE achieves immutability. A table's owner
+		//     keeps implicit privileges no REVOKE can remove, so the trigger is
+		//     the enforcement that always holds; running the service as a
+		//     non-owner role and revoking UPDATE/DELETE is documented as an
+		//     operator hardening step on top.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					-- Singleton row holding the installation's chain key material.
+					-- The salt is generated once, on first boot. An operator may
+					-- additionally configure a pepper out-of-band; key_check then
+					-- lets boot detect a missing or wrong one instead of silently
+					-- appending entries under a key that cannot verify the
+					-- existing chain.
+					CREATE TABLE IF NOT EXISTS reconciliations.audit_chain_config (
+						singleton            boolean NOT NULL DEFAULT true,
+						salt                 bytea   NOT NULL,
+						key_check            bytea   NOT NULL,
+						has_pepper           boolean NOT NULL DEFAULT false,
+						signing_key_id       text,
+						signing_public_key   bytea,
+						-- Present only when the service generated the key itself.
+						-- An operator supplying the seed by configuration leaves
+						-- this null, which is the recommended production setup.
+						signing_private_seed bytea,
+						created_at           timestamp with time zone NOT NULL DEFAULT now(),
+						CONSTRAINT audit_chain_config_pk PRIMARY KEY (singleton),
+						CONSTRAINT audit_chain_config_singleton_chk CHECK (singleton)
+					);
+
+					-- Every signing key this installation has ever used. Seals are
+					-- immutable and each carries the id of the key that signed
+					-- it, so a rotation must not orphan the seals that came
+					-- before: an auditor asking "which key verifies this seal"
+					-- gets an answer years later, from us, without having had to
+					-- archive the key themselves.
+					CREATE TABLE IF NOT EXISTS reconciliations.audit_signing_key (
+						key_id     text  NOT NULL,
+						public_key bytea NOT NULL,
+						created_at timestamp with time zone NOT NULL DEFAULT now(),
+						retired_at timestamp with time zone,
+						CONSTRAINT audit_signing_key_pk PRIMARY KEY (key_id)
+					);
+
+					-- The chain. seq is physical insertion order and may skip
+					-- values (a rolled-back transaction consumes a bigserial);
+					-- sequence is the dense logical counter assigned under the
+					-- chain advisory lock, and it is what makes a deleted entry
+					-- detectable. Ledger V2's logs table splits the same two
+					-- roles across (seq, id).
+					CREATE TABLE IF NOT EXISTS reconciliations.audit_entry (
+						seq            bigserial NOT NULL,
+						sequence       bigint    NOT NULL,
+						at             timestamp with time zone NOT NULL,
+						kind           text      NOT NULL,
+						rule_id        uuid,
+						rule_revision  bigint,
+						alert_id       uuid,
+						evaluation_id  uuid,
+						period_id      text,
+						subject        jsonb     NOT NULL,
+						memento        bytea     NOT NULL,
+						memento_digest bytea     NOT NULL,
+						prev_hash      bytea,
+						hash           bytea     NOT NULL,
+						hash_version   integer   NOT NULL DEFAULT 1,
+						created_at     timestamp with time zone NOT NULL DEFAULT now(),
+						CONSTRAINT audit_entry_pk PRIMARY KEY (seq),
+						CONSTRAINT audit_entry_sequence_unique UNIQUE (sequence),
+						CONSTRAINT audit_entry_sequence_positive_chk CHECK (sequence > 0),
+						CONSTRAINT audit_entry_kind_chk CHECK (kind IN (
+							'rule.created', 'rule.revised', 'rule.deleted',
+							'evaluation.committed', 'alert.transition', 'period.sealed'
+						))
+					);
+
+					CREATE INDEX IF NOT EXISTS audit_entry_kind_idx
+						ON reconciliations.audit_entry (kind, sequence);
+					CREATE INDEX IF NOT EXISTS audit_entry_rule_idx
+						ON reconciliations.audit_entry (rule_id, sequence)
+						WHERE rule_id IS NOT NULL;
+					CREATE INDEX IF NOT EXISTS audit_entry_alert_idx
+						ON reconciliations.audit_entry (alert_id, sequence)
+						WHERE alert_id IS NOT NULL;
+					CREATE INDEX IF NOT EXISTS audit_entry_evaluation_idx
+						ON reconciliations.audit_entry (evaluation_id, sequence)
+						WHERE evaluation_id IS NOT NULL;
+					CREATE INDEX IF NOT EXISTS audit_entry_period_idx
+						ON reconciliations.audit_entry (period_id, sequence)
+						WHERE period_id IS NOT NULL;
+					CREATE INDEX IF NOT EXISTS audit_entry_at_idx
+						ON reconciliations.audit_entry (at, sequence);
+
+					-- The enforcement that always holds, owner or not: the rows
+					-- cannot be updated or deleted through SQL at all.
+					CREATE OR REPLACE FUNCTION reconciliations.audit_entry_immutable()
+						RETURNS trigger
+						LANGUAGE plpgsql
+					AS $$
+					BEGIN
+						RAISE EXCEPTION
+							'reconciliations.audit_entry is append-only: % is not permitted', TG_OP
+							USING ERRCODE = 'restrict_violation',
+							      HINT = 'The audit journal is immutable by construction. Corrections are recorded as new entries.';
+					END;
+					$$;
+
+					DROP TRIGGER IF EXISTS audit_entry_no_rewrite ON reconciliations.audit_entry;
+					CREATE TRIGGER audit_entry_no_rewrite
+						BEFORE UPDATE OR DELETE ON reconciliations.audit_entry
+						FOR EACH ROW EXECUTE FUNCTION reconciliations.audit_entry_immutable();
+
+					-- Defence in depth: only meaningful when the service connects
+					-- as a role that does not own the table, which is the
+					-- documented production posture.
+					REVOKE UPDATE, DELETE, TRUNCATE ON reconciliations.audit_entry FROM PUBLIC;
+
+					-- Immutable snapshots of control definitions. Without these
+					-- the chain proves a verdict but not what produced it,
+					-- because the rule row only ever holds the latest spec.
+					CREATE TABLE IF NOT EXISTS reconciliations.rule_revision (
+						rule_id         uuid    NOT NULL,
+						revision        bigint  NOT NULL,
+						name            text    NOT NULL,
+						template_kind   text    NOT NULL,
+						template_spec   jsonb   NOT NULL,
+						explanation_cel text,
+						severity        text    NOT NULL,
+						cadence         text    NOT NULL,
+						enabled         boolean NOT NULL,
+						schedule        jsonb,
+						notifications   jsonb,
+						labels          jsonb,
+						audit_sequence  bigint  NOT NULL,
+						created_at      timestamp with time zone NOT NULL DEFAULT now(),
+						CONSTRAINT rule_revision_pk PRIMARY KEY (rule_id, revision)
+					);
+
+					DROP TRIGGER IF EXISTS rule_revision_no_rewrite ON reconciliations.rule_revision;
+					CREATE TRIGGER rule_revision_no_rewrite
+						BEFORE UPDATE OR DELETE ON reconciliations.rule_revision
+						FOR EACH ROW EXECUTE FUNCTION reconciliations.audit_entry_immutable();
+
+					-- Period seals partition the chain: first_sequence continues
+					-- from the previous seal's last_sequence + 1, with no gap and
+					-- no overlap, exactly as a Ledger V3 chapter closes at an
+					-- audit-sequence boundary rather than by filtering content.
+					CREATE TABLE IF NOT EXISTS reconciliations.period_seal (
+						period_id        text   NOT NULL,
+						first_sequence   bigint NOT NULL,
+						last_sequence    bigint NOT NULL,
+						entry_count      bigint NOT NULL,
+						last_audit_hash  bytea,
+						state_hash       bytea  NOT NULL,
+						sealing_hash     bytea  NOT NULL,
+						signature        bytea,
+						signing_key_id   text,
+						sealed_by        jsonb  NOT NULL,
+						alert_count      bigint NOT NULL DEFAULT 0,
+						unresolved_count bigint NOT NULL DEFAULT 0,
+						sealed_at        timestamp with time zone NOT NULL DEFAULT now(),
+						audit_sequence   bigint NOT NULL,
+						CONSTRAINT period_seal_pk PRIMARY KEY (period_id),
+						CONSTRAINT period_seal_range_chk CHECK (last_sequence >= first_sequence - 1)
+					);
+
+					CREATE INDEX IF NOT EXISTS period_seal_last_sequence_idx
+						ON reconciliations.period_seal (last_sequence);
+
+					DROP TRIGGER IF EXISTS period_seal_no_rewrite ON reconciliations.period_seal;
+					CREATE TRIGGER period_seal_no_rewrite
+						BEFORE UPDATE OR DELETE ON reconciliations.period_seal
+						FOR EACH ROW EXECUTE FUNCTION reconciliations.audit_entry_immutable();
+
+					-- Deleting a rule used to cascade away every evaluation,
+					-- alert and transition it had produced. With a chain that is
+					-- worse than before: the journal would reference rows that no
+					-- longer exist. Deletion becomes a tombstone plus a chain
+					-- entry, and the audit-bearing children are pinned by
+					-- RESTRICT so no future code path can reintroduce the cascade.
+					ALTER TABLE reconciliations.rule
+						ADD COLUMN IF NOT EXISTS deleted_at timestamp with time zone;
+
+					CREATE INDEX IF NOT EXISTS rule_live_idx
+						ON reconciliations.rule (id) WHERE deleted_at IS NULL;
+
+					ALTER TABLE reconciliations.evaluation DROP CONSTRAINT IF EXISTS evaluation_rule_fk;
+					ALTER TABLE reconciliations.evaluation ADD CONSTRAINT evaluation_rule_fk
+						FOREIGN KEY (rule_id) REFERENCES reconciliations.rule (id) ON DELETE RESTRICT;
+
+					ALTER TABLE reconciliations.alert DROP CONSTRAINT IF EXISTS alert_rule_fk;
+					ALTER TABLE reconciliations.alert ADD CONSTRAINT alert_rule_fk
+						FOREIGN KEY (rule_id) REFERENCES reconciliations.rule (id) ON DELETE RESTRICT;
+
+					-- Link the existing read models to the chain. Nullable
+					-- because rows written before this migration have no entry —
+					-- an honest null beats a fabricated sequence number.
+					ALTER TABLE reconciliations.evaluation
+						ADD COLUMN IF NOT EXISTS audit_sequence bigint;
+
+					-- Evaluations gain the period they belong to. Previously only
+					-- alerts carried one, so "the evidence for May" had to be
+					-- reached through the alerts of May — which misses every
+					-- passing check, i.e. most of what proves the controls ran.
+					-- Storing it also removes an ambiguity that would otherwise
+					-- be baked into the journal: the runner scopes alerts by the
+					-- point-in-time it read, not by the wall-clock end of the
+					-- evaluation, and those two can straddle a period boundary.
+					ALTER TABLE reconciliations.evaluation
+						ADD COLUMN IF NOT EXISTS period_id text;
+					CREATE INDEX IF NOT EXISTS evaluation_period_idx
+						ON reconciliations.evaluation (period_id, created_at DESC)
+						WHERE period_id IS NOT NULL;
+					ALTER TABLE reconciliations.alert
+						ADD COLUMN IF NOT EXISTS audit_sequence bigint;
+					ALTER TABLE reconciliations.alert_event
+						ADD COLUMN IF NOT EXISTS audit_sequence bigint;
+				`)
+				return err
+			},
+		},
+		// Backfill one rule_revision row per rule that predates the journal, so
+		// a rule created before this feature still has a retrievable definition
+		// at its current revision. audit_sequence 0 marks "not chained" — these
+		// snapshots are recovered, not witnessed, and the distinction should stay
+		// visible rather than being papered over with a plausible number.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					INSERT INTO reconciliations.rule_revision (
+						rule_id, revision, name, template_kind, template_spec,
+						explanation_cel, severity, cadence, enabled, schedule,
+						notifications, labels, audit_sequence, created_at
+					)
+					SELECT
+						id, revision, name, template_kind, template_spec,
+						explanation_cel, severity, cadence, enabled, schedule,
+						notifications, labels, 0, created_at
+					FROM reconciliations.rule
+					ON CONFLICT (rule_id, revision) DO NOTHING;
+				`)
+				return err
+			},
+		},
 	)
 }

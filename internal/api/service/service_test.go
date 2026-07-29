@@ -225,4 +225,35 @@ func (s *mockStore) ListAlertEvents(context.Context, uuid.UUID, storage.GetAlert
 	return nil, nil
 }
 
+func (s *mockStore) ListAuditEntries(context.Context, storage.AuditEntryFilters, int64, int) ([]models.AuditEntry, int64, error) {
+	return nil, 0, nil
+}
+func (s *mockStore) GetAuditEntry(context.Context, int64) (*models.AuditEntry, error) {
+	return nil, nil
+}
+func (s *mockStore) ChainHead(context.Context) (int64, []byte, error) {
+	return 0, nil, nil
+}
+func (s *mockStore) VerifyChain(context.Context, int64, int64) (*models.ChainVerification, error) {
+	return nil, nil
+}
+func (s *mockStore) ListRuleRevisions(context.Context, uuid.UUID) ([]models.RuleRevision, error) {
+	return nil, nil
+}
+func (s *mockStore) GetRuleRevision(context.Context, uuid.UUID, int64) (*models.RuleRevision, error) {
+	return nil, nil
+}
+func (s *mockStore) ListPeriodSeals(context.Context) ([]models.PeriodSeal, error) {
+	return nil, nil
+}
+func (s *mockStore) GetPeriodSeal(context.Context, string) (*models.PeriodSeal, error) {
+	return nil, nil
+}
+func (s *mockStore) VerifySealSignature(context.Context, *models.PeriodSeal) (bool, string, error) {
+	return false, "", nil
+}
+func (s *mockStore) ListVerificationKeys(context.Context) ([]storage.VerificationKey, error) {
+	return nil, nil
+}
+
 var _ Store = (*mockStore)(nil)

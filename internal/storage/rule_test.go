@@ -127,20 +127,20 @@ func TestRulePatchRejectsStaleExpectedRevision(t *testing.T) {
 	require.Equal(t, originalRevision+1, stored.Revision)
 }
 
-func TestRule_DeleteCascadesAndNotFound(t *testing.T) {
+// Deleting a rule used to cascade away every evaluation, alert and transition it
+// had produced. That is now inverted: deletion is a tombstone and the history
+// stays, because a journal that references deleted rows would be the one artefact
+// meant to survive an audit pointing at nothing.
+//
+// The rule still disappears from every read path, so callers see no behaviour
+// change — only the record does.
+func TestRule_DeleteTombstonesAndPreservesHistory(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	// First delete on a never-existed id is ErrNotFound.
+	// A delete on a never-existed id is still ErrNotFound.
 	require.ErrorIs(t, s.DeleteRule(ctx, uuid.New()), ErrNotFound)
 
-	// Rule + its OWN evaluation + an alert + an alert_event whose
-	// evaluation_id points at that same rule's evaluation. Deleting the rule
-	// must cascade through all of them. The alert_event → evaluation FK is the
-	// trap: the rule→evaluation cascade deletes the evaluation, so without
-	// ON DELETE CASCADE on that FK the surviving event row blocks the delete
-	// (regression: "no rule that ever fired can be deleted"). Using the rule's
-	// own eval here is load-bearing — a foreign eval would never exercise it.
 	ruleID, evID := seedRuleAndEval(t, s)
 
 	res, err := s.OpenOrUpdateAlert(ctx, defaultOpenInput(t, ruleID, evID))
@@ -149,17 +149,28 @@ func TestRule_DeleteCascadesAndNotFound(t *testing.T) {
 
 	require.NoError(t, s.DeleteRule(ctx, ruleID))
 
-	// Rule + evaluation + alert + alert_event should all be gone.
+	// Gone from the read paths.
 	_, err = s.GetRule(ctx, ruleID)
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.GetEvaluation(ctx, evID)
-	require.ErrorIs(t, err, ErrNotFound, "evaluation must be cascaded away with the rule")
-	_, err = s.GetAlert(ctx, res.Alert.ID)
-	require.ErrorIs(t, err, ErrNotFound)
+
+	// But the evidence, the case and its transitions all survive. The ON DELETE
+	// RESTRICT constraints are what guarantee no future code path can quietly
+	// bring the cascade back.
+	storedEval, err := s.GetEvaluation(ctx, evID)
+	require.NoError(t, err, "the evaluation must outlive its rule")
+	require.Equal(t, evID, storedEval.ID)
+
+	storedAlert, err := s.GetAlert(ctx, res.Alert.ID)
+	require.NoError(t, err, "the alert must outlive its rule")
+	require.Equal(t, res.Alert.ID, storedAlert.ID)
+
 	eventCount, err := s.db.NewSelect().Model((*models.AlertEvent)(nil)).
 		Where("alert_id = ?", res.Alert.ID).Count(ctx)
 	require.NoError(t, err)
-	require.Zero(t, eventCount, "alert_event rows must be cascaded away with the rule")
+	require.Positive(t, eventCount, "the transition history must outlive its rule")
+
+	// Deleting twice is a miss, not a second tombstone.
+	require.ErrorIs(t, s.DeleteRule(ctx, ruleID), ErrNotFound)
 }
 
 func TestRule_PatchFields(t *testing.T) {
