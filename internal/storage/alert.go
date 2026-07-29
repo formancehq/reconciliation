@@ -616,19 +616,23 @@ func (s *Storage) appendAlertEvent(
 ) (*models.AlertEvent, error) {
 	store := s.WithTx(tx)
 
+	// Take the chain lock BEFORE testing the barrier. Without it the test is
+	// advisory only: it can pass while a seal is still uncommitted, and this
+	// transition would then block on the same lock inside AppendAuditEntry, wake
+	// up after the seal has committed, and append anyway — landing a case
+	// movement in books that are already closed.
+	if err := store.lockAuditChain(ctx); err != nil {
+		return nil, err
+	}
+
 	// The closing barrier. A sealed period's cases do not move — that is what
 	// "closed" means to an auditor, and it is the one property a journal alone
 	// cannot provide. Under a periodic cadence the successor period opens a fresh
 	// case, so this rejects only genuine writes-into-closed-books: a late
 	// evaluation backdated into a sealed period, or an operator editing history.
-	sealed, err := store.IsPeriodSealed(ctx, alert.PeriodID)
-	if err != nil {
+	if err := store.assertPeriodWritable(ctx, alert.PeriodID,
+		fmt.Sprintf("the %s transition of alert %s", eventType, alert.ID)); err != nil {
 		return nil, err
-	}
-	if sealed {
-		return nil, fmt.Errorf(
-			"%w: period %q was closed, so alert %s can no longer transition (%s)",
-			ErrPeriodSealed, alert.PeriodID, alert.ID, eventType)
 	}
 
 	if at.IsZero() {

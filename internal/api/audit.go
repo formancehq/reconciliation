@@ -208,6 +208,21 @@ func verifyChainHandler(b backend.Backend) http.HandlerFunc {
 				return
 			}
 			from, to = seal.FirstSequence, seal.LastSequence
+
+			// A seal over an empty range stores lastSequence = firstSequence - 1,
+			// which for the very first seal is 0. Forwarding that to the storage
+			// layer would read as "no upper bound given" and verify the whole
+			// journal instead — answering a question about a different range than
+			// the one asked about. An empty range is intact by definition.
+			if to < from {
+				api.Ok(w, &verifyChainResponse{
+					OK:            true,
+					FirstSequence: from,
+					LastSequence:  to,
+					SealsCrossed:  []string{req.PeriodID},
+				})
+				return
+			}
 		}
 
 		result, err := b.GetService().VerifyChain(r.Context(), from, to)

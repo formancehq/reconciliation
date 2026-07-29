@@ -39,6 +39,40 @@ const auditChainLockObj = int32(0)
 // journal.
 var ErrAuditChainNotConfigured = errors.New("audit chain not configured")
 
+// lockAuditChain serialises the chain for the rest of the caller's transaction.
+//
+// Exported through this helper rather than inlined in AppendAuditEntry because
+// two callers need the lock *before* they decide whether to append at all: the
+// alert-transition and evaluation paths check whether the target period is
+// sealed, and that check is only meaningful if a seal cannot commit between the
+// check and the append. Postgres advisory locks are re-entrant within a
+// transaction, so taking it here and again inside AppendAuditEntry is free.
+func (s *Storage) lockAuditChain(ctx context.Context) error {
+	if _, err := s.db.NewRaw(
+		"SELECT pg_advisory_xact_lock(?, ?)", auditChainLockClass, auditChainLockObj,
+	).Exec(ctx); err != nil {
+		return e("acquire audit chain lock", err)
+	}
+	return nil
+}
+
+// assertPeriodWritable rejects a write into a closed period. MUST be called with
+// the chain lock already held — see lockAuditChain. Checking without the lock is
+// the race NumaryBot caught on the first review: the check passes while a seal is
+// still uncommitted, the write then blocks on the lock, and appends *after* the
+// seal without rechecking, landing evidence in books that are already closed.
+func (s *Storage) assertPeriodWritable(ctx context.Context, periodID, what string) error {
+	sealed, err := s.IsPeriodSealed(ctx, periodID)
+	if err != nil {
+		return err
+	}
+	if sealed {
+		return fmt.Errorf("%w: period %q was closed, so %s can no longer be recorded in it",
+			ErrPeriodSealed, periodID, what)
+	}
+	return nil
+}
+
 // ErrAuditAppendOutsideTx guards the one mistake that would quietly break the
 // chain: pg_advisory_xact_lock released at the end of an implicit single-statement
 // transaction leaves the head readable-then-stale, so two concurrent appends could
@@ -81,10 +115,8 @@ func (s *Storage) AppendAuditEntry(ctx context.Context, in AppendAuditInput) (*m
 		return nil, fmt.Errorf("audit append: empty memento for kind %s", in.Kind)
 	}
 
-	if _, err := s.db.NewRaw(
-		"SELECT pg_advisory_xact_lock(?, ?)", auditChainLockClass, auditChainLockObj,
-	).Exec(ctx); err != nil {
-		return nil, e("acquire audit chain lock", err)
+	if err := s.lockAuditChain(ctx); err != nil {
+		return nil, err
 	}
 
 	prevSequence, prevHash, err := s.chainHeadLocked(ctx)
@@ -230,7 +262,7 @@ func applyAuditFilters(q *bun.SelectQuery, f AuditEntryFilters) *bun.SelectQuery
 		for _, k := range f.Kinds {
 			kinds = append(kinds, string(k))
 		}
-		q = q.Where("kind IN (?)", bun.In(kinds))
+		q = q.Where("kind IN (?)", bun.List(kinds))
 	}
 	if f.RuleID != nil {
 		q = q.Where("rule_id = ?", *f.RuleID)
@@ -344,11 +376,24 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 	var expectedPrev []byte
 	if fromSeq > 1 {
 		prev, err := s.GetAuditEntry(ctx, fromSeq-1)
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return nil, err
-		}
-		if prev != nil {
+		switch {
+		case err == nil:
 			expectedPrev = prev.Hash
+		case errors.Is(err, ErrNotFound):
+			// In an intact chain the predecessor of any sequence above 1 exists.
+			// Its absence is a deletion, and reporting it beats silently skipping
+			// the first link check and returning OK for a chain that is broken at
+			// exactly the boundary the caller asked about.
+			missing := fromSeq - 1
+			result.OK = false
+			result.Violation = models.ChainViolationSequenceGap
+			result.AtSequence = &missing
+			result.Detail = fmt.Sprintf(
+				"sequence %d is missing, so the first link of the requested range cannot be verified: an entry was removed",
+				missing)
+			return result, nil
+		default:
+			return nil, err
 		}
 	}
 

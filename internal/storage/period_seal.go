@@ -68,18 +68,20 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 			ErrPeriodNotSealable, in.PeriodID)
 	}
 
+	// Lock first, THEN check whether the period is already sealed. Checking first
+	// lets two concurrent seals both pass, and the loser's insert then fails on
+	// the primary key — surfacing a double-click as a 500 instead of the conflict
+	// it is.
+	if err := s.lockAuditChain(ctx); err != nil {
+		return nil, err
+	}
+
 	existing, err := s.GetPeriodSeal(ctx, in.PeriodID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
 	if existing != nil {
 		return nil, fmt.Errorf("%w: %s was sealed at %s", ErrPeriodAlreadySealed, in.PeriodID, existing.SealedAt.Format(time.RFC3339))
-	}
-
-	if _, err := s.db.NewRaw(
-		"SELECT pg_advisory_xact_lock(?, ?)", auditChainLockClass, auditChainLockObj,
-	).Exec(ctx); err != nil {
-		return nil, e("acquire audit chain lock for seal", err)
 	}
 
 	headSeq, headHash, err := s.chainHeadLocked(ctx)
@@ -188,6 +190,11 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		AuditSequence:   entry.Sequence,
 	}
 	if _, err := s.db.NewInsert().Model(seal).Returning("*").Exec(ctx); err != nil {
+		// Belt and braces behind the lock: if a duplicate ever reaches the insert,
+		// report the conflict rather than an internal error.
+		if errors.Is(err, ErrDuplicateKeyValue) {
+			return nil, fmt.Errorf("%w: %s", ErrPeriodAlreadySealed, in.PeriodID)
+		}
 		return nil, e("store period seal", err)
 	}
 	return seal, nil

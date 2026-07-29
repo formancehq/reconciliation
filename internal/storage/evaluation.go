@@ -36,6 +36,22 @@ func (s *Storage) CreateEvaluation(ctx context.Context, ev *models.Evaluation) e
 }
 
 func (s *Storage) createEvaluation(ctx context.Context, ev *models.Evaluation) error {
+	// The barrier has to be here too, not only on the alert-transition path.
+	// A passing evaluation with no active alerts moves no case, so it never
+	// reaches appendAlertEvent — and would otherwise file fresh evidence under a
+	// period label whose seal has already counted its entries. "Everything for
+	// May" would then list more than May's seal attests to.
+	//
+	// Under the chain lock for the same reason as the transition path: an
+	// unlocked check is only advisory against a seal that has not yet committed.
+	if err := s.lockAuditChain(ctx); err != nil {
+		return err
+	}
+	if err := s.assertPeriodWritable(ctx, ev.PeriodID,
+		fmt.Sprintf("evaluation %s of rule %s", ev.ID, ev.RuleID)); err != nil {
+		return err
+	}
+
 	if _, err := s.db.NewInsert().Model(ev).Returning("*").Exec(ctx); err != nil {
 		return e("failed to create evaluation", err)
 	}

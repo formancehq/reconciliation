@@ -211,13 +211,22 @@ func (r *Runner) run(ctx context.Context, store Store, rule *models.Rule, evalua
 	// evidence in the period it examined.
 	periodID := rule.Cadence.PeriodID(req.PIT.Add(-req.SafetyMargin))
 
+	// Record the revision for EVERY evaluation, manual ones included. The rule was
+	// loaded before the reads and is fenced by AssertRuleRevision at commit, so
+	// this is the definition that actually produced the verdict. Leaving it unset
+	// on the manual path — as it was — meant those journal entries could not be
+	// linked back to the frozen definition once the rule was revised or deleted,
+	// which is exactly the link rule revisions exist to provide.
+	revision := rule.Revision
 	evaluation := &models.Evaluation{
 		ID: uuid.New(), RuleID: rule.ID, StartedAt: started, EndedAt: ended, PitPerSource: pitPerSource, CostUnits: costUnits,
-		PeriodID: periodID,
+		PeriodID: periodID, RuleRevision: &revision,
 	}
 	if completion != nil {
 		scheduledAt := completion.job.ScheduledAt
 		evaluation.ScheduledAt = &scheduledAt
+		// The claimed job's fenced revision wins: it is the one the occurrence
+		// identity was reserved against.
 		evaluation.RuleRevision = completion.revision
 	}
 

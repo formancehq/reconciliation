@@ -755,5 +755,28 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// Let a manually triggered evaluation record the revision it evaluated.
+		//
+		// The original constraint required both-or-neither on
+		// (scheduled_at, rule_revision), which forced manual evaluations to store
+		// a NULL revision — so their journal entries could not be linked back to
+		// the frozen definition that produced the verdict, which is most of the
+		// point of keeping revisions. Only the forward implication is actually
+		// load-bearing: a scheduled occurrence must carry a revision, because the
+		// partial unique index on (rule_id, rule_revision, scheduled_at) fences
+		// duplicate committed effects. Manual rows are outside that index.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					ALTER TABLE reconciliations.evaluation
+						DROP CONSTRAINT IF EXISTS evaluation_schedule_identity_chk;
+					ALTER TABLE reconciliations.evaluation
+						ADD CONSTRAINT evaluation_schedule_identity_chk CHECK (
+							scheduled_at IS NULL OR rule_revision IS NOT NULL
+						);
+				`)
+				return err
+			},
+		},
 	)
 }

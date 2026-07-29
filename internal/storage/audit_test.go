@@ -713,3 +713,174 @@ func TestAuditEntryTimestampSurvivesPostgresPrecision(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, verification.OK, "detail: %s", verification.Detail)
 }
+
+// --- regressions from the first review pass -------------------------------
+
+// A passing evaluation moves no case, so it never reaches appendAlertEvent and
+// used to file fresh evidence under a period whose seal had already counted its
+// entries. "Everything for May" would then list more than May's seal attests to.
+func TestSealedPeriodRefusesFurtherEvaluations(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+	sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+
+	// No alert involved at all — this is the quiet path.
+	now := time.Now().UTC()
+	err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
+		return tx.CreateEvaluation(ctx, &models.Evaluation{
+			ID: uuid.New(), RuleID: rule.ID, StartedAt: now, EndedAt: now,
+			PeriodID: "2026-05", Result: models.EvaluationPass,
+		})
+	})
+	require.ErrorIs(t, err, ErrPeriodSealed)
+
+	// The next period is unaffected.
+	require.NotPanics(t, func() {
+		auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationPass)
+	})
+}
+
+// A seal over an empty range stores lastSequence = firstSequence - 1, which for a
+// first seal is 0. Verification must read that as "nothing to check", not as "no
+// upper bound given" — otherwise it silently answers about a different range.
+func TestVerifyChainHandlesAnEmptySealedRange(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	// Seal before anything at all has been journalled.
+	seal := sealPeriod(t, store, ctx, "2026-04", models.Subject{Subject: "controller"})
+	require.Equal(t, int64(1), seal.FirstSequence)
+	require.Equal(t, int64(0), seal.LastSequence, "an empty range is last = first - 1")
+	require.Zero(t, seal.EntryCount)
+
+	// Activity afterwards must not be attributed to the empty period.
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+
+	// Storage still reports the whole journal as intact.
+	verification, err := store.VerifyChain(ctx, 0, 0)
+	require.NoError(t, err)
+	require.True(t, verification.OK)
+
+	// The empty range genuinely precedes everything: the seal's own entry is the
+	// first thing in the journal, so [firstSequence, lastSequence] = [1, 0]
+	// encloses nothing. This is the property the API's short-circuit relies on.
+	//
+	// Asserted directly rather than through ListAuditEntries, whose ToSeq of 0
+	// means "no upper bound" — a sensible convention for a query-param filter, but
+	// one that cannot express an empty range.
+	first, err := store.GetAuditEntry(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, models.AuditPeriodSealed, first.Kind)
+	require.Equal(t, "2026-04", first.PeriodID)
+	require.Equal(t, seal.AuditSequence, first.Sequence)
+
+	inRange, err := store.db.NewSelect().Model((*models.AuditEntry)(nil)).
+		Where("sequence >= ?", seal.FirstSequence).
+		Where("sequence <= ?", seal.LastSequence).Count(ctx)
+	require.NoError(t, err)
+	require.Zero(t, inRange, "an empty sealed range must enclose no entries")
+}
+
+// Verifying from a start whose predecessor was deleted used to skip the first
+// link check and report OK — a clean bill of health for a chain broken at exactly
+// the boundary the caller asked about.
+func TestVerifyChainReportsAMissingPredecessor(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+
+	disableImmutability(t, store, ctx, "audit_entry")
+	_, err := store.db.NewRaw("DELETE FROM reconciliations.audit_entry WHERE sequence = 2").Exec(ctx)
+	require.NoError(t, err)
+
+	// Start at 3, whose predecessor 2 is now gone.
+	verification, err := store.VerifyChain(ctx, 3, 0)
+	require.NoError(t, err)
+	require.False(t, verification.OK, "detail: %s", verification.Detail)
+	require.Equal(t, models.ChainViolationSequenceGap, verification.Violation)
+	require.Equal(t, int64(2), *verification.AtSequence)
+}
+
+// Every evaluation records the definition that produced its verdict, manual ones
+// included. Without it a verdict cannot be linked to the frozen revision once the
+// rule is revised — most of the point of keeping revisions.
+func TestEvaluationRecordsItsRuleRevision(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	revision := rule.Revision
+
+	now := time.Now().UTC()
+	ev := &models.Evaluation{
+		ID: uuid.New(), RuleID: rule.ID, StartedAt: now, EndedAt: now,
+		PeriodID: "2026-05", Result: models.EvaluationPass,
+		// No ScheduledAt: this is the manual path, which the schedule-identity
+		// constraint used to force into a NULL revision.
+		RuleRevision: &revision,
+	}
+	require.NoError(t, store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
+		return tx.CreateEvaluation(ctx, ev)
+	}))
+
+	entries, _, err := store.ListAuditEntries(ctx, AuditEntryFilters{
+		Kinds: []models.AuditEntryKind{models.AuditEvaluationCommitted},
+	}, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.NotNil(t, entries[0].RuleRevision)
+	require.Equal(t, revision, *entries[0].RuleRevision)
+
+	var memento audit.EvaluationMemento
+	require.NoError(t, json.Unmarshal(entries[0].Memento, &memento))
+	require.NotNil(t, memento.RuleRevision, "the memento must carry the revision too")
+	require.Equal(t, revision, *memento.RuleRevision)
+
+	// And the revision it names is retrievable.
+	frozen, err := store.GetRuleRevision(ctx, rule.ID, revision)
+	require.NoError(t, err)
+	require.Equal(t, rule.Name, frozen.Name)
+}
+
+// The config row and the signing-key row are written by separate statements. A
+// crash between them left a key that signs seals but is absent from the published
+// list, making every seal it signed permanently unverifiable — and later boots
+// took the fast path and never repaired it.
+func TestEnsureAuditChainRepublishesAMissingSigningKey(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	before, err := store.ListVerificationKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+
+	// Simulate the crash window: the key row never landed.
+	_, err = store.db.NewRaw("DELETE FROM reconciliations.audit_signing_key").Exec(ctx)
+	require.NoError(t, err)
+	gone, err := store.ListVerificationKeys(ctx)
+	require.NoError(t, err)
+	require.Empty(t, gone)
+
+	// A subsequent boot must repair it rather than carry on signing with a key
+	// nobody can look up.
+	reopened, err := EnsureAuditChain(ctx, NewStorage(store.pool), AuditChainSettings{Pepper: "test-pepper"})
+	require.NoError(t, err)
+
+	after, err := reopened.ListVerificationKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	require.Equal(t, before[0].KeyID, after[0].KeyID)
+	require.Equal(t, before[0].PublicKey, after[0].PublicKey)
+}

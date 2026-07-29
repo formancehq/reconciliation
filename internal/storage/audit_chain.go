@@ -107,6 +107,17 @@ func EnsureAuditChain(ctx context.Context, s *Storage, settings AuditChainSettin
 		if err != nil {
 			return nil, err
 		}
+		// Re-assert the published public key on every boot, not only on first
+		// boot. The config row and the key row are written by separate
+		// statements, so a crash between them would leave a key that signs seals
+		// but is absent from /audit-signing-keys — every seal it signed then
+		// reports an unknown signing key and becomes unverifiable, permanently,
+		// because later boots take this fast path. The insert is a no-op when the
+		// row is already there, so making it idempotent costs nothing and closes
+		// the window wherever the crash happened.
+		if err := recordSigningKey(ctx, s, signingKey); err != nil {
+			return nil, err
+		}
 		return s.WithAuditChain(audit.NewChain(key), signingKey), nil
 
 	case errors.Is(err, sql.ErrNoRows):
