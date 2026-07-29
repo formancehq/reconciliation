@@ -157,14 +157,20 @@ func (s *Storage) DeleteRule(ctx context.Context, id uuid.UUID) error {
 		}
 
 		memento, err := audit.BuildMemento(audit.RuleDeletedMemento{
-			RuleID:   rule.ID,
-			Revision: rule.Revision + 1,
-			Name:     rule.Name,
+			RuleID: rule.ID,
+			// The definition in force at deletion, which has a frozen
+			// rule_revision row. Naming the post-bump revision instead — as this
+			// did — pointed the entry at a revision that is never frozen, so
+			// GET /rules/{id}/revisions/{n} would 404 for the one entry an
+			// auditor is most likely to follow.
+			Revision:             rule.Revision,
+			TombstonedAtRevision: rule.Revision + 1,
+			Name:                 rule.Name,
 		})
 		if err != nil {
 			return err
 		}
-		revision := rule.Revision + 1
+		revision := rule.Revision
 		_, err = store.AppendAuditEntry(ctx, AppendAuditInput{
 			Kind:         models.AuditRuleDeleted,
 			RuleID:       &rule.ID,

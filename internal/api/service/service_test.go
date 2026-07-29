@@ -252,6 +252,9 @@ func (s *mockStore) GetPeriodSeal(context.Context, string) (*models.PeriodSeal, 
 func (s *mockStore) VerifySealSignature(context.Context, *models.PeriodSeal) (bool, string, error) {
 	return false, "", nil
 }
+func (s *mockStore) VerifySealIntegrity(*models.PeriodSeal) (bool, string) {
+	return true, ""
+}
 func (s *mockStore) ListVerificationKeys(context.Context) ([]storage.VerificationKey, error) {
 	return nil, nil
 }

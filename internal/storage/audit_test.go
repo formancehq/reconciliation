@@ -1106,3 +1106,82 @@ func TestVerifySealDistinguishesUnsignedFromStripped(t *testing.T) {
 	require.Contains(t, reason, "no signing key was available")
 	require.NotContains(t, reason, "removed", "must not read as an incident")
 }
+
+// Every ruleRevision in the journal must resolve to a frozen definition. The
+// deletion entry named the post-bump revision, which is never frozen — so
+// GET /rules/{id}/revisions/{n} 404'd for precisely the entry an auditor is most
+// likely to follow. The bump still happens on the rule row, to fence in-flight
+// scheduled jobs; it just is not what the entry points at.
+func TestRuleDeletionEntryNamesAResolvableRevision(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	newName := "renamed"
+	require.NoError(t, store.PatchRule(ctx, rule.ID, RulePatch{Name: &newName}))
+	require.NoError(t, store.DeleteRule(ctx, rule.ID))
+
+	entries, _, err := store.ListAuditEntries(ctx, AuditEntryFilters{
+		Kinds: []models.AuditEntryKind{models.AuditRuleDeleted}, RuleID: &rule.ID,
+	}, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.NotNil(t, entries[0].RuleRevision)
+
+	// Whatever it names must be readable.
+	frozen, err := store.GetRuleRevision(ctx, rule.ID, *entries[0].RuleRevision)
+	require.NoError(t, err, "the deletion entry points at revision %d, which has no frozen definition", *entries[0].RuleRevision)
+	require.Equal(t, "renamed", frozen.Name, "should be the definition in force at deletion")
+
+	// The memento still records the fencing bump, so nothing is lost.
+	var memento audit.RuleDeletedMemento
+	require.NoError(t, json.Unmarshal(entries[0].Memento, &memento))
+	require.Equal(t, *entries[0].RuleRevision, memento.Revision)
+	require.Equal(t, memento.Revision+1, memento.TombstonedAtRevision)
+
+	// Every ruleRevision in the whole journal resolves.
+	all, _, err := store.ListAuditEntries(ctx, AuditEntryFilters{RuleID: &rule.ID}, 0, 100)
+	require.NoError(t, err)
+	for _, e := range all {
+		if e.RuleRevision == nil {
+			continue
+		}
+		_, err := store.GetRuleRevision(ctx, rule.ID, *e.RuleRevision)
+		require.NoError(t, err, "entry %d (%s) names unreadable revision %d", e.Sequence, e.Kind, *e.RuleRevision)
+	}
+}
+
+// An empty sealed range has no entries to recompute, so a chain walk crosses no
+// seal and re-derives nothing. The seal itself can still have been edited, which
+// is what VerifySealIntegrity is for — signature aside, since an installation
+// without a signing key produces unsigned seals by design.
+func TestVerifySealIntegrityCatchesAnEditedSeal(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+	seal := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+
+	ok, reason := store.VerifySealIntegrity(seal)
+	require.True(t, ok, reason)
+
+	// Any field that enters the sealing hash must break it.
+	for name, mutate := range map[string]func(*models.PeriodSeal){
+		"entryCount":    func(s *models.PeriodSeal) { s.EntryCount = 999 },
+		"lastSequence":  func(s *models.PeriodSeal) { s.LastSequence += 1 },
+		"stateHash":     func(s *models.PeriodSeal) { s.StateHash = []byte("other") },
+		"periodID":      func(s *models.PeriodSeal) { s.PeriodID = "2026-06" },
+		"lastAuditHash": func(s *models.PeriodSeal) { s.LastAuditHash = []byte("other") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			edited := *seal
+			mutate(&edited)
+			ok, reason := store.VerifySealIntegrity(&edited)
+			require.False(t, ok, "%s is not bound into the sealing hash", name)
+			require.Contains(t, reason, "no longer reproduces")
+		})
+	}
+}

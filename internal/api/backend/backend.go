@@ -56,6 +56,7 @@ type Service interface {
 	GetPeriodSeal(ctx context.Context, periodID string) (*models.PeriodSeal, error)
 	SealPeriod(ctx context.Context, periodID string) (*models.PeriodSeal, error)
 	VerifySealSignature(ctx context.Context, periodID string) (*models.PeriodSeal, bool, string, error)
+	VerifySealIntegrity(ctx context.Context, periodID string) (bool, string, error)
 	ListVerificationKeys(ctx context.Context) ([]storage.VerificationKey, error)
 }
 

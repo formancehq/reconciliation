@@ -465,6 +465,9 @@ func (f *fakeV1Store) GetPeriodSeal(_ context.Context, periodID string) (*models
 func (f *fakeV1Store) VerifySealSignature(context.Context, *models.PeriodSeal) (bool, string, error) {
 	return true, "", nil
 }
+func (f *fakeV1Store) VerifySealIntegrity(*models.PeriodSeal) (bool, string) {
+	return true, ""
+}
 
 func (f *fakeV1Store) ListVerificationKeys(context.Context) ([]storage.VerificationKey, error) {
 	return nil, nil

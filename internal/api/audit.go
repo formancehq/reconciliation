@@ -28,22 +28,22 @@ import (
 // what a verifier needs is the exact bytes that were hashed — re-serialising
 // through a JSON view would defeat the purpose.
 type auditEntryResponse struct {
-	Sequence      int64             `json:"sequence"`
-	At            time.Time         `json:"at"`
-	Kind          string            `json:"kind"`
-	RuleID        *string           `json:"ruleID,omitempty"`
-	RuleRevision  *int64            `json:"ruleRevision,omitempty"`
-	AlertID       *string           `json:"alertID,omitempty"`
-	EvaluationID  *string           `json:"evaluationID,omitempty"`
-	PeriodID      string            `json:"periodID,omitempty"`
-	Subject       subjectResponse   `json:"subject"`
-	MementoDigest string            `json:"mementoDigest"`
-	PrevHash      string            `json:"prevHash,omitempty"`
-	Hash          string            `json:"hash"`
-	HashVersion   int               `json:"hashVersion"`
-	Memento       string            `json:"memento,omitempty"`
-	MementoJSON   json.RawMessage   `json:"mementoJSON,omitempty"`
-	CreatedAt     time.Time         `json:"createdAt"`
+	Sequence      int64           `json:"sequence"`
+	At            time.Time       `json:"at"`
+	Kind          string          `json:"kind"`
+	RuleID        *string         `json:"ruleID,omitempty"`
+	RuleRevision  *int64          `json:"ruleRevision,omitempty"`
+	AlertID       *string         `json:"alertID,omitempty"`
+	EvaluationID  *string         `json:"evaluationID,omitempty"`
+	PeriodID      string          `json:"periodID,omitempty"`
+	Subject       subjectResponse `json:"subject"`
+	MementoDigest string          `json:"mementoDigest"`
+	PrevHash      string          `json:"prevHash,omitempty"`
+	Hash          string          `json:"hash"`
+	HashVersion   int             `json:"hashVersion"`
+	Memento       string          `json:"memento,omitempty"`
+	MementoJSON   json.RawMessage `json:"mementoJSON,omitempty"`
+	CreatedAt     time.Time       `json:"createdAt"`
 }
 
 // subjectResponse renders attribution. Actor is the human-readable form; the
@@ -110,8 +110,8 @@ type auditEntriesResponse struct {
 	Next *int64 `json:"next,omitempty"`
 	// Head is where the journal ends right now, so a client can tell how far it
 	// still has to walk without a second call.
-	Head      int64  `json:"head"`
-	HeadHash  string `json:"headHash,omitempty"`
+	Head     int64  `json:"head"`
+	HeadHash string `json:"headHash,omitempty"`
 }
 
 func listAuditEntriesHandler(b backend.Backend) http.HandlerFunc {
@@ -213,14 +213,29 @@ func verifyChainHandler(b backend.Backend) http.HandlerFunc {
 			// which for the very first seal is 0. Forwarding that to the storage
 			// layer would read as "no upper bound given" and verify the whole
 			// journal instead — answering a question about a different range than
-			// the one asked about. An empty range is intact by definition.
+			// the one asked about.
+			//
+			// But an empty range is NOT automatically intact: there are no entries
+			// to recompute, and the seal itself can still have been edited. A chain
+			// walk would normally re-derive each seal it crosses; with nothing
+			// walked, that never happens, so the seal is checked directly here.
 			if to < from {
-				api.Ok(w, &verifyChainResponse{
-					OK:            true,
+				ok, reason, err := b.GetService().VerifySealIntegrity(r.Context(), req.PeriodID)
+				if err != nil {
+					handleServiceErrors(w, r, err)
+					return
+				}
+				resp := &verifyChainResponse{
+					OK:            ok,
 					FirstSequence: from,
 					LastSequence:  to,
 					SealsCrossed:  []string{req.PeriodID},
-				})
+				}
+				if !ok {
+					resp.Violation = string(models.ChainViolationHashMismatch)
+					resp.Detail = reason
+				}
+				api.Ok(w, resp)
 				return
 			}
 		}
@@ -245,7 +260,7 @@ func verifyChainHandler(b backend.Backend) http.HandlerFunc {
 
 func parseAuditFilters(r *http.Request) (storage.AuditEntryFilters, int64, int, error) {
 	var (
-		f       storage.AuditEntryFilters
+		f        storage.AuditEntryFilters
 		afterSeq int64
 		limit    int
 	)

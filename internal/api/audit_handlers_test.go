@@ -250,15 +250,21 @@ func TestVerifyChain_PeriodAndRangeAreMutuallyExclusive(t *testing.T) {
 }
 
 // A seal over an empty range stores lastSequence = firstSequence - 1. Forwarding
-// that to storage would read as "no upper bound" and verify the whole journal,
+// that to VerifyChain would read as "no upper bound" and verify the whole journal,
 // answering about a different range than the caller asked about.
-func TestVerifyChain_EmptySealedRangeShortCircuits(t *testing.T) {
+//
+// But empty is not automatically intact: there are no entries to recompute, so a
+// walk would cross no seal and re-derive nothing, while the seal itself can still
+// have been edited. The seal is therefore checked directly.
+func TestVerifyChain_EmptySealedRangeChecksTheSealItself(t *testing.T) {
 	t.Parallel()
 	srv, rec := auditRouter(t)
 
 	rec.svc.EXPECT().GetPeriodSeal(gomock.Any(), "2026-04").
 		Return(&models.PeriodSeal{PeriodID: "2026-04", FirstSequence: 1, LastSequence: 0}, nil)
-	// Deliberately no VerifyChain expectation: reaching storage would be the bug.
+	rec.svc.EXPECT().VerifySealIntegrity(gomock.Any(), "2026-04").Return(true, "", nil)
+	// Deliberately no VerifyChain expectation: walking the journal here would be
+	// answering the wrong question.
 
 	status, body := post(t, srv, "/audit-entries/verify", `{"periodID":"2026-04"}`)
 	require.Equal(t, http.StatusOK, status)
@@ -266,6 +272,26 @@ func TestVerifyChain_EmptySealedRangeShortCircuits(t *testing.T) {
 	require.True(t, data["ok"].(bool))
 	require.EqualValues(t, 1, data["firstSequence"])
 	require.EqualValues(t, 0, data["lastSequence"])
+	require.Equal(t, []any{"2026-04"}, data["sealsCrossed"])
+}
+
+// And an edited seal over an empty range must not report intact — the case the
+// unconditional short-circuit used to hide.
+func TestVerifyChain_EmptySealedRangeReportsAnEditedSeal(t *testing.T) {
+	t.Parallel()
+	srv, rec := auditRouter(t)
+
+	rec.svc.EXPECT().GetPeriodSeal(gomock.Any(), "2026-04").
+		Return(&models.PeriodSeal{PeriodID: "2026-04", FirstSequence: 1, LastSequence: 0}, nil)
+	rec.svc.EXPECT().VerifySealIntegrity(gomock.Any(), "2026-04").
+		Return(false, "the seal for period \"2026-04\" no longer reproduces its own sealing hash", nil)
+
+	status, body := post(t, srv, "/audit-entries/verify", `{"periodID":"2026-04"}`)
+	require.Equal(t, http.StatusOK, status)
+	data := body["data"].(map[string]any)
+	require.False(t, data["ok"].(bool))
+	require.Equal(t, "HASH_MISMATCH", data["violation"])
+	require.Contains(t, data["detail"], "no longer reproduces")
 }
 
 // --- periods ---------------------------------------------------------------

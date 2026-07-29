@@ -63,12 +63,19 @@ func NewRuleMemento(r *models.Rule) (RuleMemento, error) {
 }
 
 // RuleDeletedMemento records a tombstone. The definition is not repeated — the
-// creation and revision entries already carry it, and the chain is read in
-// order.
+// creation and revision entries already carry it, and the chain is read in order.
+//
+// Revision is the definition that was IN FORCE when the control was deleted, and
+// the entry's ruleRevision matches it, so it resolves against a frozen revision
+// like every other entry. TombstonedAtRevision is the bump the delete applies to
+// the rule row to fence in-flight scheduled jobs; it deliberately has no frozen
+// definition of its own, because a deletion is the end of a definition rather
+// than a new one.
 type RuleDeletedMemento struct {
-	RuleID   uuid.UUID `json:"ruleID"`
-	Revision int64     `json:"revision"`
-	Name     string    `json:"name"`
+	RuleID               uuid.UUID `json:"ruleID"`
+	Revision             int64     `json:"revision"`
+	TombstonedAtRevision int64     `json:"tombstonedAtRevision"`
+	Name                 string    `json:"name"`
 }
 
 // EvaluationMemento records one rule execution.

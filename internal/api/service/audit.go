@@ -143,6 +143,17 @@ func (s *Service) VerifySealSignature(ctx context.Context, periodID string) (*mo
 	return seal, ok, reason, nil
 }
 
+// VerifySealIntegrity re-derives a seal's own sealing hash, without regard to its
+// signature.
+func (s *Service) VerifySealIntegrity(ctx context.Context, periodID string) (bool, string, error) {
+	seal, err := s.store.GetPeriodSeal(ctx, periodID)
+	if err != nil {
+		return false, "", newStorageError(err, "getting period seal")
+	}
+	ok, reason := s.store.VerifySealIntegrity(seal)
+	return ok, reason, nil
+}
+
 // ListVerificationKeys publishes the public keys an auditor needs. Retired keys
 // stay listed: a seal signed two years ago must remain checkable.
 func (s *Service) ListVerificationKeys(ctx context.Context) ([]storage.VerificationKey, error) {

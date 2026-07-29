@@ -292,6 +292,32 @@ func (s *Storage) IsPeriodSealed(ctx context.Context, periodID string) (bool, er
 	return count > 0, nil
 }
 
+// VerifySealIntegrity re-derives a seal's sealing hash from its own stored fields
+// and reports whether it still matches — no signature involved.
+//
+// Separate from VerifySealSignature because the two answer different questions. An
+// installation with no signing key produces unsigned seals by design, so asking
+// about the signature there is meaningless; asking whether the seal's own numbers
+// still reproduce its hash is always meaningful. This is what a chain walk needs
+// when a sealed range contains no entries to walk: there is nothing to recompute,
+// but the seal itself can still have been edited.
+func (s *Storage) VerifySealIntegrity(seal *models.PeriodSeal) (bool, string) {
+	recomputed := audit.ComputeSealingHash(audit.SealInput{
+		PeriodID:      seal.PeriodID,
+		FirstSequence: seal.FirstSequence,
+		LastSequence:  seal.LastSequence,
+		EntryCount:    seal.EntryCount,
+		LastAuditHash: seal.LastAuditHash,
+		StateHash:     seal.StateHash,
+	})
+	if hexOf(recomputed) != hexOf(seal.SealingHash) {
+		return false, fmt.Sprintf(
+			"the seal for period %q no longer reproduces its own sealing hash: its recorded fields were altered",
+			seal.PeriodID)
+	}
+	return true, ""
+}
+
 // VerifySealSignature re-derives a seal's sealing hash and checks its signature
 // against the key that signed it, including a retired one.
 //

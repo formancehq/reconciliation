@@ -70,6 +70,7 @@ type Store interface {
 	ListPeriodSeals(ctx context.Context) ([]models.PeriodSeal, error)
 	GetPeriodSeal(ctx context.Context, periodID string) (*models.PeriodSeal, error)
 	VerifySealSignature(ctx context.Context, seal *models.PeriodSeal) (bool, string, error)
+	VerifySealIntegrity(seal *models.PeriodSeal) (bool, string)
 	ListVerificationKeys(ctx context.Context) ([]storage.VerificationKey, error)
 }
 
