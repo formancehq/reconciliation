@@ -778,5 +778,50 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// Close the TRUNCATE bypass, and make the guard name the table it fired on.
+		//
+		// A FOR EACH ROW trigger does not fire on TRUNCATE, so the entire journal
+		// could be emptied with no enforcement at all — verified by doing it: five
+		// entries to zero, silently. That falsifies the whole immutability claim,
+		// since removing every entry is strictly easier than editing one. REVOKE
+		// does not help, because the owner keeps implicit privileges.
+		//
+		// The message fix is small but matters for an audit feature: the shared
+		// function hardcoded audit_entry, so an operator blocked on period_seal was
+		// told about a table they had not touched.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					CREATE OR REPLACE FUNCTION reconciliations.audit_entry_immutable()
+						RETURNS trigger
+						LANGUAGE plpgsql
+					AS $$
+					BEGIN
+						RAISE EXCEPTION
+							'%.% is append-only: % is not permitted',
+							TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP
+							USING ERRCODE = 'restrict_violation',
+							      HINT = 'The audit journal is immutable by construction. Corrections are recorded as new entries.';
+					END;
+					$$;
+
+					DROP TRIGGER IF EXISTS audit_entry_no_truncate ON reconciliations.audit_entry;
+					CREATE TRIGGER audit_entry_no_truncate
+						BEFORE TRUNCATE ON reconciliations.audit_entry
+						FOR EACH STATEMENT EXECUTE FUNCTION reconciliations.audit_entry_immutable();
+
+					DROP TRIGGER IF EXISTS rule_revision_no_truncate ON reconciliations.rule_revision;
+					CREATE TRIGGER rule_revision_no_truncate
+						BEFORE TRUNCATE ON reconciliations.rule_revision
+						FOR EACH STATEMENT EXECUTE FUNCTION reconciliations.audit_entry_immutable();
+
+					DROP TRIGGER IF EXISTS period_seal_no_truncate ON reconciliations.period_seal;
+					CREATE TRIGGER period_seal_no_truncate
+						BEFORE TRUNCATE ON reconciliations.period_seal
+						FOR EACH STATEMENT EXECUTE FUNCTION reconciliations.audit_entry_immutable();
+				`)
+				return err
+			},
+		},
 	)
 }

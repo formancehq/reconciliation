@@ -310,7 +310,16 @@ func (s *Storage) VerifySealSignature(ctx context.Context, seal *models.PeriodSe
 		return false, "the seal's fields do not reproduce its sealing hash", nil
 	}
 	if len(seal.Signature) == 0 {
-		return false, "the seal carries no signature", nil
+		// Two very different situations, previously reported identically. An
+		// auditor needs to tell "nobody was configured to sign this" from "the
+		// signature was taken off", because only the second is an incident.
+		if seal.SigningKeyID != "" {
+			return false, fmt.Sprintf(
+				"the signature was removed: this seal names signing key %q but carries none",
+				seal.SigningKeyID), nil
+		}
+		return false, "this seal was recorded without a signature because no signing key was available at the time; " +
+			"it is not evidence of tampering, but it cannot be verified by a third party either", nil
 	}
 
 	var row auditSigningKeyRow

@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"time"
 
@@ -243,13 +244,43 @@ var periodIDFormats = []*regexp.Regexp{
 // ValidPeriodID reports whether id is a period a supported cadence can actually
 // produce. ContinuousPeriod is excluded deliberately: it is a real period id but
 // not a sealable one, and the caller rejects it with a more specific error.
+//
+// Shape is necessary but not sufficient. "2026-13", "2026-02-31" and "2026-W99"
+// all match their patterns and name no real period, and sealing one consumes a
+// range of the journal permanently under a label nobody will ever query. So the
+// value is round-tripped through the calendar: parsed, then re-rendered by the
+// same Cadence.PeriodID that produced legitimate ids, and required to match. That
+// makes the check exactly as strict as the producer, with no second definition of
+// "valid" to drift out of step.
 func ValidPeriodID(id string) bool {
-	for _, format := range periodIDFormats {
-		if format.MatchString(id) {
-			return true
+	switch {
+	case periodIDFormats[0].MatchString(id): // daily
+		day, err := time.Parse("2006-01-02", id)
+		return err == nil && CadenceDaily.PeriodID(day) == id
+
+	case periodIDFormats[1].MatchString(id): // weekly
+		var year, week int
+		if _, err := fmt.Sscanf(id, "%04d-W%02d", &year, &week); err != nil {
+			return false
 		}
+		if week < 1 || week > 53 {
+			return false
+		}
+		// Jan 4th is always in ISO week 1, so stepping from its Monday lands on
+		// the Monday of the requested week — for a week that exists. Week 53 in a
+		// 52-week year overflows into the next ISO year, which the round-trip
+		// catches.
+		jan4 := time.Date(year, time.January, 4, 0, 0, 0, 0, time.UTC)
+		monday := jan4.AddDate(0, 0, -int((jan4.Weekday()+6)%7))
+		return CadenceWeekly.PeriodID(monday.AddDate(0, 0, (week-1)*7)) == id
+
+	case periodIDFormats[2].MatchString(id): // monthly
+		month, err := time.Parse("2006-01", id)
+		return err == nil && CadenceMonthly.PeriodID(month) == id
+
+	default:
+		return false
 	}
-	return false
 }
 
 // ChainViolationType names the ways a chain walk can fail. The set is closed:

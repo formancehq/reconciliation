@@ -1038,3 +1038,71 @@ func TestListPeriodSealsOrdersMostRecentFirst(t *testing.T) {
 	require.Equal(t, "2026-06", seals[0].PeriodID, "most recently sealed first")
 	require.Equal(t, "2026-05", seals[1].PeriodID)
 }
+
+// A FOR EACH ROW trigger does not fire on TRUNCATE, so before the statement-level
+// guard the entire journal could be emptied silently — verified against the local
+// stack, five entries to zero. That falsifies the immutability claim outright,
+// since removing every entry is easier than editing one.
+func TestAuditJournalCannotBeTruncated(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+	sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+
+	before, err := store.db.NewSelect().Model((*models.AuditEntry)(nil)).Count(ctx)
+	require.NoError(t, err)
+	require.Positive(t, before)
+
+	for _, table := range []string{"audit_entry", "rule_revision", "period_seal"} {
+		_, err := store.db.NewRaw("TRUNCATE reconciliations." + table).Exec(ctx)
+		require.ErrorContains(t, err, "append-only", "TRUNCATE on %s must be refused", table)
+		// And the guard names the table the operator actually touched, rather than
+		// always blaming audit_entry.
+		require.ErrorContains(t, err, table)
+	}
+
+	after, err := store.db.NewSelect().Model((*models.AuditEntry)(nil)).Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "nothing may be removed")
+
+	// The chain is still verifiable, which is the property all of this protects.
+	verification, err := store.VerifyChain(ctx, 0, 0)
+	require.NoError(t, err)
+	require.True(t, verification.OK, "detail: %s", verification.Detail)
+}
+
+// An intentionally unsigned seal and one whose signature was stripped used to
+// report identically. Only the second is an incident, so an auditor has to be able
+// to tell them apart.
+func TestVerifySealDistinguishesUnsignedFromStripped(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+	seal := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	require.NotEmpty(t, seal.Signature)
+
+	// Signature removed, key id retained: tampering.
+	stripped := *seal
+	stripped.Signature = nil
+	ok, reason, err := store.VerifySealSignature(ctx, &stripped)
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Contains(t, reason, "was removed")
+	require.Contains(t, reason, seal.SigningKeyID)
+
+	// Neither signature nor key id: nothing was configured to sign it.
+	unsigned := *seal
+	unsigned.Signature = nil
+	unsigned.SigningKeyID = ""
+	ok, reason, err = store.VerifySealSignature(ctx, &unsigned)
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Contains(t, reason, "no signing key was available")
+	require.NotContains(t, reason, "removed", "must not read as an incident")
+}
