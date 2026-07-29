@@ -98,7 +98,9 @@ What enters the hash is a subject snapshot: the token subject, a one-byte **sour
 
 ### Immutability
 
-A `BEFORE UPDATE OR DELETE` trigger raises on `audit_entry`, `rule_revision` and `period_seal`. The trigger — not the grant — is the enforcement that always holds: a table's owner keeps implicit privileges that no `REVOKE` can remove.
+A `BEFORE UPDATE OR DELETE` row trigger **plus** a `BEFORE TRUNCATE` statement trigger raise on `audit_entry`, `rule_revision` and `period_seal`. The triggers — not the grant — are the enforcement that always holds: a table's owner keeps implicit privileges that no `REVOKE` can remove.
+
+Both are needed, and the second was missing at first. A `FOR EACH ROW` trigger does not fire on `TRUNCATE`, so the entire journal could be emptied with nothing raised — verified by doing it. Removing every entry is strictly easier than editing one, so a guard that catches the edit and misses the wipe is not a guard.
 
 `REVOKE UPDATE, DELETE, TRUNCATE … FROM PUBLIC` is applied as defence in depth, and becomes meaningful when the service connects as a role that does not own the tables. **That is the recommended production posture** and is an operator step, not something the migration can achieve on its own.
 
@@ -114,6 +116,7 @@ A `BEFORE UPDATE OR DELETE` trigger raises on `audit_entry`, `rule_revision` and
 | Reorder or splice entries | `BROKEN_LINK` | An entry's `prev_hash` no longer matches its predecessor. |
 | Rewrite an entry and its hash | `HASH_MISMATCH` downstream | The next entry was hashed against the original value. Rewriting forward requires the chain key. |
 | Alter a period seal | `HASH_MISMATCH` at the seal boundary | The seal is re-derived from its own fields during the walk. |
+| `TRUNCATE` any of the three tables | Refused outright | Statement-level trigger; a row trigger would not fire. |
 | Delete the tail, below a seal | `SEQUENCE_GAP` | A seal commits to a boundary that no longer exists. |
 
 The walk stops at the first violation. Past a break, every downstream comparison is meaningless, so listing more would be listing noise — the same reason the Ledger checker halts on the first mismatch.
@@ -167,6 +170,8 @@ Two consequences, both intentional:
 
 Sealing is **not idempotent**: a second seal is a 409, since it would either contradict the first or silently do nothing.
 
+Period ids are validated against the calendar, not merely against a shape. `2026-13`, `2026-02-31` and `2026-W99` all match their patterns and name no real period, and sealing one would consume a range of the journal permanently under a label nobody will ever query — in a seal that cannot be corrected. The check round-trips the id through the same `Cadence.PeriodID` that produces legitimate ones, so it is exactly as strict as the producer.
+
 ---
 
 ## 5. Operating it
@@ -174,7 +179,7 @@ Sealing is **not idempotent**: a second seal is a 409, since it would either con
 | Concern | What to do |
 |---|---|
 | **Pepper** | Set `--audit-chain-pepper` from a secret manager before first boot. Changing it afterwards is fatal by design. Without it, the service logs a warning at every start naming what is weaker. |
-| **Signing key** | Set `--audit-signing-key-seed`; the private key then never touches the database. When unset, one is generated on first boot, stored, and the seed logged **once** so it can be moved into configuration. |
+| **Signing key** | Set `--audit-signing-key-seed`; the private key then never touches the database. When unset, one is generated on first boot and stored — the seed is **not** logged, because logs usually have broader read access and longer retention than the database, and writing a signing key there would invert the very key separation the seal signature exists to provide. Read it from `audit_chain_config.signing_private_seed` when you are ready to move it into configuration. |
 | **Key rotation** | Supply a new seed. The previous key is retired but retained in `audit_signing_key`, so seals it signed stay verifiable — `GET /audit-signing-keys` serves retired keys too. |
 | **Hardening** | Run the service as a role that does not own the `reconciliations` schema, so the `REVOKE` has teeth. |
 | **Backups** | The journal is the artefact of record. A backup that captures the projections but not `audit_entry` captures the claims and not the proof. |
