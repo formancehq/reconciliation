@@ -71,7 +71,7 @@ func newServeCommand(version string) *cobra.Command {
 	cmd.Flags().String(stackURLFlag, "", "Stack url")
 	cmd.Flags().String(stackClientIDFlag, "", "Stack client ID")
 	cmd.Flags().String(stackClientSecretFlag, "", "Stack client secret")
-	cmd.Flags().Bool(audit.AuditEnabledFlag, true, "Enable HTTP audit")
+	cmd.Flags().Bool(audit.AuditEnabledFlag, false, "Enable HTTP audit")
 
 	otlpmetrics.AddFlags(cmd.Flags())
 	otlptraces.AddFlags(cmd.Flags())

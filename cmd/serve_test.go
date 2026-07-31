@@ -5,6 +5,7 @@ import (
 
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/formancehq/go-libs/logging"
+	"github.com/formancehq/go-libs/v5/pkg/audit"
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -57,4 +58,12 @@ func TestServeDoesNotExposeEmbeddedSchedulerFlags(t *testing.T) {
 	flags := newServeCommand("test").Flags()
 	require.Nil(t, flags.Lookup("scheduler-enabled"))
 	require.Nil(t, flags.Lookup("scheduler-interval"))
+}
+
+func TestAuditDefaultsToDisabled(t *testing.T) {
+	cmd := newServeCommand("test")
+
+	enabled, err := cmd.Flags().GetBool(audit.AuditEnabledFlag)
+	require.NoError(t, err)
+	require.False(t, enabled, "HTTP audit must stay opt-in")
 }
