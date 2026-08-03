@@ -198,8 +198,8 @@ flowchart LR
   if the alert isn't snoozed).
 - `snooze` and `unsnooze` are status-neutral `alert_event` rows
   (`prev_status == new_status`) and themselves notify
-  (`reconciliation.alert.snoozed` / `.unsnoozed`), so downstream consumers can
-  reflect the mute state.
+  (`reconciliation.snoozed_alert` / `.unsnoozed_alert`), so downstream
+  consumers can reflect the mute state.
 
 > **V1 scope.** Snooze is **per-alert**. Rule-level snooze (a maintenance window
 > that mutes a whole rule before it fires) and snooze-vs-digest interaction are

@@ -137,7 +137,7 @@ for existing rules and rows. Periodic scoping is **opt-in per rule**.
 
 ## Interaction with webhooks
 
-`period_id` rides on the `Alert` in every [`reconciliation.alert.*` event](api.md)
+`period_id` rides on the `Alert` in every [`reconciliation.*_alert` event](api.md)
 payload, so consumers can route/aggregate by period. `reopened` now means a
 *within-period* reopen; the same fingerprint failing in a new period is a fresh
 `opened`.

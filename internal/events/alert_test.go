@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,16 @@ func TestEventTypeFor(t *testing.T) {
 			want:  EventTypeAlertAccepted,
 		},
 		{
+			name:  "snooze → snoozed",
+			event: models.AlertEvent{Type: models.AlertEventSnooze, PrevStatus: statusPtr(models.AlertOpen), NewStatus: models.AlertOpen},
+			want:  EventTypeAlertSnoozed,
+		},
+		{
+			name:  "unsnooze → unsnoozed",
+			event: models.AlertEvent{Type: models.AlertEventUnsnooze, PrevStatus: statusPtr(models.AlertOpen), NewStatus: models.AlertOpen},
+			want:  EventTypeAlertUnsnoozed,
+		},
+		{
 			name:  "unknown type → empty (do not publish)",
 			event: models.AlertEvent{Type: models.AlertEventType("bogus")},
 			want:  "",
@@ -72,6 +83,33 @@ func TestEventTypeFor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, EventTypeFor(&tc.event))
 		})
+	}
+}
+
+func TestPublicEventTypeNames(t *testing.T) {
+	t.Parallel()
+	types := []struct {
+		eventType   string
+		wantType    string
+		wantWebhook string
+	}{
+		{EventTypeAlertOpened, "OPENED_ALERT", "reconciliation.opened_alert"},
+		{EventTypeAlertUpdated, "UPDATED_ALERT", "reconciliation.updated_alert"},
+		{EventTypeAlertAcknowledged, "ACKNOWLEDGED_ALERT", "reconciliation.acknowledged_alert"},
+		{EventTypeAlertResolved, "RESOLVED_ALERT", "reconciliation.resolved_alert"},
+		{EventTypeAlertAccepted, "ACCEPTED_ALERT", "reconciliation.accepted_alert"},
+		{EventTypeAlertReopened, "REOPENED_ALERT", "reconciliation.reopened_alert"},
+		{EventTypeAlertSnoozed, "SNOOZED_ALERT", "reconciliation.snoozed_alert"},
+		{EventTypeAlertUnsnoozed, "UNSNOOZED_ALERT", "reconciliation.unsnoozed_alert"},
+	}
+	require.Len(t, types, 8)
+
+	for _, tc := range types {
+		require.Equal(t, tc.wantType, tc.eventType)
+		// Webhooks normalizes the envelope by lowercasing app and type, then
+		// joining both with a dot.
+		got := strings.ToLower(EventApp) + "." + strings.ToLower(tc.eventType)
+		require.Equal(t, tc.wantWebhook, got)
 	}
 }
 
@@ -122,7 +160,7 @@ func TestPublisher_PublishAlertEvent(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.msgs[0].Payload, &env))
 	require.Equal(t, EventApp, env.App)
 	require.Equal(t, EventVersion, env.Version)
-	require.Equal(t, EventTypeAlertResolved, env.Type)
+	require.Equal(t, "RESOLVED_ALERT", env.Type)
 	require.Equal(t, event.ID.String(), env.IdempotencyKey)
 	require.True(t, event.At.Equal(env.Date))
 

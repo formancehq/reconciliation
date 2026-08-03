@@ -7,13 +7,13 @@
 
 Before the durable [scheduler worker](./scheduler.md) landed, evaluation was
 on-demand: an alert re-failed only when a human (or a script) re-ran the rule,
-so the `reconciliation.alert.updated` event was rare and meaningful.
+so the `reconciliation.updated_alert` event was rare and meaningful.
 
 Once rules evaluate on a cadence, that stops being true. Every failing
 evaluation appends a `fail` row and publishes a webhook
 ([api.md §Events](./api.md#events)), and the row→event mapping is
 `fail + prev ∈ {OPEN, ACKNOWLEDGED} → updated`. So a rule on a 5-minute cron
-that stays broken emits `reconciliation.alert.updated` **every 5 minutes,
+that stays broken emits `reconciliation.updated_alert` **every 5 minutes,
 indefinitely** — each one fanning out through Webhooks to the customer's Slack /
 PagerDuty / email. A discrepancy that hovers at the tolerance boundary makes it
 worse. None of those repeats carry information the consumer doesn't already

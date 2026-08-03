@@ -17,8 +17,8 @@ import (
 const (
 	// EventApp is the `app` field of every published message. The Webhooks
 	// worker lowercases it and prepends it to the type, so a message with
-	// App="reconciliation" and Type="alert.opened" is matched by subscribers
-	// against the event name "reconciliation.alert.opened". Mirrors
+	// App="reconciliation" and Type="OPENED_ALERT" is matched by subscribers
+	// against the event name "reconciliation.opened_alert". Mirrors
 	// cmd.ServiceName (kept as a literal here to avoid importing cmd).
 	EventApp = "reconciliation"
 	// EventVersion tags the payload schema. Bumped only on a breaking change
@@ -27,26 +27,26 @@ const (
 	// Topic is the logical topic every alert event is published to. The
 	// operator's --publisher-topic-mapping routes it to the physical
 	// subject the Webhooks module subscribes to (a single `*:<subject>` or
-	// `reconciliation:<subject>` mapping covers all six event types — the
+	// `reconciliation:<subject>` mapping covers all eight event types — the
 	// `type` field discriminates them downstream).
 	Topic = "reconciliation"
 )
 
-// Event type suffixes. The consumer-facing event name is EventApp + "." +
-// <suffix> (assembled by the Webhooks worker), e.g. "reconciliation.alert.opened".
+// Event types follow the public Formance ACTION_ENTITY convention. Webhooks
+// lowercases and joins EventApp + "." + <type>, e.g. "reconciliation.opened_alert".
 // The full table lives in docs/technical/api.md §Events.
 const (
-	EventTypeAlertOpened       = "alert.opened"
-	EventTypeAlertUpdated      = "alert.updated"
-	EventTypeAlertAcknowledged = "alert.acknowledged"
-	EventTypeAlertResolved     = "alert.resolved"
-	EventTypeAlertAccepted     = "alert.accepted"
-	EventTypeAlertReopened     = "alert.reopened"
-	EventTypeAlertSnoozed      = "alert.snoozed"
-	EventTypeAlertUnsnoozed    = "alert.unsnoozed"
+	EventTypeAlertOpened       = "OPENED_ALERT"
+	EventTypeAlertUpdated      = "UPDATED_ALERT"
+	EventTypeAlertAcknowledged = "ACKNOWLEDGED_ALERT"
+	EventTypeAlertResolved     = "RESOLVED_ALERT"
+	EventTypeAlertAccepted     = "ACCEPTED_ALERT"
+	EventTypeAlertReopened     = "REOPENED_ALERT"
+	EventTypeAlertSnoozed      = "SNOOZED_ALERT"
+	EventTypeAlertUnsnoozed    = "UNSNOOZED_ALERT"
 )
 
-// AlertEventPayload is the wire shape carried by every reconciliation.alert.*
+// AlertEventPayload is the wire shape carried by every reconciliation.*_alert
 // event. It pairs the alert's current state (which embeds the latest
 // evaluation's evidence on Alert.Evidence) with the append-only event row that
 // triggered the publish — giving consumers the transition (prev→new status,
