@@ -305,14 +305,14 @@ This keeps a scheduled, still-broken rule from re-paging on every tick.
 
 | Event | Fires when | `alert_event` row |
 |---|---|---|
-| `reconciliation.alert.opened`       | First failing eval for a fingerprint | `fail`, `prevStatus = null` |
-| `reconciliation.alert.updated`      | Failure while OPEN/ACKNOWLEDGED **with new evidence** (identical repeats are suppressed) | `fail`, `prevStatus ∈ {OPEN, ACKNOWLEDGED}`, `notify = true` |
-| `reconciliation.alert.acknowledged` | Human ack'd | `ack` |
-| `reconciliation.alert.resolved`     | Auto-resolve (`pass`) or `fixed_by_booking` (`resolve`) | `pass` / `resolve` |
-| `reconciliation.alert.accepted`     | Business acceptance | `accept` |
-| `reconciliation.alert.reopened`     | Same fingerprint fails after a closed alert (status → OPEN, same alert id) | `fail`, `prevStatus = RESOLVED` |
-| `reconciliation.alert.snoozed`      | Operator muted the alert until a future instant | `snooze` |
-| `reconciliation.alert.unsnoozed`    | Snooze lifted early | `unsnooze` |
+| `reconciliation.opened_alert`       | First failing eval for a fingerprint | `fail`, `prevStatus = null` |
+| `reconciliation.updated_alert`      | Failure while OPEN/ACKNOWLEDGED **with new evidence** (identical repeats are suppressed) | `fail`, `prevStatus ∈ {OPEN, ACKNOWLEDGED}`, `notify = true` |
+| `reconciliation.acknowledged_alert` | Human ack'd | `ack` |
+| `reconciliation.resolved_alert`     | Auto-resolve (`pass`) or `fixed_by_booking` (`resolve`) | `pass` / `resolve` |
+| `reconciliation.accepted_alert`     | Business acceptance | `accept` |
+| `reconciliation.reopened_alert`     | Same fingerprint fails after a closed alert (status → OPEN, same alert id) | `fail`, `prevStatus = RESOLVED` |
+| `reconciliation.snoozed_alert`      | Operator muted the alert until a future instant | `snooze` |
+| `reconciliation.unsnoozed_alert`    | Snooze lifted early | `unsnooze` |
 
 The event name is a pure function of the row (`events.EventTypeFor`) — there is
 no separate event-kind column to keep in sync. An idempotent no-op (e.g. re-ack
@@ -323,13 +323,13 @@ snooze is in force, writes a row with `notify = false` and is **not** published
 — see [notification-suppression.md](./notification-suppression.md).
 
 **Envelope.** Standard `publish.EventMessage`: `app = "reconciliation"`,
-`version = "v1"`, `type ∈ {alert.opened, alert.updated, alert.acknowledged,
-alert.resolved, alert.accepted, alert.reopened, alert.snoozed,
-alert.unsnoozed}`, `idempotencyKey =` the `alert_event` id. The Webhooks worker
-lowercases and joins `app` + `type`, so subscribers match against the full names
-in the table above. All events publish to a single logical topic
-(`reconciliation`); the operator's `--publisher-topic-mapping` routes it to the
-bus subject Webhooks subscribes to.
+`version = "v1"`, `type ∈ {OPENED_ALERT, UPDATED_ALERT, ACKNOWLEDGED_ALERT,
+RESOLVED_ALERT, ACCEPTED_ALERT, REOPENED_ALERT, SNOOZED_ALERT,
+UNSNOOZED_ALERT}`, `idempotencyKey =` the `alert_event` id. The Webhooks worker
+lowercases `app` and `type`, then joins them with `.`, so subscribers match
+against the full names in the table above. All events publish to a single
+logical topic (`reconciliation`); the operator's `--publisher-topic-mapping`
+routes it to the bus subject Webhooks subscribes to.
 
 **Payload.** The full current `Alert` row (which carries the latest evaluation's
 `evidence`, plus `resolution` / `ack` / `labels`) paired with the triggering

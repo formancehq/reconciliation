@@ -359,7 +359,7 @@ func (s *Storage) AckAlert(ctx context.Context, id uuid.UUID, ack *models.Ack) (
 		return nil, err
 	}
 	// event is nil on the idempotent re-ack no-op — recordAlertEvent skips it,
-	// so a duplicate ack does not re-emit reconciliation.alert.acknowledged.
+	// so a duplicate ack does not re-emit reconciliation.acknowledged_alert.
 	s.recordAlertEvent(ctx, &alert, event)
 	return &alert, nil
 }

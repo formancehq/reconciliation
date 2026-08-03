@@ -76,7 +76,7 @@ The engine internals (rules, expressions, kernel) exist to serve this lifecycle,
 - Four template types: `ledger_vs_pool_drift` (port of today), `ledger_invariant`, `account_threshold`, `source_parity` (post-spec addition).
 - Cron + on-demand evaluation.
 - **Alert lifecycle including resolution** — auto-resolve on passing evaluation, manual *fixed by booking* (optional transaction refs), manual *accepted by business* (required note + author + evidence snapshot). Full append-only event log per alert (one row per evaluation + one per manual transition) — the audit substrate for `/alerts/{id}/events`.
-- Event publication: `reconciliation.alert.opened | updated | acknowledged | resolved | accepted | reopened | snoozed | unsnoozed`.
+- Event publication: `reconciliation.opened_alert | updated_alert | acknowledged_alert | resolved_alert | accepted_alert | reopened_alert | snoozed_alert | unsnoozed_alert`.
 - Webhook delivery via the existing Webhooks module + an email digest owned in-module.
 - Backwards compatibility: existing `Policy` evaluates as `ledger_vs_pool_drift`.
 - EE gating + usage metering.
