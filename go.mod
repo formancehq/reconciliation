@@ -10,7 +10,7 @@ require (
 	github.com/formancehq/go-libs/v5 v5.6.1
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/golang/mock v1.7.0-rc.1
-	github.com/google/cel-go v0.29.0
+	github.com/google/cel-go v0.30.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgconn v1.14.3
 	github.com/jackc/pgx/v5 v5.9.2
