@@ -59,7 +59,7 @@ type Store interface {
 
 	// Audit journal. Sealing is not here: it needs a transaction spanning several
 	// statements, which an in-memory Store cannot provide, so it is reached
-	// through the transactional capability asserted in SealPeriod — the same
+	// through the transactional capability asserted in CloseJournal — the same
 	// pattern the evaluation runner uses.
 	ListAuditEntries(ctx context.Context, f storage.AuditEntryFilters, afterSeq int64, limit int) ([]models.AuditEntry, int64, error)
 	GetAuditEntry(ctx context.Context, sequence int64) (*models.AuditEntry, error)
@@ -67,10 +67,12 @@ type Store interface {
 	VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*models.ChainVerification, error)
 	ListRuleRevisions(ctx context.Context, ruleID uuid.UUID) ([]models.RuleRevision, error)
 	GetRuleRevision(ctx context.Context, ruleID uuid.UUID, revision int64) (*models.RuleRevision, error)
-	ListPeriodSeals(ctx context.Context) ([]models.PeriodSeal, error)
-	GetPeriodSeal(ctx context.Context, periodID string) (*models.PeriodSeal, error)
-	VerifySealSignature(ctx context.Context, seal *models.PeriodSeal) (bool, string, error)
-	VerifySealIntegrity(seal *models.PeriodSeal) (bool, string)
+	ListClosures(ctx context.Context) ([]models.Closure, error)
+	GetClosure(ctx context.Context, id int64) (*models.Closure, error)
+	AttestationsForPeriod(ctx context.Context, periodID string) ([]storage.PeriodAttestation, error)
+	VerifyClosureSignature(ctx context.Context, closure *models.Closure) (bool, string, error)
+	GetClosingSchedule(ctx context.Context) (string, error)
+	SetClosingSchedule(ctx context.Context, cron string) error
 	ListVerificationKeys(ctx context.Context) ([]storage.VerificationKey, error)
 }
 

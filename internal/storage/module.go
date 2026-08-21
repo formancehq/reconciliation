@@ -69,6 +69,14 @@ func Module(connectionOptions legacyconnect.ConnectionOptions, publisherConnecti
 						return errors.Wrap(err, "failed to initialise the audit journal")
 					}
 
+					// After the chain, because the first closure's range starts at
+					// the journal head: opening it before the chain exists would
+					// give it a boundary derived from a journal that is not there
+					// yet.
+					if err := repo.InitClosures(ctx); err != nil {
+						return errors.Wrap(err, "failed to open the first closure")
+					}
+
 					return nil
 				},
 			})

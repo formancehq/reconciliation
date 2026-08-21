@@ -52,11 +52,13 @@ type Service interface {
 	VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*models.ChainVerification, error)
 	ListRuleRevisions(ctx context.Context, ruleID uuid.UUID) ([]models.RuleRevision, error)
 	GetRuleRevision(ctx context.Context, ruleID uuid.UUID, revision int64) (*models.RuleRevision, error)
-	ListPeriodSeals(ctx context.Context) ([]models.PeriodSeal, error)
-	GetPeriodSeal(ctx context.Context, periodID string) (*models.PeriodSeal, error)
-	SealPeriod(ctx context.Context, periodID string) (*models.PeriodSeal, error)
-	VerifySealSignature(ctx context.Context, periodID string) (*models.PeriodSeal, bool, string, error)
-	VerifySealIntegrity(ctx context.Context, periodID string) (bool, string, error)
+	ListClosures(ctx context.Context) ([]models.Closure, error)
+	GetClosure(ctx context.Context, id int64) (*models.Closure, error)
+	CloseJournal(ctx context.Context) (*models.Closure, error)
+	VerifyClosure(ctx context.Context, id int64) (*models.Closure, bool, string, error)
+	AttestationsForPeriod(ctx context.Context, periodID string) ([]storage.PeriodAttestation, error)
+	GetClosingSchedule(ctx context.Context) (string, error)
+	SetClosingSchedule(ctx context.Context, cron string) error
 	ListVerificationKeys(ctx context.Context) ([]storage.VerificationKey, error)
 }
 

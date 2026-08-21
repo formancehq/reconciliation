@@ -128,14 +128,14 @@ func handleServiceErrors(w http.ResponseWriter, r *http.Request, err error) {
 		api.BadRequest(w, ErrValidation, err)
 	case errors.Is(err, storage.ErrNotFound):
 		api.NotFound(w, err)
-	// A write into closed books, and a double seal, are both conflicts rather
-	// than bad requests: the request was well-formed, the books moved on.
+	// A write into closed books is a conflict rather than a bad request: the
+	// request was well-formed, the books moved on. The double-seal and
+	// not-sealable conflicts that used to sit here are gone — closing takes no
+	// period id, so neither can be expressed.
 	case errors.Is(err, storage.ErrPeriodSealed):
 		api.WriteErrorResponse(w, http.StatusConflict, ErrPeriodSealed, err)
-	case errors.Is(err, storage.ErrPeriodAlreadySealed):
-		api.WriteErrorResponse(w, http.StatusConflict, ErrPeriodSealed, err)
-	case errors.Is(err, storage.ErrPeriodNotSealable):
-		api.BadRequest(w, ErrValidation, err)
+	case errors.Is(err, storage.ErrNoOpenClosure):
+		api.InternalServerError(w, r, err)
 	case errors.Is(err, storage.ErrAuditChainNotConfigured):
 		api.InternalServerError(w, r, err)
 	// V1 error classes

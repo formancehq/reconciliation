@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 
 	"github.com/formancehq/reconciliation/internal/audit"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -67,40 +68,55 @@ func (s *Service) GetRuleRevision(ctx context.Context, ruleID uuid.UUID, revisio
 	return rev, nil
 }
 
-// ListPeriodSeals returns every closed period.
-func (s *Service) ListPeriodSeals(ctx context.Context) ([]models.PeriodSeal, error) {
-	seals, err := s.store.ListPeriodSeals(ctx)
+// ListClosures returns every closure, open one included.
+func (s *Service) ListClosures(ctx context.Context) ([]models.Closure, error) {
+	closures, err := s.store.ListClosures(ctx)
 	if err != nil {
-		return nil, newStorageError(err, "listing period seals")
+		return nil, newStorageError(err, "listing closures")
 	}
-	return seals, nil
+	return closures, nil
 }
 
-// GetPeriodSeal returns a period's seal.
-func (s *Service) GetPeriodSeal(ctx context.Context, periodID string) (*models.PeriodSeal, error) {
-	seal, err := s.store.GetPeriodSeal(ctx, periodID)
+// GetClosure returns one closure by id.
+func (s *Service) GetClosure(ctx context.Context, id int64) (*models.Closure, error) {
+	closure, err := s.store.GetClosure(ctx, id)
 	if err != nil {
-		return nil, newStorageError(err, "getting period seal")
+		return nil, newStorageError(err, "getting closure")
 	}
-	return seal, nil
+	return closure, nil
 }
 
-// SealPeriod closes a period.
-//
-// The transaction is opened here rather than inside storage because sealing must
-// freeze the chain head for its whole duration: the range boundary, the state
-// hash and the seal's own journal entry have to agree, and they only do if
-// nothing else appends in between.
-//
-// The operator is taken from the request's verified token, not from the payload.
-// A seal is the strongest claim the system makes — "these books are closed" —
-// and it would be worth considerably less if the name attached to it were
-// something the caller typed.
-func (s *Service) SealPeriod(ctx context.Context, periodID string) (*models.PeriodSeal, error) {
+// AttestationsForPeriod answers the question an auditor actually asks — "what do
+// you attest for May" — by resolving the business period to the closures that
+// observed it. The label stays the way in, even though it is no longer the way
+// closing works.
+func (s *Service) AttestationsForPeriod(ctx context.Context, periodID string) ([]storage.PeriodAttestation, error) {
 	if periodID == "" {
 		return nil, fmt.Errorf("%w: period id is required", ErrValidation)
 	}
+	out, err := s.store.AttestationsForPeriod(ctx, periodID)
+	if err != nil {
+		return nil, newStorageError(err, "getting attestations for period")
+	}
+	return out, nil
+}
 
+// CloseJournal closes the current closure and opens its successor.
+//
+// It takes no period id, and that is the whole point: the range is the one the
+// open closure has carried since it opened, so there is nothing for a caller to
+// name and therefore nothing to name wrongly.
+//
+// The transaction is opened here rather than inside storage because closing must
+// freeze the chain head for its whole duration: the boundary, the per-period
+// breakdown and the closing's own journal entry have to agree, and they only do
+// if nothing else appends in between.
+//
+// The operator comes from the request's verified token, never from the payload.
+// A closing is the strongest claim the system makes — "these books are closed" —
+// and it would be worth considerably less if the name attached to it were
+// something the caller typed.
+func (s *Service) CloseJournal(ctx context.Context) (*models.Closure, error) {
 	// The transactional capability, asserted rather than required on Store: only a
 	// real storage can provide it, and demanding it of every implementation would
 	// force the in-memory fakes to pretend.
@@ -109,49 +125,63 @@ func (s *Service) SealPeriod(ctx context.Context, periodID string) (*models.Peri
 	}
 	tx, ok := s.store.(transactional)
 	if !ok {
-		return nil, fmt.Errorf("sealing a period requires a transactional store")
+		return nil, fmt.Errorf("closing the journal requires a transactional store")
 	}
 
-	var seal *models.PeriodSeal
+	var closure *models.Closure
 	err := tx.RunInTx(ctx, func(ctx context.Context, txStore *storage.Storage) error {
-		out, err := txStore.SealPeriod(ctx, storage.SealPeriodInput{
-			PeriodID: periodID,
-			SealedBy: audit.SubjectFrom(ctx),
+		out, err := txStore.CloseCurrentClosure(ctx, storage.CloseClosureInput{
+			ClosedBy: audit.SubjectFrom(ctx),
 		})
 		if err != nil {
 			return err
 		}
-		seal = out
+		closure = out
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return seal, nil
+	return closure, nil
 }
 
-// VerifySealSignature re-derives a seal's sealing hash and checks its signature.
-func (s *Service) VerifySealSignature(ctx context.Context, periodID string) (*models.PeriodSeal, bool, string, error) {
-	seal, err := s.store.GetPeriodSeal(ctx, periodID)
+// VerifyClosure re-derives a closure's hash and checks its signature.
+func (s *Service) VerifyClosure(ctx context.Context, id int64) (*models.Closure, bool, string, error) {
+	closure, err := s.store.GetClosure(ctx, id)
 	if err != nil {
-		return nil, false, "", newStorageError(err, "getting period seal")
+		return nil, false, "", newStorageError(err, "getting closure")
 	}
-	ok, reason, err := s.store.VerifySealSignature(ctx, seal)
+	ok, reason, err := s.store.VerifyClosureSignature(ctx, closure)
 	if err != nil {
-		return nil, false, "", newStorageError(err, "verifying seal signature")
+		return nil, false, "", newStorageError(err, "verifying closure signature")
 	}
-	return seal, ok, reason, nil
+	return closure, ok, reason, nil
 }
 
-// VerifySealIntegrity re-derives a seal's own sealing hash, without regard to its
-// signature.
-func (s *Service) VerifySealIntegrity(ctx context.Context, periodID string) (bool, string, error) {
-	seal, err := s.store.GetPeriodSeal(ctx, periodID)
+// GetClosingSchedule returns the cron rotating closures, empty when manual.
+func (s *Service) GetClosingSchedule(ctx context.Context) (string, error) {
+	cron, err := s.store.GetClosingSchedule(ctx)
 	if err != nil {
-		return false, "", newStorageError(err, "getting period seal")
+		return "", newStorageError(err, "getting closing schedule")
 	}
-	ok, reason := s.store.VerifySealIntegrity(seal)
-	return ok, reason, nil
+	return cron, nil
+}
+
+// SetClosingSchedule stores the rotation cron, validating it first.
+//
+// Validated here rather than at the storage boundary because a schedule that
+// does not parse is a silent outage: rotation simply stops, and nobody finds out
+// until an auditor asks why the books were never closed.
+func (s *Service) SetClosingSchedule(ctx context.Context, spec string) error {
+	if spec != "" {
+		if _, err := cron.ParseStandard(spec); err != nil {
+			return fmt.Errorf("%w: %q is not a valid cron expression: %s", ErrValidation, spec, err)
+		}
+	}
+	if err := s.store.SetClosingSchedule(ctx, spec); err != nil {
+		return newStorageError(err, "setting closing schedule")
+	}
+	return nil
 }
 
 // ListVerificationKeys publishes the public keys an auditor needs. Retired keys

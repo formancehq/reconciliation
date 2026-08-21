@@ -572,17 +572,17 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
-  /periods:
+  /closures:
     get:
-      summary: List sealed periods
-      operationId: listPeriods
+      summary: List closures
+      operationId: listClosures
       description: |
-        Returns every period that has been closed, most recent first. Open
-        periods have no row — absence is the open state.
+        Returns every closure, most recent first, including the one currently
+        open. Exactly one closure is open at any time.
       tags: [reconciliation.v1]
       responses:
         '200':
-          description: The sealed periods.
+          description: The closures.
           content:
             application/json:
               schema:
@@ -590,90 +590,143 @@ paths:
                 properties:
                   data:
                     type: array
-                    items: { $ref: '#/components/schemas/PeriodSeal' }
+                    items: { $ref: '#/components/schemas/Closure' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
-
-  /periods/{periodID}:
-    parameters:
-      - { name: periodID, in: path, required: true, schema: { type: string } }
-    get:
-      summary: Get a period's seal
-      operationId: getPeriod
-      description: |
-        Returns the period's seal, or `status: OPEN` when it has not been closed.
-        An unsealed period is a legitimate answer rather than a missing
-        resource, so this does not 404 — you would otherwise have to guess
-        whether the period is open or the id was wrong.
-      tags: [reconciliation.v1]
-      responses:
-        '200':
-          description: The seal, or an open period.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/PeriodSeal' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-
-  /periods/{periodID}/seal:
-    parameters:
-      - { name: periodID, in: path, required: true, schema: { type: string } }
     post:
-      summary: Close a reconciliation period
-      operationId: sealPeriod
+      summary: Close the journal
+      operationId: closeJournal
       description: |
-        Closes the period: freezes the journal range that has accumulated since
-        the previous seal, hashes the period's resulting alert state, and signs
-        the result. What comes back is one value — the sealing hash — standing
-        for a whole period of controls.
+        Seals the open closure and opens its successor in the same transaction.
 
-        Sealing also raises a write barrier. Alerts scoped to a sealed period
-        stop accepting transitions, so acknowledging or resolving one afterwards
-        fails with 409. Under a periodic cadence the next period opens a fresh
-        case for the same fingerprint, so ordinary monitoring is unaffected;
-        what is refused is editing closed books.
+        Takes no arguments, and that absence is the design. A closure carries the
+        range it was opened with, so there is nothing for a caller to name and
+        therefore nothing to name wrongly — the ordering mistakes a period seal
+        had to guard against cannot be expressed here.
 
-        The operator is taken from the request's token, not from a payload field.
-        Not idempotent: a second seal on the same period is a 409, because
-        sealing twice would either contradict the first seal or silently do
-        nothing.
+        Because the successor exists before the transaction commits, writes
+        continue immediately: closing never leaves an evaluation with nowhere to
+        file its evidence.
 
-        The `continuous` pseudo-period of a live-monitoring rule cannot be
-        sealed — it has no end, and its alerts would be frozen with no successor
-        period to move to.
+        The operator comes from the verified token, never from the payload.
       tags: [reconciliation.v1]
       responses:
         '201':
-          description: The period is closed.
+          description: The closure that was just sealed.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/PeriodSeal' }
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Closure' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
 
-  /periods/{periodID}/verify:
+  /closures/{closureID}/verify:
     parameters:
-      - { name: periodID, in: path, required: true, schema: { type: string } }
+      - { name: closureID, in: path, required: true, schema: { type: integer, format: int64 } }
     post:
-      summary: Verify a period seal's signature
-      operationId: verifyPeriodSeal
+      summary: Verify a closure's signature
+      operationId: verifyClosure
       description: |
-        Re-derives the seal's sealing hash from its stored fields and checks the
-        signature against the key that signed it, including a retired one.
+        Re-derives the closure's hash from its stored fields — the per-period
+        breakdown included, through the state hash — and checks the signature
+        against the key that signed it, including a retired one.
 
-        An auditor can and should do this themselves — everything needed is
-        published. The endpoint exists so they can confirm their own tooling
-        agrees with ours before relying on it.
+        An auditor can and should do this themselves: everything needed is
+        published and the hash is unkeyed. The endpoint exists so they can
+        confirm their own tooling agrees with ours before relying on it.
       tags: [reconciliation.v1]
       responses:
         '200':
           description: The verification result.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SealVerification' }
+              schema: { $ref: '#/components/schemas/ClosureVerification' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
+  /closing-schedule:
+    get:
+      summary: Get the closing cadence
+      operationId: getClosingSchedule
+      tags: [reconciliation.v1]
+      responses:
+        '200':
+          description: The cron rotating closures. Empty means closing is manual.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ClosingSchedule' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+    put:
+      summary: Set the closing cadence
+      operationId: setClosingSchedule
+      description: |
+        Stores the cron that rotates closures — `0 0 * * *` daily, `0 0 1 * *`
+        monthly, empty to close by hand only.
+
+        Changing it mid-flight only makes the next closure longer or shorter.
+        Closures already closed are unaffected, which is what makes the cadence
+        safe to change at all, and why this is a stored setting rather than a
+        boot flag.
+      tags: [reconciliation.v1]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClosingSchedule' }
+      responses:
+        '200':
+          description: The stored cadence.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ClosingSchedule' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
+
+  /periods/{periodID}:
+    parameters:
+      - { name: periodID, in: path, required: true, schema: { type: string } }
+    get:
+      summary: What is attested for a business period
+      operationId: getPeriod
+      description: |
+        Resolves a business period — `2026-05`, `2026-W12`, `2026-05-15` — to the
+        closures that observed it, with that period's signed figures.
+
+        The read path still speaks in business periods even though closing no
+        longer does. A period id carries a meaning no operational boundary can:
+        it comes from the evaluation's point-in-time rather than the wall clock,
+        so a backfill of May run in August belongs to May.
+
+        A period nothing has attested yet returns `OPEN` with no attestations
+        rather than 404 — absence is the open state, and a 404 would leave a
+        client guessing whether the period is open or the id was wrong.
+
+        More than one attestation means the period's evidence was recorded across
+        several closings, and an auditor needs all of them.
+      tags: [reconciliation.v1]
+      responses:
+        '200':
+          description: The period's attestations.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PeriodAttestation' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
@@ -951,38 +1004,80 @@ components:
           enum: [HASH_MISMATCH, SEQUENCE_GAP, BROKEN_LINK, MEMENTO_DIGEST_MISMATCH]
         atSequence: { type: integer, format: int64, description: 'Where the walk stopped.' }
         detail: { type: string, description: 'What went wrong, in terms an auditor can quote.' }
-        sealsCrossed: { type: array, items: { type: string }, description: 'Period seals traversed and re-derived during the walk.' }
+        sealsCrossed: { type: array, items: { type: string }, description: 'Closures traversed and re-derived during the walk, named by the business periods they observed.' }
 
-    PeriodSeal:
+    Closure:
       type: object
       description: |
-        A closed reconciliation period. Seals partition the journal at sequence
-        boundaries: `firstSequence` continues from the previous seal, with no gap
+        A contiguous, sealed segment of the journal.
+
+        `firstSequence` is assigned when the closure is opened, not derived when
+        it is closed — the range is a record of what happened rather than a
+        deduction that can be wrong. Closures partition the journal with no gap
         and no overlap.
+
+        The business period label is not lost, it is demoted: it belongs on the
+        evidence, and `periods` carries the per-label breakdown that `stateHash`
+        covers and the signature therefore binds.
+      properties:
+        id: { type: integer, format: int64 }
+        status: { type: string, enum: [OPEN, CLOSED] }
+        openedAt: { type: string, format: date-time }
+        closedAt: { type: string, format: date-time, description: 'Absent while the closure is open.' }
+        firstSequence: { type: integer, format: int64, description: 'Assigned when the closure opened.' }
+        lastSequence: { type: integer, format: int64, description: 'Chain head at closing. `first - 1` means the closure covered nothing, which is a legitimate answer rather than an error.' }
+        entryCount: { type: integer, format: int64 }
+        lastAuditHash: { type: string, description: 'Hex chain head at closing. Verification resumes across the boundary from here.' }
+        periods:
+          type: array
+          description: 'The business periods this closure observed, sorted by id.'
+          items: { $ref: '#/components/schemas/ClosurePeriod' }
+        stateHash: { type: string, description: 'Hex digest of the per-period breakdown, so the closure commits to the business outcome and not only to the range.' }
+        sealingHash: { type: string, description: 'Hex. The single value standing for the whole closure. Unkeyed, so it is reproducible from the fields above by anyone.' }
+        signature: { type: string, description: 'Base64 Ed25519 signature over `sealingHash`. This is what makes the closure verifiable without trusting this service.' }
+        signingKeyID: { type: string, description: 'Which published key verifies the signature.' }
+        closedBy: { $ref: '#/components/schemas/AuditSubject' }
+        auditSequence: { type: integer, format: int64, description: 'The journal entry recording this closing. It lands after the boundary it describes, so it belongs to the following closure.' }
+
+    ClosurePeriod:
+      type: object
+      description: One business period's figures inside a closure.
+      properties:
+        periodID: { type: string, example: '2026-05' }
+        entryCount: { type: integer, format: int64, description: 'Journal entries carrying this period id. Entries belonging to no period, such as rule.created, are counted in the closure total but appear in no period.' }
+        alertCount: { type: integer, format: int64 }
+        unresolvedCount: { type: integer, format: int64, description: 'How many discrepancies were still open — usually the first figure an auditor asks for.' }
+        stateHash: { type: string, description: 'Hex digest of this period''s resulting alert state.' }
+        ended: { type: boolean, description: 'Whether the period''s calendar span was over at closing time.' }
+        frozen: { type: boolean, description: 'Whether the period stopped accepting writes. A closure running mid-period attests what it saw without freezing it.' }
+
+    ClosureVerification:
+      type: object
+      properties:
+        closureID: { type: integer, format: int64 }
+        ok: { type: boolean }
+        reason: { type: string, description: 'Why verification failed, when it did.' }
+        closure: { $ref: '#/components/schemas/Closure' }
+
+    PeriodAttestation:
+      type: object
+      description: What is attested for one business period, and by which closures.
       properties:
         periodID: { type: string }
         status: { type: string, enum: [OPEN, SEALED] }
-        firstSequence: { type: integer, format: int64 }
-        lastSequence: { type: integer, format: int64 }
-        entryCount: { type: integer, format: int64 }
-        lastAuditHash: { type: string, description: 'Hex chain head at seal time. Verification resumes across the boundary from here.' }
-        stateHash: { type: string, description: 'Hex digest of the period''s resulting alert state, so the seal commits to the outcome as well as the journal.' }
-        sealingHash: { type: string, description: 'Hex. The single value standing for the whole period. Unkeyed, so it is reproducible from the fields above by anyone.' }
-        signature: { type: string, description: 'Base64 Ed25519 signature over `sealingHash`. This is what makes the seal verifiable without trusting this service.' }
-        signingKeyID: { type: string, description: 'Which published key verifies the signature.' }
-        sealedBy: { $ref: '#/components/schemas/AuditSubject' }
-        alertCount: { type: integer, format: int64 }
-        unresolvedCount: { type: integer, format: int64, description: 'How many discrepancies were still open when the period closed — usually the first figure an auditor asks for.' }
-        sealedAt: { type: string, format: date-time }
-        auditSequence: { type: integer, format: int64, description: 'The journal entry recording this seal. It lands after the boundary it describes, so it belongs to the following period.' }
+        attestations:
+          type: array
+          items:
+            type: object
+            properties:
+              period: { $ref: '#/components/schemas/ClosurePeriod' }
+              closure: { $ref: '#/components/schemas/Closure' }
 
-    SealVerification:
+    ClosingSchedule:
       type: object
+      required: [cron]
       properties:
-        periodID: { type: string }
-        ok: { type: boolean }
-        reason: { type: string, description: 'Why verification failed, when it did.' }
-        seal: { $ref: '#/components/schemas/PeriodSeal' }
+        cron: { type: string, example: '0 0 1 * *', description: 'Standard five-field cron. Empty means closing is manual.' }
 
     VerificationKey:
       type: object

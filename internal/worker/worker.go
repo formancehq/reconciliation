@@ -89,6 +89,8 @@ func (w *Worker) Start(ctx context.Context) {
 	go w.cleanupLoop(ctx)
 	w.wg.Add(1)
 	go w.metricsLoop(ctx)
+	w.wg.Add(1)
+	go w.closingLoop(ctx)
 }
 
 func (w *Worker) Wait(ctx context.Context) error {

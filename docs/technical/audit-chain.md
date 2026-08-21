@@ -115,10 +115,11 @@ Both are needed, and the second was missing at first. A `FOR EACH ROW` trigger d
 | Delete an interior entry | `SEQUENCE_GAP` | The dense counter skips a value. |
 | Reorder or splice entries | `BROKEN_LINK` | An entry's `prev_hash` no longer matches its predecessor. |
 | Rewrite an entry and its hash | `HASH_MISMATCH` downstream | The next entry was hashed against the original value. Rewriting forward requires the chain key. |
-| Alter a period seal | `HASH_MISMATCH` at the seal boundary | The seal is re-derived from its own fields during the walk. |
-| Alter a seal that closes an empty prefix | `HASH_MISMATCH` at the seal's own entry | Boundary sequence 0 has no entry for the walk to reach, so a verification starting at 1 re-derives such a seal explicitly. |
-| `TRUNCATE` any of the three tables | Refused outright | Statement-level trigger; a row trigger would not fire. |
-| Delete the tail, below a seal | `SEQUENCE_GAP` | A seal commits to a boundary that no longer exists. |
+| Alter a closure | `HASH_MISMATCH` at the closure boundary | The closure is re-derived from its own fields during the walk, breakdown included. |
+| Restate a period's figures inside a closure | `HASH_MISMATCH` | The breakdown enters the closing hash through the state hash, which is re-derived before the closing hash is checked. |
+| Alter a closure covering an empty prefix | `HASH_MISMATCH` at the closure's own entry | Boundary sequence 0 has no entry for the walk to reach, so a verification starting at 1 re-derives such a closure explicitly. |
+| `TRUNCATE` any journal table | Refused outright | Statement-level trigger; a row trigger would not fire. |
+| Delete the tail, below a closure | `SEQUENCE_GAP` | A closure commits to a boundary that no longer exists. |
 
 The walk stops at the first violation. Past a break, every downstream comparison is meaningless, so listing more would be listing noise — the same reason the Ledger checker halts on the first mismatch.
 
@@ -129,64 +130,92 @@ The walk stops at the first violation. Past a break, every downstream comparison
 Two things bound this:
 
 - `POST /audit-entries/verify` does not silently clamp an explicitly requested range down to a shorter head. A caller who names an end and finds fewer entries is told so.
-- A period seal commits to a boundary, so anything removed below it is caught with no range needing to be specified.
+- A closure commits to a boundary, so anything removed below it is caught with no range needing to be specified.
 
-This is the strongest practical argument for sealing periods promptly rather than eventually, and it is the gap Ledger V3 closes for free (§6).
+This is the strongest practical argument for closing the journal promptly rather than eventually, and it is the gap Ledger V3 closes for free (§6).
 
 ---
 
-## 4. Period seals
+## 4. Closures
 
-A seal closes a contiguous range of the chain under a period label. The **range**, not the label, is what it covers — exactly as a Ledger V3 chapter closes at an audit-sequence boundary rather than filtering on content. `firstSequence` continues from the previous seal's end, so seals form a partition with no gap and no overlap.
+A **closure** is a contiguous, sealed segment of the journal. Its range is not derived from anything — `firstSequence` is written when the closure is *opened*, and `lastSequence` is the chain head when it is closed. Closures partition the journal with no gap and no overlap.
 
 ```
-sealingHash = BLAKE3(context ‖ periodID ‖ firstSeq ‖ lastSeq ‖ entryCount ‖ lastAuditHash ‖ stateHash
-                     ‖ alertCount ‖ unresolvedCount ‖ sealedBy ‖ sealedAt)
-signature   = Ed25519(sealingHash)
+stateHash   = BLAKE3(context ‖ for each period: periodID ‖ entryCount ‖ alertCount
+                                ‖ unresolvedCount ‖ periodStateHash ‖ ended ‖ frozen)
+closingHash = BLAKE3(context ‖ closureID ‖ firstSeq ‖ lastSeq ‖ entryCount
+                              ‖ lastAuditHash ‖ stateHash ‖ closedBy ‖ closedAt)
+signature   = Ed25519(closingHash)
 ```
 
-Everything the seal **publishes** is hashed, which is not the same as everything that is chain-bound. The headline figures and the attribution were originally left out on the reasoning that the chain already binds them — the counts through the seal's own memento, the actor and timestamp through that entry's subject and `at`. True, and beside the point: nothing compared the row against them. Setting `alert_count` and `unresolved_count` to zero on a period that had one open alert left `POST /periods/{id}/verify` answering `ok`, so a report could cite "0 unresolved" out of a response presenting itself as verified. A field an auditor reads off a verified seal has to be inside the signature.
+### Why closing takes no argument
 
-`sealedAt` is truncated to microseconds before hashing, because that is all `timestamptz` stores — the same trap that made every chain entry verify as tampered on Linux and pass on macOS.
+This replaced a period seal, which named the period it closed and derived its range from that name: `first = previous seal's last + 1`. That one derivation is where all the difficulty lived. Because the range was deduced at close time from a caller-supplied label, three separate mistakes became expressible — and each was permanent, since a seal cannot be corrected:
 
-`stateHash` covers the period's resulting alert state via a deterministic **explicitly ordered** scan — never an aggregate whose input order is merely conventional, which is the determinism trap in V2's block hasher.
+| Mistake | What it did |
+|---|---|
+| Closing a period earlier than the last one | Sealing `2026-06` after `2026-08` gave June the range 8–8: the single entry recording August's own closure |
+| Closing past a period still open | Sealing `2026-06` while unsealed `2026-05` entries existed swallowed them into June, and May could then never be sealed |
+| Closing a period that had not begun | Sealing `2099-01` closed the books through 2099 and left every real period unsealable |
 
-The seal's own journal entry lands at `lastSequence + 1` and therefore belongs to the following period, the way a chapter's seal order is proposed after the boundary it describes. A consequence worth knowing: a quiet period's range is not literally empty, it contains the previous period's seal.
+Each needed a guard, and the guards in turn made weekly and monthly seals mutually exclusive, because two labels could not partition the same journal.
 
-The exception is the first period sealed on a fresh installation, whose range genuinely is empty and whose boundary is sequence 0. It is the one seal a chain walk cannot reach — the walk re-derives a seal when it arrives at the entry on its boundary, and there is no entry at 0 — so a full verification checks it separately by re-deriving its own fields. Before that was added, editing it returned a clean bill of health from `POST /audit-entries/verify {}`, which is the call an auditor leans on hardest.
+`POST /closures` takes no arguments. There is one open closure, and closing closes it. The mistakes above are not caught — they are **unexpressible**. This follows Ledger V3's chapters, where `processCloseChapter` discards its request payload outright.
 
-### Why the sealing hash is unkeyed
+### Closing opens its successor
+
+The successor closure is inserted in the same transaction, so writes continue immediately. This is what removed the sharpest edge of the old design: sealing a period froze it while its rules kept running, so the next evaluation failed with 409 and was rolled back — leaving no trace that a control had even been attempted.
+
+### The label survives, demoted
+
+A closure is an operational boundary. It cannot answer *"prove the control ran for May"*, because a business period is not a wall-clock window: `periodID` comes from the evaluation's point-in-time, so a backfill of May run in August belongs to May. Verified in the journal — entries recorded on 21 August carrying the label `2026-07`, because the PIT read was 15 July.
+
+So each closure carries a **per-period breakdown**, and `stateHash` covers it, so the signature binds it. The two figures are deliberately different questions:
+
+- `entryCount` on the closure — everything in the range, including entries belonging to no period at all, such as `rule.created`
+- `entryCount` on a period — only entries carrying that label
+
+They are not meant to reconcile by eye, and an auditor reading a closure needs to know which one they are looking at. The read path still speaks in business periods: `GET /periods/2026-05` resolves the label to the closures that observed it, so the auditor's three calls are unchanged.
+
+### Why the closing hash is unkeyed
 
 The chain hashes are keyed, so nobody outside the installation can check them. Left there, a client's auditor would have to trust our own verification endpoint — precisely the "black box" objection this feature exists to answer.
 
-The sealing hash is therefore **unkeyed and reproducible from the seal's published fields**, and signed with **Ed25519**. An auditor holding the public key recomputes the hash themselves and verifies the signature with no involvement from us.
+The closing hash is therefore **unkeyed and reproducible from the closure's published fields**, and signed with **Ed25519**. An auditor holding the public key recomputes it themselves and verifies the signature with no involvement from us. Confirmed by an independent Python reimplementation that reproduces the hash byte-for-byte from the API response alone, breakdown included.
 
-They cannot independently verify `lastAuditHash` — it is keyed and opaque to them. They do not need to: the signature binds us to the statement *"at sequence N the chain head was this and the derived state was that"*. If a later export presents a different head for the same period, the signature convicts us.
+They cannot independently verify `lastAuditHash` — it is keyed and opaque to them. They do not need to: the signature binds us to the statement *"at sequence N the chain head was this and the derived state was that"*. If a later export presents a different head for the same closure, the signature convicts us.
 
 This is deliberately **not** the Ledger's receipt scheme, which is HMAC-SHA256 and symmetric; its own documentation notes that no external auditor needs to verify a receipt. Here that is the entire point.
 
 ### The closing barrier
 
-A sealed period stops accepting alert transitions. Enforced in `appendAlertEvent` — the single door — so no path can bypass it. After the books are closed, the books do not move; this is the property every auditor looks for in a closing process, and the module had no form of it before.
+A period whose calendar span is over stops accepting alert transitions once a closure observes it. Enforced in `appendAlertEvent` — the single door — so no path can bypass it. After the books are closed, the books do not move.
 
-Under a periodic cadence the successor period opens a fresh case for the same fingerprint, so ordinary monitoring is unaffected. What is refused is a genuine write into closed books: a late evaluation backdated into a sealed period, or an operator editing history.
+The barrier is keyed on the **business period**, not on the closure, and only periods that have **ended** are frozen. Three consequences, all intentional:
 
-Two consequences, both intentional:
+- **A period still in progress is attested but not frozen.** A closure running mid-month records what it saw and leaves the month open, so the old hazard of closing a live period simply does not arise.
+- **`continuous` is never frozen.** It has no end, so a live-monitoring rule keeps running across every closing. Verified: a continuous rule evaluated successfully immediately after a closing that froze `2026-07`.
+- **Weekly and monthly rules can be attested by the same closing.** They are two labels in one breakdown, not two competing partitions, so the mutual exclusion the old seals forced is gone.
 
-- **`continuous` cannot be sealed.** It has no end, and its alerts would be frozen with no successor period to move to.
-- **Sealing a period that is still live makes its rules unevaluatable.** A daily-cadence rule whose current day is sealed fails its next evaluation with 409, because driving its alerts hits the barrier. Seal periods that are over — that is what sealing means. The failure is loud and names the period rather than silently accepting evidence into closed books.
+### What is no longer a conflict
 
-Sealing is **not idempotent**: a second seal is a 409, since it would either contradict the first or silently do nothing.
+Closing twice in a row is legal and produces an empty second closure, where sealing the same period twice used to be a 409. The conflict is gone because what made it one is gone: a second seal of the same period either contradicted the first or did nothing, whereas a second closing attests a second, genuinely empty segment — and an empty closure is a real answer, so refusing it here would mean refusing it everywhere.
 
-**Sealing cannot reach backwards.** A candidate period's start is checked against the end of the closed calendar, and anything earlier is refused. Without that check the range mechanism produces nonsense that cannot be undone: sealing `2026-06` after `2026-08` gave June the range 8–8 — the single entry that recorded August's own closure — while June's real entries stayed attested by August. The comparison is against the closed calendar's *end* rather than the last seal's start, because `2026-08-15` begins after `2026-08` does, so a day nested inside a closed month would otherwise slip through. One consequence worth knowing: an installation mixing cadences can only seal over disjoint calendar, which is the same non-overlap property the ranges already have. So "close every week *and* close every month" is not a supported shape — seals partition one journal, they do not nest. Sealing `2026-W20` closes the books through 18 May, which puts `2026-05` eleven days inside them; sealing `2026-05` first closes them through 1 June, which refuses every week of May. It is an either/or, and the error names the span already closed. Granularity can still *change* where the calendar aligns: `2026-W22` ends 31 May and June begins Monday 1 June, so a run of weekly seals can hand over to `2026-06` there. That alignment needs the 1st of the month to be a Monday — once in 2026, three times in 2027 — so in practice an installation picks one closing granularity and keeps it. A `continuous` rule is unaffected either way: its period is never sealed, so its cases keep transitioning while periodic periods close around them.
+Two concurrent closings therefore produce two closures rather than one and an error. Both are signed, both verify, and the partition is intact. Confirmed by racing two `POST /closures` against the local stack.
 
-**Nor can it seal a period that has not begun.** Neither of the other two checks catches this on a quiet journal — there is no earlier seal and no period-tagged entry to compare against — so `2099-01` could become the first immutable seal, closing the books through 2099 and leaving every real period refused as backwards. Only the future is refused: a period already under way is still sealable, since whether that should be pre-checked is an open question rather than something this guard settles.
+Exactly one closure is open at any time, enforced by a partial unique index rather than by application logic — the Ledger states the same invariant and gets it from a single-writer FSM, which we do not have. A second open closure would give two ranges the same starting sequence and quietly double-attest everything after it.
 
-**Nor can it skip forward.** The earliest period still awaiting a seal has to be closed first. Before there is any seal there is no closed calendar to compare against, so sealing `2026-06` while the journal held unsealed `2026-05` entries succeeded, swallowed them into June's range, and then left May refused as backwards — unsealable for good. Already-sealed periods are excluded from the check, which is what keeps the ordinary flow working: a range legitimately contains the *previous* period's seal entry, tagged with that earlier period.
+### The cadence is configuration
 
-Period ids are validated against the calendar, not merely against a shape. `2026-13`, `2026-02-31` and `2026-W99` all match their patterns and name no real period, and sealing one would consume a range of the journal permanently under a label nobody will ever query — in a seal that cannot be corrected. The check round-trips the id through the same `Cadence.PeriodID` that produces legitimate ones, so it is exactly as strict as the producer.
+Closing is automated by a cron stored in the database, not a boot flag:
 
----
+```
+PUT /closing-schedule  {"cron": "0 0 1 * *"}   # monthly
+PUT /closing-schedule  {"cron": "0 0 * * *"}   # daily
+PUT /closing-schedule  {"cron": ""}            # manual only
+```
+
+Changing it mid-flight only makes the next closure longer or shorter; closures already closed are unaffected. That is what makes the cadence safe to change at all — and it is why this is a stored setting rather than a flag, following the Ledger's `set-schedule`. The worker re-reads it each minute and closes when a firing has fallen due since the open closure was opened, which makes rotation both idempotent across several workers and catch-up safe after downtime.
 
 ## 5. Operating it
 
@@ -213,7 +242,7 @@ The [ledger-native storage RFC](https://github.com/formancehq/reconciliation/blo
 | Microsecond timestamp truncation | **Gone.** Protobuf timestamps, no `timestamptz`. | See the commit that fixed it — a Postgres-specific hazard. |
 | Chain verification endpoint | **Stays ours**, as a façade over the ledger's `checker` and `/v3/_/audit-entries`. | V3 keeps verification internal and exposes no verify operation, so the endpoint remains the differentiator. |
 | Ed25519 seal signature | **Stays ours.** | The ledger's chain is keyed and internal; externally-verifiable attestation is exactly the gap V3 does not fill. |
-| Period seals | **Stays ours, thinner.** A chapter is a cluster-wide operational boundary, not a business period, so the business seal keeps its own range + state hash + signature — but cites the ledger's chain head instead of computing one. | |
+| Closures | **Stays ours, thinner.** Our closure is already shaped like a chapter — auto id, range opened with it, close takes no argument — so on V3 it keeps its state hash, per-period breakdown and signature but cites the ledger's chain head instead of computing one. The business period label stays on the evidence, where the ledger has no equivalent. | |
 | The canonical memento | **Stays ours, and is the bridge.** | The ledger binds *orders* by their protobuf bytes; the memento is the business payload we put inside the metadata value. Replaying mementos in logical-sequence order is what re-anchors today's Postgres chain into `_recon`. |
 | Rule revisions | **Reshaped.** Ledger metadata is scalar, typed and last-write-wins with no native append, so revisions become distinct keys or `rule:{id}:rev:{n}` accounts rather than rows. | |
 
@@ -227,7 +256,7 @@ So the end-user subject has to stay in **our** memento, hashed as part of the pa
 
 1. Export the Postgres chain: entries in logical-sequence order, mementos verbatim.
 2. Replay each memento as an `AddMetadata` action on `_recon`; the ledger's chain binds them as it goes.
-3. Record a boundary artefact — the final Postgres head hash and the first `_recon` audit sequence — and sign it with the existing key. Verification then crosses the storage change the way it crosses a period seal.
+3. Record a boundary artefact — the final Postgres head hash and the first `_recon` audit sequence — and sign it with the existing key. Verification then crosses the storage change the way it crosses a closure.
 4. Keep the Postgres journal read-only for as long as the retention policy requires. It remains verifiable on its own terms; nothing about it needs reinterpreting.
 
 This is the argument for investing in the canonical memento now, even though it looks over-engineered for Postgres alone.
@@ -260,10 +289,13 @@ GET  /audit-entries/{sequence}          one entry with its memento
 POST /audit-entries/verify              recompute a range; {} verifies everything
 GET  /audit-signing-keys                the public keys an auditor needs
 
-GET  /periods                           sealed periods
-GET  /periods/{periodID}                a seal, or status OPEN
-POST /periods/{periodID}/seal           close a period
-POST /periods/{periodID}/verify         re-derive and check a seal's signature
+POST /closures                          close the journal — no arguments
+GET  /closures                          every closure, the open one included
+POST /closures/{id}/verify              re-derive and check a closure's signature
+GET  /closing-schedule                  the cron rotating closures
+PUT  /closing-schedule                  change it, with no restart
+
+GET  /periods/{periodID}                what is attested for a business period
 
 GET  /rules/{ruleID}/revisions          a control's frozen definitions
 GET  /rules/{ruleID}/revisions/{n}      what was actually being checked
@@ -276,9 +308,9 @@ That claim was only two-thirds true for a while, in a way worth recording: `GET 
 ### The three calls an audit takes
 
 ```bash
-curl $API/periods/2026-05                                   # the seal: one hash for the month
+curl $API/periods/2026-05                                   # what we attest for May, and by which closure
 curl "$API/audit-entries?periodID=2026-05"                  # the dense journal for that period
 curl -X POST $API/audit-entries/verify -d '{"periodID":"2026-05"}'   # the chain is intact
 ```
 
-The auditor does not read thousands of rows. They check one hash, confirm the chain, then sample inside a journal whose integrity is already established.
+Unchanged by the move to closures, deliberately: closing stopped taking a business period, but reading never did. The auditor does not read thousands of rows. They check one hash, confirm the chain, then sample inside a journal whose integrity is already established.

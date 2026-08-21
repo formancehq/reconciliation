@@ -63,5 +63,10 @@ func newStore(t *testing.T) *Storage {
 		Pepper: "test-pepper",
 	})
 	require.NoError(t, err)
+
+	// And a real open closure, for the same reason: every journalled write lands
+	// inside one, so a store without it would let tests pass against a shape
+	// production never has.
+	require.NoError(t, store.InitClosures(ctx))
 	return store
 }

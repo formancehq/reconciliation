@@ -823,5 +823,131 @@ func registerMigrations(migrator *migrations.Migrator) {
 				return err
 			},
 		},
+		// Closures replace period seals.
+		//
+		// A seal used to derive its range at close time from a period id the caller
+		// typed: first = previous seal's last + 1. That single derivation is what
+		// forced three ordering guards, a calendar validator and an irreversible
+		// mistake if any of them was wrong. A closure instead has its range opened
+		// with it — first_sequence is a fact recorded as it happens, not a
+		// deduction — and closing takes no argument at all, so the mistakes are
+		// unexpressible rather than caught. This follows Ledger V3's chapters, where
+		// CloseChapter discards its request payload entirely.
+		//
+		// The business period label survives, because nothing else can carry it: it
+		// is derived from the evaluation's point-in-time, not from the wall clock, so
+		// a backfill of May run in August belongs to May. It lives in the per-period
+		// breakdown, which the state hash covers and the signature therefore binds.
+		//
+		// period_seal is left in place, unread. Dropping a table whose whole purpose
+		// is to be immutable evidence would be a strange first act for this feature,
+		// and an installation that sealed under the old scheme keeps its rows
+		// verifiable on their own terms.
+		migrations.Migration{
+			Up: func(tx bun.Tx) error {
+				_, err := tx.Exec(`
+					-- The journal has a new kind of entry. Extended here rather than
+					-- edited into the original migration, which a database already at
+					-- 15 would never re-run.
+					ALTER TABLE reconciliations.audit_entry
+						DROP CONSTRAINT IF EXISTS audit_entry_kind_chk;
+					ALTER TABLE reconciliations.audit_entry
+						ADD CONSTRAINT audit_entry_kind_chk CHECK (kind IN (
+							'rule.created', 'rule.revised', 'rule.deleted',
+							'evaluation.committed', 'alert.transition',
+							'period.sealed', 'closure.sealed'
+						));
+
+					CREATE TABLE IF NOT EXISTS reconciliations.closure (
+						id bigserial PRIMARY KEY,
+						status text NOT NULL,
+						opened_at timestamptz NOT NULL,
+						closed_at timestamptz,
+						first_sequence bigint NOT NULL,
+						last_sequence bigint,
+						entry_count bigint NOT NULL DEFAULT 0,
+						last_audit_hash bytea,
+						periods jsonb NOT NULL DEFAULT '[]'::jsonb,
+						state_hash bytea,
+						sealing_hash bytea,
+						signature bytea,
+						signing_key_id text,
+						closed_by jsonb,
+						audit_sequence bigint,
+						CONSTRAINT closure_status_chk CHECK (status IN ('OPEN', 'CLOSED')),
+						CONSTRAINT closure_range_chk CHECK (last_sequence IS NULL OR last_sequence >= first_sequence - 1)
+					);
+
+					-- Exactly one closure is open at any time. The ledger states the same
+					-- invariant and enforces it in a single-writer FSM; we have neither,
+					-- so it is a database constraint rather than a convention.
+					CREATE UNIQUE INDEX IF NOT EXISTS closure_single_open
+						ON reconciliations.closure ((status)) WHERE status = 'OPEN';
+
+					CREATE INDEX IF NOT EXISTS closure_last_sequence_idx
+						ON reconciliations.closure (last_sequence) WHERE last_sequence IS NOT NULL;
+
+					-- Which business periods stopped accepting writes, and under which
+					-- closure. Kept as its own table rather than derived from the
+					-- breakdown so the barrier stays a primary-key lookup on the hot
+					-- alert path.
+					CREATE TABLE IF NOT EXISTS reconciliations.frozen_period (
+						period_id text PRIMARY KEY,
+						closure_id bigint NOT NULL REFERENCES reconciliations.closure (id),
+						frozen_at timestamptz NOT NULL
+					);
+
+					-- The closing cadence, runtime-modifiable rather than a boot flag.
+					-- Changing it mid-flight simply makes the next closure longer or
+					-- shorter; closures already closed are unaffected, which is the
+					-- property that makes the cadence safe to change at all.
+					CREATE TABLE IF NOT EXISTS reconciliations.closing_schedule (
+						singleton boolean PRIMARY KEY DEFAULT true,
+						cron text NOT NULL,
+						updated_at timestamptz NOT NULL,
+						CONSTRAINT closing_schedule_singleton_chk CHECK (singleton)
+					);
+
+					-- A closure is mutable exactly once, on the open -> closed
+					-- transition that records its seal. After that it is evidence, and
+					-- the trigger says so. UPDATE on an already-closed row, and DELETE
+					-- or TRUNCATE on any row, are refused.
+					CREATE OR REPLACE FUNCTION reconciliations.closure_immutable_once_closed()
+						RETURNS trigger
+						LANGUAGE plpgsql
+					AS $$
+					BEGIN
+						IF TG_OP = 'UPDATE' AND OLD.status <> 'CLOSED' THEN
+							RETURN NEW;
+						END IF;
+						RAISE EXCEPTION
+							'%.% is append-only once closed: % is not permitted',
+							TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP
+							USING ERRCODE = 'restrict_violation',
+							      HINT = 'A closed closure is evidence. Corrections are recorded as new entries.';
+					END;
+					$$;
+
+					DROP TRIGGER IF EXISTS closure_immutable ON reconciliations.closure;
+					CREATE TRIGGER closure_immutable
+						BEFORE UPDATE OR DELETE ON reconciliations.closure
+						FOR EACH ROW EXECUTE FUNCTION reconciliations.closure_immutable_once_closed();
+
+					DROP TRIGGER IF EXISTS closure_no_truncate ON reconciliations.closure;
+					CREATE TRIGGER closure_no_truncate
+						BEFORE TRUNCATE ON reconciliations.closure
+						FOR EACH STATEMENT EXECUTE FUNCTION reconciliations.audit_entry_immutable();
+
+					DROP TRIGGER IF EXISTS frozen_period_no_truncate ON reconciliations.frozen_period;
+					CREATE TRIGGER frozen_period_no_truncate
+						BEFORE TRUNCATE ON reconciliations.frozen_period
+						FOR EACH STATEMENT EXECUTE FUNCTION reconciliations.audit_entry_immutable();
+
+					REVOKE UPDATE, DELETE, TRUNCATE ON reconciliations.closure FROM PUBLIC;
+					REVOKE UPDATE, DELETE, TRUNCATE ON reconciliations.frozen_period FROM PUBLIC;
+				`)
+				return err
+			},
+		},
 	)
 }

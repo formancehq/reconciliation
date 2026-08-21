@@ -221,174 +221,182 @@ func TestNormalizeSubjectDoesNotMutateInput(t *testing.T) {
 	require.Equal(t, []string{"write", "read"}, original, "the caller's slice was reordered in place")
 }
 
-func TestSealingHashBindsEveryField(t *testing.T) {
+// Every field a closure publishes must change its hash. A published field
+// outside the signature is a field anyone can restate — the gap that once let an
+// edited alert count read "0 still open" while verification answered intact.
+func TestClosureHashBindsEveryField(t *testing.T) {
 	t.Parallel()
 
-	base := SealInput{
-		PeriodID:      "2026-05",
+	base := ClosureInput{
+		ClosureID:     7,
 		FirstSequence: 1,
 		LastSequence:  42,
 		EntryCount:    42,
 		LastAuditHash: []byte("head"),
 		StateHash:     []byte("state"),
-
-		AlertCount:      3,
-		UnresolvedCount: 1,
-		SealedBy:        models.Subject{Subject: "controller@example.com"},
-		SealedAt:        time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+		ClosedBy:      models.Subject{Subject: "controller@example.com"},
+		ClosedAt:      time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
 	}
-	baseline := ComputeSealingHash(base)
+	baseline := ComputeClosureHash(base)
 
-	mutations := map[string]func(in *SealInput){
-		"periodID":      func(in *SealInput) { in.PeriodID = "2026-06" },
-		"firstSequence": func(in *SealInput) { in.FirstSequence = 2 },
-		"lastSequence":  func(in *SealInput) { in.LastSequence = 43 },
-		"entryCount":    func(in *SealInput) { in.EntryCount = 41 },
-		"lastAuditHash": func(in *SealInput) { in.LastAuditHash = []byte("other") },
-		"stateHash":     func(in *SealInput) { in.StateHash = []byte("other") },
-		// The published headline figures and attribution. A report cites these, so
-		// leaving them unsigned let an edited row show "0 alerts, 0 unresolved" for
-		// a period that had one open while verification still answered ok.
-		"alertCount":      func(in *SealInput) { in.AlertCount = 4 },
-		"unresolvedCount": func(in *SealInput) { in.UnresolvedCount = 0 },
-		"sealedBy":        func(in *SealInput) { in.SealedBy = models.Subject{Subject: "someone-else"} },
-		// The source tag, not just the subject string: a seal closed by a scheduled
-		// component must not be presentable as one a person signed off.
-		"sealedBySource": func(in *SealInput) { in.SealedBy.Source = models.SubjectSourceSystem },
-		"sealedAt":       func(in *SealInput) { in.SealedAt = in.SealedAt.Add(time.Hour) },
+	mutations := map[string]func(in *ClosureInput){
+		"closureID":     func(in *ClosureInput) { in.ClosureID = 8 },
+		"firstSequence": func(in *ClosureInput) { in.FirstSequence = 2 },
+		"lastSequence":  func(in *ClosureInput) { in.LastSequence = 43 },
+		"entryCount":    func(in *ClosureInput) { in.EntryCount = 41 },
+		"lastAuditHash": func(in *ClosureInput) { in.LastAuditHash = []byte("other") },
+		"stateHash":     func(in *ClosureInput) { in.StateHash = []byte("other") },
+		"closedBy":      func(in *ClosureInput) { in.ClosedBy = models.Subject{Subject: "someone-else"} },
+		// The source tag, not just the subject string: a closing done by a
+		// scheduled component must not be presentable as one a person signed off.
+		"closedBySource": func(in *ClosureInput) { in.ClosedBy.Source = models.SubjectSourceSystem },
+		"closedAt":       func(in *ClosureInput) { in.ClosedAt = in.ClosedAt.Add(time.Hour) },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
 			in := base
 			mutate(&in)
-			require.NotEqual(t, baseline, ComputeSealingHash(in), "%s is not bound into the seal", name)
+			require.NotEqual(t, baseline, ComputeClosureHash(in), "%s is not bound into the closure hash", name)
 		})
 	}
 }
 
-// SealInputFor is the single mapping every sealing-hash path shares, so the one
-// way it can still go wrong is a field added to SealInput and not mapped: every
-// path would then agree on hashing its zero value, and the new field would be
-// silently uncommitted while TestSealingHashBindsEveryField — which builds its
-// own SealInput — kept passing. Reflection is what makes the omission fail here
+// The one way the centralised mapping can still go wrong is a field added to
+// ClosureInput and not mapped: every path would agree on hashing its zero value,
+// leaving the field committed to nothing. Reflection makes the omission fail here
 // instead of shipping.
-func TestSealInputForMapsEveryCommittedField(t *testing.T) {
+func TestClosureInputForMapsEveryCommittedField(t *testing.T) {
 	t.Parallel()
 
-	seal := &models.PeriodSeal{
-		PeriodID:      "2026-05",
+	last := int64(42)
+	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	closure := &models.Closure{
+		ID:            7,
 		FirstSequence: 1,
-		LastSequence:  42,
+		LastSequence:  &last,
 		EntryCount:    42,
 		LastAuditHash: []byte("head"),
 		StateHash:     []byte("state"),
-
-		AlertCount:      3,
-		UnresolvedCount: 1,
-		SealedBy:        models.Subject{Subject: "controller@example.com"},
-		SealedAt:        time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+		ClosedBy:      models.Subject{Subject: "controller@example.com"},
+		ClosedAt:      &closedAt,
 	}
 
-	in := SealInputFor(seal)
+	in := ClosureInputFor(closure)
 	v := reflect.ValueOf(in)
 	for i := range v.NumField() {
 		name := v.Type().Field(i).Name
 		require.False(t, v.Field(i).IsZero(),
-			"SealInput.%s is not populated by SealInputFor: every path would hash its zero value, "+
-				"leaving the field committed to nothing. Map it from models.PeriodSeal.", name)
+			"ClosureInput.%s is not populated by ClosureInputFor: every path would hash its zero "+
+				"value, leaving the field committed to nothing. Map it from models.Closure.", name)
 	}
-
-	require.Equal(t, seal.PeriodID, in.PeriodID)
-	require.Equal(t, seal.FirstSequence, in.FirstSequence)
-	require.Equal(t, seal.LastSequence, in.LastSequence)
-	require.Equal(t, seal.EntryCount, in.EntryCount)
-	require.Equal(t, seal.LastAuditHash, in.LastAuditHash)
-	require.Equal(t, seal.StateHash, in.StateHash)
-	require.Equal(t, seal.AlertCount, in.AlertCount)
-	require.Equal(t, seal.UnresolvedCount, in.UnresolvedCount)
-	require.Equal(t, seal.SealedBy, in.SealedBy)
-	require.Equal(t, seal.SealedAt, in.SealedAt)
+	require.Equal(t, closure.ID, in.ClosureID)
+	require.Equal(t, *closure.LastSequence, in.LastSequence)
+	require.Equal(t, *closure.ClosedAt, in.ClosedAt)
 }
 
-// WithHead exists only for the chain walk, which re-derives a seal against the
-// head the journal actually presents. If it ever altered anything else, the walk
-// would report tampering on seals that are intact.
-func TestWithHeadOverridesOnlyTheHead(t *testing.T) {
+// WithHead exists only for the chain walk, which re-derives a closure against the
+// head the journal actually presents. If it altered anything else, the walk would
+// report tampering on closures that are intact.
+func TestClosureWithHeadOverridesOnlyTheHead(t *testing.T) {
 	t.Parallel()
 
-	seal := &models.PeriodSeal{
-		PeriodID:      "2026-05",
-		FirstSequence: 1,
-		LastSequence:  42,
-		EntryCount:    42,
-		LastAuditHash: []byte("recorded head"),
-		StateHash:     []byte("state"),
-
-		AlertCount:      3,
-		UnresolvedCount: 1,
-		SealedBy:        models.Subject{Subject: "controller@example.com"},
-		SealedAt:        time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+	last := int64(42)
+	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	closure := &models.Closure{
+		ID: 7, FirstSequence: 1, LastSequence: &last, EntryCount: 42,
+		LastAuditHash: []byte("recorded head"), StateHash: []byte("state"),
+		ClosedBy: models.Subject{Subject: "controller@example.com"}, ClosedAt: &closedAt,
 	}
 
-	base := SealInputFor(seal)
+	base := ClosureInputFor(closure)
 	swapped := base.WithHead([]byte("journal head"))
 
 	require.Equal(t, []byte("journal head"), swapped.LastAuditHash)
-	require.Equal(t, []byte("recorded head"), base.LastAuditHash,
-		"WithHead must not mutate the input it was called on")
+	require.Equal(t, []byte("recorded head"), base.LastAuditHash, "WithHead must not mutate its input")
+	require.Equal(t, base, swapped.WithHead(closure.LastAuditHash))
+	require.NotEqual(t, ComputeClosureHash(base), ComputeClosureHash(swapped))
+}
 
-	// Every other field is untouched, so re-deriving against the seal's own head
-	// reproduces the plain mapping exactly.
-	require.Equal(t, base, swapped.WithHead(seal.LastAuditHash))
-	require.Equal(t,
-		ComputeSealingHash(base),
-		ComputeSealingHash(SealInputFor(seal).WithHead(seal.LastAuditHash)))
+// The per-period breakdown enters the closure hash only through the state hash,
+// so every figure in it has to change that digest — otherwise editing a count
+// inside the stored jsonb would leave the closure hash reproducing perfectly.
+func TestClosureStateHasherBindsEveryPeriodFigure(t *testing.T) {
+	t.Parallel()
 
-	// And a seal moved onto a different journal head does not re-derive.
-	require.NotEqual(t, ComputeSealingHash(base), ComputeSealingHash(swapped))
+	base := models.ClosurePeriod{
+		PeriodID: "2026-05", EntryCount: 12, AlertCount: 5, UnresolvedCount: 2,
+		StateHash: "abcd", Ended: true, Frozen: true,
+	}
+	sum := func(p models.ClosurePeriod) []byte {
+		h := NewClosureStateHasher()
+		h.Add(p)
+		return h.Sum()
+	}
+	baseline := sum(base)
+
+	for name, mutate := range map[string]func(p *models.ClosurePeriod){
+		"periodID":        func(p *models.ClosurePeriod) { p.PeriodID = "2026-06" },
+		"entryCount":      func(p *models.ClosurePeriod) { p.EntryCount = 13 },
+		"alertCount":      func(p *models.ClosurePeriod) { p.AlertCount = 0 },
+		"unresolvedCount": func(p *models.ClosurePeriod) { p.UnresolvedCount = 0 },
+		"stateHash":       func(p *models.ClosurePeriod) { p.StateHash = "ffff" },
+		"ended":           func(p *models.ClosurePeriod) { p.Ended = false },
+		"frozen":          func(p *models.ClosurePeriod) { p.Frozen = false },
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := base
+			mutate(&p)
+			require.NotEqual(t, baseline, sum(p), "%s is not bound into the state hash", name)
+		})
+	}
+
+	// Order is part of the digest, so two closures observing the same periods in a
+	// different order must not collide.
+	other := models.ClosurePeriod{PeriodID: "2026-06", EntryCount: 1}
+	forward := NewClosureStateHasher()
+	forward.Add(base)
+	forward.Add(other)
+	backward := NewClosureStateHasher()
+	backward.Add(other)
+	backward.Add(base)
+	require.NotEqual(t, forward.Sum(), backward.Sum())
 }
 
 // timestamptz stores microseconds; time.Now() on Linux carries nanoseconds. If
-// the sealing hash took the un-truncated reading, every seal would verify as
-// tampered in production and pass on a developer's Mac, where wall-clock
-// readings are already microsecond-granular. An explicit sub-microsecond value
-// makes this fail on either platform rather than depending on the host clock.
-func TestSealingHashIgnoresSubMicrosecondTime(t *testing.T) {
+// the closure hash took the un-truncated reading, every closure would verify as
+// tampered in production and pass on a developer's Mac.
+func TestClosureHashIgnoresSubMicrosecondTime(t *testing.T) {
 	t.Parallel()
 
-	base := SealInput{PeriodID: "2026-05", LastSequence: 10}
-	base.SealedAt = time.Date(2026, 6, 1, 12, 0, 0, 123456000, time.UTC)
-
+	base := ClosureInput{ClosureID: 1, ClosedAt: time.Date(2026, 6, 1, 12, 0, 0, 123456000, time.UTC)}
 	withNanos := base
-	withNanos.SealedAt = time.Date(2026, 6, 1, 12, 0, 0, 123456789, time.UTC)
-
-	require.Equal(t, ComputeSealingHash(base), ComputeSealingHash(withNanos),
+	withNanos.ClosedAt = time.Date(2026, 6, 1, 12, 0, 0, 123456789, time.UTC)
+	require.Equal(t, ComputeClosureHash(base), ComputeClosureHash(withNanos),
 		"nanoseconds Postgres cannot store must not change the hash")
 
-	// A different microsecond still must.
 	other := base
-	other.SealedAt = time.Date(2026, 6, 1, 12, 0, 0, 123457000, time.UTC)
-	require.NotEqual(t, ComputeSealingHash(base), ComputeSealingHash(other))
+	other.ClosedAt = time.Date(2026, 6, 1, 12, 0, 0, 123457000, time.UTC)
+	require.NotEqual(t, ComputeClosureHash(base), ComputeClosureHash(other))
 }
 
-// The sealing hash must be reproducible by someone who has only the seal's
-// published fields — no installation key. That is what lets an auditor verify
-// the signature without our cooperation.
-func TestSealingHashIsUnkeyed(t *testing.T) {
+// The closure hash must be reproducible by someone holding only the published
+// fields — no installation key. That is what lets an auditor verify the signature
+// without our cooperation.
+func TestClosureHashIsUnkeyed(t *testing.T) {
 	t.Parallel()
 
-	in := SealInput{PeriodID: "2026-05", FirstSequence: 1, LastSequence: 10, EntryCount: 10}
-	require.Equal(t, ComputeSealingHash(in), ComputeSealingHash(in))
+	in := ClosureInput{ClosureID: 7, FirstSequence: 1, LastSequence: 10, EntryCount: 10}
+	require.Equal(t, ComputeClosureHash(in), ComputeClosureHash(in))
 }
 
-func TestSealSignatureRoundTrip(t *testing.T) {
+func TestClosureSignatureRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	key, err := GenerateSigningKey()
 	require.NoError(t, err)
 	require.True(t, key.CanSign())
 
-	sealingHash := ComputeSealingHash(SealInput{PeriodID: "2026-05", LastSequence: 10})
+	sealingHash := ComputeClosureHash(ClosureInput{ClosureID: 7, LastSequence: 10})
 	signature, err := key.Sign(sealingHash)
 	require.NoError(t, err)
 
@@ -398,7 +406,7 @@ func TestSealSignatureRoundTrip(t *testing.T) {
 	require.True(t, verifier.Verify(sealingHash, signature))
 	require.Equal(t, key.ID, verifier.ID)
 
-	tampered := ComputeSealingHash(SealInput{PeriodID: "2026-05", LastSequence: 11})
+	tampered := ComputeClosureHash(ClosureInput{ClosureID: 7, LastSequence: 11})
 	require.False(t, verifier.Verify(tampered, signature))
 }
 

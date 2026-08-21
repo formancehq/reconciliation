@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -78,11 +79,11 @@ func (s *Storage) lockAuditChain(ctx context.Context) error {
 // still uncommitted, the write then blocks on the lock, and appends *after* the
 // seal without rechecking, landing evidence in books that are already closed.
 func (s *Storage) assertPeriodWritable(ctx context.Context, periodID, what string) error {
-	sealed, err := s.IsPeriodSealed(ctx, periodID)
+	frozen, err := s.IsPeriodFrozen(ctx, periodID)
 	if err != nil {
 		return err
 	}
-	if sealed {
+	if frozen {
 		return fmt.Errorf("%w: period %q was closed, so %s can no longer be recorded in it",
 			ErrPeriodSealed, periodID, what)
 	}
@@ -368,7 +369,7 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 	// unverifiable from the data alone — the head is derived from the same table
 	// an attacker just truncated — which is the strongest practical argument for
 	// sealing periods promptly rather than eventually.
-	if sealed, err := s.maxSealedSequence(ctx); err != nil {
+	if sealed, err := s.maxClosedSequence(ctx); err != nil {
 		return nil, err
 	} else if sealed > head {
 		missing := head + 1
@@ -376,7 +377,7 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 		result.Violation = models.ChainViolationSequenceGap
 		result.AtSequence = &missing
 		result.Detail = fmt.Sprintf(
-			"a period seal closes the journal at sequence %d but the journal now ends at %d: %d entries were removed from the tail",
+			"a closure closes the journal at sequence %d but the journal now ends at %d: %d entries were removed from the tail",
 			sealed, head, sealed-head)
 		return result, nil
 	}
@@ -392,26 +393,25 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 	// Only when the range starts at 1. A caller who asked about 10..20 is not
 	// asking about the chain's opening prefix.
 	if fromSeq == 1 {
-		genesis, err := s.zeroBoundarySeals(ctx)
+		genesis, err := s.zeroBoundaryClosures(ctx)
 		if err != nil {
 			return nil, err
 		}
 		for i := range genesis {
 			seal := &genesis[i]
-			if ok, reason := s.VerifySealIntegrity(seal); !ok {
+			if ok, reason := s.VerifyClosureIntegrity(seal); !ok {
 				// The seal has no boundary entry to point at, so name the entry
 				// that recorded it — a real, fetchable sequence an investigator
 				// can start from.
-				at := seal.AuditSequence
 				result.OK = false
 				result.Violation = models.ChainViolationHashMismatch
-				result.AtSequence = &at
+				result.AtSequence = seal.AuditSequence
 				result.Detail = reason
 				return result, nil
 			}
-			// Reported so the caller can tell the seal was checked rather than
+			// Reported so the caller can tell the closure was checked rather than
 			// skipped, which is the whole distinction this fix restores.
-			result.SealsCrossed = append(result.SealsCrossed, seal.PeriodID)
+			result.SealsCrossed = append(result.SealsCrossed, closureLabel(seal))
 		}
 	}
 
@@ -466,13 +466,15 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 		}
 	}
 
-	seals, err := s.sealsInRange(ctx, fromSeq, toSeq)
+	seals, err := s.closuresInRange(ctx, fromSeq, toSeq)
 	if err != nil {
 		return nil, err
 	}
-	sealByLastSeq := make(map[int64]*models.PeriodSeal, len(seals))
+	sealByLastSeq := make(map[int64]*models.Closure, len(seals))
 	for i := range seals {
-		sealByLastSeq[seals[i].LastSequence] = &seals[i]
+		if seals[i].LastSequence != nil {
+			sealByLastSeq[*seals[i].LastSequence] = &seals[i]
+		}
 	}
 
 	expectedSeq := fromSeq
@@ -560,7 +562,7 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 			}
 
 			if seal, ok := sealByLastSeq[entry.Sequence]; ok {
-				if err := verifySealAgainstHead(seal, entry.Hash); err != nil {
+				if err := verifyClosureAgainstHead(seal, entry.Hash); err != nil {
 					seq := entry.Sequence
 					result.OK = false
 					result.Violation = models.ChainViolationHashMismatch
@@ -568,7 +570,7 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 					result.Detail = err.Error()
 					return result, nil
 				}
-				result.SealsCrossed = append(result.SealsCrossed, seal.PeriodID)
+				result.SealsCrossed = append(result.SealsCrossed, closureLabel(seal))
 			}
 
 			expectedPrev = entry.Hash
@@ -596,43 +598,39 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 	return result, nil
 }
 
-// maxSealedSequence is the highest boundary any period seal committed to.
-func (s *Storage) maxSealedSequence(ctx context.Context) (int64, error) {
-	var max int64
-	if err := s.db.NewSelect().Model((*models.PeriodSeal)(nil)).
-		ColumnExpr("coalesce(max(last_sequence), 0)").Scan(ctx, &max); err != nil {
-		return 0, e("read highest sealed sequence", err)
+// closureLabel names a closure for a verification report. Its business periods
+// when it observed any, so the report stays legible to an auditor who thinks in
+// months rather than in closure ids; the id alone otherwise, because a closure
+// that observed nothing is still a real boundary worth naming.
+func closureLabel(closure *models.Closure) string {
+	if len(closure.Periods) == 0 {
+		return fmt.Sprintf("closure %d", closure.ID)
 	}
-	return max, nil
+	names := make([]string, 0, len(closure.Periods))
+	for _, p := range closure.Periods {
+		names = append(names, p.PeriodID)
+	}
+	return fmt.Sprintf("closure %d (%s)", closure.ID, strings.Join(names, ", "))
 }
 
-// zeroBoundarySeals returns the seals that close at sequence 0 — a period sealed
-// while the journal was still empty. They are invisible to the walk, which
-// re-derives a seal only when it reaches the entry at its boundary, and there is
-// no entry at sequence 0.
-func (s *Storage) zeroBoundarySeals(ctx context.Context) ([]models.PeriodSeal, error) {
-	var seals []models.PeriodSeal
-	if err := s.db.NewSelect().Model(&seals).
-		Where("last_sequence = 0").
-		Order("period_id ASC").Scan(ctx); err != nil {
-		return nil, e("list zero-boundary seals", err)
-	}
-	return seals, nil
-}
-
-// verifySealAgainstHead re-derives a seal's sealing hash from its own stored
-// fields plus the chain head it claims to close. A seal whose fields were edited,
-// or that was moved onto a different head, fails here.
-func verifySealAgainstHead(seal *models.PeriodSeal, headHash []byte) error {
-	recomputed := audit.ComputeSealingHash(audit.SealInputFor(seal).WithHead(headHash))
-	if !bytes.Equal(recomputed, seal.SealingHash) {
+// verifyClosureAgainstHead re-derives a closure's hash from its own stored fields
+// plus the chain head it claims to close. A closure whose fields were edited, or
+// that was moved onto a different head, fails here.
+func verifyClosureAgainstHead(closure *models.Closure, headHash []byte) error {
+	if !closureStateMatches(closure) {
 		return fmt.Errorf(
-			"the seal for period %q does not match the journal it claims to close", seal.PeriodID)
+			"closure %d no longer reproduces its own state hash: its per-period figures were altered",
+			closure.ID)
 	}
-	if len(seal.LastAuditHash) > 0 && !bytes.Equal(seal.LastAuditHash, headHash) {
+	recomputed := audit.ComputeClosureHash(audit.ClosureInputFor(closure).WithHead(headHash))
+	if !bytes.Equal(recomputed, closure.SealingHash) {
 		return fmt.Errorf(
-			"the seal for period %q records a different chain head than the journal has at sequence %d",
-			seal.PeriodID, seal.LastSequence)
+			"closure %d does not match the journal it claims to close", closure.ID)
+	}
+	if len(closure.LastAuditHash) > 0 && !bytes.Equal(closure.LastAuditHash, headHash) {
+		return fmt.Errorf(
+			"closure %d records a different chain head than the journal has at sequence %d",
+			closure.ID, *closure.LastSequence)
 	}
 	return nil
 }

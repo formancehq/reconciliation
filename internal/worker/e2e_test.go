@@ -44,6 +44,9 @@ func newWorkerStore(t *testing.T) (*storage.Storage, *bun.DB) {
 	require.NoError(t, migrations.Migrate(context.Background(), db))
 	store, err := storage.EnsureAuditChain(context.Background(), storage.NewStorage(db), storage.AuditChainSettings{Pepper: "test-pepper"})
 	require.NoError(t, err)
+	// Every journalled write lands inside an open closure, so a store without one
+	// would let tests pass against a shape production never has.
+	require.NoError(t, store.InitClosures(context.Background()))
 	return store, db
 }
 

@@ -40,6 +40,11 @@ const (
 	// AuditPeriodSealed records the closure of a reconciliation period. The
 	// memento carries the sealing hash, so the seal is itself chained.
 	AuditPeriodSealed AuditEntryKind = "period.sealed"
+	// AuditClosureSealed records the closing of a journal segment. Distinct from
+	// period.sealed because it attests a different statement: a closure covers a
+	// range of the journal and reports the business periods it observed, where a
+	// seal claimed to *be* one business period.
+	AuditClosureSealed AuditEntryKind = "closure.sealed"
 )
 
 // SubjectSource discriminates the origin of an action. The distinction is
@@ -178,57 +183,6 @@ const (
 	// no longer writable.
 	PeriodSealed PeriodSealStatus = "SEALED"
 )
-
-// PeriodSeal closes a contiguous range of the chain under a period label.
-//
-// The range, not the label, is what the seal covers — exactly as a Ledger V3
-// chapter closes at an audit-sequence boundary rather than filtering on
-// content. FirstSequence continues from the previous seal, so the seals form a
-// partition of the chain with no gap and no overlap.
-type PeriodSeal struct {
-	bun.BaseModel `bun:"reconciliations.period_seal" json:"-"`
-
-	PeriodID      string `bun:"period_id,pk"            json:"periodID"`
-	FirstSequence int64  `bun:"first_sequence,notnull"  json:"firstSequence"`
-	LastSequence  int64  `bun:"last_sequence,notnull"   json:"lastSequence"`
-	// EntryCount is the number of chain entries the seal covers. Zero is legal
-	// (a quiet period) and is not the same as an unsealed period.
-	EntryCount int64 `bun:"entry_count,notnull" json:"entryCount"`
-	// LastAuditHash is the chain head at seal time. Chain verification resumes
-	// across a sealed boundary from this value, the same way the Ledger does
-	// across an archived chapter.
-	LastAuditHash []byte `bun:"last_audit_hash" json:"lastAuditHash,omitempty"`
-	// StateHash covers the derived alert state of the period, so the seal
-	// commits to the outcome as well as to the journal that produced it.
-	StateHash []byte `bun:"state_hash,notnull" json:"stateHash"`
-	// SealingHash is what an auditor checks: one value standing for the whole
-	// period.
-	SealingHash []byte `bun:"sealing_hash,notnull" json:"sealingHash"`
-	// Signature is the Ed25519 signature of SealingHash. It is what makes the
-	// seal verifiable by a third party who holds only the public key — the
-	// chain hashes themselves are keyed and cannot be checked from outside.
-	Signature []byte `bun:"signature" json:"signature,omitempty"`
-	// SigningKeyID identifies which public key verifies Signature.
-	SigningKeyID string  `bun:"signing_key_id,nullzero" json:"signingKeyID,omitempty"`
-	SealedBy     Subject `bun:"sealed_by,type:jsonb,notnull" json:"sealedBy"`
-	// AlertCount and UnresolvedCount are the period's headline figures, frozen
-	// at seal time so a report does not have to re-derive them later.
-	AlertCount      int64     `bun:"alert_count,notnull"      json:"alertCount"`
-	UnresolvedCount int64     `bun:"unresolved_count,notnull" json:"unresolvedCount"`
-	SealedAt        time.Time `bun:"sealed_at,notnull,nullzero" json:"sealedAt"`
-	// AuditSequence is the chain entry that recorded this seal.
-	AuditSequence int64 `bun:"audit_sequence,notnull" json:"auditSequence"`
-}
-
-// Status reports the period's lifecycle state. A stored PeriodSeal is always
-// sealed; the method exists so API read models can render both cases through
-// one type.
-func (p *PeriodSeal) Status() PeriodSealStatus {
-	if p == nil {
-		return PeriodOpen
-	}
-	return PeriodSealed
-}
 
 // periodIDFormats are the exact shapes Cadence.PeriodID produces. Anything else
 // is a typo, and a typo here is not recoverable: sealing advances a global
@@ -377,4 +331,101 @@ type ChainVerification struct {
 	// SealsCrossed lists the period seals the walk traversed, each of whose
 	// sealing hash was re-derived and checked against the stored value.
 	SealsCrossed []string `json:"sealsCrossed,omitempty"`
+}
+
+// ClosureStatus is the lifecycle of a closure. Two states, not the Ledger's
+// five: CLOSING exists there to keep an expensive state hash off the Raft
+// critical path, and ARCHIVING/ARCHIVED to move cold logs out of Pebble. We have
+// neither problem at a handful of writes per rule per minute.
+type ClosureStatus string
+
+const (
+	// ClosureOpen is the single closure currently accepting journal entries.
+	ClosureOpen ClosureStatus = "OPEN"
+	// ClosureClosed is sealed and immutable.
+	ClosureClosed ClosureStatus = "CLOSED"
+)
+
+// Closure is a contiguous, sealed segment of the journal.
+//
+// The difference from the period seal it replaces is where the range comes from.
+// A seal derived its start at close time from a period id the caller typed; a
+// closure has FirstSequence written when it is opened, so the range is a record
+// of what happened rather than a deduction that can be wrong. Closing takes no
+// argument — there is only ever one open closure — which is why the ordering
+// mistakes a seal had to guard against cannot be expressed here.
+//
+// The business period label is not lost, it is demoted: it belongs on the
+// evidence, not on the boundary. Periods carries the per-label breakdown, and
+// StateHash covers it, so the signature binds it.
+type Closure struct {
+	bun.BaseModel `bun:"reconciliations.closure" json:"-"`
+
+	ID     int64         `bun:"id,pk,autoincrement" json:"id"`
+	Status ClosureStatus `bun:"status,notnull"      json:"status"`
+
+	OpenedAt time.Time  `bun:"opened_at,notnull,nullzero" json:"openedAt"`
+	ClosedAt *time.Time `bun:"closed_at,nullzero"         json:"closedAt,omitempty"`
+
+	// FirstSequence is assigned when the closure opens. LastSequence is the chain
+	// head at close; last = first - 1 means the closure covered nothing, which is
+	// a legitimate answer rather than an error.
+	FirstSequence int64  `bun:"first_sequence,notnull" json:"firstSequence"`
+	LastSequence  *int64 `bun:"last_sequence,nullzero" json:"lastSequence,omitempty"`
+	EntryCount    int64  `bun:"entry_count,notnull"    json:"entryCount"`
+
+	LastAuditHash []byte `bun:"last_audit_hash" json:"lastAuditHash,omitempty"`
+
+	// Periods is the per-business-period breakdown. This is what an auditor
+	// actually asks about — "prove the control ran for May" — and it is the half
+	// a purely operational boundary cannot answer, because a period id comes from
+	// the evaluation's point-in-time and not from when the record was written.
+	Periods []ClosurePeriod `bun:"periods,type:jsonb,notnull" json:"periods"`
+
+	StateHash    []byte  `bun:"state_hash"                json:"stateHash,omitempty"`
+	SealingHash  []byte  `bun:"sealing_hash"              json:"sealingHash,omitempty"`
+	Signature    []byte  `bun:"signature"                 json:"signature,omitempty"`
+	SigningKeyID string  `bun:"signing_key_id,nullzero"   json:"signingKeyID,omitempty"`
+	ClosedBy     Subject `bun:"closed_by,type:jsonb"      json:"closedBy"`
+
+	// AuditSequence is the chain entry that recorded the closing. It lands after
+	// the boundary it describes, so it belongs to the following closure.
+	AuditSequence *int64 `bun:"audit_sequence,nullzero" json:"auditSequence,omitempty"`
+}
+
+// ClosurePeriod is one business period's figures inside a closure.
+//
+// Ended is what decides whether the period's alerts stop accepting writes. A
+// closure that runs while a period is still in progress attests what it saw
+// without freezing it — which is the whole reason closing a live period is no
+// longer a hazard needing a guard.
+type ClosurePeriod struct {
+	PeriodID        string `json:"periodID"`
+	EntryCount      int64  `json:"entryCount"`
+	AlertCount      int64  `json:"alertCount"`
+	UnresolvedCount int64  `json:"unresolvedCount"`
+	StateHash       string `json:"stateHash"`
+	Ended           bool   `json:"ended"`
+	Frozen          bool   `json:"frozen"`
+}
+
+// FrozenPeriod records that a business period stopped accepting writes.
+type FrozenPeriod struct {
+	bun.BaseModel `bun:"reconciliations.frozen_period" json:"-"`
+
+	PeriodID  string    `bun:"period_id,pk"          json:"periodID"`
+	ClosureID int64     `bun:"closure_id,notnull"    json:"closureID"`
+	FrozenAt  time.Time `bun:"frozen_at,notnull,nullzero" json:"frozenAt"`
+}
+
+// ClosingSchedule is the cron that rotates closures, held in the database rather
+// than in a boot flag so it can be changed without a restart. Changing it
+// mid-flight only makes the next closure longer or shorter; closures already
+// closed are unaffected, which is what makes the cadence safe to change at all.
+type ClosingSchedule struct {
+	bun.BaseModel `bun:"reconciliations.closing_schedule" json:"-"`
+
+	Singleton bool      `bun:"singleton,pk"               json:"-"`
+	Cron      string    `bun:"cron,notnull"               json:"cron"`
+	UpdatedAt time.Time `bun:"updated_at,notnull,nullzero" json:"updatedAt"`
 }

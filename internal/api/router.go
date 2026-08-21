@@ -78,10 +78,12 @@ func newRouter(
 		r.Post("/audit-entries/verify", verifyChainHandler(b))
 		r.Get("/audit-signing-keys", listVerificationKeysHandler(b))
 
-		r.Get("/periods", listPeriodSealsHandler(b))
-		r.Get("/periods/{periodID}", getPeriodSealHandler(b))
-		r.Post("/periods/{periodID}/seal", sealPeriodHandler(b))
-		r.Post("/periods/{periodID}/verify", verifyPeriodSealHandler(b))
+		r.Get("/closures", listClosuresHandler(b))
+		r.Post("/closures", closeJournalHandler(b))
+		r.Post("/closures/{closureID}/verify", verifyClosureHandler(b))
+		r.Get("/closing-schedule", getClosingScheduleHandler(b))
+		r.Put("/closing-schedule", setClosingScheduleHandler(b))
+		r.Get("/periods/{periodID}", getPeriodHandler(b))
 
 		r.Get("/rules/{ruleID}/revisions", listRuleRevisionsHandler(b))
 		r.Get("/rules/{ruleID}/revisions/{revision}", getRuleRevisionHandler(b))

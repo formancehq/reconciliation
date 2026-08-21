@@ -229,11 +229,11 @@ func TestVerifyChainDetectsTruncationBelowASeal(t *testing.T) {
 
 	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
 	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
-	seal := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	closure := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 
 	disableImmutability(t, store, ctx, "audit_entry")
 	_, err := store.db.NewRaw(
-		"DELETE FROM reconciliations.audit_entry WHERE sequence >= ?", seal.LastSequence).Exec(ctx)
+		"DELETE FROM reconciliations.audit_entry WHERE sequence >= ?", *closure.LastSequence).Exec(ctx)
 	require.NoError(t, err)
 
 	// No range given at all — the seal is what catches it.
@@ -341,22 +341,39 @@ func TestDeleteRuleTombstonesAndKeepsHistory(t *testing.T) {
 	require.ErrorIs(t, store.DeleteRule(ctx, rule.ID), ErrNotFound)
 }
 
-func sealPeriod(t *testing.T, store *Storage, ctx context.Context, periodID string, by models.Subject) *models.PeriodSeal {
+// closeJournal closes the current closure and opens its successor.
+//
+// No period id, because closing takes none: the range is the one the open
+// closure has carried since it opened. That absence is the point of the design,
+// so the helper reflects it rather than hiding it behind a parameter.
+func closeJournal(t *testing.T, store *Storage, ctx context.Context, by models.Subject) *models.Closure {
 	t.Helper()
-	var seal *models.PeriodSeal
+	var closure *models.Closure
 	err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
-		out, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: periodID, SealedBy: by})
+		out, err := tx.CloseCurrentClosure(ctx, CloseClosureInput{ClosedBy: by})
 		if err != nil {
 			return err
 		}
-		seal = out
+		closure = out
 		return nil
 	})
 	require.NoError(t, err)
-	return seal
+	return closure
 }
 
-func TestSealPeriodProducesAVerifiableSignedSeal(t *testing.T) {
+// periodIn returns a closure's figures for one business period.
+func periodIn(t *testing.T, closure *models.Closure, periodID string) models.ClosurePeriod {
+	t.Helper()
+	for _, p := range closure.Periods {
+		if p.PeriodID == periodID {
+			return p
+		}
+	}
+	t.Fatalf("closure %d has no figures for period %q", closure.ID, periodID)
+	return models.ClosurePeriod{}
+}
+
+func TestClosureProducesAVerifiableSignedAttestation(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
@@ -365,21 +382,27 @@ func TestSealPeriodProducesAVerifiableSignedSeal(t *testing.T) {
 	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
 
 	operator := models.Subject{Subject: "controller@example.com", Source: models.SubjectSourceIssuer, SourceValue: "https://issuer"}
-	seal := sealPeriod(t, store, ctx, "2026-05", operator)
+	closure := closeJournal(t, store, ctx, operator)
 
-	require.Equal(t, "2026-05", seal.PeriodID)
-	require.Equal(t, int64(1), seal.FirstSequence)
-	require.Equal(t, int64(2), seal.LastSequence)
-	require.Equal(t, int64(2), seal.EntryCount)
-	require.NotEmpty(t, seal.SealingHash)
-	require.NotEmpty(t, seal.Signature, "the seal must be signed so an auditor can check it without us")
-	require.Equal(t, "controller@example.com", seal.SealedBy.Subject)
-	require.Equal(t, models.PeriodSealed, seal.Status())
+	require.Equal(t, models.ClosureClosed, closure.Status)
+	require.Equal(t, int64(1), closure.FirstSequence)
+	require.NotNil(t, closure.LastSequence)
+	require.Equal(t, int64(2), *closure.LastSequence)
+	require.Equal(t, int64(2), closure.EntryCount)
+	require.NotEmpty(t, closure.SealingHash)
+	require.NotEmpty(t, closure.Signature, "a closure must be signed so an auditor can check it without us")
+	require.Equal(t, "controller@example.com", closure.ClosedBy.Subject)
 
-	// The seal is itself journalled, at the sequence right after the range.
-	require.Equal(t, seal.LastSequence+1, seal.AuditSequence)
+	// The business period is not lost, it is demoted: it belongs on the evidence
+	// rather than on the boundary.
+	may := periodIn(t, closure, "2026-05")
+	require.Equal(t, int64(1), may.EntryCount, "the rule.created entry belongs to no period")
 
-	ok, reason, err := store.VerifySealSignature(ctx, seal)
+	// The closing is itself journalled, at the sequence right after the range.
+	require.NotNil(t, closure.AuditSequence)
+	require.Equal(t, *closure.LastSequence+1, *closure.AuditSequence)
+
+	ok, reason, err := store.VerifyClosureSignature(ctx, closure)
 	require.NoError(t, err)
 	require.True(t, ok, reason)
 
@@ -389,108 +412,185 @@ func TestSealPeriodProducesAVerifiableSignedSeal(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, keys)
 
-	// Deliberately spelled out rather than calling audit.SealInputFor: this stands
-	// in for an auditor's own reimplementation, and is the guard that a field
-	// added to the shared mapping cannot quietly change what a published seal
-	// commits to. Collapsing it into the helper would make production code verify
-	// itself against itself and remove the only independent check there is.
-	recomputed := audit.ComputeSealingHash(audit.SealInput{
-		PeriodID:      seal.PeriodID,
-		FirstSequence: seal.FirstSequence,
-		LastSequence:  seal.LastSequence,
-		EntryCount:    seal.EntryCount,
-		LastAuditHash: seal.LastAuditHash,
-		StateHash:     seal.StateHash,
-
-		AlertCount:      seal.AlertCount,
-		UnresolvedCount: seal.UnresolvedCount,
-		SealedBy:        seal.SealedBy,
-		SealedAt:        seal.SealedAt,
+	// Deliberately spelled out rather than calling audit.ClosureInputFor: this
+	// stands in for an auditor's own reimplementation, and is the guard that a
+	// field added to the shared mapping cannot quietly change what a published
+	// closure commits to. Collapsing it into the helper would make production code
+	// verify itself against itself and remove the only independent check there is.
+	recomputed := audit.ComputeClosureHash(audit.ClosureInput{
+		ClosureID:     closure.ID,
+		FirstSequence: closure.FirstSequence,
+		LastSequence:  *closure.LastSequence,
+		EntryCount:    closure.EntryCount,
+		LastAuditHash: closure.LastAuditHash,
+		StateHash:     closure.StateHash,
+		ClosedBy:      closure.ClosedBy,
+		ClosedAt:      *closure.ClosedAt,
 	})
-	require.Equal(t, seal.SealingHash, recomputed)
-	require.True(t, store.SigningKey().Verify(recomputed, seal.Signature))
+	require.Equal(t, closure.SealingHash, recomputed)
+	require.True(t, store.SigningKey().Verify(recomputed, closure.Signature))
 }
 
-// A period sealed before the journal has any entries commits to boundary
-// sequence 0. The walk re-derives a seal only when it reaches the entry at that
-// boundary, and there is no entry at 0 — so this seal used to be the one thing a
-// full verification silently skipped, and editing it returned OK from the exact
-// call an auditor leans on hardest. Verified live before fixing: entry_count went
-// 0 -> 99 and POST /audit-entries/verify {} still said intact.
-func TestFullVerificationChecksASealWithNoEntriesBelowIt(t *testing.T) {
+// Closing opens the successor in the same transaction. That is what removes the
+// hazard a period seal had: a seal froze a period and left the next write with
+// nowhere to go, which is why sealing a live period used to 409 the next
+// evaluation.
+// Exactly one closure is open at any time. The ledger states the same invariant
+// and enforces it in a single-writer FSM; we have neither, so it is a database
+// constraint rather than a convention — and worth asserting, because a second
+// open closure would give two ranges the same starting sequence and quietly
+// double-attest everything after it.
+func TestOnlyOneClosureCanBeOpen(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
 
-	var seal *models.PeriodSeal
-	require.NoError(t, store.RunInTx(ctx, func(ctx context.Context, scoped *Storage) error {
-		var err error
-		seal, err = scoped.SealPeriod(ctx, SealPeriodInput{PeriodID: "2026-05"})
-		return err
-	}))
-	require.Equal(t, int64(0), seal.LastSequence, "sealing an empty journal closes at boundary 0")
-	require.Equal(t, int64(0), seal.EntryCount)
+	_, err := store.db.NewInsert().Model(&models.Closure{
+		Status: models.ClosureOpen, OpenedAt: time.Now().UTC(), FirstSequence: 99,
+	}).Exec(ctx)
+	require.Error(t, err, "a second open closure must be refused by the database")
+	require.ErrorContains(t, err, "closure_single_open",
+		"refused by the partial unique index, not by application logic that could be bypassed")
+}
 
-	// Intact: the seal is reported as checked, not quietly skipped. Without that
-	// the caller cannot tell verification covered it.
+// Closing twice in a row is legal and produces an empty second closure, where
+// sealing the same period twice used to be a 409.
+//
+// The conflict is gone because what made it one is gone: a second seal of the
+// same period either contradicted the first or did nothing, whereas a second
+// closing attests a second, genuinely empty segment. An empty closure is a real
+// answer — "we ran the controls and nothing happened" — so refusing it here would
+// mean refusing it everywhere.
+func TestClosingTwiceProducesAnEmptySecondClosure(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+
+	first := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+	require.Positive(t, first.EntryCount)
+
+	second := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+	require.Zero(t, second.EntryCount)
+	require.Empty(t, second.Periods)
+	require.NotEmpty(t, second.Signature, "an empty closure is still signed evidence")
+
+	// And both remain verifiable, which is what makes the extra closure harmless
+	// rather than noise that breaks something.
+	result, err := store.VerifyChain(ctx, 0, 0)
+	require.NoError(t, err)
+	require.True(t, result.OK, result.Detail)
+}
+
+func TestClosingOpensItsSuccessorAtomically(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
+
+	first := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+
+	next, err := store.CurrentClosure(ctx)
+	require.NoError(t, err)
+	require.Equal(t, models.ClosureOpen, next.Status)
+	require.Equal(t, *first.AuditSequence+1, next.FirstSequence,
+		"the successor continues one past the closing entry: no gap, no overlap")
+
+	// And the journal keeps accepting writes with no further ceremony.
+	auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationFail)
+	second := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+	require.Equal(t, next.ID, second.ID)
+	require.Equal(t, next.FirstSequence, second.FirstSequence)
+}
+
+// Closures partition the journal exactly: every entry falls in one, and the
+// boundaries meet without gap or overlap.
+func TestClosuresPartitionTheChain(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationFail)
+	one := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+
+	auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationFail)
+	two := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+
+	require.Equal(t, *one.LastSequence+2, two.FirstSequence,
+		"one sequence apart: the closing entry of the first sits between them")
+	require.Equal(t, *one.AuditSequence+1, two.FirstSequence)
+}
+
+// A closure that covered nothing is still worth attesting: "we ran the controls
+// and nothing happened" is an audit answer.
+func TestClosingWithNoActivityStillAttests(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	closure := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+	require.Equal(t, int64(0), closure.EntryCount)
+	require.Empty(t, closure.Periods)
+	require.NotEmpty(t, closure.SealingHash)
+	require.NotEmpty(t, closure.Signature)
+
+	ok, reason, err := store.VerifyClosureSignature(ctx, closure)
+	require.NoError(t, err)
+	require.True(t, ok, reason)
+}
+
+// A closure that closed while the journal was still empty commits to boundary
+// sequence 0, and the walk re-derives a closure only on reaching the entry at its
+// boundary — of which there is none at 0. Without an explicit check it was the
+// one thing a full verification silently skipped.
+func TestFullVerificationChecksAClosureWithNoEntriesBelowIt(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	closure := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+	require.Equal(t, int64(0), *closure.LastSequence)
+
 	clean, err := store.VerifyChain(ctx, 0, 0)
 	require.NoError(t, err)
 	require.True(t, clean.OK)
-	require.Contains(t, clean.SealsCrossed, "2026-05")
+	require.NotEmpty(t, clean.SealsCrossed, "the closure must be reported as checked, not skipped")
 
-	// Altered: every field the sealing hash covers must break the full walk.
 	for _, tc := range []struct {
 		name string
 		set  string
 	}{
 		{"entryCount", "entry_count = 99"},
-		{"lastSequence", "last_sequence = 0, entry_count = 1"},
 		{"stateHash", `state_hash = '\x00'::bytea`},
-		{"periodID", "period_id = '2026-06'"},
+		{"periods", `periods = '[{"periodID":"2026-05","entryCount":9,"alertCount":9,"unresolvedCount":0,"stateHash":"","ended":true,"frozen":true}]'::jsonb`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newStore(t)
-			require.NoError(t, store.RunInTx(ctx, func(ctx context.Context, scoped *Storage) error {
-				_, err := scoped.SealPeriod(ctx, SealPeriodInput{PeriodID: "2026-05"})
-				return err
-			}))
+			closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 
-			disableImmutability(t, store, ctx, "period_seal")
+			disableImmutability(t, store, ctx, "closure")
 			_, err := store.db.NewRaw(
-				"UPDATE reconciliations.period_seal SET " + tc.set).Exec(ctx)
+				"UPDATE reconciliations.closure SET " + tc.set + " WHERE status = 'CLOSED'").Exec(ctx)
 			require.NoError(t, err)
 
 			res, err := store.VerifyChain(ctx, 0, 0)
 			require.NoError(t, err)
 			require.False(t, res.OK, "editing %s left full verification reporting intact", tc.name)
 			require.Equal(t, models.ChainViolationHashMismatch, res.Violation)
-			require.NotNil(t, res.AtSequence, "the report must name a sequence to start from")
 		})
 	}
-
-	// firstSequence is absent from the table above because the schema already
-	// makes it unreachable on a genesis seal: last_sequence >= first_sequence - 1
-	// pins first_sequence to 1 whenever the boundary is 0. Asserted rather than
-	// assumed, so dropping the constraint reopens the hole loudly.
-	t.Run("firstSequence is refused by the range constraint", func(t *testing.T) {
-		store := newStore(t)
-		require.NoError(t, store.RunInTx(ctx, func(ctx context.Context, scoped *Storage) error {
-			_, err := scoped.SealPeriod(ctx, SealPeriodInput{PeriodID: "2026-05"})
-			return err
-		}))
-		disableImmutability(t, store, ctx, "period_seal")
-		_, err := store.db.NewRaw(
-			"UPDATE reconciliations.period_seal SET first_sequence = 7").Exec(ctx)
-		require.ErrorContains(t, err, "period_seal_range_chk")
-	})
 }
 
-// The figures and attribution a seal publishes must be covered by its signature,
-// not merely stored beside it. Reproduced live before fixing: setting alert_count
-// and unresolved_count to 0 on a period that had one open alert left both
-// /periods/{id}/verify and the full chain walk answering ok, so a report could
-// cite "0 unresolved" from a response that presented itself as verified.
-func TestForgedSealMetadataFailsVerification(t *testing.T) {
+// The figures a closure publishes must be covered by its signature, not merely
+// stored beside it. The breakdown enters the sealing hash only through the state
+// hash, so editing a period's count inside the jsonb would otherwise leave the
+// sealing hash reproducing perfectly.
+func TestForgedClosureFiguresFailVerification(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 
@@ -498,18 +598,17 @@ func TestForgedSealMetadataFailsVerification(t *testing.T) {
 		name string
 		set  string
 	}{
-		{"alertCount", "alert_count = 0"},
-		{"unresolvedCount", "unresolved_count = 0"},
-		{"sealedBy", `sealed_by = '{"subject":"someone-else"}'::jsonb`},
-		{"sealedAt", "sealed_at = sealed_at + interval '1 hour'"},
+		{"alertCount", `periods = jsonb_set(periods, '{0,alertCount}', '0')`},
+		{"unresolvedCount", `periods = jsonb_set(periods, '{0,unresolvedCount}', '0')`},
+		{"frozen", `periods = jsonb_set(periods, '{0,frozen}', 'false')`},
+		{"closedBy", `closed_by = '{"subject":"someone-else"}'::jsonb`},
+		{"closedAt", "closed_at = closed_at + interval '1 hour'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			store := newStore(t)
 			rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
 			ev := auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationFail)
-			// A real alert, so alertCount and unresolvedCount are non-zero and
-			// setting them to 0 is a genuine restatement rather than a no-op.
 			_, err := store.OpenOrUpdateAlert(ctx, OpenAlertInput{
 				RuleID:       rule.ID,
 				Fingerprint:  "asset:USD/2",
@@ -521,154 +620,64 @@ func TestForgedSealMetadataFailsVerification(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			seal := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
-			require.Positive(t, seal.AlertCount, "the fixture must produce a countable alert")
-			require.Positive(t, seal.UnresolvedCount)
+			closure := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+			require.Positive(t, periodIn(t, closure, "2026-05").AlertCount)
 
-			ok, _, err := store.VerifySealSignature(ctx, seal)
+			ok, _, err := store.VerifyClosureSignature(ctx, closure)
 			require.NoError(t, err)
-			require.True(t, ok, "the untouched seal must verify")
+			require.True(t, ok, "the untouched closure must verify")
 
-			disableImmutability(t, store, ctx, "period_seal")
+			disableImmutability(t, store, ctx, "closure")
 			_, err = store.db.NewRaw(
-				"UPDATE reconciliations.period_seal SET " + tc.set + " WHERE period_id = '2026-05'").Exec(ctx)
+				"UPDATE reconciliations.closure SET "+tc.set+" WHERE id = ?", closure.ID).Exec(ctx)
 			require.NoError(t, err)
 
-			edited, err := store.GetPeriodSeal(ctx, "2026-05")
+			edited, err := store.GetClosure(ctx, closure.ID)
 			require.NoError(t, err)
 
-			ok, reason, err := store.VerifySealSignature(ctx, edited)
+			ok, reason, err := store.VerifyClosureSignature(ctx, edited)
 			require.NoError(t, err)
-			require.False(t, ok, "editing %s left the seal verifying", tc.name)
+			require.False(t, ok, "editing %s left the closure verifying", tc.name)
 			require.NotEmpty(t, reason)
-
-			integrity, _ := store.VerifySealIntegrity(edited)
-			require.False(t, integrity, "editing %s left the seal's own hash reproducing", tc.name)
 		})
 	}
 }
 
-// A seal's range continues from the previous seal's end, so sealing a period that
-// begins earlier than the last sealed one gives it the entries recorded after
-// that seal. Reproduced live: 2026-06 sealed after 2026-08 took range 8-8, so
-// June attested the entry that recorded August's closure. Irreversible, which is
-// why it has to be refused up front.
-func TestSealPeriodRefusesGoingBackwards(t *testing.T) {
+// Weekly and monthly rules can now both be attested by the same closing, which a
+// period seal could not do: two seals could not cover the same stretch of
+// calendar, so an installation had to pick one granularity and keep it. A closure
+// attests a range and reports every period it observed, so the question does not
+// arise.
+func TestOneClosingAttestsEveryCadenceItObserved(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
 
-	// The clock is pinned so the test does not depend on today's date: sealing a
-	// period that has not begun is refused by its own guard.
-	seal := func(periodID string) error {
-		return store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
-			_, err := tx.SealPeriod(ctx, SealPeriodInput{
-				PeriodID: periodID,
-				SealedBy: models.Subject{Subject: "controller"},
-				At:       time.Date(2026, 12, 31, 12, 0, 0, 0, time.UTC),
-			})
-			return err
-		})
-	}
-	require.NoError(t, seal("2026-08"))
+	monthly := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	weekly := auditTestRule(t, store, ctx, models.CadenceWeekly)
+	daily := auditTestRule(t, store, ctx, models.CadenceDaily)
+	auditTestEvaluation(t, store, ctx, monthly, "2026-05", models.EvaluationPass)
+	auditTestEvaluation(t, store, ctx, weekly, "2026-W20", models.EvaluationPass)
+	auditTestEvaluation(t, store, ctx, daily, "2026-05-15", models.EvaluationFail)
 
-	// 2026-08-15 is in the list on purpose: it begins *after* 2026-08 does, so a
-	// start-versus-start rule would let a day nested inside the closed month
-	// through. The books are closed through 1 September, and that is the bound.
-	for _, earlier := range []string{"2026-07", "2026-06", "2026-W12", "2026-08-15", "2026-08"} {
-		err := seal(earlier)
-		// 2026-08 itself is refused as already sealed; the rest as backwards.
-		if earlier == "2026-08" {
-			require.ErrorIs(t, err, ErrPeriodAlreadySealed)
-			continue
-		}
-		require.ErrorIs(t, err, ErrPeriodNotSealable, "%q falls inside the closed calendar", earlier)
-		require.ErrorContains(t, err, "the books are closed through",
-			"the error must say why, since the operator cannot undo a wrong seal")
-	}
+	closure := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 
-	// Forward still works, and the partition stays contiguous.
-	require.NoError(t, seal("2026-09"))
-	next, err := store.GetPeriodSeal(ctx, "2026-09")
-	require.NoError(t, err)
-	prev, err := store.GetPeriodSeal(ctx, "2026-08")
-	require.NoError(t, err)
-	require.Equal(t, prev.LastSequence+1, next.FirstSequence, "seals must partition with no gap")
+	require.Len(t, closure.Periods, 3)
+	for _, id := range []string{"2026-05", "2026-05-15", "2026-W20"} {
+		require.Equal(t, int64(1), periodIn(t, closure, id).EntryCount, "period %s", id)
+	}
+	// Sorted, because the state hash is taken over this sequence and a digest over
+	// a set is only meaningful if the set has an agreed order.
+	require.Equal(t, "2026-05", closure.Periods[0].PeriodID)
+	require.Equal(t, "2026-05-15", closure.Periods[1].PeriodID)
+	require.Equal(t, "2026-W20", closure.Periods[2].PeriodID)
 }
 
-// The mirror of TestSealPeriodRefusesGoingBackwards. With no seal yet there is no
-// closed calendar to compare against, so sealing a period later than the entries
-// already in the journal used to succeed — reproduced: sealing 2026-06 took range
-// 1..2, swallowing a 2026-05 evaluation, after which 2026-05 was refused as
-// backwards and could never be sealed at all.
-func TestSealPeriodRefusesSkippingPastAnOpenEarlierPeriod(t *testing.T) {
-	t.Parallel()
-	ctx := logging.TestingContext()
-	store := newStore(t)
-
-	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
-	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationFail)
-
-	for _, later := range []string{"2026-06", "2026-07", "2026-06-15"} {
-		err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
-			_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: later})
-			return err
-		})
-		require.ErrorIs(t, err, ErrPeriodNotSealable, "%q skips past the open 2026-05", later)
-		require.ErrorContains(t, err, "2026-05",
-			"the error must name the period to seal first, since guessing wrong is permanent")
-	}
-
-	// The earliest open period is sealable, and then the next one is too — the
-	// ordinary flow, where the second range legitimately contains the first's seal
-	// entry tagged with the earlier period.
-	may := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
-	require.Positive(t, may.EntryCount)
-
-	june := sealPeriod(t, store, ctx, "2026-06", models.Subject{Subject: "controller"})
-	require.Equal(t, may.LastSequence+1, june.FirstSequence, "seals must partition with no gap")
-}
-
-// Neither the backwards guard nor the skip-forward guard catches a first seal for
-// a period that has not started: there is no earlier seal and no period-tagged
-// entry to compare against. Reproduced: sealing 2099-01 on a quiet journal
-// succeeded, closed the books through February 2099, and left the real 2026-08
-// refused as backwards — permanently unsealable.
-func TestSealPeriodRefusesAPeriodThatHasNotBegun(t *testing.T) {
-	t.Parallel()
-	ctx := logging.TestingContext()
-	store := newStore(t)
-
-	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-
-	for _, future := range []string{"2099-01", "2026-09", "2026-08-22", "2026-W40"} {
-		err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
-			_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: future, At: now})
-			return err
-		})
-		require.ErrorIs(t, err, ErrPeriodNotSealable, "%q has not begun", future)
-		require.ErrorContains(t, err, "has not happened yet")
-	}
-
-	// A period already under way is still sealable: whether closing a live period
-	// should be refused up front is an open question, not settled by this guard.
-	live := sealPeriod(t, store, ctx, "2026-08", models.Subject{Subject: "controller"})
-	require.Equal(t, "2026-08", live.PeriodID)
-}
-
-// A continuous rule and a periodic rule share one journal, and closing the
-// periodic one must not freeze the continuous one. Verified rather than assumed,
-// because two separate guards have to agree for it to hold: the write barrier is
-// keyed on periodID and "continuous" is never sealed, and the skip-forward check
-// skips ids no cadence orders — had it treated "continuous" as an open earlier
-// period instead, the first weekly seal would have been refused and every one
-// after it, for as long as any continuous rule existed.
-//
-// The asymmetry this pins is deliberate and worth stating: the seal's *range*
-// covers every entry in the journal, continuous ones included, so they are
-// attested; its *figures* count only alerts carrying the sealed period's id. So
-// entryCount and alertCount do not reconcile by eye, and should not.
-func TestSealingAPeriodLeavesContinuousAlertsAlone(t *testing.T) {
+// A continuous rule and a periodic rule share one journal, and closing must not
+// freeze the continuous one. Two things have to agree for this to hold: the
+// barrier is keyed on the period label, and continuous never ends so it is never
+// frozen.
+func TestClosingLeavesContinuousAlertsAlone(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
@@ -694,270 +703,78 @@ func TestSealingAPeriodLeavesContinuousAlertsAlone(t *testing.T) {
 
 	continuousCase := openCase(cont, models.ContinuousPeriod, "asset:EUR/2")
 	openCase(weekly, "2026-W20", "asset:USD/2")
-	openCase(cont, models.ContinuousPeriod, "asset:GBP/2")
 
-	seal := sealPeriod(t, store, ctx, "2026-W20", models.Subject{Subject: "controller"})
+	closure := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 
-	// The range takes the whole journal; the figures take only the week's cases.
-	require.Equal(t, int64(8), seal.EntryCount, "the range covers the continuous entries too")
-	require.Equal(t, int64(1), seal.AlertCount, "only the weekly case is counted")
-	require.Equal(t, int64(1), seal.UnresolvedCount)
+	require.True(t, periodIn(t, closure, "2026-W20").Frozen, "a period that is over is frozen")
+	require.False(t, periodIn(t, closure, models.ContinuousPeriod).Frozen,
+		"continuous has no end, so a closing never freezes it")
 
-	// The continuous rule is untouched: existing cases still transition...
+	// Existing continuous cases still transition, and new ones still open.
 	_, err := store.AckAlert(ctx, continuousCase.ID, &models.Ack{By: "ops", At: time.Now().UTC()})
-	require.NoError(t, err, "closing a weekly period must not freeze a continuous alert")
-
-	// ...and new ones still open.
+	require.NoError(t, err, "closing must not freeze a continuous alert")
 	openCase(cont, models.ContinuousPeriod, "asset:CHF/2")
-
-	// And the next week still seals, continuing the partition with no gap.
-	openCase(weekly, "2026-W21", "asset:USD/2")
-	next := sealPeriod(t, store, ctx, "2026-W21", models.Subject{Subject: "controller"})
-	require.Equal(t, seal.LastSequence+1, next.FirstSequence)
-	require.Equal(t, int64(1), next.AlertCount)
 }
 
-// Weeks and months cannot both close the same stretch of calendar. Seals form a
-// partition of one journal, not a hierarchy, so "seal every week *and* every
-// month" is not a supported shape — it is an either/or, and the error says which
-// span is already closed.
-//
-// Pinned because both directions look plausible enough that someone could
-// "relax" the guard, and the failure would be silent and permanent: the second
-// seal would be handed the entries recorded after the first, attesting the wrong
-// period under a label an auditor will read at face value.
-//
-// The one thing that does work is switching granularity at a boundary where the
-// calendar happens to align, which the last case covers.
-func TestSealingCannotMixWeeklyAndMonthlyOverTheSameSpan(t *testing.T) {
-	t.Parallel()
-	ctx := logging.TestingContext()
-
-	trySeal := func(store *Storage, periodID string) error {
-		return store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
-			_, err := tx.SealPeriod(ctx, SealPeriodInput{
-				PeriodID: periodID,
-				SealedBy: models.Subject{Subject: "controller"},
-				// Pinned: a period that has not begun is refused by its own guard,
-				// and these are 2026 periods.
-				At: time.Date(2026, 12, 31, 12, 0, 0, 0, time.UTC),
-			})
-			return err
-		})
-	}
-
-	t.Run("the month is refused after one of its weeks", func(t *testing.T) {
-		t.Parallel()
-		store := newStore(t)
-		auditTestRule(t, store, ctx, models.CadenceWeekly)
-		require.NoError(t, trySeal(store, "2026-W20"))
-		// 2026-W20 runs 11-17 May, so the books close through 18 May and the month
-		// starts eleven days inside them.
-		err := trySeal(store, "2026-05")
-		require.ErrorIs(t, err, ErrPeriodNotSealable)
-		require.ErrorContains(t, err, "closed through 2026-05-18")
-	})
-
-	t.Run("a week is refused after its month", func(t *testing.T) {
-		t.Parallel()
-		store := newStore(t)
-		auditTestRule(t, store, ctx, models.CadenceMonthly)
-		require.NoError(t, trySeal(store, "2026-05"))
-		err := trySeal(store, "2026-W20")
-		require.ErrorIs(t, err, ErrPeriodNotSealable)
-		require.ErrorContains(t, err, "closed through 2026-06-01")
-
-		// The next month is fine: one granularity, carried forward.
-		require.NoError(t, trySeal(store, "2026-06"))
-	})
-
-	// ISO weeks start on a Monday and months do not, so a run of weeks lands on a
-	// month boundary only when the 1st is a Monday — once in 2026, three times in
-	// 2027. 2026-W22 ends 31 May and June starts Monday 1 June, so this is one of
-	// those, and switching cadence there is legal rather than a special case.
-	t.Run("granularity can change where the calendar aligns", func(t *testing.T) {
-		t.Parallel()
-		store := newStore(t)
-		auditTestRule(t, store, ctx, models.CadenceWeekly)
-		for _, week := range []string{"2026-W19", "2026-W20", "2026-W21", "2026-W22"} {
-			require.NoError(t, trySeal(store, week), "week %s", week)
-		}
-		require.NoError(t, trySeal(store, "2026-06"),
-			"June begins exactly where 2026-W22 ends, so the switch is not an overlap")
-
-		// And back the other way is closed off again, as it must be.
-		err := trySeal(store, "2026-W24")
-		require.ErrorIs(t, err, ErrPeriodNotSealable)
-	})
-}
-
-func TestSealedPeriodRefusesFurtherAlertTransitions(t *testing.T) {
+// A period still in progress is attested but not frozen. This is what makes
+// closing a live period harmless, where sealing one used to make its rules
+// unevaluatable until the next period opened.
+func TestClosingDoesNotFreezeAPeriodStillInProgress(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
 
+	// A period far enough ahead that it cannot have ended by the time this runs.
+	future := "2999-01"
 	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
-	ev := auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationFail)
+	auditTestEvaluation(t, store, ctx, rule, future, models.EvaluationFail)
 
-	opened, err := store.OpenOrUpdateAlert(ctx, OpenAlertInput{
-		RuleID:       rule.ID,
-		Fingerprint:  "asset:USD/2",
-		PeriodID:     "2026-05",
-		Severity:     models.Severity("high"),
-		EvaluationID: ev.ID,
-		Evidence:     json.RawMessage(`{"drift":"10.00"}`),
-		OccurredAt:   time.Now().UTC(),
-	})
+	closure := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+	attested := periodIn(t, closure, future)
+	require.False(t, attested.Ended)
+	require.False(t, attested.Frozen, "a period that has not ended keeps accepting writes")
+
+	frozen, err := store.IsPeriodFrozen(ctx, future)
 	require.NoError(t, err)
-	require.NotNil(t, opened.Alert)
-
-	sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
-
-	// The closing barrier: after the books are closed, the books do not move.
-	_, err = store.AckAlert(ctx, opened.Alert.ID, &models.Ack{By: "someone", At: time.Now().UTC()})
-	require.ErrorIs(t, err, ErrPeriodSealed)
-
-	_, err = store.ResolveAlertManual(ctx, opened.Alert.ID, &models.Resolution{
-		Kind: models.ResolutionFixedByBooking, By: "someone", At: time.Now().UTC(),
-	})
-	require.ErrorIs(t, err, ErrPeriodSealed)
-
-	// A different period is unaffected.
-	ev2 := auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationFail)
-	next, err := store.OpenOrUpdateAlert(ctx, OpenAlertInput{
-		RuleID:       rule.ID,
-		Fingerprint:  "asset:USD/2",
-		PeriodID:     "2026-06",
-		Severity:     models.Severity("high"),
-		EvaluationID: ev2.ID,
-		Evidence:     json.RawMessage(`{"drift":"10.00"}`),
-		OccurredAt:   time.Now().UTC(),
-	})
-	require.NoError(t, err)
-	require.NotEqual(t, opened.Alert.ID, next.Alert.ID)
+	require.False(t, frozen)
 }
 
-func TestSealPeriodIsNotIdempotent(t *testing.T) {
-	t.Parallel()
-	ctx := logging.TestingContext()
-	store := newStore(t)
-
-	auditTestRule(t, store, ctx, models.CadenceMonthly)
-	sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
-
-	err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
-		_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: "2026-05"})
-		return err
-	})
-	require.ErrorIs(t, err, ErrPeriodAlreadySealed)
-}
-
-// Sealing the continuous pseudo-period would freeze every live-monitoring rule
-// with no successor period for its alerts to move into.
-func TestSealPeriodRejectsContinuous(t *testing.T) {
-	t.Parallel()
-	ctx := logging.TestingContext()
-	store := newStore(t)
-
-	err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
-		_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: models.ContinuousPeriod})
-		return err
-	})
-	require.ErrorIs(t, err, ErrPeriodNotSealable)
-}
-
-// Seals partition the chain: the next one starts where the last one stopped, so
-// no entry falls outside every period and none is covered twice.
-func TestSealsPartitionTheChain(t *testing.T) {
-	t.Parallel()
-	ctx := logging.TestingContext()
-	store := newStore(t)
-
-	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
-	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
-	first := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
-
-	auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationPass)
-	second := sealPeriod(t, store, ctx, "2026-06", models.Subject{Subject: "controller"})
-
-	require.Equal(t, first.LastSequence+1, second.FirstSequence)
-	require.Greater(t, second.LastSequence, second.FirstSequence-1)
-}
-
-// A quiet period still gets a seal. "We ran the controls and nothing happened"
-// is an audit answer, and refusing to record it would leave the operator with no
-// attestation at all for that month.
-//
-// Its range is not literally empty: a seal's own journal entry lands after the
-// boundary it describes, so it falls into the following period — the same way a
-// Ledger chapter's seal order is proposed after the close sequence. So a quiet
-// June covers exactly one entry, May's seal.
-func TestSealPeriodWithNoActivityStillSeals(t *testing.T) {
-	t.Parallel()
-	ctx := logging.TestingContext()
-	store := newStore(t)
-
-	auditTestRule(t, store, ctx, models.CadenceMonthly)
-	first := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
-	second := sealPeriod(t, store, ctx, "2026-06", models.Subject{Subject: "controller"})
-
-	require.Equal(t, int64(1), second.EntryCount)
-	require.Zero(t, second.AlertCount, "nothing happened in June")
-
-	entries, _, err := store.ListAuditEntries(ctx, AuditEntryFilters{
-		FromSeq: second.FirstSequence, ToSeq: second.LastSequence,
-	}, 0, 10)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.Equal(t, models.AuditPeriodSealed, entries[0].Kind,
-		"the only entry in a quiet period is the previous period's seal")
-
-	require.Equal(t, first.LastSequence+1, second.FirstSequence)
-
-	verification, err := store.VerifyChain(ctx, 0, 0)
-	require.NoError(t, err)
-	require.True(t, verification.OK)
-}
-
-func TestVerifyChainCrossesSealsAndRederivesThem(t *testing.T) {
-	t.Parallel()
-	ctx := logging.TestingContext()
-	store := newStore(t)
-
-	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
-	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
-	sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
-	auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationPass)
-
-	verification, err := store.VerifyChain(ctx, 0, 0)
-	require.NoError(t, err)
-	require.True(t, verification.OK)
-	require.Equal(t, []string{"2026-05"}, verification.SealsCrossed)
-}
-
-func TestVerifyChainDetectsATamperedSeal(t *testing.T) {
+func TestVerifyChainCrossesClosuresAndRederivesThem(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
 
 	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
 	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationFail)
-	seal := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+	auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationFail)
+	closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 
-	disableImmutability(t, store, ctx, "period_seal")
+	result, err := store.VerifyChain(ctx, 0, 0)
+	require.NoError(t, err)
+	require.True(t, result.OK, result.Detail)
+	require.Len(t, result.SealsCrossed, 2)
+}
+
+func TestVerifyChainDetectsATamperedClosure(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationFail)
+	closure := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+	auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationFail)
+
+	disableImmutability(t, store, ctx, "closure")
 	_, err := store.db.NewRaw(
-		"UPDATE reconciliations.period_seal SET unresolved_count = 0 WHERE period_id = '2026-05'").Exec(ctx)
-	require.NoError(t, err)
-	// The headline figure is not in the sealing hash, so that edit alone does not
-	// break the chain — but the entry_count is, and so is the state hash.
-	_, err = store.db.NewRaw(
-		"UPDATE reconciliations.period_seal SET entry_count = 99 WHERE period_id = '2026-05'").Exec(ctx)
+		"UPDATE reconciliations.closure SET entry_count = entry_count + 1 WHERE id = ?", closure.ID).Exec(ctx)
 	require.NoError(t, err)
 
-	verification, err := store.VerifyChain(ctx, 0, seal.LastSequence)
+	result, err := store.VerifyChain(ctx, 0, 0)
 	require.NoError(t, err)
-	require.False(t, verification.OK)
-	require.Contains(t, verification.Detail, "does not match the journal")
+	require.False(t, result.OK)
+	require.Equal(t, models.ChainViolationHashMismatch, result.Violation)
 }
 
 func TestAuditFiltersSeparateMachineFromHuman(t *testing.T) {
@@ -1116,7 +933,7 @@ func TestSealedPeriodRefusesFurtherEvaluations(t *testing.T) {
 
 	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
 	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
-	sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 
 	// No alert involved at all — this is the quiet path.
 	now := time.Now().UTC()
@@ -1137,28 +954,29 @@ func TestSealedPeriodRefusesFurtherEvaluations(t *testing.T) {
 // A seal over an empty range stores lastSequence = firstSequence - 1, which for a
 // first seal is 0. Verification must read that as "nothing to check", not as "no
 // upper bound given" — otherwise it silently answers about a different range.
-func TestVerifyChainHandlesAnEmptySealedRange(t *testing.T) {
+func TestVerifyChainHandlesAnEmptyClosure(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
 
-	// Seal before anything at all has been journalled.
-	seal := sealPeriod(t, store, ctx, "2026-04", models.Subject{Subject: "controller"})
-	require.Equal(t, int64(1), seal.FirstSequence)
-	require.Equal(t, int64(0), seal.LastSequence, "an empty range is last = first - 1")
-	require.Zero(t, seal.EntryCount)
+	// Close before anything at all has been journalled.
+	closure := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
+	require.Equal(t, int64(1), closure.FirstSequence)
+	require.Equal(t, int64(0), *closure.LastSequence, "an empty range is last = first - 1")
+	require.Zero(t, closure.EntryCount)
+	require.Empty(t, closure.Periods, "nothing was observed, so there is nothing to break down")
 
-	// Activity afterwards must not be attributed to the empty period.
+	// Activity afterwards must not be attributed to the empty closure.
 	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
 	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
 
 	// Storage still reports the whole journal as intact.
 	verification, err := store.VerifyChain(ctx, 0, 0)
 	require.NoError(t, err)
-	require.True(t, verification.OK)
+	require.True(t, verification.OK, verification.Detail)
 
-	// The empty range genuinely precedes everything: the seal's own entry is the
-	// first thing in the journal, so [firstSequence, lastSequence] = [1, 0]
+	// The empty range genuinely precedes everything: the closing's own entry is
+	// the first thing in the journal, so [firstSequence, lastSequence] = [1, 0]
 	// encloses nothing. This is the property the API's short-circuit relies on.
 	//
 	// Asserted directly rather than through ListAuditEntries, whose ToSeq of 0
@@ -1166,15 +984,14 @@ func TestVerifyChainHandlesAnEmptySealedRange(t *testing.T) {
 	// one that cannot express an empty range.
 	first, err := store.GetAuditEntry(ctx, 1)
 	require.NoError(t, err)
-	require.Equal(t, models.AuditPeriodSealed, first.Kind)
-	require.Equal(t, "2026-04", first.PeriodID)
-	require.Equal(t, seal.AuditSequence, first.Sequence)
+	require.Equal(t, models.AuditClosureSealed, first.Kind)
+	require.Equal(t, *closure.AuditSequence, first.Sequence)
 
 	inRange, err := store.db.NewSelect().Model((*models.AuditEntry)(nil)).
-		Where("sequence >= ?", seal.FirstSequence).
-		Where("sequence <= ?", seal.LastSequence).Count(ctx)
+		Where("sequence >= ?", closure.FirstSequence).
+		Where("sequence <= ?", *closure.LastSequence).Count(ctx)
 	require.NoError(t, err)
-	require.Zero(t, inRange, "an empty sealed range must enclose no entries")
+	require.Zero(t, inRange, "an empty closure must enclose no entries")
 }
 
 // Verifying from a start whose predecessor was deleted used to skip the first
@@ -1301,36 +1118,6 @@ func TestEnsureAuditChainRefusesToRekeyANonEmptyJournal(t *testing.T) {
 	require.ErrorContains(t, err, "unverifiable")
 }
 
-// A typo'd period id is not recoverable: sealing advances a global boundary and
-// the seal is immutable, so "2026-5" would consume the range belonging to
-// "2026-05" and leave those entries attested under a label nobody looks up.
-// Neither seal could be corrected afterwards, so the only safe place to catch it
-// is before the first one is written.
-func TestSealPeriodRejectsMalformedPeriodIDs(t *testing.T) {
-	t.Parallel()
-	ctx := logging.TestingContext()
-	store := newStore(t)
-
-	for _, bad := range []string{"2026-5", "26-05", "2026-05-", "may", "2026_05", "2026-W1", "  2026-05"} {
-		err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
-			_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: bad})
-			return err
-		})
-		require.ErrorIs(t, err, ErrPeriodNotSealable, "should have rejected %q", bad)
-	}
-
-	// The three shapes the cadences actually produce are accepted — over disjoint
-	// calendar, and in order. Sealing refuses to reach back into closed books, so
-	// 2026-W12 (16-23 March) must come before 2026-05, and the daily has to fall
-	// after May closes rather than inside it. That the shapes cannot overlap is
-	// the point of the partition, not a limitation of this test.
-	for _, good := range []string{"2026-W12", "2026-05", "2026-06-15"} {
-		require.NotPanics(t, func() {
-			sealPeriod(t, store, ctx, good, models.Subject{Subject: "controller"})
-		}, "should have accepted %q", good)
-	}
-}
-
 // An empty journal is intact as an answer to "verify whatever is there". It is
 // NOT intact as an answer to "verify sequences 1..10" — a journal truncated to
 // nothing is the most complete tampering possible, and would otherwise verify
@@ -1367,7 +1154,7 @@ func TestSigningKeyRotationKeepsPriorKeysVerifiable(t *testing.T) {
 
 	// Seal something with the original key.
 	auditTestRule(t, store, ctx, models.CadenceMonthly)
-	first := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	first := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 	require.Equal(t, originalID, first.SigningKeyID)
 
 	// Rotate by supplying a different seed out-of-band.
@@ -1393,14 +1180,14 @@ func TestSigningKeyRotationKeepsPriorKeysVerifiable(t *testing.T) {
 	require.NotNil(t, byID[originalID].RetiredAt)
 
 	// And the seal signed by the retired key still verifies.
-	ok, reason, err := rotated.VerifySealSignature(ctx, first)
+	ok, reason, err := rotated.VerifyClosureSignature(ctx, first)
 	require.NoError(t, err)
 	require.True(t, ok, reason)
 
 	// A seal signed after the rotation uses the new key.
-	second := sealPeriod(t, rotated, ctx, "2026-06", models.Subject{Subject: "controller"})
+	second := closeJournal(t, rotated, ctx, models.Subject{Subject: "controller"})
 	require.Equal(t, fresh.ID, second.SigningKeyID)
-	ok, reason, err = rotated.VerifySealSignature(ctx, second)
+	ok, reason, err = rotated.VerifyClosureSignature(ctx, second)
 	require.NoError(t, err)
 	require.True(t, ok, reason)
 }
@@ -1415,22 +1202,26 @@ func TestVerificationKeyThumbprintToleratesShortBlobs(t *testing.T) {
 	require.Len(t, thumbprintOf(make([]byte, 32)), 16, "long keys are truncated to 8 bytes")
 }
 
-func TestListPeriodSealsOrdersMostRecentFirst(t *testing.T) {
+func TestListClosuresOrdersMostRecentFirst(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
 
 	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
 	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
-	sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 	auditTestEvaluation(t, store, ctx, rule, "2026-06", models.EvaluationPass)
-	sealPeriod(t, store, ctx, "2026-06", models.Subject{Subject: "controller"})
+	closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 
-	seals, err := store.ListPeriodSeals(ctx)
+	closures, err := store.ListClosures(ctx)
 	require.NoError(t, err)
-	require.Len(t, seals, 2)
-	require.Equal(t, "2026-06", seals[0].PeriodID, "most recently sealed first")
-	require.Equal(t, "2026-05", seals[1].PeriodID)
+	// Two closed plus the successor the second closing opened.
+	require.Len(t, closures, 3)
+	require.Equal(t, models.ClosureOpen, closures[0].Status, "most recent first, and the open one leads")
+	require.Equal(t, models.ClosureClosed, closures[1].Status)
+	require.Greater(t, closures[1].ID, closures[2].ID)
+	require.Equal(t, "2026-06", periodIn(t, &closures[1], "2026-06").PeriodID)
+	require.Equal(t, "2026-05", periodIn(t, &closures[2], "2026-05").PeriodID)
 }
 
 // A FOR EACH ROW trigger does not fire on TRUNCATE, so before the statement-level
@@ -1444,18 +1235,28 @@ func TestAuditJournalCannotBeTruncated(t *testing.T) {
 
 	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
 	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
-	sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 
 	before, err := store.db.NewSelect().Model((*models.AuditEntry)(nil)).Count(ctx)
 	require.NoError(t, err)
 	require.Positive(t, before)
 
-	for _, table := range []string{"audit_entry", "rule_revision", "period_seal"} {
-		_, err := store.db.NewRaw("TRUNCATE reconciliations." + table).Exec(ctx)
-		require.ErrorContains(t, err, "append-only", "TRUNCATE on %s must be refused", table)
+	for _, tc := range []struct {
+		// named is the table the error must blame; target is what actually gets
+		// truncated. closure has to go with frozen_period, because a foreign key
+		// would otherwise refuse the statement before the trigger runs — testing
+		// the wrong guard entirely.
+		named, target string
+	}{
+		{"audit_entry", "reconciliations.audit_entry"},
+		{"rule_revision", "reconciliations.rule_revision"},
+		{"closure", "reconciliations.closure, reconciliations.frozen_period"},
+	} {
+		_, err := store.db.NewRaw("TRUNCATE " + tc.target).Exec(ctx)
+		require.ErrorContains(t, err, "append-only", "TRUNCATE on %s must be refused", tc.named)
 		// And the guard names the table the operator actually touched, rather than
 		// always blaming audit_entry.
-		require.ErrorContains(t, err, table)
+		require.ErrorContains(t, err, tc.named)
 	}
 
 	after, err := store.db.NewSelect().Model((*models.AuditEntry)(nil)).Count(ctx)
@@ -1471,20 +1272,20 @@ func TestAuditJournalCannotBeTruncated(t *testing.T) {
 // An intentionally unsigned seal and one whose signature was stripped used to
 // report identically. Only the second is an incident, so an auditor has to be able
 // to tell them apart.
-func TestVerifySealDistinguishesUnsignedFromStripped(t *testing.T) {
+func TestVerifyClosureDistinguishesUnsignedFromStripped(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
 
 	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
 	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
-	seal := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	seal := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 	require.NotEmpty(t, seal.Signature)
 
 	// Signature removed, key id retained: tampering.
 	stripped := *seal
 	stripped.Signature = nil
-	ok, reason, err := store.VerifySealSignature(ctx, &stripped)
+	ok, reason, err := store.VerifyClosureSignature(ctx, &stripped)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Contains(t, reason, "was removed")
@@ -1494,7 +1295,7 @@ func TestVerifySealDistinguishesUnsignedFromStripped(t *testing.T) {
 	unsigned := *seal
 	unsigned.Signature = nil
 	unsigned.SigningKeyID = ""
-	ok, reason, err = store.VerifySealSignature(ctx, &unsigned)
+	ok, reason, err = store.VerifyClosureSignature(ctx, &unsigned)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Contains(t, reason, "no signing key was available")
@@ -1550,32 +1351,33 @@ func TestRuleDeletionEntryNamesAResolvableRevision(t *testing.T) {
 // seal and re-derives nothing. The seal itself can still have been edited, which
 // is what VerifySealIntegrity is for — signature aside, since an installation
 // without a signing key produces unsigned seals by design.
-func TestVerifySealIntegrityCatchesAnEditedSeal(t *testing.T) {
+func TestVerifyClosureIntegrityCatchesAnEditedClosure(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
 	store := newStore(t)
 
 	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
 	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationPass)
-	seal := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	seal := closeJournal(t, store, ctx, models.Subject{Subject: "controller"})
 
-	ok, reason := store.VerifySealIntegrity(seal)
+	ok, reason := store.VerifyClosureIntegrity(seal)
 	require.True(t, ok, reason)
 
 	// Any field that enters the sealing hash must break it.
-	for name, mutate := range map[string]func(*models.PeriodSeal){
-		"entryCount":    func(s *models.PeriodSeal) { s.EntryCount = 999 },
-		"lastSequence":  func(s *models.PeriodSeal) { s.LastSequence += 1 },
-		"stateHash":     func(s *models.PeriodSeal) { s.StateHash = []byte("other") },
-		"periodID":      func(s *models.PeriodSeal) { s.PeriodID = "2026-06" },
-		"lastAuditHash": func(s *models.PeriodSeal) { s.LastAuditHash = []byte("other") },
+	for name, mutate := range map[string]func(*models.Closure){
+		"entryCount":    func(s *models.Closure) { s.EntryCount = 999 },
+		"lastSequence":  func(s *models.Closure) { s.LastSequence = pointerTo(*s.LastSequence + 1) },
+		"stateHash":     func(s *models.Closure) { s.StateHash = []byte("other") },
+		"lastAuditHash": func(s *models.Closure) { s.LastAuditHash = []byte("other") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			edited := *seal
 			mutate(&edited)
-			ok, reason := store.VerifySealIntegrity(&edited)
+			ok, reason := store.VerifyClosureIntegrity(&edited)
 			require.False(t, ok, "%s is not bound into the sealing hash", name)
 			require.Contains(t, reason, "no longer reproduces")
 		})
 	}
 }
+
+func pointerTo[T any](v T) *T { return &v }

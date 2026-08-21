@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	gomock "go.uber.org/mock/gomock"
 
 	"github.com/formancehq/reconciliation/internal/api/backend"
+	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
 )
@@ -56,6 +58,22 @@ func (a *auditBackend) expectList(assert func(storage.AuditEntryFilters, int64, 
 func get(t *testing.T, srv *httptest.Server, path string) (int, map[string]any) {
 	t.Helper()
 	res, err := http.Get(srv.URL + path)
+	require.NoError(t, err)
+	defer func() { _ = res.Body.Close() }()
+
+	var body map[string]any
+	if res.ContentLength != 0 {
+		_ = json.NewDecoder(res.Body).Decode(&body)
+	}
+	return res.StatusCode, body
+}
+
+func put(t *testing.T, srv *httptest.Server, path, payload string) (int, map[string]any) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, srv.URL+path, strings.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = res.Body.Close() }()
 
@@ -249,20 +267,25 @@ func TestVerifyChain_PeriodAndRangeAreMutuallyExclusive(t *testing.T) {
 	require.Contains(t, body["errorMessage"], "not both")
 }
 
-// A seal over an empty range stores lastSequence = firstSequence - 1. Forwarding
-// that to VerifyChain would read as "no upper bound" and verify the whole journal,
-// answering about a different range than the caller asked about.
+// A closure that covered nothing stores lastSequence = firstSequence - 1.
+// Forwarding that to VerifyChain would read as "no upper bound" and verify the
+// whole journal, answering about a different range than the caller asked about.
 //
 // But empty is not automatically intact: there are no entries to recompute, so a
-// walk would cross no seal and re-derive nothing, while the seal itself can still
-// have been edited. The seal is therefore checked directly.
-func TestVerifyChain_EmptySealedRangeChecksTheSealItself(t *testing.T) {
+// walk would cross no closure and re-derive nothing, while the closure itself can
+// still have been edited. It is therefore checked directly.
+func TestVerifyChain_EmptyClosureChecksTheClosureItself(t *testing.T) {
 	t.Parallel()
 	srv, rec := auditRouter(t)
 
-	rec.svc.EXPECT().GetPeriodSeal(gomock.Any(), "2026-04").
-		Return(&models.PeriodSeal{PeriodID: "2026-04", FirstSequence: 1, LastSequence: 0}, nil)
-	rec.svc.EXPECT().VerifySealIntegrity(gomock.Any(), "2026-04").Return(true, "", nil)
+	last := int64(0)
+	closure := &models.Closure{ID: 4, FirstSequence: 1, LastSequence: &last}
+	rec.svc.EXPECT().AttestationsForPeriod(gomock.Any(), "2026-04").
+		Return([]storage.PeriodAttestation{{
+			Period:  models.ClosurePeriod{PeriodID: "2026-04"},
+			Closure: closure,
+		}}, nil)
+	rec.svc.EXPECT().VerifyClosure(gomock.Any(), int64(4)).Return(closure, true, "", nil)
 	// Deliberately no VerifyChain expectation: walking the journal here would be
 	// answering the wrong question.
 
@@ -275,16 +298,20 @@ func TestVerifyChain_EmptySealedRangeChecksTheSealItself(t *testing.T) {
 	require.Equal(t, []any{"2026-04"}, data["sealsCrossed"])
 }
 
-// And an edited seal over an empty range must not report intact — the case the
-// unconditional short-circuit used to hide.
-func TestVerifyChain_EmptySealedRangeReportsAnEditedSeal(t *testing.T) {
+// And an edited closure over an empty range must not report intact.
+func TestVerifyChain_EmptyClosureReportsAnEditedClosure(t *testing.T) {
 	t.Parallel()
 	srv, rec := auditRouter(t)
 
-	rec.svc.EXPECT().GetPeriodSeal(gomock.Any(), "2026-04").
-		Return(&models.PeriodSeal{PeriodID: "2026-04", FirstSequence: 1, LastSequence: 0}, nil)
-	rec.svc.EXPECT().VerifySealIntegrity(gomock.Any(), "2026-04").
-		Return(false, "the seal for period \"2026-04\" no longer reproduces its own sealing hash", nil)
+	last := int64(0)
+	closure := &models.Closure{ID: 4, FirstSequence: 1, LastSequence: &last}
+	rec.svc.EXPECT().AttestationsForPeriod(gomock.Any(), "2026-04").
+		Return([]storage.PeriodAttestation{{
+			Period:  models.ClosurePeriod{PeriodID: "2026-04"},
+			Closure: closure,
+		}}, nil)
+	rec.svc.EXPECT().VerifyClosure(gomock.Any(), int64(4)).
+		Return(closure, false, "closure 4 no longer reproduces its own sealing hash", nil)
 
 	status, body := post(t, srv, "/audit-entries/verify", `{"periodID":"2026-04"}`)
 	require.Equal(t, http.StatusOK, status)
@@ -294,65 +321,107 @@ func TestVerifyChain_EmptySealedRangeReportsAnEditedSeal(t *testing.T) {
 	require.Contains(t, data["detail"], "no longer reproduces")
 }
 
-// --- periods ---------------------------------------------------------------
+// --- periods and closures --------------------------------------------------
 
-// An unsealed period is a legitimate answer, not a missing resource: absence of a
-// seal IS the open state, and a 404 would leave a client guessing whether the
-// period is open or the id was wrong.
-func TestGetPeriod_OpenPeriodIsNotAFourOhFour(t *testing.T) {
+// A period nothing has attested yet is a legitimate answer, not a missing
+// resource: absence IS the open state, and a 404 would leave a client guessing
+// whether the period is open or the id was wrong.
+func TestGetPeriod_UnattestedPeriodIsNotAFourOhFour(t *testing.T) {
 	t.Parallel()
 	srv, rec := auditRouter(t)
 
-	rec.svc.EXPECT().GetPeriodSeal(gomock.Any(), "2026-09").Return(nil, storage.ErrNotFound)
+	rec.svc.EXPECT().AttestationsForPeriod(gomock.Any(), "2026-09").Return(nil, storage.ErrNotFound)
 
 	status, body := get(t, srv, "/periods/2026-09")
 	require.Equal(t, http.StatusOK, status)
 	data := body["data"].(map[string]any)
 	require.Equal(t, "OPEN", data["status"])
 	require.Equal(t, "2026-09", data["periodID"])
+	require.Empty(t, data["attestations"])
 }
 
-func TestSealPeriod_RendersTheSignedSeal(t *testing.T) {
+// The read path still answers in business periods even though closing no longer
+// takes one, and the period's own figures come back alongside the closure that
+// attested them.
+func TestGetPeriod_RendersTheAttestationAndItsClosure(t *testing.T) {
 	t.Parallel()
 	srv, rec := auditRouter(t)
 
-	rec.svc.EXPECT().SealPeriod(gomock.Any(), "2026-05").Return(&models.PeriodSeal{
-		PeriodID: "2026-05", FirstSequence: 1, LastSequence: 40, EntryCount: 40,
-		SealingHash: []byte{0x01, 0x02}, Signature: []byte{0x03, 0x04},
-		SigningKeyID: "abc123", UnresolvedCount: 2, AlertCount: 5,
-		SealedBy: models.Subject{Subject: "controller@acme.com", Source: models.SubjectSourceIssuer},
-	}, nil)
+	last := int64(40)
+	closedAt := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	rec.svc.EXPECT().AttestationsForPeriod(gomock.Any(), "2026-05").
+		Return([]storage.PeriodAttestation{{
+			Period: models.ClosurePeriod{
+				PeriodID: "2026-05", EntryCount: 12, AlertCount: 5, UnresolvedCount: 2,
+				Ended: true, Frozen: true,
+			},
+			Closure: &models.Closure{
+				ID: 7, Status: models.ClosureClosed, FirstSequence: 1, LastSequence: &last,
+				EntryCount: 40, ClosedAt: &closedAt,
+				SealingHash: []byte{0x01, 0x02}, Signature: []byte{0x03, 0x04}, SigningKeyID: "abc123",
+				ClosedBy: models.Subject{Subject: "controller@acme.com", Source: models.SubjectSourceIssuer},
+			},
+		}}, nil)
 
-	status, body := post(t, srv, "/periods/2026-05/seal", "")
-	require.Equal(t, http.StatusCreated, status)
+	status, body := get(t, srv, "/periods/2026-05")
+	require.Equal(t, http.StatusOK, status)
 	data := body["data"].(map[string]any)
 	require.Equal(t, "SEALED", data["status"])
-	require.Equal(t, hex.EncodeToString([]byte{0x01, 0x02}), data["sealingHash"])
-	require.Equal(t, base64.StdEncoding.EncodeToString([]byte{0x03, 0x04}), data["signature"])
-	require.EqualValues(t, 2, data["unresolvedCount"])
-	require.False(t, data["sealedBy"].(map[string]any)["system"].(bool))
+
+	attestations := data["attestations"].([]any)
+	require.Len(t, attestations, 1)
+	first := attestations[0].(map[string]any)
+	period := first["period"].(map[string]any)
+	require.EqualValues(t, 2, period["unresolvedCount"])
+	require.True(t, period["frozen"].(bool))
+
+	closure := first["closure"].(map[string]any)
+	require.EqualValues(t, 7, closure["id"])
+	require.Equal(t, hex.EncodeToString([]byte{0x01, 0x02}), closure["sealingHash"])
+	require.Equal(t, base64.StdEncoding.EncodeToString([]byte{0x03, 0x04}), closure["signature"])
+	require.False(t, closure["closedBy"].(map[string]any)["system"].(bool))
 }
 
-func TestSealPeriod_SealedPeriodIsAConflict(t *testing.T) {
+// Closing takes no argument at all. That absence is the design: a seal derived
+// its range from a period id the caller typed, which is what made an ordering
+// mistake possible and permanent.
+func TestCloseJournal_RendersTheSignedClosure(t *testing.T) {
 	t.Parallel()
 	srv, rec := auditRouter(t)
 
-	rec.svc.EXPECT().SealPeriod(gomock.Any(), "2026-05").
-		Return(nil, storage.ErrPeriodAlreadySealed)
+	last := int64(40)
+	rec.svc.EXPECT().CloseJournal(gomock.Any()).Return(&models.Closure{
+		ID: 7, Status: models.ClosureClosed, FirstSequence: 1, LastSequence: &last, EntryCount: 40,
+		Periods: []models.ClosurePeriod{
+			{PeriodID: "2026-05", AlertCount: 5, UnresolvedCount: 2, Ended: true, Frozen: true},
+			{PeriodID: "continuous", AlertCount: 1},
+		},
+		SealingHash: []byte{0x01, 0x02}, Signature: []byte{0x03, 0x04}, SigningKeyID: "abc123",
+	}, nil)
 
-	status, body := post(t, srv, "/periods/2026-05/seal", "")
-	require.Equal(t, http.StatusConflict, status)
-	require.Equal(t, "PERIOD_SEALED", body["errorCode"])
+	status, body := post(t, srv, "/closures", "")
+	require.Equal(t, http.StatusCreated, status)
+	data := body["data"].(map[string]any)
+	require.Equal(t, "CLOSED", data["status"])
+	require.EqualValues(t, 7, data["id"])
+
+	periods := data["periods"].([]any)
+	require.Len(t, periods, 2)
+	// continuous never ends, so a closing never freezes it — which is what lets
+	// live monitoring run across closings untouched.
+	require.False(t, periods[1].(map[string]any)["frozen"].(bool))
 }
 
-func TestSealPeriod_UnsealablePeriodIsAValidationError(t *testing.T) {
+// A schedule that does not parse is a silent outage: rotation stops and nobody
+// finds out until an auditor asks why the books were never closed.
+func TestSetClosingSchedule_RejectsAnInvalidCron(t *testing.T) {
 	t.Parallel()
 	srv, rec := auditRouter(t)
 
-	rec.svc.EXPECT().SealPeriod(gomock.Any(), "continuous").
-		Return(nil, storage.ErrPeriodNotSealable)
+	rec.svc.EXPECT().SetClosingSchedule(gomock.Any(), "not a cron").
+		Return(fmt.Errorf("%w: bad cron", service.ErrValidation))
 
-	status, body := post(t, srv, "/periods/continuous/seal", "")
+	status, body := put(t, srv, "/closing-schedule", `{"cron":"not a cron"}`)
 	require.Equal(t, http.StatusBadRequest, status)
 	require.Equal(t, "VALIDATION", body["errorCode"])
 }

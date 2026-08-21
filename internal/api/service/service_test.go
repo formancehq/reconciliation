@@ -243,18 +243,20 @@ func (s *mockStore) ListRuleRevisions(context.Context, uuid.UUID) ([]models.Rule
 func (s *mockStore) GetRuleRevision(context.Context, uuid.UUID, int64) (*models.RuleRevision, error) {
 	return nil, nil
 }
-func (s *mockStore) ListPeriodSeals(context.Context) ([]models.PeriodSeal, error) {
+func (s *mockStore) ListClosures(context.Context) ([]models.Closure, error) {
 	return nil, nil
 }
-func (s *mockStore) GetPeriodSeal(context.Context, string) (*models.PeriodSeal, error) {
+func (s *mockStore) GetClosure(context.Context, int64) (*models.Closure, error) {
 	return nil, nil
 }
-func (s *mockStore) VerifySealSignature(context.Context, *models.PeriodSeal) (bool, string, error) {
+func (s *mockStore) AttestationsForPeriod(context.Context, string) ([]storage.PeriodAttestation, error) {
+	return nil, nil
+}
+func (s *mockStore) VerifyClosureSignature(context.Context, *models.Closure) (bool, string, error) {
 	return false, "", nil
 }
-func (s *mockStore) VerifySealIntegrity(*models.PeriodSeal) (bool, string) {
-	return true, ""
-}
+func (s *mockStore) GetClosingSchedule(context.Context) (string, error) { return "", nil }
+func (s *mockStore) SetClosingSchedule(context.Context, string) error   { return nil }
 func (s *mockStore) ListVerificationKeys(context.Context) ([]storage.VerificationKey, error) {
 	return nil, nil
 }

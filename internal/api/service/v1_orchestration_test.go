@@ -29,7 +29,7 @@ import (
 type fakeV1Store struct {
 	auditEntries  []models.AuditEntry
 	ruleRevisions []models.RuleRevision
-	periodSeals   []models.PeriodSeal
+	closures      []models.Closure
 
 	rules       map[uuid.UUID]*models.Rule
 	evaluations map[uuid.UUID]*models.Evaluation
@@ -449,25 +449,39 @@ func (f *fakeV1Store) GetRuleRevision(_ context.Context, ruleID uuid.UUID, revis
 	return nil, storage.ErrNotFound
 }
 
-func (f *fakeV1Store) ListPeriodSeals(context.Context) ([]models.PeriodSeal, error) {
-	return f.periodSeals, nil
+func (f *fakeV1Store) ListClosures(context.Context) ([]models.Closure, error) {
+	return f.closures, nil
 }
 
-func (f *fakeV1Store) GetPeriodSeal(_ context.Context, periodID string) (*models.PeriodSeal, error) {
-	for i := range f.periodSeals {
-		if f.periodSeals[i].PeriodID == periodID {
-			return &f.periodSeals[i], nil
+func (f *fakeV1Store) GetClosure(_ context.Context, id int64) (*models.Closure, error) {
+	for i := range f.closures {
+		if f.closures[i].ID == id {
+			return &f.closures[i], nil
 		}
 	}
 	return nil, storage.ErrNotFound
 }
 
-func (f *fakeV1Store) VerifySealSignature(context.Context, *models.PeriodSeal) (bool, string, error) {
+func (f *fakeV1Store) AttestationsForPeriod(_ context.Context, periodID string) ([]storage.PeriodAttestation, error) {
+	out := []storage.PeriodAttestation{}
+	for i := range f.closures {
+		for _, p := range f.closures[i].Periods {
+			if p.PeriodID == periodID {
+				out = append(out, storage.PeriodAttestation{Period: p, Closure: &f.closures[i]})
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, storage.ErrNotFound
+	}
+	return out, nil
+}
+
+func (f *fakeV1Store) VerifyClosureSignature(context.Context, *models.Closure) (bool, string, error) {
 	return true, "", nil
 }
-func (f *fakeV1Store) VerifySealIntegrity(*models.PeriodSeal) (bool, string) {
-	return true, ""
-}
+func (f *fakeV1Store) GetClosingSchedule(context.Context) (string, error) { return "", nil }
+func (f *fakeV1Store) SetClosingSchedule(context.Context, string) error   { return nil }
 
 func (f *fakeV1Store) ListVerificationKeys(context.Context) ([]storage.VerificationKey, error) {
 	return nil, nil

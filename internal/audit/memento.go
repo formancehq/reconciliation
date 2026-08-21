@@ -170,20 +170,25 @@ func NewAlertTransitionMemento(alert *models.Alert, event *models.AlertEvent) (A
 	return m, nil
 }
 
-// PeriodSealMemento records a period closure inside the chain, so the seal is
-// itself an audited act rather than a side table anyone could add rows to.
-type PeriodSealMemento struct {
-	PeriodID      string `json:"periodID"`
-	FirstSequence int64  `json:"firstSequence"`
-	LastSequence  int64  `json:"lastSequence"`
-	EntryCount    int64  `json:"entryCount"`
-	AlertCount    int64  `json:"alertCount"`
-	// UnresolvedCount is the headline an auditor asks for first: how many
-	// discrepancies were still open when the period closed.
-	UnresolvedCount int64  `json:"unresolvedCount"`
-	StateHash       string `json:"stateHash"`
-	SealingHash     string `json:"sealingHash"`
-	SigningKeyID    string `json:"signingKeyID,omitempty"`
+// ClosureMemento records a closing inside the chain, so the act of closing is
+// itself audited rather than a side-table row anyone could add.
+//
+// The per-period breakdown is carried by digest rather than by value: it is
+// already bound through the closure's state hash, and copying it here would
+// double the payload for no extra guarantee.
+type ClosureMemento struct {
+	ClosureID     int64 `json:"closureID"`
+	FirstSequence int64 `json:"firstSequence"`
+	LastSequence  int64 `json:"lastSequence"`
+	EntryCount    int64 `json:"entryCount"`
+	// PeriodCount is how many distinct business periods the closure observed, and
+	// FrozenPeriods names the ones that stopped accepting writes — the fact an
+	// operator will want to find in the journal when a later write is refused.
+	PeriodCount   int      `json:"periodCount"`
+	FrozenPeriods []string `json:"frozenPeriods"`
+	StateHash     string   `json:"stateHash"`
+	SealingHash   string   `json:"sealingHash"`
+	SigningKeyID  string   `json:"signingKeyID,omitempty"`
 }
 
 // DigestJSON returns the hex digest of a JSON payload's canonical form, or an

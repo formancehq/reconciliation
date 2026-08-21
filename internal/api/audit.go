@@ -202,38 +202,47 @@ func verifyChainHandler(b backend.Backend) http.HandlerFunc {
 					fmt.Errorf("give either periodID or an explicit sequence range, not both"))
 				return
 			}
-			seal, err := b.GetService().GetPeriodSeal(r.Context(), req.PeriodID)
+			// A business period can span more than one closing, so the range to
+			// verify runs from the first attesting closure's start to the last
+			// one's boundary. Narrowing to a single closure would answer a
+			// question about part of the period while appearing to answer about
+			// all of it.
+			out, err := b.GetService().AttestationsForPeriod(r.Context(), req.PeriodID)
 			if err != nil {
 				handleServiceErrors(w, r, err)
 				return
 			}
-			from, to = seal.FirstSequence, seal.LastSequence
+			from = out[0].Closure.FirstSequence
+			for i := range out {
+				if last := out[i].Closure.LastSequence; last != nil && *last > to {
+					to = *last
+				}
+			}
 
-			// A seal over an empty range stores lastSequence = firstSequence - 1,
-			// which for the very first seal is 0. Forwarding that to the storage
-			// layer would read as "no upper bound given" and verify the whole
-			// journal instead — answering a question about a different range than
-			// the one asked about.
+			// A closure that covered nothing stores lastSequence = firstSequence - 1,
+			// which for the very first one is 0. Forwarding that would read as "no
+			// upper bound given" and verify the whole journal instead — answering a
+			// different question than the one asked.
 			//
-			// But an empty range is NOT automatically intact: there are no entries
-			// to recompute, and the seal itself can still have been edited. A chain
-			// walk would normally re-derive each seal it crosses; with nothing
-			// walked, that never happens, so the seal is checked directly here.
+			// An empty range is NOT automatically intact: there are no entries to
+			// recompute, but the closure itself can still have been edited. The walk
+			// re-derives each closure it crosses, and with nothing walked it crosses
+			// none, so they are checked directly here.
 			if to < from {
-				ok, reason, err := b.GetService().VerifySealIntegrity(r.Context(), req.PeriodID)
-				if err != nil {
-					handleServiceErrors(w, r, err)
-					return
-				}
-				resp := &verifyChainResponse{
-					OK:            ok,
-					FirstSequence: from,
-					LastSequence:  to,
-					SealsCrossed:  []string{req.PeriodID},
-				}
-				if !ok {
-					resp.Violation = string(models.ChainViolationHashMismatch)
-					resp.Detail = reason
+				resp := &verifyChainResponse{OK: true, FirstSequence: from, LastSequence: to}
+				for i := range out {
+					_, ok, reason, err := b.GetService().VerifyClosure(r.Context(), out[i].Closure.ID)
+					if err != nil {
+						handleServiceErrors(w, r, err)
+						return
+					}
+					resp.SealsCrossed = append(resp.SealsCrossed, req.PeriodID)
+					if !ok {
+						resp.OK = false
+						resp.Violation = string(models.ChainViolationHashMismatch)
+						resp.Detail = reason
+						break
+					}
 				}
 				api.Ok(w, resp)
 				return
@@ -340,116 +349,241 @@ func parseAuditFilters(r *http.Request) (storage.AuditEntryFilters, int64, int, 
 	return f, afterSeq, limit, nil
 }
 
-// --- period seals ---
+// --- closures ---
 
-type periodSealResponse struct {
-	PeriodID      string `json:"periodID"`
-	Status        string `json:"status"`
+type closurePeriodResponse struct {
+	PeriodID        string `json:"periodID"`
+	EntryCount      int64  `json:"entryCount"`
+	AlertCount      int64  `json:"alertCount"`
+	UnresolvedCount int64  `json:"unresolvedCount"`
+	StateHash       string `json:"stateHash"`
+	// Ended says whether the period's calendar span was over at closing time, and
+	// Frozen whether its books stopped accepting writes as a result. A closure
+	// running mid-period attests what it saw without freezing it.
+	Ended  bool `json:"ended"`
+	Frozen bool `json:"frozen"`
+}
+
+type closureResponse struct {
+	ID       int64  `json:"id"`
+	Status   string `json:"status"`
+	OpenedAt string `json:"openedAt"`
+	ClosedAt string `json:"closedAt,omitempty"`
+
 	FirstSequence int64  `json:"firstSequence"`
-	LastSequence  int64  `json:"lastSequence"`
+	LastSequence  *int64 `json:"lastSequence,omitempty"`
 	EntryCount    int64  `json:"entryCount"`
 	LastAuditHash string `json:"lastAuditHash,omitempty"`
-	StateHash     string `json:"stateHash"`
-	// SealingHash is the single value that stands for the whole period. It is
+
+	// Periods is the per-business-period breakdown, and is what an auditor
+	// actually reads. StateHash covers it, and the signature covers StateHash.
+	Periods   []closurePeriodResponse `json:"periods"`
+	StateHash string                  `json:"stateHash,omitempty"`
+	// SealingHash is the single value that stands for the whole closure. It is
 	// unkeyed, so an auditor can recompute it from the fields above.
-	SealingHash string `json:"sealingHash"`
-	// Signature is what makes the seal checkable without trusting this service.
-	Signature       string          `json:"signature,omitempty"`
-	SigningKeyID    string          `json:"signingKeyID,omitempty"`
-	SealedBy        subjectResponse `json:"sealedBy"`
-	AlertCount      int64           `json:"alertCount"`
-	UnresolvedCount int64           `json:"unresolvedCount"`
-	SealedAt        time.Time       `json:"sealedAt"`
-	AuditSequence   int64           `json:"auditSequence"`
+	SealingHash string `json:"sealingHash,omitempty"`
+	// Signature is what makes the closure checkable without trusting this service.
+	Signature     string          `json:"signature,omitempty"`
+	SigningKeyID  string          `json:"signingKeyID,omitempty"`
+	ClosedBy      subjectResponse `json:"closedBy"`
+	AuditSequence *int64          `json:"auditSequence,omitempty"`
 }
 
-func renderPeriodSeal(seal *models.PeriodSeal) *periodSealResponse {
-	return &periodSealResponse{
-		PeriodID:        seal.PeriodID,
-		Status:          string(seal.Status()),
-		FirstSequence:   seal.FirstSequence,
-		LastSequence:    seal.LastSequence,
-		EntryCount:      seal.EntryCount,
-		LastAuditHash:   hex.EncodeToString(seal.LastAuditHash),
-		StateHash:       hex.EncodeToString(seal.StateHash),
-		SealingHash:     hex.EncodeToString(seal.SealingHash),
-		Signature:       base64.StdEncoding.EncodeToString(seal.Signature),
-		SigningKeyID:    seal.SigningKeyID,
-		SealedBy:        renderSubject(seal.SealedBy),
-		AlertCount:      seal.AlertCount,
-		UnresolvedCount: seal.UnresolvedCount,
-		SealedAt:        seal.SealedAt,
-		AuditSequence:   seal.AuditSequence,
+func renderClosure(closure *models.Closure) *closureResponse {
+	periods := make([]closurePeriodResponse, 0, len(closure.Periods))
+	for _, p := range closure.Periods {
+		periods = append(periods, closurePeriodResponse{
+			PeriodID:        p.PeriodID,
+			EntryCount:      p.EntryCount,
+			AlertCount:      p.AlertCount,
+			UnresolvedCount: p.UnresolvedCount,
+			StateHash:       p.StateHash,
+			Ended:           p.Ended,
+			Frozen:          p.Frozen,
+		})
 	}
+	out := &closureResponse{
+		ID:            closure.ID,
+		Status:        string(closure.Status),
+		OpenedAt:      closure.OpenedAt.Format(time.RFC3339Nano),
+		FirstSequence: closure.FirstSequence,
+		LastSequence:  closure.LastSequence,
+		EntryCount:    closure.EntryCount,
+		LastAuditHash: hex.EncodeToString(closure.LastAuditHash),
+		Periods:       periods,
+		StateHash:     hex.EncodeToString(closure.StateHash),
+		SealingHash:   hex.EncodeToString(closure.SealingHash),
+		Signature:     base64.StdEncoding.EncodeToString(closure.Signature),
+		SigningKeyID:  closure.SigningKeyID,
+		ClosedBy:      renderSubject(closure.ClosedBy),
+		AuditSequence: closure.AuditSequence,
+	}
+	if closure.ClosedAt != nil {
+		out.ClosedAt = closure.ClosedAt.Format(time.RFC3339Nano)
+	}
+	return out
 }
 
-func listPeriodSealsHandler(b backend.Backend) http.HandlerFunc {
+func listClosuresHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		seals, err := b.GetService().ListPeriodSeals(r.Context())
+		closures, err := b.GetService().ListClosures(r.Context())
 		if err != nil {
 			handleServiceErrors(w, r, err)
 			return
 		}
-		out := make([]*periodSealResponse, 0, len(seals))
-		for i := range seals {
-			out = append(out, renderPeriodSeal(&seals[i]))
+		out := make([]*closureResponse, 0, len(closures))
+		for i := range closures {
+			out = append(out, renderClosure(&closures[i]))
 		}
 		api.Ok(w, out)
 	}
 }
 
-func getPeriodSealHandler(b backend.Backend) http.HandlerFunc {
+func closeJournalHandler(b backend.Backend) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		closure, err := b.GetService().CloseJournal(r.Context())
+		if err != nil {
+			handleServiceErrors(w, r, err)
+			return
+		}
+		api.Created(w, renderClosure(closure))
+	}
+}
+
+type verifyClosureResponse struct {
+	ClosureID int64            `json:"closureID"`
+	OK        bool             `json:"ok"`
+	Reason    string           `json:"reason,omitempty"`
+	Closure   *closureResponse `json:"closure"`
+}
+
+func verifyClosureHandler(b backend.Backend) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "closureID"), 10, 64)
+		if err != nil {
+			api.BadRequest(w, ErrValidation, fmt.Errorf("closure id must be a number"))
+			return
+		}
+		closure, ok, reason, err := b.GetService().VerifyClosure(r.Context(), id)
+		if err != nil {
+			handleServiceErrors(w, r, err)
+			return
+		}
+		api.Ok(w, &verifyClosureResponse{
+			ClosureID: id,
+			OK:        ok,
+			Reason:    reason,
+			Closure:   renderClosure(closure),
+		})
+	}
+}
+
+// --- business periods ---
+//
+// The read path still speaks in business periods, even though closing no longer
+// does. That asymmetry is deliberate: an auditor asks "what do you attest for
+// May", and a period id carries a meaning no operational boundary can — it comes
+// from the evaluation's point-in-time, so a backfill of May run in August
+// belongs to May.
+
+type periodAttestationResponse struct {
+	PeriodID string `json:"periodID"`
+	Status   string `json:"status"`
+	// Attestations is usually one entry. More than one means the period's evidence
+	// was recorded across several closings — a period spanning a boundary, or a
+	// backfill landing long after the fact — and an auditor needs all of them
+	// rather than the most convenient one.
+	Attestations []periodAttestationEntry `json:"attestations"`
+}
+
+type periodAttestationEntry struct {
+	Period  closurePeriodResponse `json:"period"`
+	Closure *closureResponse      `json:"closure"`
+}
+
+func getPeriodHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		periodID := chi.URLParam(r, "periodID")
-		seal, err := b.GetService().GetPeriodSeal(r.Context(), periodID)
+		out, err := b.GetService().AttestationsForPeriod(r.Context(), periodID)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
-				// An open period is a legitimate answer, not a missing resource:
-				// absence of a seal IS the open state, and returning 404 would make
-				// a client guess whether the period is open or the id is wrong.
-				api.Ok(w, &periodSealResponse{PeriodID: periodID, Status: string(models.PeriodOpen)})
+				// A period nothing has attested yet is a legitimate answer, not a
+				// missing resource: absence IS the open state, and a 404 would make a
+				// client guess whether the period is open or the id is wrong.
+				api.Ok(w, &periodAttestationResponse{
+					PeriodID:     periodID,
+					Status:       string(models.PeriodOpen),
+					Attestations: []periodAttestationEntry{},
+				})
 				return
 			}
 			handleServiceErrors(w, r, err)
 			return
 		}
-		api.Ok(w, renderPeriodSeal(seal))
-	}
-}
 
-func sealPeriodHandler(b backend.Backend) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		periodID := chi.URLParam(r, "periodID")
-		seal, err := b.GetService().SealPeriod(r.Context(), periodID)
-		if err != nil {
-			handleServiceErrors(w, r, err)
-			return
+		entries := make([]periodAttestationEntry, 0, len(out))
+		frozen := false
+		for i := range out {
+			p := out[i].Period
+			if p.Frozen {
+				frozen = true
+			}
+			entries = append(entries, periodAttestationEntry{
+				Period: closurePeriodResponse{
+					PeriodID:        p.PeriodID,
+					EntryCount:      p.EntryCount,
+					AlertCount:      p.AlertCount,
+					UnresolvedCount: p.UnresolvedCount,
+					StateHash:       p.StateHash,
+					Ended:           p.Ended,
+					Frozen:          p.Frozen,
+				},
+				Closure: renderClosure(out[i].Closure),
+			})
 		}
-		api.Created(w, renderPeriodSeal(seal))
-	}
-}
-
-type verifySealResponse struct {
-	PeriodID string              `json:"periodID"`
-	OK       bool                `json:"ok"`
-	Reason   string              `json:"reason,omitempty"`
-	Seal     *periodSealResponse `json:"seal"`
-}
-
-func verifyPeriodSealHandler(b backend.Backend) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		periodID := chi.URLParam(r, "periodID")
-		seal, ok, reason, err := b.GetService().VerifySealSignature(r.Context(), periodID)
-		if err != nil {
-			handleServiceErrors(w, r, err)
-			return
+		status := models.PeriodOpen
+		if frozen {
+			status = models.PeriodSealed
 		}
-		api.Ok(w, &verifySealResponse{
-			PeriodID: periodID,
-			OK:       ok,
-			Reason:   reason,
-			Seal:     renderPeriodSeal(seal),
+		api.Ok(w, &periodAttestationResponse{
+			PeriodID:     periodID,
+			Status:       string(status),
+			Attestations: entries,
 		})
+	}
+}
+
+// --- closing schedule ---
+
+type closingScheduleResponse struct {
+	// Cron is empty when rotation is manual. Kept as a plain string rather than a
+	// structured cadence so the operator sees exactly what will fire.
+	Cron string `json:"cron"`
+}
+
+func getClosingScheduleHandler(b backend.Backend) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		spec, err := b.GetService().GetClosingSchedule(r.Context())
+		if err != nil {
+			handleServiceErrors(w, r, err)
+			return
+		}
+		api.Ok(w, &closingScheduleResponse{Cron: spec})
+	}
+}
+
+func setClosingScheduleHandler(b backend.Backend) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req closingScheduleResponse
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			api.BadRequest(w, ErrMissingOrInvalidBody, err)
+			return
+		}
+		if err := b.GetService().SetClosingSchedule(r.Context(), req.Cron); err != nil {
+			handleServiceErrors(w, r, err)
+			return
+		}
+		api.Ok(w, &closingScheduleResponse{Cron: req.Cron})
 	}
 }
 

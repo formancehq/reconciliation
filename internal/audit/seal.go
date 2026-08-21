@@ -10,117 +10,9 @@ import (
 )
 
 const (
-	// sealContext domain-separates the sealing hash from every other digest the
-	// module produces.
-	sealContext = "formance:reconciliation:period-seal:v1"
 	// stateContext domain-separates the derived-state hash.
 	stateContext = "formance:reconciliation:period-state:v1"
 )
-
-// SealInput is everything a period seal commits to.
-type SealInput struct {
-	PeriodID      string
-	FirstSequence int64
-	LastSequence  int64
-	EntryCount    int64
-	// LastAuditHash is the chain head at seal time. Verification of the chain
-	// resumes across a sealed boundary from this value, the way the Ledger
-	// resumes across an archived chapter using its sealed last_audit_hash.
-	LastAuditHash []byte
-	// StateHash covers the period's derived alert state, so the seal commits to
-	// the outcome and not only to the journal.
-	StateHash []byte
-	// AlertCount and UnresolvedCount are the period's headline figures. They are
-	// hashed because they are *published* as part of the seal: a report cites
-	// them, so leaving them unsigned let an edited row present "0 alerts, 0
-	// unresolved" for a period that had one open, while /periods/{id}/verify
-	// still answered ok. Verified live before fixing.
-	AlertCount      int64
-	UnresolvedCount int64
-	// SealedBy and SealedAt are who closed the books and when — the two facts an
-	// auditor cares about most after the figures themselves, and both presented
-	// by the API as frozen at seal time. SealedAt is truncated to microseconds
-	// because that is all timestamptz stores; hashing a nanosecond value would
-	// make every seal verify as tampered on Linux and pass on macOS.
-	SealedBy models.Subject
-	SealedAt time.Time
-}
-
-// SealInputFor is the one mapping from a stored seal to the fields its sealing
-// hash covers.
-//
-// Four paths compute a sealing hash — signing at seal time, VerifySealIntegrity,
-// VerifySealSignature and the chain walk's verifySealAgainstHead — and they must
-// agree exactly. When each spelled the mapping out for itself, adding a committed
-// field to some of them and not the others would have left signing, integrity
-// verification and chain walking contradicting one another over the same seal:
-// a seal signed over the new field would fail to re-derive on a path that still
-// hashed the old set, reported as tampering that never happened. Centralising it
-// makes that class of drift impossible to introduce by omission.
-//
-// seal must be non-nil, and deliberately is not guarded: every caller reaches
-// here from a stored row, and GetPeriodSeal reports an open period as ErrNotFound
-// rather than a nil seal. Returning a zero SealInput for nil would be the
-// dangerous reading — it would hash a seal that commits to nothing, and let an
-// all-zero forgery verify. Failing loudly is the only safe behaviour a verifier
-// can have.
-func SealInputFor(seal *models.PeriodSeal) SealInput {
-	return SealInput{
-		PeriodID:      seal.PeriodID,
-		FirstSequence: seal.FirstSequence,
-		LastSequence:  seal.LastSequence,
-		EntryCount:    seal.EntryCount,
-		LastAuditHash: seal.LastAuditHash,
-		StateHash:     seal.StateHash,
-
-		AlertCount:      seal.AlertCount,
-		UnresolvedCount: seal.UnresolvedCount,
-		SealedBy:        seal.SealedBy,
-		SealedAt:        seal.SealedAt,
-	}
-}
-
-// WithHead substitutes the chain head the journal actually presents at the seal's
-// boundary for the one the seal records.
-//
-// The chain walk needs this: re-deriving from the seal's own LastAuditHash only
-// proves the seal is internally consistent, which a forger who rewrote both
-// fields together satisfies. Hashing against the head the walk just computed is
-// what catches a seal moved onto a different journal.
-func (in SealInput) WithHead(headHash []byte) SealInput {
-	in.LastAuditHash = headHash
-	return in
-}
-
-// ComputeSealingHash returns the single value that stands for a whole period.
-//
-// Unkeyed, unlike the chain — and that is the point. An auditor holding the
-// seal's published fields and the public key must be able to recompute this
-// value themselves and check the signature over it, with no cooperation from
-// this service. A keyed sealing hash would put us back in the position of being
-// the only party able to verify our own claims.
-//
-// They cannot independently verify LastAuditHash, since the chain is keyed. They
-// do not need to: the signature binds us to the statement "at sequence N the
-// chain head was this and the derived state was that". If a later export
-// presents a different head for the same period, the signature convicts us.
-func ComputeSealingHash(in SealInput) []byte {
-	w := &payloadWriter{}
-	w.stringField(sealContext)
-	w.stringField(in.PeriodID)
-	w.uint64(uint64(in.FirstSequence))
-	w.uint64(uint64(in.LastSequence))
-	w.uint64(uint64(in.EntryCount))
-	w.bytesField(in.LastAuditHash)
-	w.bytesField(in.StateHash)
-	w.uint64(uint64(in.AlertCount))
-	w.uint64(uint64(in.UnresolvedCount))
-	w.bytesField(EncodeSubject(in.SealedBy))
-	w.uint64(uint64(in.SealedAt.UTC().Truncate(time.Microsecond).UnixMicro()))
-
-	sum := blake3.Sum256(w.bytes())
-	return sum[:]
-}
 
 // StateHasher accumulates a period's derived alert state into one digest.
 //
@@ -186,4 +78,130 @@ func (s *StateHasher) Sum() []byte {
 	out := make([]byte, digestLen)
 	_, _ = s.h.Digest().Read(out)
 	return out
+}
+
+// closureContext domain-separates a closure's sealing hash from a period seal's.
+// Deliberately a different constant: the two attest different statements, and a
+// value that verified under one scheme must not verify under the other.
+const closureContext = "formance:reconciliation:closure-seal:v1"
+
+// ClosureInput is everything a closure's seal commits to.
+//
+// The per-period breakdown is bound through StateHash rather than listed here,
+// so this stays a fixed, short field list an auditor can reimplement — the same
+// reason ComputeSealingHash is unkeyed.
+type ClosureInput struct {
+	ClosureID     int64
+	FirstSequence int64
+	LastSequence  int64
+	EntryCount    int64
+	LastAuditHash []byte
+	// StateHash covers the per-period breakdown: every period id in the closure
+	// with its counts and its own state hash. Without it the closure would attest
+	// a range and leave the business figures unsigned — the exact gap that let an
+	// edited alert count read "0 still open" while verification answered intact.
+	StateHash []byte
+	ClosedBy  models.Subject
+	ClosedAt  time.Time
+}
+
+// ClosureInputFor is the one mapping from a stored closure to what its seal
+// covers, for the same reason SealInputFor exists: signing and every
+// verification path must agree by construction rather than by review.
+//
+// closure must be non-nil and closed. An open closure has no LastSequence, and
+// hashing one would attest a boundary that has not happened.
+func ClosureInputFor(closure *models.Closure) ClosureInput {
+	var last int64
+	if closure.LastSequence != nil {
+		last = *closure.LastSequence
+	}
+	var closedAt time.Time
+	if closure.ClosedAt != nil {
+		closedAt = *closure.ClosedAt
+	}
+	return ClosureInput{
+		ClosureID:     closure.ID,
+		FirstSequence: closure.FirstSequence,
+		LastSequence:  last,
+		EntryCount:    closure.EntryCount,
+		LastAuditHash: closure.LastAuditHash,
+		StateHash:     closure.StateHash,
+		ClosedBy:      closure.ClosedBy,
+		ClosedAt:      closedAt,
+	}
+}
+
+// WithHead substitutes the chain head the journal actually presents at the
+// closure's boundary, so a chain walk catches a closure moved onto a different
+// journal rather than merely one that is internally consistent.
+func (in ClosureInput) WithHead(headHash []byte) ClosureInput {
+	in.LastAuditHash = headHash
+	return in
+}
+
+// ComputeClosureHash returns the single value that stands for a whole closure.
+//
+// Unkeyed and reproducible from the closure's published fields, for the same
+// reason as ComputeSealingHash: an auditor holding those fields and the public
+// key must be able to check our claim without our cooperation.
+func ComputeClosureHash(in ClosureInput) []byte {
+	w := &payloadWriter{}
+	w.stringField(closureContext)
+	w.uint64(uint64(in.ClosureID))
+	w.uint64(uint64(in.FirstSequence))
+	w.uint64(uint64(in.LastSequence))
+	w.uint64(uint64(in.EntryCount))
+	w.bytesField(in.LastAuditHash)
+	w.bytesField(in.StateHash)
+	w.bytesField(EncodeSubject(in.ClosedBy))
+	// Microseconds, because that is all timestamptz stores. Hashing the raw
+	// reading would make every closure verify as tampered on Linux and pass on
+	// macOS.
+	w.uint64(uint64(in.ClosedAt.UTC().Truncate(time.Microsecond).UnixMicro()))
+
+	sum := blake3.Sum256(w.bytes())
+	return sum[:]
+}
+
+// ClosureStateHasher folds a closure's per-period breakdown into one digest, in
+// an order it states explicitly rather than one the query happens to return.
+type ClosureStateHasher struct {
+	w *payloadWriter
+}
+
+func NewClosureStateHasher() *ClosureStateHasher {
+	w := &payloadWriter{}
+	w.stringField(stateContext)
+	return &ClosureStateHasher{w: w}
+}
+
+// Add folds one period's figures in. Callers must add periods in a deterministic
+// order — sorted by period id — because a digest over a set is only meaningful
+// if the set has an agreed sequence.
+func (h *ClosureStateHasher) Add(p models.ClosurePeriod) {
+	h.w.stringField(p.PeriodID)
+	h.w.uint64(uint64(p.EntryCount))
+	h.w.uint64(uint64(p.AlertCount))
+	h.w.uint64(uint64(p.UnresolvedCount))
+	h.w.stringField(p.StateHash)
+	// Both flags, not just Ended. Frozen is what an operator reads to know whether
+	// a period still accepts writes, and a published field outside the signature
+	// is a field anyone can restate — the same gap that once let an edited alert
+	// count read "0 still open" while verification answered intact.
+	if p.Ended {
+		h.w.byteTag(0x01)
+	} else {
+		h.w.byteTag(0x00)
+	}
+	if p.Frozen {
+		h.w.byteTag(0x01)
+	} else {
+		h.w.byteTag(0x00)
+	}
+}
+
+func (h *ClosureStateHasher) Sum() []byte {
+	sum := blake3.Sum256(h.w.bytes())
+	return sum[:]
 }
