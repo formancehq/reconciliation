@@ -128,6 +128,34 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 	}
 
 	first := prevLast + 1
+
+	// The mirror of the backwards check, and the case it did not cover: skipping
+	// forward. With no seal yet there is no closed calendar to compare against, so
+	// sealing 2026-06 while the journal already held unsealed 2026-05 entries
+	// succeeded, swallowed them into June's range, and then left May permanently
+	// unsealable — the backwards check refuses it from that point on. Reproduced
+	// before fixing.
+	//
+	// So the earliest period still awaiting a seal has to be sealed first. Periods
+	// already sealed are excluded, which is what keeps the ordinary flow working:
+	// a range legitimately contains the *previous* period's seal entry, tagged with
+	// that earlier period, and refusing on it would make every seal after the first
+	// impossible.
+	earliest, earliestID, err := s.earliestUnsealedPeriod(ctx, first)
+	if err != nil {
+		return nil, err
+	}
+	if !earliest.IsZero() {
+		if start, ok := models.PeriodStart(in.PeriodID); ok && start.After(earliest) {
+			return nil, fmt.Errorf(
+				"%w: %q cannot be sealed while %q is still open and holds earlier unsealed entries. "+
+					"A seal takes the whole journal since the last one, so sealing %q now would give it %q's "+
+					"entries and leave %q unsealable for good. Seal %q first",
+				ErrPeriodNotSealable, in.PeriodID, earliestID,
+				in.PeriodID, earliestID, earliestID, earliestID)
+		}
+	}
+
 	// An empty range (last = first - 1) is legal: a quiet period is still worth
 	// attesting to, and "we ran the controls and nothing happened" is an audit
 	// answer.
@@ -225,6 +253,48 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		return nil, e("store period seal", err)
 	}
 	return seal, nil
+}
+
+// earliestUnsealedPeriod returns the start instant and id of the earliest period
+// represented in the journal from fromSeq onwards that has not been sealed yet,
+// or the zero time when there is none.
+//
+// Periods with an existing seal are excluded on purpose. A seal's range
+// legitimately contains the previous period's seal entry — that entry carries the
+// earlier period's id — so counting it would report an already-closed period as
+// still awaiting one and refuse every seal after the first.
+//
+// Ids no cadence orders (continuous, and the empty id on entries that belong to no
+// period, such as rule.created) are skipped: they can never be sealed, so treating
+// them as blocking would mean nothing could ever be sealed.
+func (s *Storage) earliestUnsealedPeriod(ctx context.Context, fromSeq int64) (time.Time, string, error) {
+	var rows []struct {
+		PeriodID string `bun:"period_id"`
+	}
+	if err := s.db.NewSelect().
+		Model((*models.AuditEntry)(nil)).
+		ColumnExpr("DISTINCT period_id").
+		Where("sequence >= ?", fromSeq).
+		Where("period_id <> ''").
+		Where("period_id NOT IN (SELECT period_id FROM reconciliations.period_seal)").
+		Scan(ctx, &rows); err != nil {
+		return time.Time{}, "", e("read unsealed journal periods", err)
+	}
+
+	var (
+		earliest time.Time
+		id       string
+	)
+	for _, row := range rows {
+		start, ok := models.PeriodStart(row.PeriodID)
+		if !ok {
+			continue
+		}
+		if earliest.IsZero() || start.Before(earliest) {
+			earliest, id = start, row.PeriodID
+		}
+	}
+	return earliest, id, nil
 }
 
 // sealedCalendarEnd returns the instant the closed books run through — the

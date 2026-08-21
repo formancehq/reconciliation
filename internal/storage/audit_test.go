@@ -585,6 +585,39 @@ func TestSealPeriodRefusesGoingBackwards(t *testing.T) {
 	require.Equal(t, prev.LastSequence+1, next.FirstSequence, "seals must partition with no gap")
 }
 
+// The mirror of TestSealPeriodRefusesGoingBackwards. With no seal yet there is no
+// closed calendar to compare against, so sealing a period later than the entries
+// already in the journal used to succeed — reproduced: sealing 2026-06 took range
+// 1..2, swallowing a 2026-05 evaluation, after which 2026-05 was refused as
+// backwards and could never be sealed at all.
+func TestSealPeriodRefusesSkippingPastAnOpenEarlierPeriod(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+	auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationFail)
+
+	for _, later := range []string{"2026-06", "2026-07", "2026-06-15"} {
+		err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
+			_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: later})
+			return err
+		})
+		require.ErrorIs(t, err, ErrPeriodNotSealable, "%q skips past the open 2026-05", later)
+		require.ErrorContains(t, err, "2026-05",
+			"the error must name the period to seal first, since guessing wrong is permanent")
+	}
+
+	// The earliest open period is sealable, and then the next one is too — the
+	// ordinary flow, where the second range legitimately contains the first's seal
+	// entry tagged with the earlier period.
+	may := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+	require.Positive(t, may.EntryCount)
+
+	june := sealPeriod(t, store, ctx, "2026-06", models.Subject{Subject: "controller"})
+	require.Equal(t, may.LastSequence+1, june.FirstSequence, "seals must partition with no gap")
+}
+
 func TestSealedPeriodRefusesFurtherAlertTransitions(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
