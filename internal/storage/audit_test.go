@@ -656,6 +656,67 @@ func TestSealPeriodRefusesAPeriodThatHasNotBegun(t *testing.T) {
 	require.Equal(t, "2026-08", live.PeriodID)
 }
 
+// A continuous rule and a periodic rule share one journal, and closing the
+// periodic one must not freeze the continuous one. Verified rather than assumed,
+// because two separate guards have to agree for it to hold: the write barrier is
+// keyed on periodID and "continuous" is never sealed, and the skip-forward check
+// skips ids no cadence orders — had it treated "continuous" as an open earlier
+// period instead, the first weekly seal would have been refused and every one
+// after it, for as long as any continuous rule existed.
+//
+// The asymmetry this pins is deliberate and worth stating: the seal's *range*
+// covers every entry in the journal, continuous ones included, so they are
+// attested; its *figures* count only alerts carrying the sealed period's id. So
+// entryCount and alertCount do not reconcile by eye, and should not.
+func TestSealingAPeriodLeavesContinuousAlertsAlone(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	cont := auditTestRule(t, store, ctx, models.CadenceContinuous)
+	weekly := auditTestRule(t, store, ctx, models.CadenceWeekly)
+
+	openCase := func(rule *models.Rule, periodID, fingerprint string) *models.Alert {
+		t.Helper()
+		ev := auditTestEvaluation(t, store, ctx, rule, periodID, models.EvaluationFail)
+		out, err := store.OpenOrUpdateAlert(ctx, OpenAlertInput{
+			RuleID:       rule.ID,
+			Fingerprint:  fingerprint,
+			PeriodID:     periodID,
+			Severity:     models.Severity("high"),
+			EvaluationID: ev.ID,
+			Evidence:     json.RawMessage(`{"drift":"1"}`),
+			OccurredAt:   time.Now().UTC(),
+		})
+		require.NoError(t, err)
+		return out.Alert
+	}
+
+	continuousCase := openCase(cont, models.ContinuousPeriod, "asset:EUR/2")
+	openCase(weekly, "2026-W20", "asset:USD/2")
+	openCase(cont, models.ContinuousPeriod, "asset:GBP/2")
+
+	seal := sealPeriod(t, store, ctx, "2026-W20", models.Subject{Subject: "controller"})
+
+	// The range takes the whole journal; the figures take only the week's cases.
+	require.Equal(t, int64(8), seal.EntryCount, "the range covers the continuous entries too")
+	require.Equal(t, int64(1), seal.AlertCount, "only the weekly case is counted")
+	require.Equal(t, int64(1), seal.UnresolvedCount)
+
+	// The continuous rule is untouched: existing cases still transition...
+	_, err := store.AckAlert(ctx, continuousCase.ID, &models.Ack{By: "ops", At: time.Now().UTC()})
+	require.NoError(t, err, "closing a weekly period must not freeze a continuous alert")
+
+	// ...and new ones still open.
+	openCase(cont, models.ContinuousPeriod, "asset:CHF/2")
+
+	// And the next week still seals, continuing the partition with no gap.
+	openCase(weekly, "2026-W21", "asset:USD/2")
+	next := sealPeriod(t, store, ctx, "2026-W21", models.Subject{Subject: "controller"})
+	require.Equal(t, seal.LastSequence+1, next.FirstSequence)
+	require.Equal(t, int64(1), next.AlertCount)
+}
+
 func TestSealedPeriodRefusesFurtherAlertTransitions(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
