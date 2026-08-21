@@ -41,6 +41,13 @@ type SealInput struct {
 // a seal signed over the new field would fail to re-derive on a path that still
 // hashed the old set, reported as tampering that never happened. Centralising it
 // makes that class of drift impossible to introduce by omission.
+//
+// seal must be non-nil, and deliberately is not guarded: every caller reaches
+// here from a stored row, and GetPeriodSeal reports an open period as ErrNotFound
+// rather than a nil seal. Returning a zero SealInput for nil would be the
+// dangerous reading — it would hash a seal that commits to nothing, and let an
+// all-zero forgery verify. Failing loudly is the only safe behaviour a verifier
+// can have.
 func SealInputFor(seal *models.PeriodSeal) SealInput {
 	return SealInput{
 		PeriodID:      seal.PeriodID,
