@@ -91,6 +91,31 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		return nil, fmt.Errorf("%w: %s was sealed at %s", ErrPeriodAlreadySealed, in.PeriodID, existing.SealedAt.Format(time.RFC3339))
 	}
 
+	// Refuse to go backwards. A seal's range always continues from the previous
+	// seal's end, so sealing a period that starts before the last sealed one hands
+	// it the entries that came *after* that seal — 2026-06 sealed after 2026-08
+	// gets August's closing entry, and June's own entries end up attested by
+	// August. Neither seal can be corrected afterwards, so the only place to catch
+	// it is before the range is consumed.
+	//
+	// The candidate's start is compared against the closed calendar's end, not
+	// against the last sealed period's start. Start-versus-start leaves a hole:
+	// 2026-08-15 begins after 2026-08 does, so a day nested inside an
+	// already-closed month would pass and attest calendar that is already sealed.
+	if closedThrough, err := s.sealedCalendarEnd(ctx); err != nil {
+		return nil, err
+	} else if !closedThrough.IsZero() {
+		start, ok := models.PeriodStart(in.PeriodID)
+		if ok && start.Before(closedThrough) {
+			return nil, fmt.Errorf(
+				"%w: %q begins at %s, but the books are closed through %s. "+
+					"Sealing continues the range from the last seal, so this period would be given the entries "+
+					"recorded after that seal, and neither seal could be corrected afterwards",
+				ErrPeriodNotSealable, in.PeriodID,
+				start.Format("2006-01-02"), closedThrough.Format("2006-01-02"))
+		}
+	}
+
 	headSeq, headHash, err := s.chainHeadLocked(ctx)
 	if err != nil {
 		return nil, err
@@ -126,6 +151,17 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		return nil, err
 	}
 
+	at := in.At
+	if at.IsZero() {
+		at = time.Now()
+	}
+	// Truncated to microseconds here, before it is either hashed or stored, so
+	// the two are the same value. timestamptz keeps microseconds while time.Now()
+	// on Linux carries nanoseconds, and hashing the un-truncated reading would
+	// make every seal verify as tampered in production while passing on macOS —
+	// the same trap 8dadf43b fixed for chain entries.
+	at = at.UTC().Truncate(time.Microsecond)
+
 	// Build the seal first and hash the struct that is about to be stored, through
 	// the same SealInputFor every verification path uses. Hashing a separate,
 	// hand-listed copy of these fields is how signing and verification drift
@@ -140,6 +176,7 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		SealedBy:        audit.NormalizeSubject(in.SealedBy),
 		AlertCount:      alertCount,
 		UnresolvedCount: unresolved,
+		SealedAt:        at,
 	}
 	seal.SealingHash = audit.ComputeSealingHash(audit.SealInputFor(seal))
 
@@ -151,12 +188,6 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		seal.Signature = signature
 		seal.SigningKeyID = key.ID
 	}
-
-	at := in.At
-	if at.IsZero() {
-		at = time.Now()
-	}
-	at = at.UTC()
 
 	memento, err := audit.BuildMemento(audit.PeriodSealMemento{
 		PeriodID:        seal.PeriodID,
@@ -184,7 +215,6 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		return nil, err
 	}
 
-	seal.SealedAt = at
 	seal.AuditSequence = entry.Sequence
 	if _, err := s.db.NewInsert().Model(seal).Returning("*").Exec(ctx); err != nil {
 		// Belt and braces behind the lock: if a duplicate ever reaches the insert,
@@ -195,6 +225,35 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		return nil, e("store period seal", err)
 	}
 	return seal, nil
+}
+
+// sealedCalendarEnd returns the instant the closed books run through — the
+// latest end of any sealed period — or the zero time when nothing is sealed yet.
+//
+// Derived from the period ids rather than from sealed_at: what matters is which
+// stretch of calendar is closed, not when someone ran the closing. An operator
+// sealing last month today must still be refused if next month is already
+// sealed.
+func (s *Storage) sealedCalendarEnd(ctx context.Context) (time.Time, error) {
+	var seals []models.PeriodSeal
+	if err := s.db.NewSelect().Model(&seals).Column("period_id").Scan(ctx); err != nil {
+		return time.Time{}, e("read sealed period ids", err)
+	}
+	var latest time.Time
+	for _, seal := range seals {
+		end, ok := models.PeriodEnd(seal.PeriodID)
+		if !ok {
+			// A label no cadence produces cannot be ordered. Ids are validated at
+			// seal time, so this only happens for rows predating that check;
+			// skipping is right — an unorderable seal must not block every future
+			// one.
+			continue
+		}
+		if end.After(latest) {
+			latest = end
+		}
+	}
+	return latest, nil
 }
 
 // hashPeriodState folds the period's alerts into a digest, in an order the query

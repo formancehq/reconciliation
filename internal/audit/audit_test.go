@@ -231,6 +231,11 @@ func TestSealingHashBindsEveryField(t *testing.T) {
 		EntryCount:    42,
 		LastAuditHash: []byte("head"),
 		StateHash:     []byte("state"),
+
+		AlertCount:      3,
+		UnresolvedCount: 1,
+		SealedBy:        models.Subject{Subject: "controller@example.com"},
+		SealedAt:        time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
 	}
 	baseline := ComputeSealingHash(base)
 
@@ -241,6 +246,16 @@ func TestSealingHashBindsEveryField(t *testing.T) {
 		"entryCount":    func(in *SealInput) { in.EntryCount = 41 },
 		"lastAuditHash": func(in *SealInput) { in.LastAuditHash = []byte("other") },
 		"stateHash":     func(in *SealInput) { in.StateHash = []byte("other") },
+		// The published headline figures and attribution. A report cites these, so
+		// leaving them unsigned let an edited row show "0 alerts, 0 unresolved" for
+		// a period that had one open while verification still answered ok.
+		"alertCount":      func(in *SealInput) { in.AlertCount = 4 },
+		"unresolvedCount": func(in *SealInput) { in.UnresolvedCount = 0 },
+		"sealedBy":        func(in *SealInput) { in.SealedBy = models.Subject{Subject: "someone-else"} },
+		// The source tag, not just the subject string: a seal closed by a scheduled
+		// component must not be presentable as one a person signed off.
+		"sealedBySource": func(in *SealInput) { in.SealedBy.Source = models.SubjectSourceSystem },
+		"sealedAt":       func(in *SealInput) { in.SealedAt = in.SealedAt.Add(time.Hour) },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -267,6 +282,11 @@ func TestSealInputForMapsEveryCommittedField(t *testing.T) {
 		EntryCount:    42,
 		LastAuditHash: []byte("head"),
 		StateHash:     []byte("state"),
+
+		AlertCount:      3,
+		UnresolvedCount: 1,
+		SealedBy:        models.Subject{Subject: "controller@example.com"},
+		SealedAt:        time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
 	}
 
 	in := SealInputFor(seal)
@@ -284,6 +304,10 @@ func TestSealInputForMapsEveryCommittedField(t *testing.T) {
 	require.Equal(t, seal.EntryCount, in.EntryCount)
 	require.Equal(t, seal.LastAuditHash, in.LastAuditHash)
 	require.Equal(t, seal.StateHash, in.StateHash)
+	require.Equal(t, seal.AlertCount, in.AlertCount)
+	require.Equal(t, seal.UnresolvedCount, in.UnresolvedCount)
+	require.Equal(t, seal.SealedBy, in.SealedBy)
+	require.Equal(t, seal.SealedAt, in.SealedAt)
 }
 
 // WithHead exists only for the chain walk, which re-derives a seal against the
@@ -299,6 +323,11 @@ func TestWithHeadOverridesOnlyTheHead(t *testing.T) {
 		EntryCount:    42,
 		LastAuditHash: []byte("recorded head"),
 		StateHash:     []byte("state"),
+
+		AlertCount:      3,
+		UnresolvedCount: 1,
+		SealedBy:        models.Subject{Subject: "controller@example.com"},
+		SealedAt:        time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
 	}
 
 	base := SealInputFor(seal)
@@ -317,6 +346,29 @@ func TestWithHeadOverridesOnlyTheHead(t *testing.T) {
 
 	// And a seal moved onto a different journal head does not re-derive.
 	require.NotEqual(t, ComputeSealingHash(base), ComputeSealingHash(swapped))
+}
+
+// timestamptz stores microseconds; time.Now() on Linux carries nanoseconds. If
+// the sealing hash took the un-truncated reading, every seal would verify as
+// tampered in production and pass on a developer's Mac, where wall-clock
+// readings are already microsecond-granular. An explicit sub-microsecond value
+// makes this fail on either platform rather than depending on the host clock.
+func TestSealingHashIgnoresSubMicrosecondTime(t *testing.T) {
+	t.Parallel()
+
+	base := SealInput{PeriodID: "2026-05", LastSequence: 10}
+	base.SealedAt = time.Date(2026, 6, 1, 12, 0, 0, 123456000, time.UTC)
+
+	withNanos := base
+	withNanos.SealedAt = time.Date(2026, 6, 1, 12, 0, 0, 123456789, time.UTC)
+
+	require.Equal(t, ComputeSealingHash(base), ComputeSealingHash(withNanos),
+		"nanoseconds Postgres cannot store must not change the hash")
+
+	// A different microsecond still must.
+	other := base
+	other.SealedAt = time.Date(2026, 6, 1, 12, 0, 0, 123457000, time.UTC)
+	require.NotEqual(t, ComputeSealingHash(base), ComputeSealingHash(other))
 }
 
 // The sealing hash must be reproducible by someone who has only the seal's

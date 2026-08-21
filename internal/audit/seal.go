@@ -1,6 +1,8 @@
 package audit
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/zeebo/blake3"
 
@@ -28,6 +30,20 @@ type SealInput struct {
 	// StateHash covers the period's derived alert state, so the seal commits to
 	// the outcome and not only to the journal.
 	StateHash []byte
+	// AlertCount and UnresolvedCount are the period's headline figures. They are
+	// hashed because they are *published* as part of the seal: a report cites
+	// them, so leaving them unsigned let an edited row present "0 alerts, 0
+	// unresolved" for a period that had one open, while /periods/{id}/verify
+	// still answered ok. Verified live before fixing.
+	AlertCount      int64
+	UnresolvedCount int64
+	// SealedBy and SealedAt are who closed the books and when — the two facts an
+	// auditor cares about most after the figures themselves, and both presented
+	// by the API as frozen at seal time. SealedAt is truncated to microseconds
+	// because that is all timestamptz stores; hashing a nanosecond value would
+	// make every seal verify as tampered on Linux and pass on macOS.
+	SealedBy models.Subject
+	SealedAt time.Time
 }
 
 // SealInputFor is the one mapping from a stored seal to the fields its sealing
@@ -56,6 +72,11 @@ func SealInputFor(seal *models.PeriodSeal) SealInput {
 		EntryCount:    seal.EntryCount,
 		LastAuditHash: seal.LastAuditHash,
 		StateHash:     seal.StateHash,
+
+		AlertCount:      seal.AlertCount,
+		UnresolvedCount: seal.UnresolvedCount,
+		SealedBy:        seal.SealedBy,
+		SealedAt:        seal.SealedAt,
 	}
 }
 
@@ -92,6 +113,10 @@ func ComputeSealingHash(in SealInput) []byte {
 	w.uint64(uint64(in.EntryCount))
 	w.bytesField(in.LastAuditHash)
 	w.bytesField(in.StateHash)
+	w.uint64(uint64(in.AlertCount))
+	w.uint64(uint64(in.UnresolvedCount))
+	w.bytesField(EncodeSubject(in.SealedBy))
+	w.uint64(uint64(in.SealedAt.UTC().Truncate(time.Microsecond).UnixMicro()))
 
 	sum := blake3.Sum256(w.bytes())
 	return sum[:]
