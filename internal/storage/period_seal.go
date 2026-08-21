@@ -91,6 +91,34 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		return nil, fmt.Errorf("%w: %s was sealed at %s", ErrPeriodAlreadySealed, in.PeriodID, existing.SealedAt.Format(time.RFC3339))
 	}
 
+	at := in.At
+	if at.IsZero() {
+		at = time.Now()
+	}
+	// Truncated to microseconds here, before it is either hashed or stored, so
+	// the two are the same value. timestamptz keeps microseconds while time.Now()
+	// on Linux carries nanoseconds, and hashing the un-truncated reading would
+	// make every seal verify as tampered in production while passing on macOS —
+	// the same trap 8dadf43b fixed for chain entries.
+	at = at.UTC().Truncate(time.Microsecond)
+
+	// A period cannot be closed before it opens, and the damage from allowing it
+	// is unbounded: sealing 2099-01 on a quiet journal succeeded, closed the
+	// calendar through 2099, and left every real period refused as backwards for
+	// good. Neither of the other two guards catches it — there is no earlier seal
+	// and no period-tagged entry to compare against. Reproduced before fixing.
+	//
+	// Deliberately only the future. A period that has *started* but not yet ended
+	// is still sealable, because whether closing a live period should be refused
+	// up front is an open question on this PR, not something to settle here.
+	if start, ok := models.PeriodStart(in.PeriodID); ok && start.After(at) {
+		return nil, fmt.Errorf(
+			"%w: %q begins at %s, which has not happened yet — a period cannot be closed before it opens. "+
+				"Sealing it would close the books through %s and leave every period until then unsealable",
+			ErrPeriodNotSealable, in.PeriodID,
+			start.Format("2006-01-02"), start.Format("2006-01-02"))
+	}
+
 	// Refuse to go backwards. A seal's range always continues from the previous
 	// seal's end, so sealing a period that starts before the last sealed one hands
 	// it the entries that came *after* that seal — 2026-06 sealed after 2026-08
@@ -178,17 +206,6 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 	if err != nil {
 		return nil, err
 	}
-
-	at := in.At
-	if at.IsZero() {
-		at = time.Now()
-	}
-	// Truncated to microseconds here, before it is either hashed or stored, so
-	// the two are the same value. timestamptz keeps microseconds while time.Now()
-	// on Linux carries nanoseconds, and hashing the un-truncated reading would
-	// make every seal verify as tampered in production while passing on macOS —
-	// the same trap 8dadf43b fixed for chain entries.
-	at = at.UTC().Truncate(time.Microsecond)
 
 	// Build the seal first and hash the struct that is about to be stored, through
 	// the same SealInputFor every verification path uses. Hashing a separate,

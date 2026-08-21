@@ -558,16 +558,25 @@ func TestSealPeriodRefusesGoingBackwards(t *testing.T) {
 	ctx := logging.TestingContext()
 	store := newStore(t)
 
-	sealPeriod(t, store, ctx, "2026-08", models.Subject{Subject: "controller"})
+	// The clock is pinned so the test does not depend on today's date: sealing a
+	// period that has not begun is refused by its own guard.
+	seal := func(periodID string) error {
+		return store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
+			_, err := tx.SealPeriod(ctx, SealPeriodInput{
+				PeriodID: periodID,
+				SealedBy: models.Subject{Subject: "controller"},
+				At:       time.Date(2026, 12, 31, 12, 0, 0, 0, time.UTC),
+			})
+			return err
+		})
+	}
+	require.NoError(t, seal("2026-08"))
 
 	// 2026-08-15 is in the list on purpose: it begins *after* 2026-08 does, so a
 	// start-versus-start rule would let a day nested inside the closed month
 	// through. The books are closed through 1 September, and that is the bound.
 	for _, earlier := range []string{"2026-07", "2026-06", "2026-W12", "2026-08-15", "2026-08"} {
-		err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
-			_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: earlier})
-			return err
-		})
+		err := seal(earlier)
 		// 2026-08 itself is refused as already sealed; the rest as backwards.
 		if earlier == "2026-08" {
 			require.ErrorIs(t, err, ErrPeriodAlreadySealed)
@@ -579,7 +588,9 @@ func TestSealPeriodRefusesGoingBackwards(t *testing.T) {
 	}
 
 	// Forward still works, and the partition stays contiguous.
-	next := sealPeriod(t, store, ctx, "2026-09", models.Subject{Subject: "controller"})
+	require.NoError(t, seal("2026-09"))
+	next, err := store.GetPeriodSeal(ctx, "2026-09")
+	require.NoError(t, err)
 	prev, err := store.GetPeriodSeal(ctx, "2026-08")
 	require.NoError(t, err)
 	require.Equal(t, prev.LastSequence+1, next.FirstSequence, "seals must partition with no gap")
@@ -616,6 +627,33 @@ func TestSealPeriodRefusesSkippingPastAnOpenEarlierPeriod(t *testing.T) {
 
 	june := sealPeriod(t, store, ctx, "2026-06", models.Subject{Subject: "controller"})
 	require.Equal(t, may.LastSequence+1, june.FirstSequence, "seals must partition with no gap")
+}
+
+// Neither the backwards guard nor the skip-forward guard catches a first seal for
+// a period that has not started: there is no earlier seal and no period-tagged
+// entry to compare against. Reproduced: sealing 2099-01 on a quiet journal
+// succeeded, closed the books through February 2099, and left the real 2026-08
+// refused as backwards — permanently unsealable.
+func TestSealPeriodRefusesAPeriodThatHasNotBegun(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+
+	for _, future := range []string{"2099-01", "2026-09", "2026-08-22", "2026-W40"} {
+		err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
+			_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: future, At: now})
+			return err
+		})
+		require.ErrorIs(t, err, ErrPeriodNotSealable, "%q has not begun", future)
+		require.ErrorContains(t, err, "has not happened yet")
+	}
+
+	// A period already under way is still sealable: whether closing a live period
+	// should be refused up front is an open question, not settled by this guard.
+	live := sealPeriod(t, store, ctx, "2026-08", models.Subject{Subject: "controller"})
+	require.Equal(t, "2026-08", live.PeriodID)
 }
 
 func TestSealedPeriodRefusesFurtherAlertTransitions(t *testing.T) {
