@@ -717,6 +717,80 @@ func TestSealingAPeriodLeavesContinuousAlertsAlone(t *testing.T) {
 	require.Equal(t, int64(1), next.AlertCount)
 }
 
+// Weeks and months cannot both close the same stretch of calendar. Seals form a
+// partition of one journal, not a hierarchy, so "seal every week *and* every
+// month" is not a supported shape — it is an either/or, and the error says which
+// span is already closed.
+//
+// Pinned because both directions look plausible enough that someone could
+// "relax" the guard, and the failure would be silent and permanent: the second
+// seal would be handed the entries recorded after the first, attesting the wrong
+// period under a label an auditor will read at face value.
+//
+// The one thing that does work is switching granularity at a boundary where the
+// calendar happens to align, which the last case covers.
+func TestSealingCannotMixWeeklyAndMonthlyOverTheSameSpan(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+
+	trySeal := func(store *Storage, periodID string) error {
+		return store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
+			_, err := tx.SealPeriod(ctx, SealPeriodInput{
+				PeriodID: periodID,
+				SealedBy: models.Subject{Subject: "controller"},
+				// Pinned: a period that has not begun is refused by its own guard,
+				// and these are 2026 periods.
+				At: time.Date(2026, 12, 31, 12, 0, 0, 0, time.UTC),
+			})
+			return err
+		})
+	}
+
+	t.Run("the month is refused after one of its weeks", func(t *testing.T) {
+		t.Parallel()
+		store := newStore(t)
+		auditTestRule(t, store, ctx, models.CadenceWeekly)
+		require.NoError(t, trySeal(store, "2026-W20"))
+		// 2026-W20 runs 11-17 May, so the books close through 18 May and the month
+		// starts eleven days inside them.
+		err := trySeal(store, "2026-05")
+		require.ErrorIs(t, err, ErrPeriodNotSealable)
+		require.ErrorContains(t, err, "closed through 2026-05-18")
+	})
+
+	t.Run("a week is refused after its month", func(t *testing.T) {
+		t.Parallel()
+		store := newStore(t)
+		auditTestRule(t, store, ctx, models.CadenceMonthly)
+		require.NoError(t, trySeal(store, "2026-05"))
+		err := trySeal(store, "2026-W20")
+		require.ErrorIs(t, err, ErrPeriodNotSealable)
+		require.ErrorContains(t, err, "closed through 2026-06-01")
+
+		// The next month is fine: one granularity, carried forward.
+		require.NoError(t, trySeal(store, "2026-06"))
+	})
+
+	// ISO weeks start on a Monday and months do not, so a run of weeks lands on a
+	// month boundary only when the 1st is a Monday — once in 2026, three times in
+	// 2027. 2026-W22 ends 31 May and June starts Monday 1 June, so this is one of
+	// those, and switching cadence there is legal rather than a special case.
+	t.Run("granularity can change where the calendar aligns", func(t *testing.T) {
+		t.Parallel()
+		store := newStore(t)
+		auditTestRule(t, store, ctx, models.CadenceWeekly)
+		for _, week := range []string{"2026-W19", "2026-W20", "2026-W21", "2026-W22"} {
+			require.NoError(t, trySeal(store, week), "week %s", week)
+		}
+		require.NoError(t, trySeal(store, "2026-06"),
+			"June begins exactly where 2026-W22 ends, so the switch is not an overlap")
+
+		// And back the other way is closed off again, as it must be.
+		err := trySeal(store, "2026-W24")
+		require.ErrorIs(t, err, ErrPeriodNotSealable)
+	})
+}
+
 func TestSealedPeriodRefusesFurtherAlertTransitions(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
