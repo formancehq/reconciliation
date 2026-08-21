@@ -116,6 +116,7 @@ Both are needed, and the second was missing at first. A `FOR EACH ROW` trigger d
 | Reorder or splice entries | `BROKEN_LINK` | An entry's `prev_hash` no longer matches its predecessor. |
 | Rewrite an entry and its hash | `HASH_MISMATCH` downstream | The next entry was hashed against the original value. Rewriting forward requires the chain key. |
 | Alter a period seal | `HASH_MISMATCH` at the seal boundary | The seal is re-derived from its own fields during the walk. |
+| Alter a seal that closes an empty prefix | `HASH_MISMATCH` at the seal's own entry | Boundary sequence 0 has no entry for the walk to reach, so a verification starting at 1 re-derives such a seal explicitly. |
 | `TRUNCATE` any of the three tables | Refused outright | Statement-level trigger; a row trigger would not fire. |
 | Delete the tail, below a seal | `SEQUENCE_GAP` | A seal commits to a boundary that no longer exists. |
 
@@ -146,6 +147,8 @@ signature   = Ed25519(sealingHash)
 `stateHash` covers the period's resulting alert state via a deterministic **explicitly ordered** scan — never an aggregate whose input order is merely conventional, which is the determinism trap in V2's block hasher.
 
 The seal's own journal entry lands at `lastSequence + 1` and therefore belongs to the following period, the way a chapter's seal order is proposed after the boundary it describes. A consequence worth knowing: a quiet period's range is not literally empty, it contains the previous period's seal.
+
+The exception is the first period sealed on a fresh installation, whose range genuinely is empty and whose boundary is sequence 0. It is the one seal a chain walk cannot reach — the walk re-derives a seal when it arrives at the entry on its boundary, and there is no entry at 0 — so a full verification checks it separately by re-deriving its own fields. Before that was added, editing it returned a clean bill of health from `POST /audit-entries/verify {}`, which is the call an auditor leans on hardest.
 
 ### Why the sealing hash is unkeyed
 

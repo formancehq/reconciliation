@@ -381,6 +381,40 @@ func (s *Storage) VerifyChain(ctx context.Context, fromSeq, toSeq int64) (*model
 		return result, nil
 	}
 
+	// A period sealed while the journal was still empty commits to the boundary
+	// sequence 0, and no entry exists there for the walk to cross. sealsInRange
+	// starts at fromSeq, never below 1, so that seal was the one a full
+	// verification never checked: editing its figures produced a clean bill of
+	// health from the very call an auditor would rely on most. Having no
+	// crossable boundary, it is checked by re-deriving its own fields — the same
+	// check the period-scoped path makes on an empty range.
+	//
+	// Only when the range starts at 1. A caller who asked about 10..20 is not
+	// asking about the chain's opening prefix.
+	if fromSeq == 1 {
+		genesis, err := s.zeroBoundarySeals(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for i := range genesis {
+			seal := &genesis[i]
+			if ok, reason := s.VerifySealIntegrity(seal); !ok {
+				// The seal has no boundary entry to point at, so name the entry
+				// that recorded it — a real, fetchable sequence an investigator
+				// can start from.
+				at := seal.AuditSequence
+				result.OK = false
+				result.Violation = models.ChainViolationHashMismatch
+				result.AtSequence = &at
+				result.Detail = reason
+				return result, nil
+			}
+			// Reported so the caller can tell the seal was checked rather than
+			// skipped, which is the whole distinction this fix restores.
+			result.SealsCrossed = append(result.SealsCrossed, seal.PeriodID)
+		}
+	}
+
 	if fromSeq > toSeq {
 		// A genuinely empty range is intact by definition.
 		return result, nil
@@ -570,6 +604,20 @@ func (s *Storage) maxSealedSequence(ctx context.Context) (int64, error) {
 		return 0, e("read highest sealed sequence", err)
 	}
 	return max, nil
+}
+
+// zeroBoundarySeals returns the seals that close at sequence 0 — a period sealed
+// while the journal was still empty. They are invisible to the walk, which
+// re-derives a seal only when it reaches the entry at its boundary, and there is
+// no entry at sequence 0.
+func (s *Storage) zeroBoundarySeals(ctx context.Context) ([]models.PeriodSeal, error) {
+	var seals []models.PeriodSeal
+	if err := s.db.NewSelect().Model(&seals).
+		Where("last_sequence = 0").
+		Order("period_id ASC").Scan(ctx); err != nil {
+		return nil, e("list zero-boundary seals", err)
+	}
+	return seals, nil
 }
 
 // verifySealAgainstHead re-derives a seal's sealing hash from its own stored

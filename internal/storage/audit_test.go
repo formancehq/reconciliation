@@ -406,6 +406,80 @@ func TestSealPeriodProducesAVerifiableSignedSeal(t *testing.T) {
 	require.True(t, store.SigningKey().Verify(recomputed, seal.Signature))
 }
 
+// A period sealed before the journal has any entries commits to boundary
+// sequence 0. The walk re-derives a seal only when it reaches the entry at that
+// boundary, and there is no entry at 0 — so this seal used to be the one thing a
+// full verification silently skipped, and editing it returned OK from the exact
+// call an auditor leans on hardest. Verified live before fixing: entry_count went
+// 0 -> 99 and POST /audit-entries/verify {} still said intact.
+func TestFullVerificationChecksASealWithNoEntriesBelowIt(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	var seal *models.PeriodSeal
+	require.NoError(t, store.RunInTx(ctx, func(ctx context.Context, scoped *Storage) error {
+		var err error
+		seal, err = scoped.SealPeriod(ctx, SealPeriodInput{PeriodID: "2026-05"})
+		return err
+	}))
+	require.Equal(t, int64(0), seal.LastSequence, "sealing an empty journal closes at boundary 0")
+	require.Equal(t, int64(0), seal.EntryCount)
+
+	// Intact: the seal is reported as checked, not quietly skipped. Without that
+	// the caller cannot tell verification covered it.
+	clean, err := store.VerifyChain(ctx, 0, 0)
+	require.NoError(t, err)
+	require.True(t, clean.OK)
+	require.Contains(t, clean.SealsCrossed, "2026-05")
+
+	// Altered: every field the sealing hash covers must break the full walk.
+	for _, tc := range []struct {
+		name string
+		set  string
+	}{
+		{"entryCount", "entry_count = 99"},
+		{"lastSequence", "last_sequence = 0, entry_count = 1"},
+		{"stateHash", `state_hash = '\x00'::bytea`},
+		{"periodID", "period_id = '2026-06'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newStore(t)
+			require.NoError(t, store.RunInTx(ctx, func(ctx context.Context, scoped *Storage) error {
+				_, err := scoped.SealPeriod(ctx, SealPeriodInput{PeriodID: "2026-05"})
+				return err
+			}))
+
+			disableImmutability(t, store, ctx, "period_seal")
+			_, err := store.db.NewRaw(
+				"UPDATE reconciliations.period_seal SET " + tc.set).Exec(ctx)
+			require.NoError(t, err)
+
+			res, err := store.VerifyChain(ctx, 0, 0)
+			require.NoError(t, err)
+			require.False(t, res.OK, "editing %s left full verification reporting intact", tc.name)
+			require.Equal(t, models.ChainViolationHashMismatch, res.Violation)
+			require.NotNil(t, res.AtSequence, "the report must name a sequence to start from")
+		})
+	}
+
+	// firstSequence is absent from the table above because the schema already
+	// makes it unreachable on a genesis seal: last_sequence >= first_sequence - 1
+	// pins first_sequence to 1 whenever the boundary is 0. Asserted rather than
+	// assumed, so dropping the constraint reopens the hole loudly.
+	t.Run("firstSequence is refused by the range constraint", func(t *testing.T) {
+		store := newStore(t)
+		require.NoError(t, store.RunInTx(ctx, func(ctx context.Context, scoped *Storage) error {
+			_, err := scoped.SealPeriod(ctx, SealPeriodInput{PeriodID: "2026-05"})
+			return err
+		}))
+		disableImmutability(t, store, ctx, "period_seal")
+		_, err := store.db.NewRaw(
+			"UPDATE reconciliations.period_seal SET first_sequence = 7").Exec(ctx)
+		require.ErrorContains(t, err, "period_seal_range_chk")
+	})
+}
+
 func TestSealedPeriodRefusesFurtherAlertTransitions(t *testing.T) {
 	t.Parallel()
 	ctx := logging.TestingContext()
