@@ -30,6 +30,40 @@ type SealInput struct {
 	StateHash []byte
 }
 
+// SealInputFor is the one mapping from a stored seal to the fields its sealing
+// hash covers.
+//
+// Four paths compute a sealing hash — signing at seal time, VerifySealIntegrity,
+// VerifySealSignature and the chain walk's verifySealAgainstHead — and they must
+// agree exactly. When each spelled the mapping out for itself, adding a committed
+// field to some of them and not the others would have left signing, integrity
+// verification and chain walking contradicting one another over the same seal:
+// a seal signed over the new field would fail to re-derive on a path that still
+// hashed the old set, reported as tampering that never happened. Centralising it
+// makes that class of drift impossible to introduce by omission.
+func SealInputFor(seal *models.PeriodSeal) SealInput {
+	return SealInput{
+		PeriodID:      seal.PeriodID,
+		FirstSequence: seal.FirstSequence,
+		LastSequence:  seal.LastSequence,
+		EntryCount:    seal.EntryCount,
+		LastAuditHash: seal.LastAuditHash,
+		StateHash:     seal.StateHash,
+	}
+}
+
+// WithHead substitutes the chain head the journal actually presents at the seal's
+// boundary for the one the seal records.
+//
+// The chain walk needs this: re-deriving from the seal's own LastAuditHash only
+// proves the seal is internally consistent, which a forger who rewrote both
+// fields together satisfies. Hashing against the head the walk just computed is
+// what catches a seal moved onto a different journal.
+func (in SealInput) WithHead(headHash []byte) SealInput {
+	in.LastAuditHash = headHash
+	return in
+}
+
 // ComputeSealingHash returns the single value that stands for a whole period.
 //
 // Unkeyed, unlike the chain — and that is the point. An auditor holding the

@@ -389,6 +389,11 @@ func TestSealPeriodProducesAVerifiableSignedSeal(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, keys)
 
+	// Deliberately spelled out rather than calling audit.SealInputFor: this stands
+	// in for an auditor's own reimplementation, and is the guard that a field
+	// added to the shared mapping cannot quietly change what a published seal
+	// commits to. Collapsing it into the helper would make production code verify
+	// itself against itself and remove the only independent check there is.
 	recomputed := audit.ComputeSealingHash(audit.SealInput{
 		PeriodID:      seal.PeriodID,
 		FirstSequence: seal.FirstSequence,

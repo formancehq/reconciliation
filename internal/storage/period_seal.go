@@ -126,26 +126,30 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		return nil, err
 	}
 
-	sealingHash := audit.ComputeSealingHash(audit.SealInput{
-		PeriodID:      in.PeriodID,
-		FirstSequence: first,
-		LastSequence:  last,
-		EntryCount:    entryCount,
-		LastAuditHash: headHash,
-		StateHash:     stateHash,
-	})
+	// Build the seal first and hash the struct that is about to be stored, through
+	// the same SealInputFor every verification path uses. Hashing a separate,
+	// hand-listed copy of these fields is how signing and verification drift
+	// apart: whatever is committed here is by construction what gets re-derived.
+	seal := &models.PeriodSeal{
+		PeriodID:        in.PeriodID,
+		FirstSequence:   first,
+		LastSequence:    last,
+		EntryCount:      entryCount,
+		LastAuditHash:   headHash,
+		StateHash:       stateHash,
+		SealedBy:        audit.NormalizeSubject(in.SealedBy),
+		AlertCount:      alertCount,
+		UnresolvedCount: unresolved,
+	}
+	seal.SealingHash = audit.ComputeSealingHash(audit.SealInputFor(seal))
 
-	key := s.signingKey
-	var (
-		signature []byte
-		keyID     string
-	)
-	if key.CanSign() {
-		signature, err = key.Sign(sealingHash)
+	if key := s.signingKey; key.CanSign() {
+		signature, err := key.Sign(seal.SealingHash)
 		if err != nil {
 			return nil, err
 		}
-		keyID = key.ID
+		seal.Signature = signature
+		seal.SigningKeyID = key.ID
 	}
 
 	at := in.At
@@ -155,15 +159,15 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 	at = at.UTC()
 
 	memento, err := audit.BuildMemento(audit.PeriodSealMemento{
-		PeriodID:        in.PeriodID,
-		FirstSequence:   first,
-		LastSequence:    last,
-		EntryCount:      entryCount,
-		AlertCount:      alertCount,
-		UnresolvedCount: unresolved,
-		StateHash:       hexOf(stateHash),
-		SealingHash:     hexOf(sealingHash),
-		SigningKeyID:    keyID,
+		PeriodID:        seal.PeriodID,
+		FirstSequence:   seal.FirstSequence,
+		LastSequence:    seal.LastSequence,
+		EntryCount:      seal.EntryCount,
+		AlertCount:      seal.AlertCount,
+		UnresolvedCount: seal.UnresolvedCount,
+		StateHash:       hexOf(seal.StateHash),
+		SealingHash:     hexOf(seal.SealingHash),
+		SigningKeyID:    seal.SigningKeyID,
 	})
 	if err != nil {
 		return nil, err
@@ -180,22 +184,8 @@ func (s *Storage) SealPeriod(ctx context.Context, in SealPeriodInput) (*models.P
 		return nil, err
 	}
 
-	seal := &models.PeriodSeal{
-		PeriodID:        in.PeriodID,
-		FirstSequence:   first,
-		LastSequence:    last,
-		EntryCount:      entryCount,
-		LastAuditHash:   headHash,
-		StateHash:       stateHash,
-		SealingHash:     sealingHash,
-		Signature:       signature,
-		SigningKeyID:    keyID,
-		SealedBy:        audit.NormalizeSubject(in.SealedBy),
-		AlertCount:      alertCount,
-		UnresolvedCount: unresolved,
-		SealedAt:        at,
-		AuditSequence:   entry.Sequence,
-	}
+	seal.SealedAt = at
+	seal.AuditSequence = entry.Sequence
 	if _, err := s.db.NewInsert().Model(seal).Returning("*").Exec(ctx); err != nil {
 		// Belt and braces behind the lock: if a duplicate ever reaches the insert,
 		// report the conflict rather than an internal error.
@@ -302,14 +292,7 @@ func (s *Storage) IsPeriodSealed(ctx context.Context, periodID string) (bool, er
 // when a sealed range contains no entries to walk: there is nothing to recompute,
 // but the seal itself can still have been edited.
 func (s *Storage) VerifySealIntegrity(seal *models.PeriodSeal) (bool, string) {
-	recomputed := audit.ComputeSealingHash(audit.SealInput{
-		PeriodID:      seal.PeriodID,
-		FirstSequence: seal.FirstSequence,
-		LastSequence:  seal.LastSequence,
-		EntryCount:    seal.EntryCount,
-		LastAuditHash: seal.LastAuditHash,
-		StateHash:     seal.StateHash,
-	})
+	recomputed := audit.ComputeSealingHash(audit.SealInputFor(seal))
 	if hexOf(recomputed) != hexOf(seal.SealingHash) {
 		return false, fmt.Sprintf(
 			"the seal for period %q no longer reproduces its own sealing hash: its recorded fields were altered",
@@ -324,14 +307,7 @@ func (s *Storage) VerifySealIntegrity(seal *models.PeriodSeal) (bool, string) {
 // This is what an auditor does offline; the endpoint exists so they can confirm
 // their own tooling agrees with ours before trusting it.
 func (s *Storage) VerifySealSignature(ctx context.Context, seal *models.PeriodSeal) (bool, string, error) {
-	recomputed := audit.ComputeSealingHash(audit.SealInput{
-		PeriodID:      seal.PeriodID,
-		FirstSequence: seal.FirstSequence,
-		LastSequence:  seal.LastSequence,
-		EntryCount:    seal.EntryCount,
-		LastAuditHash: seal.LastAuditHash,
-		StateHash:     seal.StateHash,
-	})
+	recomputed := audit.ComputeSealingHash(audit.SealInputFor(seal))
 	if hexOf(recomputed) != hexOf(seal.SealingHash) {
 		return false, "the seal's fields do not reproduce its sealing hash", nil
 	}

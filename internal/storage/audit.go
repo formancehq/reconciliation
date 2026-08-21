@@ -576,14 +576,7 @@ func (s *Storage) maxSealedSequence(ctx context.Context) (int64, error) {
 // fields plus the chain head it claims to close. A seal whose fields were edited,
 // or that was moved onto a different head, fails here.
 func verifySealAgainstHead(seal *models.PeriodSeal, headHash []byte) error {
-	recomputed := audit.ComputeSealingHash(audit.SealInput{
-		PeriodID:      seal.PeriodID,
-		FirstSequence: seal.FirstSequence,
-		LastSequence:  seal.LastSequence,
-		EntryCount:    seal.EntryCount,
-		LastAuditHash: headHash,
-		StateHash:     seal.StateHash,
-	})
+	recomputed := audit.ComputeSealingHash(audit.SealInputFor(seal).WithHead(headHash))
 	if !bytes.Equal(recomputed, seal.SealingHash) {
 		return fmt.Errorf(
 			"the seal for period %q does not match the journal it claims to close", seal.PeriodID)

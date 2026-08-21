@@ -2,6 +2,7 @@ package audit
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -248,6 +249,74 @@ func TestSealingHashBindsEveryField(t *testing.T) {
 			require.NotEqual(t, baseline, ComputeSealingHash(in), "%s is not bound into the seal", name)
 		})
 	}
+}
+
+// SealInputFor is the single mapping every sealing-hash path shares, so the one
+// way it can still go wrong is a field added to SealInput and not mapped: every
+// path would then agree on hashing its zero value, and the new field would be
+// silently uncommitted while TestSealingHashBindsEveryField — which builds its
+// own SealInput — kept passing. Reflection is what makes the omission fail here
+// instead of shipping.
+func TestSealInputForMapsEveryCommittedField(t *testing.T) {
+	t.Parallel()
+
+	seal := &models.PeriodSeal{
+		PeriodID:      "2026-05",
+		FirstSequence: 1,
+		LastSequence:  42,
+		EntryCount:    42,
+		LastAuditHash: []byte("head"),
+		StateHash:     []byte("state"),
+	}
+
+	in := SealInputFor(seal)
+	v := reflect.ValueOf(in)
+	for i := range v.NumField() {
+		name := v.Type().Field(i).Name
+		require.False(t, v.Field(i).IsZero(),
+			"SealInput.%s is not populated by SealInputFor: every path would hash its zero value, "+
+				"leaving the field committed to nothing. Map it from models.PeriodSeal.", name)
+	}
+
+	require.Equal(t, seal.PeriodID, in.PeriodID)
+	require.Equal(t, seal.FirstSequence, in.FirstSequence)
+	require.Equal(t, seal.LastSequence, in.LastSequence)
+	require.Equal(t, seal.EntryCount, in.EntryCount)
+	require.Equal(t, seal.LastAuditHash, in.LastAuditHash)
+	require.Equal(t, seal.StateHash, in.StateHash)
+}
+
+// WithHead exists only for the chain walk, which re-derives a seal against the
+// head the journal actually presents. If it ever altered anything else, the walk
+// would report tampering on seals that are intact.
+func TestWithHeadOverridesOnlyTheHead(t *testing.T) {
+	t.Parallel()
+
+	seal := &models.PeriodSeal{
+		PeriodID:      "2026-05",
+		FirstSequence: 1,
+		LastSequence:  42,
+		EntryCount:    42,
+		LastAuditHash: []byte("recorded head"),
+		StateHash:     []byte("state"),
+	}
+
+	base := SealInputFor(seal)
+	swapped := base.WithHead([]byte("journal head"))
+
+	require.Equal(t, []byte("journal head"), swapped.LastAuditHash)
+	require.Equal(t, []byte("recorded head"), base.LastAuditHash,
+		"WithHead must not mutate the input it was called on")
+
+	// Every other field is untouched, so re-deriving against the seal's own head
+	// reproduces the plain mapping exactly.
+	require.Equal(t, base, swapped.WithHead(seal.LastAuditHash))
+	require.Equal(t,
+		ComputeSealingHash(base),
+		ComputeSealingHash(SealInputFor(seal).WithHead(seal.LastAuditHash)))
+
+	// And a seal moved onto a different journal head does not re-derive.
+	require.NotEqual(t, ComputeSealingHash(base), ComputeSealingHash(swapped))
 }
 
 // The sealing hash must be reproducible by someone who has only the seal's
