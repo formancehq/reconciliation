@@ -271,6 +271,8 @@ GET  /rules/{ruleID}/revisions/{n}      what was actually being checked
 
 Plus `auditSequence` on evaluations, alerts and alert events, and `periodID` on evaluations — without those links the evidence exists but is attached to nothing verifiable.
 
+That claim was only two-thirds true for a while, in a way worth recording: `GET /alerts` served `auditSequence` by accident, because the list handler renders the model directly and the struct tag carried it through, while `renderAlert` and `renderAlertEvent` — every single-alert read, every transition response, and the whole event timeline — dropped it. The stored column was populated the entire time. A link that exists in the database and not in the API is not a link, and the accidental one was the reason nobody noticed.
+
 ### The three calls an audit takes
 
 ```bash

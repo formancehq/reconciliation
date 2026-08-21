@@ -1496,6 +1496,7 @@ components:
           additionalProperties: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        auditSequence: { type: integer, format: int64, nullable: true, description: "Journal entry that witnessed this alert's most recent transition. Follow it to the hashed record via /audit-entries/{sequence}." }
     AlertResponse:
       type: object
       required: [data]
@@ -1543,6 +1544,7 @@ components:
         at: { type: string, format: date-time }
         isReopen: { type: boolean }
         notify: { type: boolean, description: "Whether this transition was published to the message bus. false = recorded for audit but suppressed." }
+        auditSequence: { type: integer, format: int64, nullable: true, description: "Journal entry that witnessed this transition. Follow it to the hashed record via /audit-entries/{sequence}." }
     AlertEventsCursorResponse:
       type: object
       required: [cursor]

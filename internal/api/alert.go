@@ -34,6 +34,10 @@ type alertResponse struct {
 	Labels           map[string]string  `json:"labels,omitempty"`
 	CreatedAt        time.Time          `json:"createdAt"`
 	UpdatedAt        time.Time          `json:"updatedAt"`
+	// AuditSequence links the alert to the journal entry that witnessed its most
+	// recent transition. Without it the evidence exists but is attached to nothing
+	// verifiable, which is the whole point of journalling transitions.
+	AuditSequence *int64 `json:"auditSequence,omitempty"`
 }
 
 func renderAlert(a *models.Alert) *alertResponse {
@@ -55,6 +59,7 @@ func renderAlert(a *models.Alert) *alertResponse {
 		Labels:           a.Labels,
 		CreatedAt:        a.CreatedAt,
 		UpdatedAt:        a.UpdatedAt,
+		AuditSequence:    a.AuditSequence,
 	}
 }
 
@@ -69,6 +74,9 @@ type alertEventResponse struct {
 	At           time.Time       `json:"at"`
 	IsReopen     bool            `json:"isReopen"`
 	Notify       bool            `json:"notify"`
+	// AuditSequence is the journal entry that witnessed this transition — the
+	// link an auditor follows from a status change to its hashed record.
+	AuditSequence *int64 `json:"auditSequence,omitempty"`
 }
 
 func renderAlertEvent(e *models.AlertEvent) *alertEventResponse {
@@ -83,16 +91,17 @@ func renderAlertEvent(e *models.AlertEvent) *alertEventResponse {
 		prev = &s
 	}
 	return &alertEventResponse{
-		ID:           e.ID.String(),
-		AlertID:      e.AlertID.String(),
-		EvaluationID: evalID,
-		Type:         string(e.Type),
-		PrevStatus:   prev,
-		NewStatus:    string(e.NewStatus),
-		Payload:      e.Payload,
-		At:           e.At,
-		IsReopen:     e.IsReopen(),
-		Notify:       e.Notify,
+		ID:            e.ID.String(),
+		AlertID:       e.AlertID.String(),
+		EvaluationID:  evalID,
+		Type:          string(e.Type),
+		PrevStatus:    prev,
+		NewStatus:     string(e.NewStatus),
+		Payload:       e.Payload,
+		At:            e.At,
+		IsReopen:      e.IsReopen(),
+		Notify:        e.Notify,
+		AuditSequence: e.AuditSequence,
 	}
 }
 
