@@ -401,6 +401,11 @@ func TestSealPeriodProducesAVerifiableSignedSeal(t *testing.T) {
 		EntryCount:    seal.EntryCount,
 		LastAuditHash: seal.LastAuditHash,
 		StateHash:     seal.StateHash,
+
+		AlertCount:      seal.AlertCount,
+		UnresolvedCount: seal.UnresolvedCount,
+		SealedBy:        seal.SealedBy,
+		SealedAt:        seal.SealedAt,
 	})
 	require.Equal(t, seal.SealingHash, recomputed)
 	require.True(t, store.SigningKey().Verify(recomputed, seal.Signature))
@@ -478,6 +483,106 @@ func TestFullVerificationChecksASealWithNoEntriesBelowIt(t *testing.T) {
 			"UPDATE reconciliations.period_seal SET first_sequence = 7").Exec(ctx)
 		require.ErrorContains(t, err, "period_seal_range_chk")
 	})
+}
+
+// The figures and attribution a seal publishes must be covered by its signature,
+// not merely stored beside it. Reproduced live before fixing: setting alert_count
+// and unresolved_count to 0 on a period that had one open alert left both
+// /periods/{id}/verify and the full chain walk answering ok, so a report could
+// cite "0 unresolved" from a response that presented itself as verified.
+func TestForgedSealMetadataFailsVerification(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+
+	for _, tc := range []struct {
+		name string
+		set  string
+	}{
+		{"alertCount", "alert_count = 0"},
+		{"unresolvedCount", "unresolved_count = 0"},
+		{"sealedBy", `sealed_by = '{"subject":"someone-else"}'::jsonb`},
+		{"sealedAt", "sealed_at = sealed_at + interval '1 hour'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := newStore(t)
+			rule := auditTestRule(t, store, ctx, models.CadenceMonthly)
+			ev := auditTestEvaluation(t, store, ctx, rule, "2026-05", models.EvaluationFail)
+			// A real alert, so alertCount and unresolvedCount are non-zero and
+			// setting them to 0 is a genuine restatement rather than a no-op.
+			_, err := store.OpenOrUpdateAlert(ctx, OpenAlertInput{
+				RuleID:       rule.ID,
+				Fingerprint:  "asset:USD/2",
+				PeriodID:     "2026-05",
+				Severity:     models.Severity("high"),
+				EvaluationID: ev.ID,
+				Evidence:     json.RawMessage(`{"drift":"10.00"}`),
+				OccurredAt:   time.Now().UTC(),
+			})
+			require.NoError(t, err)
+
+			seal := sealPeriod(t, store, ctx, "2026-05", models.Subject{Subject: "controller"})
+			require.Positive(t, seal.AlertCount, "the fixture must produce a countable alert")
+			require.Positive(t, seal.UnresolvedCount)
+
+			ok, _, err := store.VerifySealSignature(ctx, seal)
+			require.NoError(t, err)
+			require.True(t, ok, "the untouched seal must verify")
+
+			disableImmutability(t, store, ctx, "period_seal")
+			_, err = store.db.NewRaw(
+				"UPDATE reconciliations.period_seal SET " + tc.set + " WHERE period_id = '2026-05'").Exec(ctx)
+			require.NoError(t, err)
+
+			edited, err := store.GetPeriodSeal(ctx, "2026-05")
+			require.NoError(t, err)
+
+			ok, reason, err := store.VerifySealSignature(ctx, edited)
+			require.NoError(t, err)
+			require.False(t, ok, "editing %s left the seal verifying", tc.name)
+			require.NotEmpty(t, reason)
+
+			integrity, _ := store.VerifySealIntegrity(edited)
+			require.False(t, integrity, "editing %s left the seal's own hash reproducing", tc.name)
+		})
+	}
+}
+
+// A seal's range continues from the previous seal's end, so sealing a period that
+// begins earlier than the last sealed one gives it the entries recorded after
+// that seal. Reproduced live: 2026-06 sealed after 2026-08 took range 8-8, so
+// June attested the entry that recorded August's closure. Irreversible, which is
+// why it has to be refused up front.
+func TestSealPeriodRefusesGoingBackwards(t *testing.T) {
+	t.Parallel()
+	ctx := logging.TestingContext()
+	store := newStore(t)
+
+	sealPeriod(t, store, ctx, "2026-08", models.Subject{Subject: "controller"})
+
+	// 2026-08-15 is in the list on purpose: it begins *after* 2026-08 does, so a
+	// start-versus-start rule would let a day nested inside the closed month
+	// through. The books are closed through 1 September, and that is the bound.
+	for _, earlier := range []string{"2026-07", "2026-06", "2026-W12", "2026-08-15", "2026-08"} {
+		err := store.RunInTx(ctx, func(ctx context.Context, tx *Storage) error {
+			_, err := tx.SealPeriod(ctx, SealPeriodInput{PeriodID: earlier})
+			return err
+		})
+		// 2026-08 itself is refused as already sealed; the rest as backwards.
+		if earlier == "2026-08" {
+			require.ErrorIs(t, err, ErrPeriodAlreadySealed)
+			continue
+		}
+		require.ErrorIs(t, err, ErrPeriodNotSealable, "%q falls inside the closed calendar", earlier)
+		require.ErrorContains(t, err, "the books are closed through",
+			"the error must say why, since the operator cannot undo a wrong seal")
+	}
+
+	// Forward still works, and the partition stays contiguous.
+	next := sealPeriod(t, store, ctx, "2026-09", models.Subject{Subject: "controller"})
+	prev, err := store.GetPeriodSeal(ctx, "2026-08")
+	require.NoError(t, err)
+	require.Equal(t, prev.LastSequence+1, next.FirstSequence, "seals must partition with no gap")
 }
 
 func TestSealedPeriodRefusesFurtherAlertTransitions(t *testing.T) {
@@ -1008,8 +1113,12 @@ func TestSealPeriodRejectsMalformedPeriodIDs(t *testing.T) {
 		require.ErrorIs(t, err, ErrPeriodNotSealable, "should have rejected %q", bad)
 	}
 
-	// The three shapes the cadences actually produce are accepted.
-	for _, good := range []string{"2026-05", "2026-W12", "2026-05-15"} {
+	// The three shapes the cadences actually produce are accepted — over disjoint
+	// calendar, and in order. Sealing refuses to reach back into closed books, so
+	// 2026-W12 (16-23 March) must come before 2026-05, and the daily has to fall
+	// after May closes rather than inside it. That the shapes cannot overlap is
+	// the point of the partition, not a limitation of this test.
+	for _, good := range []string{"2026-W12", "2026-05", "2026-06-15"} {
 		require.NotPanics(t, func() {
 			sealPeriod(t, store, ctx, good, models.Subject{Subject: "controller"})
 		}, "should have accepted %q", good)

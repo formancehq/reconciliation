@@ -252,6 +252,67 @@ var periodIDFormats = []*regexp.Regexp{
 // same Cadence.PeriodID that produced legitimate ids, and required to match. That
 // makes the check exactly as strict as the producer, with no second definition of
 // "valid" to drift out of step.
+// PeriodStart returns the instant a period id begins, and whether the id names a
+// real period at all.
+//
+// Sealing needs it to refuse going backwards. A seal's range always continues
+// from the previous seal's end, so sealing 2026-06 after 2026-08 hands June the
+// entries that came after August's seal — a partition that is both nonsensical
+// and, since a seal cannot be corrected, permanent. Comparing start instants
+// rather than the id strings is what makes the check work across cadences:
+// lexically "2026-W12" sorts after every monthly id of that year, which would
+// make the guard wrong for any installation mixing cadences.
+//
+// Shares ValidPeriodID's parsing so there is one definition of what an id means.
+func PeriodStart(id string) (time.Time, bool) {
+	if !ValidPeriodID(id) {
+		return time.Time{}, false
+	}
+	switch {
+	case periodIDFormats[0].MatchString(id): // daily
+		day, err := time.Parse("2006-01-02", id)
+		return day.UTC(), err == nil
+
+	case periodIDFormats[1].MatchString(id): // weekly
+		var year, week int
+		if _, err := fmt.Sscanf(id, "%04d-W%02d", &year, &week); err != nil {
+			return time.Time{}, false
+		}
+		jan4 := time.Date(year, time.January, 4, 0, 0, 0, 0, time.UTC)
+		monday := jan4.AddDate(0, 0, -int((jan4.Weekday()+6)%7))
+		return monday.AddDate(0, 0, (week-1)*7), true
+
+	case periodIDFormats[2].MatchString(id): // monthly
+		month, err := time.Parse("2006-01", id)
+		return month.UTC(), err == nil
+	}
+	return time.Time{}, false
+}
+
+// PeriodEnd returns the instant a period id stops covering, exclusive.
+//
+// Sealing compares a candidate's start against this rather than against the last
+// sealed period's start, because start-versus-start leaves a hole: 2026-08-15
+// begins after 2026-08 does, so a day nested inside an already-closed month
+// would pass and attest calendar that is already sealed. Comparing against the
+// end makes the closed calendar contiguous, which is the property the range
+// partition already has.
+func PeriodEnd(id string) (time.Time, bool) {
+	start, ok := PeriodStart(id)
+	if !ok {
+		return time.Time{}, false
+	}
+	switch {
+	case periodIDFormats[0].MatchString(id): // daily
+		return start.AddDate(0, 0, 1), true
+	case periodIDFormats[1].MatchString(id): // weekly
+		return start.AddDate(0, 0, 7), true
+	case periodIDFormats[2].MatchString(id): // monthly
+		return start.AddDate(0, 1, 0), true
+	}
+	return time.Time{}, false
+}
+
 func ValidPeriodID(id string) bool {
 	switch {
 	case periodIDFormats[0].MatchString(id): // daily

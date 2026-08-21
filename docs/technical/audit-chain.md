@@ -140,9 +140,14 @@ This is the strongest practical argument for sealing periods promptly rather tha
 A seal closes a contiguous range of the chain under a period label. The **range**, not the label, is what it covers — exactly as a Ledger V3 chapter closes at an audit-sequence boundary rather than filtering on content. `firstSequence` continues from the previous seal's end, so seals form a partition with no gap and no overlap.
 
 ```
-sealingHash = BLAKE3(context ‖ periodID ‖ firstSeq ‖ lastSeq ‖ entryCount ‖ lastAuditHash ‖ stateHash)
+sealingHash = BLAKE3(context ‖ periodID ‖ firstSeq ‖ lastSeq ‖ entryCount ‖ lastAuditHash ‖ stateHash
+                     ‖ alertCount ‖ unresolvedCount ‖ sealedBy ‖ sealedAt)
 signature   = Ed25519(sealingHash)
 ```
+
+Everything the seal **publishes** is hashed, which is not the same as everything that is chain-bound. The headline figures and the attribution were originally left out on the reasoning that the chain already binds them — the counts through the seal's own memento, the actor and timestamp through that entry's subject and `at`. True, and beside the point: nothing compared the row against them. Setting `alert_count` and `unresolved_count` to zero on a period that had one open alert left `POST /periods/{id}/verify` answering `ok`, so a report could cite "0 unresolved" out of a response presenting itself as verified. A field an auditor reads off a verified seal has to be inside the signature.
+
+`sealedAt` is truncated to microseconds before hashing, because that is all `timestamptz` stores — the same trap that made every chain entry verify as tampered on Linux and pass on macOS.
 
 `stateHash` covers the period's resulting alert state via a deterministic **explicitly ordered** scan — never an aggregate whose input order is merely conventional, which is the determinism trap in V2's block hasher.
 
@@ -172,6 +177,8 @@ Two consequences, both intentional:
 - **Sealing a period that is still live makes its rules unevaluatable.** A daily-cadence rule whose current day is sealed fails its next evaluation with 409, because driving its alerts hits the barrier. Seal periods that are over — that is what sealing means. The failure is loud and names the period rather than silently accepting evidence into closed books.
 
 Sealing is **not idempotent**: a second seal is a 409, since it would either contradict the first or silently do nothing.
+
+**Sealing cannot reach backwards.** A candidate period's start is checked against the end of the closed calendar, and anything earlier is refused. Without that check the range mechanism produces nonsense that cannot be undone: sealing `2026-06` after `2026-08` gave June the range 8–8 — the single entry that recorded August's own closure — while June's real entries stayed attested by August. The comparison is against the closed calendar's *end* rather than the last seal's start, because `2026-08-15` begins after `2026-08` does, so a day nested inside a closed month would otherwise slip through. One consequence worth knowing: an installation mixing cadences can only seal over disjoint calendar, which is the same non-overlap property the ranges already have.
 
 Period ids are validated against the calendar, not merely against a shape. `2026-13`, `2026-02-31` and `2026-W99` all match their patterns and name no real period, and sealing one would consume a range of the journal permanently under a label nobody will ever query — in a seal that cannot be corrected. The check round-trips the id through the same `Cadence.PeriodID` that produces legitimate ones, so it is exactly as strict as the producer.
 

@@ -56,3 +56,46 @@ func TestCadence_Valid(t *testing.T) {
 		require.False(t, c.Valid(), "%q should be invalid", c)
 	}
 }
+
+// Sealing orders periods by these bounds, and a wrong bound would either refuse a
+// legitimate close or let a seal reach back into closed books — neither of which
+// can be undone afterwards.
+func TestPeriodStartAndEnd(t *testing.T) {
+	for _, tc := range []struct {
+		id         string
+		start, end string
+	}{
+		{"2026-05", "2026-05-01", "2026-06-01"},
+		{"2026-12", "2026-12-01", "2027-01-01"},
+		{"2026-05-15", "2026-05-15", "2026-05-16"},
+		{"2026-02-28", "2026-02-28", "2026-03-01"},
+		{"2026-W12", "2026-03-16", "2026-03-23"},
+		{"2026-W01", "2025-12-29", "2026-01-05"},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			start, ok := PeriodStart(tc.id)
+			require.True(t, ok)
+			require.Equal(t, tc.start, start.Format("2006-01-02"))
+			require.Equal(t, time.UTC, start.Location())
+
+			end, ok := PeriodEnd(tc.id)
+			require.True(t, ok)
+			require.Equal(t, tc.end, end.Format("2006-01-02"))
+			require.True(t, end.After(start))
+		})
+	}
+
+	// An id no cadence produces has no bounds, so sealing cannot order it.
+	for _, bad := range []string{"2026-13", "2026-02-31", "2026-W99", "continuous", "", "may"} {
+		_, ok := PeriodStart(bad)
+		require.False(t, ok, "PeriodStart(%q) must not resolve", bad)
+		_, ok = PeriodEnd(bad)
+		require.False(t, ok, "PeriodEnd(%q) must not resolve", bad)
+	}
+
+	// Consecutive periods meet exactly: no gap, no overlap. This is what makes the
+	// closed calendar contiguous.
+	mayEnd, _ := PeriodEnd("2026-05")
+	juneStart, _ := PeriodStart("2026-06")
+	require.Equal(t, mayEnd, juneStart)
+}
