@@ -27,8 +27,13 @@ type AuditChainSettings struct {
 	// SigningKeySeed is the optional 32-byte Ed25519 seed (base64 or hex) used
 	// to sign period seals. Supplying it by configuration is the recommended
 	// posture: the service then never stores a private key at all. When absent,
-	// one is generated on first boot and stored, and the seed is logged once so
-	// it can be moved into configuration.
+	// one is generated on first boot and stored.
+	//
+	// The generated seed is deliberately NOT logged — logs usually have broader
+	// read access and longer retention than the database, so a signing key
+	// written there would invert the key separation the seal signature exists to
+	// provide. Recover it from audit_chain_config.signing_private_seed instead;
+	// boot logs only the key id and the public key, and says where to look.
 	SigningKeySeed string
 }
 
