@@ -83,7 +83,7 @@ EE-gated. Same auth surface as the legacy API. The contracts below match what's 
   },
   "schedule": { "kind": "on_demand" },
   "severity": "high",
-  "cadence": "monthly",
+  "periodType": "monthly",
   "notifications": ["wh_xyz", "email:ops@buildr.com"],
   "labels": { "team": "treasury", "env": "prod" }
 }
@@ -91,7 +91,11 @@ EE-gated. Same auth surface as the legacy API. The contracts below match what's 
 
 Returns `201` + the rule with `id` and the derived `explanationCEL`. This is a representative expression for explainability, not the runtime program. Validation failures return `400 VALIDATION` (e.g. unknown `templateKind`, invalid spec).
 
-`cadence` (`continuous` *(default)* · `daily` · `weekly` · `monthly`) sets the reconciliation rhythm: it scopes each failing fingerprint into a period, so a March break and an April break are distinct, independently-closable cases and resolving April never rewrites March. `continuous` keeps a single ongoing case per fingerprint (live monitoring). See [alert-period-model.md](./alert-period-model.md).
+`periodType` (`continuous` *(default)* · `daily` · `weekly` · `monthly`) sets **how long a reconciliation period is**: it scopes each failing fingerprint into a period, so a March break and an April break are distinct, independently-closable cases and resolving April never rewrites March. `continuous` keeps a single ongoing case per fingerprint (live monitoring). It is not how often the rule runs — that is `schedule`, and the two are independent: an hourly `schedule` with a `monthly` `periodType` is normal. The period type determines the `periodID` an alert is filed under: `monthly` yields `2026-07`. See [alert-period-model.md](./alert-period-model.md).
+
+`periodType` was called `cadence` up to 2.4.1. Both keys are accepted on create and both are returned, so clients on either contract keep working; sending both is rejected with 400 unless they are equal. `cadence` is deprecated and goes away at the next API major — prefer `periodType`.
+
+Rollout ordering is server-first, and inherently so: a client learns `periodType` exists from an SDK regenerated against the 2.4.2 spec, which does not exist until 2.4.2 ships. A pre-2.4.2 server ignores `periodType` and falls back to `continuous`, so a client that somehow sent it at a mid-upgrade fleet would get an unbucketed rule. Anything needing determinism during that window can send both keys with equal values — accepted on every version. That is deliberately not mandated: making `cadence` load-bearing for correctness would mean it could never be removed.
 
 See [templates.md](./templates.md) for per-template spec schemas.
 
@@ -177,7 +181,7 @@ Ordered by `created_at DESC`. Filtered via the **query builder** (JSON body or U
 
 ### Alerts
 
-An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one row per triple. Within a period, reopens after RESOLVED flip status back to OPEN **in place** (same id); the same fingerprint failing in a *new* period is a fresh case (new id). For a `continuous`-cadence rule there is a single ongoing period, so it behaves as one immortal case per `(rule, fingerprint)`. The full transition history lives in `alert_event` and is exposed at `GET /alerts/{id}/events`. See [alert-period-model.md](./alert-period-model.md).
+An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one row per triple. Within a period, reopens after RESOLVED flip status back to OPEN **in place** (same id); the same fingerprint failing in a *new* period is a fresh case (new id). For a rule with `periodType: continuous` there is a single ongoing period, so it behaves as one immortal case per `(rule, fingerprint)`. The full transition history lives in `alert_event` and is exposed at `GET /alerts/{id}/events`. See [alert-period-model.md](./alert-period-model.md).
 
 #### `GET /alerts` — list
 
@@ -209,11 +213,11 @@ Example: `{"$match":{"status":"OPEN"}}`, or `{"$and":[{"$match":{"periodID":"202
 }
 ```
 
-`occurrenceCount` is the count of FAIL events on this alert across its reopen cycles **within its period** (for a `continuous`-cadence rule, that's the lifetime count, since there is one unbounded period). Finer per-episode counts can be derived from `/events`.
+`occurrenceCount` is the count of FAIL events on this alert across its reopen cycles **within its period** (for a rule with `periodType: continuous`, that's the lifetime count, since there is one unbounded period). Finer per-episode counts can be derived from `/events`.
 
 #### `GET /alerts/{id}/events` — append-only timeline
 
-Returns a page of the events recorded for this alert: every evaluation that touched it plus every manual transition. Most-recent-first, **cursor-paginated** (`?pageSize=`, `?cursor=`) like the other list endpoints. Pagination is required, not optional: a long-lived alert (a `continuous`-cadence rule, or an `engine.error` meta-alert) accumulates one event row per failing evaluation indefinitely — notification suppression keeps those rows off the bus but **not** out of the table — so the timeline is unbounded.
+Returns a page of the events recorded for this alert: every evaluation that touched it plus every manual transition. Most-recent-first, **cursor-paginated** (`?pageSize=`, `?cursor=`) like the other list endpoints. Pagination is required, not optional: a long-lived alert (a rule with `periodType: continuous`, or an `engine.error` meta-alert) accumulates one event row per failing evaluation indefinitely — notification suppression keeps those rows off the bus but **not** out of the table — so the timeline is unbounded.
 
 ```json
 {

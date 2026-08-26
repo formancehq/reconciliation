@@ -17,11 +17,12 @@ import (
 // the service layer (template Explain output) — the storage layer doesn't
 // render or compile it.
 func (s *Storage) CreateRule(ctx context.Context, rule *models.Rule) error {
-	// Storage invariant: cadence is never empty in the DB (the rule_cadence_chk
-	// CHECK rejects ''). Default the zero value so direct inserts are safe even
-	// if a caller skipped the service-layer default.
-	if rule.Cadence == "" {
-		rule.Cadence = models.CadenceContinuous
+	// Storage invariant: the period type is never empty in the DB (the
+	// rule_cadence_chk CHECK rejects ''). Default the zero value so direct
+	// inserts are safe even if a caller skipped the service-layer default.
+	// The column is still `cadence`; see models.Rule.PeriodType.
+	if rule.PeriodType == "" {
+		rule.PeriodType = models.PeriodTypeContinuous
 	}
 	if rule.Revision == 0 {
 		rule.Revision = 1

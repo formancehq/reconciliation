@@ -45,7 +45,7 @@ func TestCreateRule_Nominal(t *testing.T) {
 		ExplanationCEL: `abs(...) <= 0`,
 		Enabled:        true,
 		Severity:       req.Severity,
-		Cadence:        models.CadenceMonthly,
+		PeriodType:     models.PeriodTypeMonthly,
 		CreatedAt:      time.Now().UTC(),
 		UpdatedAt:      time.Now().UTC(),
 	}
@@ -63,7 +63,7 @@ func TestCreateRule_Nominal(t *testing.T) {
 	sharedapi.Decode(t, rec.Body, &got)
 	require.Equal(t, resp.ID.String(), got.Data.ID)
 	require.Equal(t, resp.ExplanationCEL, got.Data.ExplanationCEL)
-	require.Equal(t, "monthly", got.Data.Cadence, "rule response must expose cadence")
+	require.Equal(t, "monthly", got.Data.PeriodType, "rule response must expose periodType")
 }
 
 func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
@@ -698,4 +698,89 @@ type notFoundErr struct{}
 func (notFoundErr) Error() string { return "not found" }
 func (notFoundErr) Is(target error) bool {
 	return target.Error() == "not found"
+}
+
+// TestCreateRule_PeriodTypeWireContract pins the cadence -> periodType rename at
+// the HTTP boundary, which is the part of this rename that is actually breaking.
+// Both directions are asserted, because a partial rename (say, request renamed
+// but response not) would still pass a round-trip test that only checked one.
+func TestCreateRule_PeriodTypeWireContract(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	// The request body speaks periodType; the service must receive it decoded.
+	want := &service.CreateRuleRequest{
+		Name:         "period-type-wire",
+		TemplateKind: models.TemplateLedgerInvariant,
+		TemplateSpec: json.RawMessage(`{"terms":[],"tolerance":{}}`),
+		PeriodType:   models.PeriodTypeWeekly,
+	}
+	resp := &models.Rule{
+		ID:           uuid.New(),
+		Name:         want.Name,
+		TemplateKind: want.TemplateKind,
+		TemplateSpec: want.TemplateSpec,
+		Enabled:      true,
+		Severity:     models.SeverityHigh,
+		PeriodType:   models.PeriodTypeWeekly,
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	mockSvc.EXPECT().CreateRule(gomock.Any(), want).Return(resp, nil)
+
+	r := httptest.NewRequest(http.MethodPost, "/rules", bytes.NewReader([]byte(
+		`{"name":"period-type-wire","templateKind":"ledger_invariant",`+
+			`"templateSpec":{"terms":[],"tolerance":{}},"periodType":"weekly"}`)))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Contains(t, rec.Body.String(), `"periodType":"weekly"`)
+	// `cadence` is still emitted, deprecated, mirroring periodType — dropping it
+	// would break clients generated against the pre-2.4.2 V1 contract, where it
+	// is a required response field.
+	require.Contains(t, rec.Body.String(), `"cadence":"weekly"`,
+		"the deprecated mirror must keep V1 responses deserializable")
+}
+
+// TestCreateRule_LegacyCadenceKeyReachesService proves the deprecated `cadence`
+// key survives decoding and is handed to the service, which is what makes
+// dual-acceptance possible. The gomock argument match is the assertion: if the
+// handler dropped the key, the expected request would not match.
+//
+// The resolution itself (cadence -> periodType, and rejection when the two
+// disagree) is covered against the real service in
+// internal/api/service/rule_period_type_compat_test.go — deliberately not here,
+// where a mocked service could only ever confirm a handcrafted answer.
+func TestCreateRule_LegacyCadenceKeyReachesService(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+	want := &service.CreateRuleRequest{
+		Name:         "legacy-cadence",
+		TemplateKind: models.TemplateLedgerInvariant,
+		TemplateSpec: json.RawMessage(`{"terms":[],"tolerance":{}}`),
+		Cadence:      models.PeriodTypeMonthly,
+	}
+	resp := &models.Rule{
+		ID: uuid.New(), Name: want.Name, TemplateKind: want.TemplateKind,
+		TemplateSpec: want.TemplateSpec, Enabled: true,
+		Severity: models.SeverityHigh, PeriodType: models.PeriodTypeMonthly,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	mockSvc.EXPECT().CreateRule(gomock.Any(), want).Return(resp, nil)
+
+	r := httptest.NewRequest(http.MethodPost, "/rules", bytes.NewReader([]byte(
+		`{"name":"legacy-cadence","templateKind":"ledger_invariant",`+
+			`"templateSpec":{"terms":[],"tolerance":{}},"cadence":"monthly"}`)))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	// Both keys come back, so a pre-2.4.2 client reading `cadence` and a current
+	// client reading `periodType` each see monthly.
+	require.Contains(t, rec.Body.String(), `"periodType":"monthly"`)
+	require.Contains(t, rec.Body.String(), `"cadence":"monthly"`)
 }

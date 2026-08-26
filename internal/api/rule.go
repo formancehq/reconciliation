@@ -19,19 +19,25 @@ import (
 )
 
 type ruleResponse struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	TemplateKind   string            `json:"templateKind"`
-	TemplateSpec   json.RawMessage   `json:"templateSpec"`
-	ExplanationCEL string            `json:"explanationCEL,omitempty"`
-	Enabled        bool              `json:"enabled"`
-	Severity       string            `json:"severity"`
-	Cadence        string            `json:"cadence"`
-	Schedule       *models.Schedule  `json:"schedule,omitempty"`
-	Notifications  []string          `json:"notifications,omitempty"`
-	Labels         map[string]string `json:"labels,omitempty"`
-	CreatedAt      time.Time         `json:"createdAt"`
-	UpdatedAt      time.Time         `json:"updatedAt"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	TemplateKind   string          `json:"templateKind"`
+	TemplateSpec   json.RawMessage `json:"templateSpec"`
+	ExplanationCEL string          `json:"explanationCEL,omitempty"`
+	Enabled        bool            `json:"enabled"`
+	Severity       string          `json:"severity"`
+	PeriodType     string          `json:"periodType"`
+	// Cadence mirrors PeriodType under its pre-2.4.2 name. It stays in the V1
+	// `required` set so clients generated against the older contract keep
+	// deserializing responses.
+	//
+	// Deprecated: read periodType. Remove at the next API major.
+	Cadence       string            `json:"cadence"`
+	Schedule      *models.Schedule  `json:"schedule,omitempty"`
+	Notifications []string          `json:"notifications,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	CreatedAt     time.Time         `json:"createdAt"`
+	UpdatedAt     time.Time         `json:"updatedAt"`
 }
 
 func renderRule(r *models.Rule) *ruleResponse {
@@ -43,7 +49,8 @@ func renderRule(r *models.Rule) *ruleResponse {
 		ExplanationCEL: r.ExplanationCEL,
 		Enabled:        r.Enabled,
 		Severity:       string(r.Severity),
-		Cadence:        string(r.Cadence),
+		PeriodType:     string(r.PeriodType),
+		Cadence:        string(r.PeriodType),
 		Schedule:       r.Schedule,
 		Notifications:  r.Notifications,
 		Labels:         r.Labels,

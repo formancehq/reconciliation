@@ -9,7 +9,7 @@ Before the durable [scheduler worker](./scheduler.md) landed, evaluation was
 on-demand: an alert re-failed only when a human (or a script) re-ran the rule,
 so the `reconciliation.updated_alert` event was rare and meaningful.
 
-Once rules evaluate on a cadence, that stops being true. Every failing
+Once rules evaluate on a schedule, that stops being true. Every failing
 evaluation appends a `fail` row and publishes a webhook
 ([api.md §Events](./api.md#events)), and the row→event mapping is
 `fail + prev ∈ {OPEN, ACKNOWLEDGED} → updated`. So a rule on a 5-minute cron
@@ -139,7 +139,7 @@ same `notify` decision point.
 ## Open question — log volume
 
 Suppression keeps the *pager* quiet but, by design, still writes a `fail` row per
-evaluation. A continuously-broken rule on a fast cadence therefore still grows
+evaluation. A continuously-broken rule on a fast schedule therefore still grows
 `alert_event` linearly. Whether to additionally collapse identical repeats in the
 log itself (e.g. bump `occurrence_count` + `last_seen_at` without a new row, or
 roll up to a counter) is a separate, deliberately-deferred decision — it trades

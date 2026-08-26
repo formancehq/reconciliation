@@ -810,12 +810,18 @@ components:
       type: string
       description: Which built-in check a rule applies, determining the shape of its templateSpec
       enum: [ledger_vs_pool_drift, ledger_invariant, account_threshold, source_parity]
-    Cadence:
+    PeriodType:
       type: string
       description: |
-        Reconciliation rhythm. Scopes each failing fingerprint into a period so a
-        March break and an April break are distinct, independently-closable cases.
-        `continuous` (default) is a single unbounded period (live monitoring).
+        How long a reconciliation period lasts. Scopes each failing fingerprint
+        into a period so a March break and an April break are distinct,
+        independently-closable cases. `continuous` (default) is a single
+        unbounded period (live monitoring).
+
+        This is not how often the rule runs — that is `schedule`, and the two are
+        independent: an hourly schedule with a `monthly` period type is normal.
+        The period type determines the `periodID` an alert is filed under:
+        `monthly` yields `2026-07`.
       enum: [continuous, daily, weekly, monthly]
       default: continuous
     Schedule:
@@ -867,8 +873,8 @@ components:
 
     Rule:
       type: object
-      description: A monitoring rule evaluated on a cadence, raising alerts when it fails
-      required: [id, name, templateKind, templateSpec, enabled, severity, cadence, createdAt, updatedAt]
+      description: A monitoring rule evaluated on a schedule, raising alerts when it fails
+      required: [id, name, templateKind, templateSpec, enabled, severity, periodType, cadence, createdAt, updatedAt]
       properties:
         id: {type: string, format: uuid, description: "Unique identifier of the rule"}
         name: {type: string, description: "Human-readable name of the rule"}
@@ -882,7 +888,15 @@ components:
           description: Representative CEL for human explanation; not the runtime program.
         enabled: {type: boolean, description: "Whether the rule is evaluated. Disabled rules produce no evaluations"}
         severity: { $ref: '#/components/schemas/Severity' }
-        cadence: { $ref: '#/components/schemas/Cadence' }
+        periodType: { $ref: '#/components/schemas/PeriodType' }
+        cadence:
+          allOf: [{ $ref: '#/components/schemas/PeriodType' }]
+          deprecated: true
+          description: |
+            Deprecated alias of `periodType`, retained so clients generated
+            before 2.4.2 keep deserializing responses. Always mirrors
+            `periodType`. Read `periodType`; this field is removed at the next
+            API major.
         schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
@@ -905,7 +919,23 @@ components:
           additionalProperties: true
           description: Parameters for the chosen template, whose shape depends on templateKind
         severity: { $ref: '#/components/schemas/Severity' }
-        cadence: { $ref: '#/components/schemas/Cadence' }
+        periodType: { $ref: '#/components/schemas/PeriodType' }
+        cadence:
+          allOf: [{ $ref: '#/components/schemas/PeriodType' }]
+          deprecated: true
+          description: |
+            Deprecated alias of `periodType`, still accepted so clients
+            generated before 2.4.2 keep working. Sending both is rejected with
+            400 unless the two values are equal. Prefer `periodType`; this
+            field is removed at the next API major.
+
+            Servers before 2.4.2 do not know `periodType` and ignore it,
+            falling back to the `continuous` default. Normally that cannot bite
+            you: `periodType` reaches clients via an SDK regenerated from this
+            spec, which only exists once 2.4.2 is released. If you do need
+            determinism while a fleet is mid-upgrade, send both keys with equal
+            values — explicitly accepted, and every server version reads one of
+            them.
         schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
@@ -1062,7 +1092,7 @@ components:
         reconciliation period. There is exactly one Alert per
         (ruleID, fingerprint, periodID) — within a period, re-opens after resolve
         flip the status back to OPEN in place; the same fingerprint failing in a
-        new period is a separate Alert. For a `continuous`-cadence rule there is
+        new period is a separate Alert. For a `continuous` period type there is
         one unbounded period, so it behaves as one Alert per (ruleID, fingerprint).
         The full history of transitions lives in alert_event
         (see /alerts/{alertID}/events).
@@ -1076,7 +1106,7 @@ components:
         severity: { $ref: '#/components/schemas/Severity' }
         firstSeenAt: {type: string, format: date-time, description: "When the fingerprint first failed within this period"}
         lastSeenAt: {type: string, format: date-time, description: "When the fingerprint most recently failed"}
-        occurrenceCount: { type: integer, format: int64, description: "Count of FAIL events on this alert across reopen cycles within its period (lifetime, for a continuous-cadence rule)." }
+        occurrenceCount: { type: integer, format: int64, description: "Count of FAIL events on this alert across reopen cycles within its period (lifetime, for a `continuous` period type)." }
         lastEvaluationID: {type: string, format: uuid, description: "Identifier of the evaluation that last touched the alert"}
         evidence:
           type: object

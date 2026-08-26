@@ -191,7 +191,7 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 - ✅ Service layer — rule / evaluation / alert orchestration + resolution paths + append-only event log
 - ✅ API endpoints + legacy `/policies` facade + OpenAPI
 - ✅ End-to-end demo UI ([poc-reconciliation-demo](../../../poc-reconciliation-demo)) — replaces the planned dockertest harness
-- ✅ Period-scoped alert identity (rule `cadence`: continuous / daily / weekly / monthly) + webhook event publication on alert transitions
+- ✅ Period-scoped alert identity (rule `periodType`: continuous / daily / weekly / monthly) + webhook event publication on alert transitions
 - ✅ PostgreSQL-backed cron worker with multi-replica safety — see [scheduler.md](../technical/scheduler.md)
 - 🚧 Remaining V1 GA additions: email digest, fctl, EE gating, usage metering
 

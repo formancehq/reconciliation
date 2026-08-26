@@ -26,7 +26,7 @@ type OpenAlertInput struct {
 	// PeriodID scopes the alert to a reconciliation period. Empty defaults to
 	// models.ContinuousPeriod, which reproduces the original
 	// (rule_id, fingerprint) dedup. The caller (the evaluation service)
-	// derives it from the rule's cadence and the evaluation PIT.
+	// derives it from the rule's period type and the evaluation PIT.
 	PeriodID     string
 	Severity     models.Severity
 	EvaluationID uuid.UUID
@@ -630,8 +630,8 @@ func appendAlertEvent(
 // first (at DESC, id DESC — a stable total order even when several events share
 // a timestamp). Backed by the alert_event_alert_idx (alert_id, at DESC) index.
 //
-// Pagination is mandatory, not cosmetic: a long-lived alert (a continuous-cadence
-// rule, or an engine.error meta-alert) accumulates one row per failing evaluation
+// Pagination is mandatory, not cosmetic: a long-lived alert (a rule with
+// periodType continuous, or an engine.error meta-alert) accumulates one row per failing evaluation
 // indefinitely — notification suppression keeps those rows out of the bus but NOT
 // out of the table — so an unbounded read could pull millions of rows into memory.
 // Offset-paginated to match the other list endpoints; the (alert_id, at) index
