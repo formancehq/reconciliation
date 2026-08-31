@@ -12,14 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// alreadyDue stamps a job row with an instant Postgres already considers past.
-// ClaimEvaluationJob compares available_at against the database's own now(), so
-// a row stamped from the host clock is not claimable whenever the Postgres
-// container lags the host — routine under parallel test load, and a single
-// millisecond is enough to make the claim return nothing. A minute of
-// backdating is wider than any plausible skew.
-func alreadyDue() time.Time {
-	return time.Now().UTC().Add(-time.Minute)
+// alreadyDue reads from Postgres so fixtures and ClaimEvaluationJob use the
+// same clock. Backdating makes the row unambiguously due without assuming that
+// the database clock is synchronized with the test host.
+func alreadyDue(t *testing.T, ctx context.Context, store *Storage) time.Time {
+	t.Helper()
+	var due time.Time
+	require.NoError(t, store.db.NewSelect().ColumnExpr("now() - interval '1 minute'").Scan(ctx, &due))
+	return due.UTC()
 }
 
 func TestPlanScheduledJobsConcurrentPlannersCreateOneOccurrence(t *testing.T) {
@@ -60,7 +60,7 @@ func TestEvaluationJobLeaseReclaimFencesOldToken(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("lease")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	due := alreadyDue()
+	due := alreadyDue(t, ctx, store)
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
 		ScheduledAt: due, Status: models.EvaluationJobPending, AvailableAt: due,
@@ -86,7 +86,7 @@ func TestExpiredLeaseCannotStartOrCommitWithoutReclaim(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("expired")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	due := alreadyDue()
+	due := alreadyDue(t, ctx, store)
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
 		ScheduledAt: due, Status: models.EvaluationJobPending, AvailableAt: due,
@@ -110,7 +110,7 @@ func TestReclaimedWorkerIsFencedFromCommittingEvaluation(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("rolling-restart")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	scheduledAt := alreadyDue().Truncate(time.Second)
+	scheduledAt := alreadyDue(t, ctx, store).Truncate(time.Second)
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
 		ScheduledAt: scheduledAt, Status: models.EvaluationJobPending, AvailableAt: scheduledAt,
@@ -159,7 +159,7 @@ func TestEvaluationJobClaimCompletesWithEvaluationAtomically(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("complete")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	scheduledAt := alreadyDue().Truncate(time.Second)
+	scheduledAt := alreadyDue(t, ctx, store).Truncate(time.Second)
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
 		ScheduledAt: scheduledAt, Status: models.EvaluationJobPending, AvailableAt: scheduledAt,
@@ -197,7 +197,7 @@ func TestConcurrentExecutorsClaimOccurrenceOnce(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("claim-once")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	due := alreadyDue()
+	due := alreadyDue(t, ctx, store)
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
 		ScheduledAt: due, Status: models.EvaluationJobPending, AvailableAt: due,
@@ -251,7 +251,7 @@ func TestScheduledEvaluationOccurrenceIsUniqueAfterJobCompletion(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("dedupe")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	scheduledAt := alreadyDue().Truncate(time.Second)
+	scheduledAt := alreadyDue(t, ctx, store).Truncate(time.Second)
 	revision := rule.Revision
 	newEvaluation := func() *models.Evaluation {
 		return &models.Evaluation{
@@ -269,7 +269,7 @@ func TestPatchRuleCancelsPendingJobsAndAdvancesRevision(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("revise")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	due := alreadyDue()
+	due := alreadyDue(t, ctx, store)
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
 		ScheduledAt: due, Status: models.EvaluationJobPending, AvailableAt: due,
@@ -291,7 +291,7 @@ func TestPatchRuleFencesAlreadyRunningJob(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("running-revision")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	due := alreadyDue()
+	due := alreadyDue(t, ctx, store)
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
 		ScheduledAt: due, Status: models.EvaluationJobPending, AvailableAt: due,
@@ -314,7 +314,7 @@ func TestClaimValidationLocksRuleUntilScheduledCommitFinishes(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("atomic-revision-fence")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	due := alreadyDue()
+	due := alreadyDue(t, ctx, store)
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
 		ScheduledAt: due, Status: models.EvaluationJobPending, AvailableAt: due,
@@ -362,7 +362,7 @@ func TestInfrastructureFailurePersistsAttemptWhenStartDidNot(t *testing.T) {
 	ctx := context.Background()
 	rule := makeRule("start-failure")
 	require.NoError(t, store.CreateRule(ctx, rule))
-	due := alreadyDue()
+	due := alreadyDue(t, ctx, store)
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,
 		ScheduledAt: due, Status: models.EvaluationJobPending, AvailableAt: due,
