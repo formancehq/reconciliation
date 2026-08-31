@@ -16,9 +16,9 @@ import (
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
-	gomock "go.uber.org/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	gomock "go.uber.org/mock/gomock"
 )
 
 func TestCreatePolicy(t *testing.T) {

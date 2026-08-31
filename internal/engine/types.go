@@ -19,7 +19,7 @@ type Account struct {
 	Address      string
 	Ledger       string
 	Metadata     map[string]string
-	Balance      *big.Int           // single-asset shortcut: meaningful only when caller scoped to one asset
+	Balance      *big.Int // single-asset shortcut: meaningful only when caller scoped to one asset
 	Balances     map[string]*big.Int
 	LastActivity time.Time
 }

@@ -30,12 +30,12 @@ const (
 // per-source PITs (which is also what gets persisted in evaluation.pit_per_source).
 type Source struct {
 	Kind   SourceKind
-	Key    string           // stable key used in pit_per_source map, e.g. "ledgerSet:0"
-	Ledger string           // LedgerSet, LedgerPostings
-	Query  json.RawMessage  // LedgerSet, LedgerPostings — the metadata-query JSON
-	PoolID string           // PaymentsPool
-	Window time.Duration    // LedgerPostings (V1.1+)
-	PIT    time.Time        // resolved at evaluate time
+	Key    string          // stable key used in pit_per_source map, e.g. "ledgerSet:0"
+	Ledger string          // LedgerSet, LedgerPostings
+	Query  json.RawMessage // LedgerSet, LedgerPostings — the metadata-query JSON
+	PoolID string          // PaymentsPool
+	Window time.Duration   // LedgerPostings (V1.1+)
+	PIT    time.Time       // resolved at evaluate time
 }
 
 // celSourceType is the named opaque type CEL uses to type-check source-handling
