@@ -53,7 +53,7 @@ export type TemplateKind =
   | "source_parity"
   | "account_threshold";
 
-export type Cadence = "continuous" | "daily" | "weekly" | "monthly";
+export type PeriodType = "continuous" | "daily" | "weekly" | "monthly";
 
 export type AlertStatus = "OPEN" | "ACKNOWLEDGED" | "RESOLVED";
 
@@ -122,7 +122,7 @@ export interface Rule {
   compiledCEL?: string;
   enabled: boolean;
   severity: Severity;
-  cadence: Cadence;
+  periodType: PeriodType;
   schedule?: Schedule;
   notifications?: string[];
   labels?: Record<string, string>;
@@ -136,7 +136,7 @@ export interface RuleRequest {
   templateKind: TemplateKind;
   templateSpec: Record<string, unknown>;
   severity?: Severity;
-  cadence?: Cadence; // defaults to "continuous"
+  periodType?: PeriodType; // defaults to "continuous"
   schedule?: Schedule;
   notifications?: string[];
   labels?: Record<string, string>;

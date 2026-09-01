@@ -244,11 +244,11 @@ function CreateRuleDialogV2Open({
           </div>
 
           <RunTimingFields
-            cadence={draft.cadence}
+            periodType={draft.periodType}
             schedule={draft.schedule}
-            cadenceLocked={isEdit}
-            onCadenceChange={(cadence) =>
-              setDraft((current) => ({ ...current, cadence }))
+            periodTypeLocked={isEdit}
+            onPeriodTypeChange={(periodType) =>
+              setDraft((current) => ({ ...current, periodType }))
             }
             onScheduleChange={(schedule) =>
               setDraft((current) => ({ ...current, schedule }))

@@ -3,7 +3,7 @@ import type {
   AcceptAlertRequest,
   AlertEventType,
   AlertStatus,
-  Cadence,
+  PeriodType,
   CursorResponse,
   Data,
   EvaluateRuleRequest,
@@ -102,7 +102,7 @@ interface RuleCommonV2 {
   compiledCEL?: string
   enabled: boolean
   severity: Severity
-  cadence: Cadence
+  periodType: PeriodType
   schedule?: Schedule
   notifications?: string[]
   labels?: Record<string, string>
@@ -131,7 +131,7 @@ export type RuleV2 =
 interface RuleRequestCommonV2 {
   name: string
   severity?: Severity
-  cadence?: Cadence
+  periodType?: PeriodType
   schedule?: Schedule
   notifications?: string[]
   labels?: Record<string, string>

@@ -6,7 +6,7 @@
  */
 import type {
   AlertStatus,
-  Cadence,
+  PeriodType,
   EvaluationResult,
   Rule,
   Severity,
@@ -95,8 +95,8 @@ export const TEMPLATE_META: Record<
 
 export const TEMPLATE_KINDS = Object.keys(TEMPLATE_META) as TemplateKind[]
 
-// ── Cadence ─────────────────────────────────────────────────────────────────
-export const CADENCE_META: Record<Cadence, { label: string }> = {
+// ── Period type ───────────────────────────────────────────────────────────────
+export const PERIOD_TYPE_META: Record<PeriodType, { label: string }> = {
   continuous: { label: "Continuous" },
   daily: { label: "Daily" },
   weekly: { label: "Weekly" },

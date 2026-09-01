@@ -51,7 +51,7 @@ import {
   formatRelative,
   TEMPLATE_META,
   TEMPLATE_KINDS,
-  CADENCE_META,
+  PERIOD_TYPE_META,
   SEVERITY_ORDER,
   SEVERITY_META,
   ReconError,
@@ -629,7 +629,7 @@ export function RuleListItem({
             <SeverityBadge severity={rule.severity} />
             <span>{templateLabel(rule.templateKind)}</span>
             <span aria-hidden="true">·</span>
-            <span>{CADENCE_META[rule.cadence]?.label ?? rule.cadence}</span>
+            <span>{PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType}</span>
           </div>
         </div>
 

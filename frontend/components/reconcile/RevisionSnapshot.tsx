@@ -1,6 +1,6 @@
 import { Braces, CalendarClock, Code2, Settings2 } from "lucide-react"
 import {
-  CADENCE_META,
+  PERIOD_TYPE_META,
   describeAnyRule,
   formatDateTime,
   isRuleV2,
@@ -57,8 +57,8 @@ export function RevisionSnapshot({
         <SnapshotFact label="State" value={rule.enabled ? "Enabled" : "Disabled"} />
         <SnapshotFact label="Severity" value={rule.severity} />
         <SnapshotFact
-          label="Cadence"
-          value={CADENCE_META[rule.cadence]?.label ?? rule.cadence}
+          label="Period type"
+          value={PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType}
         />
         <SnapshotFact label="Schedule" value={schedule} />
       </dl>

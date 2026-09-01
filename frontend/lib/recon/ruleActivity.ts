@@ -58,7 +58,7 @@ const CONFIGURATION_FIELDS = [
   "templateSpec",
   "enabled",
   "severity",
-  "cadence",
+  "periodType",
   "schedule",
   "notifications",
   "labels",

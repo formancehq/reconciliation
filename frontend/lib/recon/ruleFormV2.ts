@@ -1,4 +1,4 @@
-import type { Cadence, Schedule, Severity } from "./types"
+import type { PeriodType, Schedule, Severity } from "./types"
 import type {
   NamedSourceV2,
   RateBoundsV2,
@@ -29,7 +29,7 @@ export interface RuleFormDraftV2 {
   name: string
   kind: TemplateKindV2
   severity: Severity
-  cadence: Cadence
+  periodType: PeriodType
   schedule: Schedule
   enabled: boolean
   sources: NamedSourceV2[]
@@ -162,7 +162,7 @@ export function createRuleFormDraftV2({
     name: duplicate && rule ? `${rule.name} (copy)` : (rule?.name ?? ""),
     kind: selectedKind,
     severity: rule?.severity ?? "medium",
-    cadence: rule?.cadence ?? "continuous",
+    periodType: rule?.periodType ?? "continuous",
     schedule: rule?.schedule ?? { kind: "on_demand" },
     enabled: rule?.enabled ?? true,
     sources,
@@ -207,7 +207,7 @@ export function changeRuleTemplateV2(
     ...next,
     name: draft.name,
     severity: draft.severity,
-    cadence: draft.cadence,
+    periodType: draft.periodType,
     schedule: draft.schedule,
     enabled: draft.enabled,
   }
@@ -286,7 +286,7 @@ export function serializeRuleFormV2(draft: RuleFormDraftV2): RuleRequestV2 {
   const common = {
     name: draft.name.trim(),
     severity: draft.severity,
-    cadence: draft.cadence,
+    periodType: draft.periodType,
     schedule: draft.schedule,
     enabled: draft.enabled,
   }

@@ -31,9 +31,9 @@ import { toast } from '@/components/ui/toast';
 import { ToggleGroup, ToggleGroupItem } from '@workspace/ui/components/toggle-group';
 import { RadioGroup, RadioGroupItem } from '@workspace/ui/components/radio-group';
 import {
-  reconClient, ReconError, TEMPLATE_META, TEMPLATE_KINDS, SEVERITY_ORDER, SEVERITY_META, CADENCE_META,
+  reconClient, ReconError, TEMPLATE_META, TEMPLATE_KINDS, SEVERITY_ORDER, SEVERITY_META, PERIOD_TYPE_META,
   buildParitySide, parityScope, parseParitySide, isParitySideComplete, validateParitySide, validateParityPair, PARITY_SOURCE_KINDS,
-  type Rule, type RuleRequest, type TemplateKind, type Severity, type Cadence, type Schedule, type ParitySourceKind,
+  type Rule, type RuleRequest, type TemplateKind, type Severity, type PeriodType, type Schedule, type ParitySourceKind,
 } from '@/lib/recon';
 import createLogger from '@/lib/logger';
 import { useChartStore } from '@/stores/chartStore';
@@ -70,7 +70,7 @@ interface Source extends Query {
 }
 type Mode = 'aggregate' | 'per_account';
 
-const CADENCES: Cadence[] = ['continuous', 'daily', 'weekly', 'monthly'];
+const PERIOD_TYPES: PeriodType[] = ['continuous', 'daily', 'weekly', 'monthly'];
 const TEMPLATE_CHOICES: Record<TemplateKind, {
   capability: string;
   icon: typeof Scale;
@@ -89,14 +89,14 @@ const TEMPLATE_CHOICES: Record<TemplateKind, {
   },
 };
 
-const CADENCE_DESCRIPTIONS: Record<Cadence, string> = {
+const PERIOD_TYPE_DESCRIPTIONS: Record<PeriodType, string> = {
   continuous: 'One ongoing alert thread',
   daily: 'One alert thread per day',
   weekly: 'One alert thread per week',
   monthly: 'One alert thread per month',
 };
 
-const ALERT_PERIOD_COPY: Record<Cadence, {
+const ALERT_PERIOD_COPY: Record<PeriodType, {
   activeTitle: string;
   activeDescription: string;
   rolloverTitle: string;
@@ -128,7 +128,7 @@ const ALERT_PERIOD_COPY: Record<Cadence, {
   },
 };
 
-const DEFAULT_CRON: Record<Cadence, string> = {
+const DEFAULT_CRON: Record<PeriodType, string> = {
   continuous: '*/15 * * * *',
   daily: '0 0 * * *',
   weekly: '0 0 * * 1',
@@ -149,14 +149,14 @@ const SCOPE_OPTIONS: { value: Mode; label: string }[] = [
 const emptyQuery = (address = ''): Query => ({ address, meta: [], metaComb: 'and' });
 
 interface FormState {
-  name: string; kind: TemplateKind; severity: Severity; cadence: Cadence; enabled: boolean; schedule: Schedule;
+  name: string; kind: TemplateKind; severity: Severity; periodType: PeriodType; enabled: boolean; schedule: Schedule;
   terms: Term[]; invTol: Amount[];
   left: Source; right: Source; scope: Mode; parTol: Amount[];
   thLedger: string; thQuery: Query; thMode: Mode; bounds: Bound[];
 }
 
 const DEFAULT_STATE: FormState = {
-  name: '', kind: 'source_parity', severity: 'high', cadence: 'continuous', enabled: true, schedule: { kind: 'on_demand' },
+  name: '', kind: 'source_parity', severity: 'high', periodType: 'continuous', enabled: true, schedule: { kind: 'on_demand' },
   terms: [{ ledger: '', sign: 1, ...emptyQuery() }], invTol: [{ asset: 'USD', amount: '0' }],
   left: { ledger: '', kind: 'ledger', metadataKey: '', asset: '', ...emptyQuery() },
   right: { ledger: '', kind: 'ledger', metadataKey: '', asset: '', ...emptyQuery() },
@@ -181,7 +181,7 @@ const boundRows = (b: unknown): Bound[] => {
 /** Reverse-map a rule into editor state (inverse of buildSpec) for edit mode. */
 function buildInitialState(rule?: Rule | null): FormState {
   if (!rule) return DEFAULT_STATE;
-  const base: FormState = { ...DEFAULT_STATE, name: rule.name, kind: rule.templateKind, severity: rule.severity, cadence: rule.cadence, enabled: rule.enabled, schedule: rule.schedule ?? { kind: 'on_demand' } };
+  const base: FormState = { ...DEFAULT_STATE, name: rule.name, kind: rule.templateKind, severity: rule.severity, periodType: rule.periodType, enabled: rule.enabled, schedule: rule.schedule ?? { kind: 'on_demand' } };
   const spec = (rule.templateSpec ?? {}) as Record<string, unknown>;
   if (rule.templateKind === 'ledger_invariant') {
     const terms = (Array.isArray(spec.terms) ? (spec.terms as Array<Record<string, unknown>>) : [])
@@ -212,7 +212,7 @@ function buildInitialState(rule?: Rule | null): FormState {
   };
 }
 
-export function nextScheduleForCadence(schedule: Schedule, current: Cadence, next: Cadence): Schedule {
+export function nextScheduleForPeriodType(schedule: Schedule, current: PeriodType, next: PeriodType): Schedule {
   if (schedule.kind !== 'cron') return schedule;
   const expr = (schedule.expr ?? '').trim();
   if (expr && expr !== DEFAULT_CRON[current]) return schedule;
@@ -273,14 +273,14 @@ export function TemplatePicker({ value, onChange }: {
   );
 }
 
-export function RunTimingFields({ cadence, schedule, cadenceLocked = false, onCadenceChange, onScheduleChange }: {
-  cadence: Cadence;
+export function RunTimingFields({ periodType, schedule, periodTypeLocked = false, onPeriodTypeChange, onScheduleChange }: {
+  periodType: PeriodType;
   schedule: Schedule;
-  cadenceLocked?: boolean;
-  onCadenceChange: (value: Cadence) => void;
+  periodTypeLocked?: boolean;
+  onPeriodTypeChange: (value: PeriodType) => void;
   onScheduleChange: (value: Schedule) => void;
 }) {
-  const periodCopy = ALERT_PERIOD_COPY[cadence];
+  const periodCopy = ALERT_PERIOD_COPY[periodType];
   return (
     <fieldset className="space-y-4 rounded-md border bg-muted/15 p-4">
       <legend className="text-sm font-semibold">When should it evaluate?</legend>
@@ -291,38 +291,38 @@ export function RunTimingFields({ cadence, schedule, cadenceLocked = false, onCa
       <div className="space-y-2">
         <div className="flex items-baseline justify-between gap-3">
           <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Alert grouping period</Label>
-          {cadenceLocked && <span className="text-xs text-muted-foreground">Fixed after creation</span>}
+          {periodTypeLocked && <span className="text-xs text-muted-foreground">Fixed after creation</span>}
         </div>
         <RadioGroup
-          value={cadence}
-          onValueChange={(next) => onCadenceChange(next as Cadence)}
-          disabled={cadenceLocked}
+          value={periodType}
+          onValueChange={(next) => onPeriodTypeChange(next as PeriodType)}
+          disabled={periodTypeLocked}
           className="grid gap-2 sm:grid-cols-2 md:grid-cols-4"
           aria-label="Alert grouping period"
         >
-          {CADENCES.map((option) => (
+          {PERIOD_TYPES.map((option) => (
             <label
               key={option}
               className={cn(
                 'flex min-h-16 cursor-pointer items-start gap-2.5 rounded-md border bg-background p-3 transition-colors',
                 'hover:bg-muted/30 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30',
-                cadence === option && 'border-primary bg-primary/5 ring-1 ring-primary/20',
-                cadenceLocked && 'cursor-not-allowed opacity-60',
+                periodType === option && 'border-primary bg-primary/5 ring-1 ring-primary/20',
+                periodTypeLocked && 'cursor-not-allowed opacity-60',
               )}
             >
-              <RadioGroupItem value={option} className="mt-0.5" aria-label={CADENCE_META[option].label} />
+              <RadioGroupItem value={option} className="mt-0.5" aria-label={PERIOD_TYPE_META[option].label} />
               <span>
-                <span className="block text-sm font-medium">{CADENCE_META[option].label}</span>
-                <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{CADENCE_DESCRIPTIONS[option]}</span>
+                <span className="block text-sm font-medium">{PERIOD_TYPE_META[option].label}</span>
+                <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{PERIOD_TYPE_DESCRIPTIONS[option]}</span>
               </span>
             </label>
           ))}
         </RadioGroup>
       </div>
 
-      <div className="space-y-2 rounded-md border bg-background p-3" role="note" aria-label={`${CADENCE_META[cadence].label} alert lifecycle`}>
+      <div className="space-y-2 rounded-md border bg-background p-3" role="note" aria-label={`${PERIOD_TYPE_META[periodType].label} alert lifecycle`}>
         <div>
-          <p className="text-xs font-semibold text-foreground">How the {CADENCE_META[cadence].label.toLowerCase()} period works</p>
+          <p className="text-xs font-semibold text-foreground">How the {PERIOD_TYPE_META[periodType].label.toLowerCase()} period works</p>
           <p className="mt-0.5 text-xs text-muted-foreground">Related failures share one alert only while the same period is active.</p>
         </div>
         <div className="grid items-stretch gap-2 md:grid-cols-[1fr_auto_1fr_auto_1fr]">
@@ -349,7 +349,7 @@ export function RunTimingFields({ cadence, schedule, cadenceLocked = false, onCa
           value={schedule.kind}
           onValueChange={(next) => onScheduleChange(
             next === 'cron'
-              ? { kind: 'cron', expr: schedule.expr || DEFAULT_CRON[cadence], tz: schedule.tz }
+              ? { kind: 'cron', expr: schedule.expr || DEFAULT_CRON[periodType], tz: schedule.tz }
               : { kind: 'on_demand' },
           )}
           className="grid gap-2 sm:grid-cols-2"
@@ -405,7 +405,7 @@ export function RunTimingFields({ cadence, schedule, cadenceLocked = false, onCa
                 className="font-mono"
                 value={schedule.expr ?? ''}
                 onChange={(event) => onScheduleChange({ ...schedule, expr: event.target.value })}
-                placeholder={DEFAULT_CRON[cadence]}
+                placeholder={DEFAULT_CRON[periodType]}
               />
             </Field>
             <Field label="Time zone" htmlFor="rule-time-zone">
@@ -422,7 +422,7 @@ export function RunTimingFields({ cadence, schedule, cadenceLocked = false, onCa
 
       <p className="flex items-start gap-2 border-t pt-3 text-xs text-muted-foreground" role="status">
         <Check className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden="true" />
-        <span><strong className="font-medium text-foreground">{CADENCE_META[cadence].label} alert period.</strong> {CADENCE_DESCRIPTIONS[cadence]}. {scheduleDescription(schedule)}</span>
+        <span><strong className="font-medium text-foreground">{PERIOD_TYPE_META[periodType].label} alert period.</strong> {PERIOD_TYPE_DESCRIPTIONS[periodType]}. {scheduleDescription(schedule)}</span>
       </p>
     </fieldset>
   );
@@ -442,13 +442,13 @@ export function CreateRuleDialog({ open, onOpenChange, editRule, duplicateRule, 
   const [name, setName] = useState(init.name);
   const [kind, setKind] = useState<TemplateKind>(init.kind);
   const [severity, setSeverity] = useState<Severity>(init.severity);
-  const [cadence, setCadence] = useState<Cadence>(init.cadence);
+  const [periodType, setPeriodType] = useState<PeriodType>(init.periodType);
   const [enabled, setEnabled] = useState(init.enabled);
   const [schedule, setSchedule] = useState<Schedule>(init.schedule);
 
-  const changeCadence = (next: Cadence) => {
-    setSchedule((currentSchedule) => nextScheduleForCadence(currentSchedule, cadence, next));
-    setCadence(next);
+  const changePeriodType = (next: PeriodType) => {
+    setSchedule((currentSchedule) => nextScheduleForPeriodType(currentSchedule, periodType, next));
+    setPeriodType(next);
   };
 
   // Per-template spec state (only the active kind is serialized on submit).
@@ -497,7 +497,7 @@ export function CreateRuleDialog({ open, onOpenChange, editRule, duplicateRule, 
   }, [open, isEdit, isDup, activeLedger]);
 
   const reset = () => {
-    setName(init.name); setKind(init.kind); setSeverity(init.severity); setCadence(init.cadence); setEnabled(init.enabled); setSchedule(init.schedule);
+    setName(init.name); setKind(init.kind); setSeverity(init.severity); setPeriodType(init.periodType); setEnabled(init.enabled); setSchedule(init.schedule);
     setTerms(init.terms); setInvTol(init.invTol);
     setLeft(init.left); setRight(init.right); setScope(init.scope); setParTol(init.parTol);
     setThLedger(init.thLedger); setThQuery(init.thQuery); setThMode(init.thMode); setBounds(init.bounds);
@@ -616,13 +616,13 @@ export function CreateRuleDialog({ open, onOpenChange, editRule, duplicateRule, 
     const sched: Schedule = schedule.kind === 'cron'
       ? { kind: 'cron', expr: (schedule.expr ?? '').trim(), ...(schedule.tz?.trim() ? { tz: schedule.tz.trim() } : {}) }
       : { kind: 'on_demand' };
-    // cadence is only settable at create — PATCH doesn't accept it (compiled CEL
+    // periodType is only settable at create — PATCH doesn't accept it (compiled CEL
     // is rederived from the spec server-side). schedule IS patchable.
     const common = { name: name.trim(), templateKind: kind, templateSpec: buildSpec(), severity, enabled, schedule: sched };
     try {
       const rule = isEdit && editRule
         ? await reconClient.patchRule(editRule.id, common)
-        : await reconClient.createRule({ ...common, cadence } as RuleRequest);
+        : await reconClient.createRule({ ...common, periodType } as RuleRequest);
       toast.success(isEdit ? 'Rule updated' : isDup ? 'Rule duplicated' : 'Rule created', { description: rule.name });
       onSaved(rule);
       close(false);
@@ -662,10 +662,10 @@ export function CreateRuleDialog({ open, onOpenChange, editRule, duplicateRule, 
           <TemplatePicker value={kind} onChange={(next) => { setKind(next); setServerError(null); }} />
 
           <RunTimingFields
-            cadence={cadence}
+            periodType={periodType}
             schedule={schedule}
-            cadenceLocked={isEdit}
-            onCadenceChange={changeCadence}
+            periodTypeLocked={isEdit}
+            onPeriodTypeChange={changePeriodType}
             onScheduleChange={setSchedule}
           />
 

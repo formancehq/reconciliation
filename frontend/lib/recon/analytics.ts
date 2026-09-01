@@ -13,7 +13,7 @@
  *   • A capture's `evidence` is an ARRAY of per-fingerprint results
  *     `[{ fingerprint, passed, evidence:{…} }]` on a FAIL, and is EMPTY/absent on
  *     a PASS — a pass records no magnitude. So the deviation series has numeric
- *     points on fails only; passes are tracked as run cadence, not values.
+ *     points on fails only; passes are tracked as run occurrences, not values.
  *   • The authoritative reference band (tolerance / bounds) lives on the rule's
  *     `templateSpec`, not the capture — so we can draw the safe zone even for a
  *     rule that has never failed.
@@ -125,7 +125,7 @@ export interface DeviationModel {
   metric: "signedDiff" | "balance" | "residual" | "none"
   /** One entry per asset (from fail evidence, or spec fallback when never failed). */
   series: DeviationSeries[]
-  /** Runs with a `pass` verdict (no magnitude recorded — cadence only). */
+  /** Runs with a `pass` verdict (no magnitude recorded — occurrence only). */
   passRuns: Array<{ at: string; t: number }>
   counts: { total: number; pass: number; fail: number }
   /** passes / (pass + fail); undefined when there are no runs. */

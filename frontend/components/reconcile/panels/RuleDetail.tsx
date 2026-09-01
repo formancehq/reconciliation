@@ -28,7 +28,7 @@ import {
   poll,
   describeAnyRule,
   templateLabel,
-  CADENCE_META,
+  PERIOD_TYPE_META,
   formatRelative,
   isZeroTime,
   ReconError,
@@ -273,7 +273,7 @@ export function RuleDetail({
               </span>
             )}
             {rule && <span>·</span>}
-            {rule && <span>{CADENCE_META[rule.cadence]?.label ?? rule.cadence}</span>}
+            {rule && <span>{PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType}</span>}
             {rule && !isZeroTime(rule.updatedAt) && (
               <>
                 <span>·</span>
@@ -430,8 +430,8 @@ export function CurrentRuleConfiguration({
         />
         <ConfigurationFact label="Severity" value={rule.severity} />
         <ConfigurationFact
-          label="Cadence"
-          value={CADENCE_META[rule.cadence]?.label ?? rule.cadence}
+          label="Period type"
+          value={PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType}
         />
         <ConfigurationFact label="Schedule" value={schedule} />
         <div className="min-w-0">
