@@ -205,10 +205,14 @@ func TestIntegration_OpenAlert(t *testing.T) {
 	// as a key/content conflict rather than replaying (see migration log F17).
 	probe := schema.AlertItemAccount(ruleID.String(), period, schema.FingerprintHash("idem-probe"))
 	occMint := ledger.CreateTransactionInput{
-		Ledger:         control,
-		ScriptName:     schema.NumscriptAlertBump,
-		ScriptVersion:  schema.NumscriptVersion,
-		Vars:           map[string]string{schema.VarPool: poolAddr, schema.VarItem: probe},
+		Ledger:        control,
+		ScriptName:    schema.NumscriptAlertBump,
+		ScriptVersion: schema.NumscriptVersion,
+		Vars: map[string]string{
+			schema.VarPool: poolAddr, schema.VarItem: probe,
+			schema.VarActivityPool: schema.ActivityPool(ruleID.String()),
+			schema.VarActivity:     schema.ActivityAccount(ruleID.String()),
+		},
 		IdempotencyKey: "it-idem-" + ruleID.String(),
 	}
 	require.NoError(t, client.CreateTransaction(ctx, occMint))
@@ -567,7 +571,7 @@ func balance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, ad
 	acct, err := c.GetAccount(ctx, ledgerName, addr)
 	require.NoError(t, err, "get account %s", addr)
 
-	return acct.GetVolumes()[asset].GetBalance()
+	return commonpb.BalanceByAsset(acct, asset).String()
 }
 
 // balanceOrZero reads an asset balance, treating a purged (NotFound) account or
@@ -582,8 +586,8 @@ func balanceOrZero(ctx context.Context, t *testing.T, c *ledger.Client, ledgerNa
 
 	require.NoError(t, err, "get account %s", addr)
 
-	if bal := acct.GetVolumes()[asset].GetBalance(); bal != "" {
-		return bal
+	if bal := commonpb.BalanceByAsset(acct, asset); bal.Sign() != 0 {
+		return bal.String()
 	}
 
 	return "0"

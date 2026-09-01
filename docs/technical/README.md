@@ -1,18 +1,23 @@
 # Technical Documentation
 
-Engineering reference for the V1 reconciliation work. Start with the architecture doc if you're new to the project; use the topical docs as reference once you have the shape.
+Engineering reference for the reconciliation service. The unprefixed V1 API remains the compatibility
+surface for existing rules; the `/v2` API adds aggregate multi-source equations and exchange-rate
+bounds. Start with the architecture doc if you're new to the project; use the topical docs as reference
+once you have the shape.
 
 ## Documents
 
 | Document | What it covers |
 |---|---|
 | [architecture.md](./architecture.md) | How the CEL kernel, templates, the ledger-native store (`_recon`), and the service layer fit together — plus the account model + transition workflow. |
-| [api.md](./api.md) | The V1 `/rules` / `/alerts` API + the events sink (evaluations are non-durable). |
-| [workflows.md](./workflows.md) | Lifecycle flows: rule create → evaluate (live reads + capture) → alert → resolve / accept, plus reopen, engine-error, and event delivery. |
-| [templates.md](./templates.md) | The V1 GA template catalog — spec shapes, validation rules, what each compiles to, evidence format. |
+| [ledger-v3-storage.md](./ledger-v3-storage.md) | Exact Ledger v3 account types, assets, Numscript programs, indexes, queries, provisioning, and timeline persistence. |
+| [api.md](./api.md) | V1/V2 API coexistence, route isolation, rule/evaluation/alert contracts, and the events sink. |
+| [workflows.md](./workflows.md) | Lifecycle flows: versioned rule create → live evaluation + capture → alert → resolve / accept, plus reopen, engine-error, and event delivery. |
+| [templates.md](./templates.md) | V1 templates and V2 multi-source controls — spec shapes, exact arithmetic, validation, fingerprints, and evidence. |
 | [alert-period-model.md](./alert-period-model.md) | Why alerts are scoped by reconciliation period (cadence), and how it's implemented. |
 | [scheduler.md](./scheduler.md) | The in-process cron scheduler — how rules fire automatically, and the single-instance caveat. |
 | [notification-suppression.md](./notification-suppression.md) | Why a still-broken alert shouldn't re-page on every tick — and why suppression now lives at the consumer. |
+| [ADR-004](../prd/adr-004-multi-source-comparisons.md) | Why V2 is additive, how equations and exchange rates are defined, and why arithmetic never uses floating point. |
 
 ## Status legend used throughout
 

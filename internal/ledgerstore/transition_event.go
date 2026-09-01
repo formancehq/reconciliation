@@ -72,3 +72,12 @@ func stampTransition(md map[string]*commonpb.MetadataValue, t transitionType, a 
 
 	return nil
 }
+
+func alertActivityMetadata(a *models.Alert, md map[string]*commonpb.MetadataValue) (map[string]*commonpb.MetadataValue, error) {
+	var env transitionEvent
+	if err := json.Unmarshal([]byte(getStr(md, schema.MetaLastTransition)), &env); err != nil {
+		return nil, err
+	}
+	kind := "alert." + string(env.Type[len(transitionEventTypePrefix):])
+	return activityMetadata(kind, a.RuleID, a.ContractVersion, "", env.CorrelationID, env.OccurredAt, env)
+}

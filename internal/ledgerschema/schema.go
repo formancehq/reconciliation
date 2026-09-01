@@ -4,12 +4,25 @@ import "github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 
 // Account-type names (used as the AccountType.Name / the "family" identifier).
 const (
-	AccountTypeRule        = "rule"
-	AccountTypeAlertItem   = "alert-item"
-	AccountTypeAlertState  = "alert-state"
-	AccountTypeAlertPool   = "alert-pool"
-	AccountTypeCapture     = "capture"      // per-(rule,period) capture bucket (ADR-003)
-	AccountTypeCapturePool = "capture-pool" // per-rule capture mint source
+	AccountTypeRule         = "rule"
+	AccountTypeAlertItem    = "alert-item"
+	AccountTypeAlertState   = "alert-state"
+	AccountTypeAlertPool    = "alert-pool"
+	AccountTypeCapture      = "capture"      // per-(rule,period) capture bucket (ADR-003)
+	AccountTypeCapturePool  = "capture-pool" // per-rule capture mint source
+	AccountTypeActivity     = "activity"
+	AccountTypeActivityPool = "activity-pool"
+)
+
+const (
+	ActivityMetaSchemaVersion   = "activity_schema_version"
+	ActivityMetaKind            = "activity_kind"
+	ActivityMetaRule            = "activity_rule_id"
+	ActivityMetaAt              = "activity_occurred_at"
+	ActivityMetaContractVersion = "activity_contract_version"
+	ActivityMetaRevision        = "activity_rule_revision"
+	ActivityMetaCorrelation     = "activity_correlation_id"
+	ActivityMetaPayload         = "activity_payload"
 )
 
 // Capture transaction metadata keys — the self-describing capture envelope stamped
@@ -17,16 +30,22 @@ const (
 // (COMMITTED_TRANSACTION payload), undeclared like the alert labels: stored as-is,
 // not indexed. The immutable, receipt-signed transaction is the audit record.
 const (
-	CaptureType     = "reconciliation.capture" // value of CaptureMetaType
-	CaptureMetaType = "type"
-	CaptureMetaRule = "rule_id"
-	CaptureMetaTmpl = "template_kind"
-	CaptureMetaPer  = "period"
-	CaptureMetaEval = "evaluation_id"
-	CaptureMetaAt   = "captured_at"
-	CaptureMetaVdt  = "verdict"
-	CaptureMetaTrig = "trigger"
-	CaptureMetaEvi  = "evidence"
+	CaptureType                = "reconciliation.capture" // value of CaptureMetaType
+	CaptureMetaType            = "type"
+	CaptureMetaRule            = "rule_id"
+	CaptureMetaTmpl            = "template_kind"
+	CaptureMetaPer             = "period"
+	CaptureMetaEval            = "evaluation_id"
+	CaptureMetaAt              = "captured_at"
+	CaptureMetaVdt             = "verdict"
+	CaptureMetaTrig            = "trigger"
+	CaptureMetaEvi             = "evidence"
+	CaptureMetaContractVersion = "contract_version"
+	CaptureMetaRevision        = "rule_revision"
+	CaptureMetaStartedAt       = "started_at"
+	CaptureMetaPIT             = "pit"
+	CaptureMetaResult          = "result"
+	CaptureMetaError           = "error"
 )
 
 // Metadata keys on the canonical alert (`alert:item:*`) account.
@@ -53,16 +72,18 @@ const (
 
 // Metadata keys on the rule (`rule:*`) account.
 const (
-	MetaName          = "name"
-	MetaTemplateKind  = "template_kind"
-	MetaEnabled       = "enabled"
-	MetaSchedule      = "schedule" // JSON
-	MetaCadence       = "cadence"
-	MetaSpec          = "spec" // JSON
-	MetaCompiledCEL   = "compiled_cel"
-	MetaNotifications = "notifications" // JSON array
-	MetaCreatedAt     = "created_at"
-	MetaUpdatedAt     = "updated_at"
+	MetaName            = "name"
+	MetaTemplateKind    = "template_kind"
+	MetaEnabled         = "enabled"
+	MetaSchedule        = "schedule" // JSON
+	MetaCadence         = "cadence"
+	MetaSpec            = "spec" // JSON
+	MetaCompiledCEL     = "compiled_cel"
+	MetaNotifications   = "notifications" // JSON array
+	MetaContractVersion = "contract_version"
+	MetaCreatedAt       = "created_at"
+	MetaUpdatedAt       = "updated_at"
+	MetaRevision        = "revision"
 )
 
 // LabelPrefix namespaces a rule/alert label as a flat, indexable metadata key
@@ -71,8 +92,9 @@ const (
 const LabelPrefix = "label."
 
 // AccountTypes returns the chart of accounts declared on the control-ledger.
-// Applied at bootstrap; combined with STRICT enforcement, any write to an
-// address outside these patterns is rejected by the FSM (see RFC §4.1.3).
+// Applied at bootstrap. Once STRICT enforcement is enabled, any write to an
+// address outside these patterns is rejected by the FSM; the current server
+// provisions in AUDIT mode during rollout (see RFC §4.1.3).
 func AccountTypes() map[string]*commonpb.AccountType {
 	uuid := func() *commonpb.SegmentType {
 		return &commonpb.SegmentType{Constraint: &commonpb.SegmentType_Uuid{Uuid: &commonpb.UUIDConstraint{}}}
@@ -135,6 +157,16 @@ func AccountTypes() map[string]*commonpb.AccountType {
 			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
 			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid()},
 		},
+		AccountTypeActivity: {
+			Name: AccountTypeActivity, Pattern: "activity:rule:{ruleId}",
+			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
+			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid()},
+		},
+		AccountTypeActivityPool: {
+			Name: AccountTypeActivityPool, Pattern: "activity:pool:rule:{ruleId}",
+			Persistence:  commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL,
+			SegmentTypes: map[string]*commonpb.SegmentType{"ruleId": uuid()},
+		},
 	}
 }
 
@@ -161,8 +193,8 @@ func MetadataSchema() []*commonpb.SetMetadataFieldTypeCommand {
 		{MetaEvidence, str}, {MetaResolution, str}, {MetaAck, str}, {MetaSnooze, str},
 		// rule
 		{MetaName, str}, {MetaTemplateKind, str}, {MetaEnabled, b}, {MetaSchedule, str},
-		{MetaCadence, str}, {MetaSpec, str}, {MetaCompiledCEL, str}, {MetaNotifications, str},
-		{MetaCreatedAt, dt}, {MetaUpdatedAt, dt},
+		{MetaCadence, str}, {MetaSpec, str}, {MetaCompiledCEL, str}, {MetaNotifications, str}, {MetaContractVersion, str},
+		{MetaCreatedAt, dt}, {MetaUpdatedAt, dt}, {MetaRevision, str},
 	}
 
 	cmds := make([]*commonpb.SetMetadataFieldTypeCommand, 0, len(fields))

@@ -82,27 +82,34 @@ func (s SourceSpec) kind() SourceKind {
 // VALIDATION. `field` prefixes messages so a caller with multiple sources
 // (left/right) can point at the offending one.
 func (s SourceSpec) Validate(field string) error {
+	return s.validateAs(field, field)
+}
+
+// validateAs keeps the stable machine field path separate from the label shown
+// to an operator. V1 can therefore say Source A / Source B while still
+// returning paths such as left.asset, and V2 can use a caller-defined label.
+func (s SourceSpec) validateAs(field, label string) error {
 	if s.Ledger == "" {
-		return fmt.Errorf("%w: %s.ledger is required", ErrInvalidSpec, field)
+		return fmt.Errorf("%w: Source %s is missing a ledger (field: %s.ledger)", ErrInvalidSpec, label, field)
 	}
 	if !hasMeaningfulJSON(s.Query) {
-		return fmt.Errorf("%w: %s.query is required", ErrInvalidSpec, field)
+		return fmt.Errorf("%w: Source %s is missing a query (field: %s.query)", ErrInvalidSpec, label, field)
 	}
 	switch s.kind() {
 	case SourceLedger:
 		// ledger + query suffice.
 	case SourceAccountMetadata:
 		if s.MetadataKey == "" {
-			return fmt.Errorf("%w: %s.metadataKey is required for kind %q", ErrInvalidSpec, field, SourceAccountMetadata)
+			return fmt.Errorf("%w: Source %s is missing metadataKey for kind %q (field: %s.metadataKey)", ErrInvalidSpec, label, SourceAccountMetadata, field)
 		}
 		if s.Asset == "" {
-			return fmt.Errorf("%w: %s.asset is required for kind %q", ErrInvalidSpec, field, SourceAccountMetadata)
+			return fmt.Errorf("%w: Source %s is missing an asset (field: %s.asset)", ErrInvalidSpec, label, field)
 		}
 		if !engine.ValidAssetCode(s.Asset) {
-			return fmt.Errorf("%w: %s.asset %q is not a valid asset code", ErrInvalidSpec, field, s.Asset)
+			return fmt.Errorf("%w: Source %s asset %q is not a valid asset code (field: %s.asset)", ErrInvalidSpec, label, s.Asset, field)
 		}
 	default:
-		return fmt.Errorf("%w: %s.kind %q must be one of %q, %q", ErrInvalidSpec, field, s.Kind, SourceLedger, SourceAccountMetadata)
+		return fmt.Errorf("%w: Source %s kind %q must be one of %q, %q (field: %s.kind)", ErrInvalidSpec, label, s.Kind, SourceLedger, SourceAccountMetadata, field)
 	}
 	return nil
 }

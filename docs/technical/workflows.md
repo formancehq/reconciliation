@@ -1,6 +1,6 @@
 # Lifecycle Workflows
 
-The V1 product surface is a **business lifecycle**, not a rules engine. This document is the visual reference for that lifecycle:
+The V1 and V2 product surfaces share a **business lifecycle**, not a generic rules engine. This document is the visual reference for that lifecycle:
 
 > **Observe → Detect → Alert → Evidence → Resolve or Accept**
 
@@ -28,7 +28,8 @@ sequenceDiagram
     participant Eng as engine.Engine
     participant L   as Ledger (_recon)
 
-    U->>Svc: POST /rules { templateKind, templateSpec, … }
+    U->>Svc: POST /rules or /v2/rules { templateKind, templateSpec, … }
+    Note over Svc: route selects immutable contractVersion<br/>V1=1, V2=2
     Svc->>Reg: Get(templateKind).Validate(spec)
     alt invalid spec
         Reg-->>Svc: ErrInvalidSpec
@@ -44,6 +45,8 @@ sequenceDiagram
 **Notes**
 
 - The rule is a typed-metadata account `rule:{id}` on `_recon` — no relational row.
+- V1 and V2 use separate route-scoped registries. The version predicate is applied before lists and
+  point operations; an ID used through the wrong version returns `404`.
 - `Explain()` returns one representative CEL string for `compiled_cel` (explainability); real
   evaluation re-renders the per-asset CEL at run time.
 
@@ -57,14 +60,16 @@ sequenceDiagram
     participant Trig as Trigger (cron / POST evaluate)
     participant Svc  as Service.EvaluateRule
     participant Reg  as templates.Registry
-    participant Data as data-ledgers A/B
+    participant Data as data-ledgers / metadata sources
     participant L    as Ledger (_recon)
 
     Trig->>Svc: evaluate(rule)
     Svc->>Reg: Evaluate(spec, resolvers, {PIT})
-    Reg->>Data: AggregateVolumes(query)  (live, per source)
-    Data-->>Reg: balances (per asset)
-    Note over Reg: direct big.Int math per asset;<br/>render compiledCEL into evidence
+    loop Each named source (2–32 in V2)
+        Reg->>Data: AggregateVolumes/ListAccounts(query) (live)
+        Data-->>Reg: declared-asset balance + presence
+    end
+    Note over Reg: exact big.Int/big.Rat financial built-ins;<br/>render compiledCEL into evidence
     Reg-->>Svc: []Outcome  (one per fingerprint axis)
     Svc->>L: RecordCapture — mint 1 CAPTURE (snapshot in tx metadata)
     loop For each failing outcome
@@ -81,19 +86,23 @@ sequenceDiagram
 - **Live reads, no checkpoint** (ADR-003). Each `ledgerSet` source is one `AggregateVolumes` — an
   internally consistent server-side snapshot, so a **single-ledger** universe is skew-free for free.
   **Cross-ledger** rules read each side separately; the transient skew is absorbed by the template's
-  `tolerance`. Built-ins evaluate in **typed `big.Int` math** — the CEL kernel is not run at
-  evaluation time (it renders `compiledCEL` into `evidence` for explainability only).
+  `tolerance`. Typed templates use authoritative **`big.Int` / `big.Rat` math** and retain an exact
+  `compiledCEL`; equivalent financial built-ins support explainability and cross-checking without
+  binary floating point.
+- **V2 evidence is self-describing.** Equation outcomes retain every named source balance,
+  coefficient and contribution plus the residual. Exchange-rate outcomes retain the base/quote
+  snapshots, exact numerator/denominator and effective bounds. Both carry `schemaVersion: 2` and
+  `compiledCEL`; neither uses V1 left/right evidence keys.
 - **A capture per evaluation** (ADR-003). `RecordCapture` mints one `CAPTURE` into
   `capture:rule:{id}:per:{p}`; the observed snapshot (`verdict`, `trigger`, `evidence`, …) rides the
   `COMMITTED_TRANSACTION` metadata — the durable, receipt-signed "what reconciled and when", covering
-  passes as well as breaks. Its bounded evidence contains every failing outcome and only those
-  passing outcomes that resolve an active alert. A mixed run can therefore retain failure evidence
-  for one fingerprint and successful resolution evidence for another. It is written **before** the
+  passes as well as breaks. Its evidence contains every outcome and the exact values used for the
+  verdict, including successful outcomes that do not mutate an alert. It is written **before** the
   planned alert transitions.
 - The `Outcome` list covers every asset the template touched — passing included — so the service
-  can plan **auto-resolution** from the same observed values before persisting the capture. Passing
-  outcomes with no active alert are not retained; active fingerprints that disappear still resolve
-  without evidence because no outcome was observed for them.
+  can plan **auto-resolution** from the same observed values before persisting the capture. Active
+  fingerprints that disappear still resolve without outcome evidence because this evaluation did
+  not observe that fingerprint.
 - **The capture is the durable evaluation record** (ADR-003, revising RFC §4.4.2) — an immutable
   `_recon` transaction, not a queryable Postgres evaluation table (`CreateEvaluation` is a no-op).
   The run result is also returned; the break `evidence` is additionally durable on `alert:item`. The
@@ -211,7 +220,8 @@ flowchart TB
 A kernel/resolver failure (resolver timeout, CEL builtin throw, budget exceeded) is not a
 *financial* alert, so it opens a synthetic `engine.error` meta-alert (same alert infrastructure, a
 distinct `engine.error` fingerprint + `kind: engine.error` label) instead of a data alert. The
-evaluation returns `ERROR` (non-durable). Translation lives in
+evaluation returns `ERROR` and records an immutable error capture before the
+meta-alert is opened. Translation lives in
 [engine/errors.go](../../internal/engine/errors.go).
 
 ---
@@ -221,7 +231,7 @@ evaluation returns `ERROR` (non-durable). Translation lives in
 ```mermaid
 flowchart LR
     Tick[Evaluate @ T] --> Read["Each ledgerSet source →<br/>AggregateVolumes (live, per source)"]
-    Read --> Math[Template direct big.Int math]
+    Read --> Math["Exact big.Int / big.Rat<br/>financial built-ins"]
     Math --> Cap["Record capture on _recon<br/>(immutable snapshot in tx metadata)"]
 ```
 
@@ -242,18 +252,19 @@ uniquely offered, and discarded anyway — is deferred to a future ledger primit
 
 ---
 
-## 8. Audit history & delivery — the ledger log
+## 8. Combined rule history and delivery
 
-There is **no `alert_event` table**. The control-ledger's ordered, append-only log *is* the audit
-history: every transition is a `COMMITTED_TRANSACTION` (marker move + `account_metadata`) or, for
-snooze/unsnooze, a `SAVED_METADATA`/`DELETED_METADATA` entry — each carrying the self-describing
-`last_transition` envelope. The ledger already gives the cryptographic transaction-log guarantees
-recon used to aspire to.
+There is **no `alert_event` table**. Every rule change, evaluation capture, and
+alert transition touches `activity:rule:{ruleID}` and carries a semantic event
+envelope. The same transaction mutates current state and appends history.
+`GET /rules/{id}/timeline` and its V2 counterpart query this address through the
+Ledger transaction-address index and expose one ordered feed.
 
 - **Delivery** rides the ledger's native **events sink** ([architecture.md](./architecture.md#event-delivery)):
   when `--events-sink-url` is set, recon provisions an HTTP webhook sink for
   `[COMMITTED_TRANSACTION, SAVED_METADATA, DELETED_METADATA]`; consumers filter on
-  `event.ledger == _recon`.
-- **`GET /alerts/{id}/events` (`ListAlertEvents`) returns empty today** — paginated per-alert
-  history needs a downstream queryable sink (ClickHouse/Databricks), because the ledger log has no
-  per-account filter (RFC §10). Deferred.
+  the configured control-ledger name. Current rule, evaluation, and alert activity—including
+  snooze/unsnooze—is transaction-backed; metadata event types remain subscribed for compatibility.
+- The rule timeline is the canonical product read model. The existing per-alert
+  events endpoint remains a compatibility surface and can later be projected
+  from the same journal.

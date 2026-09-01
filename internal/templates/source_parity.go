@@ -46,10 +46,10 @@ func (t *SourceParity) Validate(raw json.RawMessage) error {
 	if err := unmarshalSpec(raw, &spec); err != nil {
 		return err
 	}
-	if err := spec.Left.Validate("left"); err != nil {
+	if err := spec.Left.validateAs("left", "A"); err != nil {
 		return err
 	}
-	if err := spec.Right.Validate("right"); err != nil {
+	if err := spec.Right.validateAs("right", "B"); err != nil {
 		return err
 	}
 	if !spec.Scope.Valid() {
@@ -65,7 +65,7 @@ func (t *SourceParity) Validate(raw json.RawMessage) error {
 	if spec.Left.kind() == SourceAccountMetadata &&
 		spec.Right.kind() == SourceAccountMetadata &&
 		spec.Left.Asset != spec.Right.Asset {
-		return fmt.Errorf("%w: account_metadata sources must declare the same asset (left %q, right %q)", ErrInvalidSpec, spec.Left.Asset, spec.Right.Asset)
+		return fmt.Errorf("%w: Source A and Source B must declare the same asset for account_metadata (fields: left.asset, right.asset; values: %q, %q)", ErrInvalidSpec, spec.Left.Asset, spec.Right.Asset)
 	}
 	for asset, tol := range spec.Tolerance {
 		if tol < 0 {

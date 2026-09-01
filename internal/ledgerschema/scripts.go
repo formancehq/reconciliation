@@ -6,20 +6,21 @@ import "fmt"
 // in the ledger's numscript library (SaveNumscript, validated at save time) and
 // referenced by name+version at transaction time (ScriptReference), instead of
 // inlining the source in every request. Accounts are passed as vars — addresses
-// are dynamic (rule/period/fp) — and STRICT enforcement is the backstop that
-// rejects any address outside the declared chart. See RFC §4.1.2 and
+// are dynamic (rule/period/fp). STRICT enforcement will reject any address
+// outside the declared chart once enabled; the current rollout uses AUDIT. See RFC §4.1.2 and
 // docs/technical/architecture/subsystems/scripting/numscript-library.md.
 
 // Numscript names and the pinned version. Library semver is immutable: bump the
 // version when a program's content changes, and update the reference in lockstep.
 const (
-	NumscriptVersion = "1.0.0"
+	NumscriptVersion = "2.0.0"
 
 	NumscriptAlertOpen   = "alert_open"   // mint marker → st:open + mint OCC → item (new alert)
 	NumscriptAlertBump   = "alert_bump"   // mint OCC → item (repeat, marker stays put)
 	NumscriptAlertReopen = "alert_reopen" // guarded move st:{from}→st:open + mint OCC (reopen/resurface)
 	NumscriptAlertMove   = "alert_move"   // guarded move st:{from}→st:{to}, no OCC (ack/resolve/accept/auto-resolve)
 	NumscriptCapture     = "capture"      // mint 1 CAPTURE → capture bucket (records one evaluation)
+	NumscriptActivity    = "activity"     // append one event to a rule's activity stream
 )
 
 // Numscript var names — the account addresses passed per call.
@@ -30,8 +31,10 @@ const (
 	VarStFrom = "st_from" // the marker's current state account (guarded move source)
 	VarStTo   = "st_to"   // the marker's target state account (guarded move destination)
 
-	VarCapturePool = "capture_pool" // the per-rule capture overdraft source
-	VarCapture     = "capture"      // the (rule, period) capture bucket account
+	VarCapturePool  = "capture_pool" // the per-rule capture overdraft source
+	VarCapture      = "capture"      // the (rule, period) capture bucket account
+	VarActivityPool = "activity_pool"
+	VarActivity     = "activity"
 )
 
 // NumscriptDef is one library program to register at provisioning.
@@ -51,6 +54,7 @@ func Numscripts() []NumscriptDef {
 		{NumscriptAlertReopen, alertReopenContent(), NumscriptVersion},
 		{NumscriptAlertMove, alertMoveContent(), NumscriptVersion},
 		{NumscriptCapture, captureContent(), NumscriptVersion},
+		{NumscriptActivity, activityContent(), NumscriptVersion},
 	}
 }
 
@@ -62,11 +66,28 @@ func captureContent() string {
 	return fmt.Sprintf(`vars {
 	account $%[1]s
 	account $%[2]s
+	account $%[3]s
+	account $%[4]s
+}
+send [%[5]s 1] (
+	source = $%[1]s allowing unbounded overdraft
+	destination = $%[2]s
+)
+send [%[6]s 1] (
+	source = $%[3]s allowing unbounded overdraft
+	destination = $%[4]s
+)`, VarCapturePool, VarCapture, VarActivityPool, VarActivity, AssetCapture, AssetActivity)
+}
+
+func activityContent() string {
+	return fmt.Sprintf(`vars {
+	account $%[1]s
+	account $%[2]s
 }
 send [%[3]s 1] (
 	source = $%[1]s allowing unbounded overdraft
 	destination = $%[2]s
-)`, VarCapturePool, VarCapture, AssetCapture)
+)`, VarActivityPool, VarActivity, AssetActivity)
 }
 
 // alertOpenContent mints the single ALERT marker into st:open (overdraft, the
@@ -77,15 +98,21 @@ func alertOpenContent() string {
 	account $%[1]s
 	account $%[2]s
 	account $%[3]s
+	account $%[4]s
+	account $%[5]s
 }
-send [%[4]s 1] (
+send [%[6]s 1] (
 	source = $%[1]s allowing unbounded overdraft
 	destination = $%[2]s
 )
-send [%[5]s 1] (
+send [%[7]s 1] (
 	source = $%[1]s allowing unbounded overdraft
 	destination = $%[3]s
-)`, VarPool, VarStOpen, VarItem, AssetAlert, AssetOcc)
+)
+send [%[8]s 1] (
+	source = $%[4]s allowing unbounded overdraft
+	destination = $%[5]s
+)`, VarPool, VarStOpen, VarItem, VarActivityPool, VarActivity, AssetAlert, AssetOcc, AssetActivity)
 }
 
 // alertBumpContent increments the item's OCC counter by one (a repeat failure —
@@ -94,11 +121,17 @@ func alertBumpContent() string {
 	return fmt.Sprintf(`vars {
 	account $%[1]s
 	account $%[2]s
+	account $%[3]s
+	account $%[4]s
 }
-send [%[3]s 1] (
+send [%[5]s 1] (
 	source = $%[1]s allowing unbounded overdraft
 	destination = $%[2]s
-)`, VarPool, VarItem, AssetOcc)
+)
+send [%[6]s 1] (
+	source = $%[3]s allowing unbounded overdraft
+	destination = $%[4]s
+)`, VarPool, VarItem, VarActivityPool, VarActivity, AssetOcc, AssetActivity)
 }
 
 // alertMoveContent moves the ALERT marker between two state accounts, no OCC
@@ -108,11 +141,17 @@ func alertMoveContent() string {
 	return fmt.Sprintf(`vars {
 	account $%[1]s
 	account $%[2]s
+	account $%[3]s
+	account $%[4]s
 }
-send [%[3]s 1] (
+send [%[5]s 1] (
 	source = $%[1]s
 	destination = $%[2]s
-)`, VarStFrom, VarStTo, AssetAlert)
+)
+send [%[6]s 1] (
+	source = $%[3]s allowing unbounded overdraft
+	destination = $%[4]s
+)`, VarStFrom, VarStTo, VarActivityPool, VarActivity, AssetAlert, AssetActivity)
 }
 
 // alertReopenContent moves the ALERT marker st:{from}→st:open and bumps OCC. The
@@ -125,13 +164,19 @@ func alertReopenContent() string {
 	account $%[2]s
 	account $%[3]s
 	account $%[4]s
+	account $%[5]s
+	account $%[6]s
 }
-send [%[5]s 1] (
+send [%[7]s 1] (
 	source = $%[2]s
 	destination = $%[3]s
 )
-send [%[6]s 1] (
+send [%[8]s 1] (
 	source = $%[1]s allowing unbounded overdraft
 	destination = $%[4]s
-)`, VarPool, VarStFrom, VarStOpen, VarItem, AssetAlert, AssetOcc)
+)
+send [%[9]s 1] (
+	source = $%[5]s allowing unbounded overdraft
+	destination = $%[6]s
+)`, VarPool, VarStFrom, VarStOpen, VarItem, VarActivityPool, VarActivity, AssetAlert, AssetOcc, AssetActivity)
 }

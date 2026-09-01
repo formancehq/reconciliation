@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
@@ -20,32 +21,47 @@ import (
 // one evaluation (ADR-003): a self-describing snapshot (verdict, trigger, evidence)
 // on a COMMITTED_TRANSACTION plus a CAPTURE counter unit in the (rule, period)
 // bucket. The transaction is receipt-signed and append-only — the durable audit
-// record complementing the alert lifecycle (all failing evidence plus passing
-// evidence retained for automatic resolutions). Idempotent per (rule, period, evaluation): a gRPC
+// record complementing the alert lifecycle, with every evaluated outcome.
+// Idempotent per (rule, period, evaluation): a gRPC
 // retransmit dedups; a genuinely new evaluation gets a fresh key.
 func (s *LedgerStore) RecordCapture(ctx context.Context, in store.CaptureInput) error {
 	md := map[string]*commonpb.MetadataValue{
-		schema.CaptureMetaType: strVal(schema.CaptureType),
-		schema.CaptureMetaRule: strVal(in.RuleID.String()),
-		schema.CaptureMetaTmpl: strVal(in.TemplateKind),
-		schema.CaptureMetaPer:  strVal(in.PeriodID),
-		schema.CaptureMetaEval: strVal(in.EvaluationID.String()),
-		schema.CaptureMetaAt:   strVal(in.CapturedAt.UTC().Format(time.RFC3339Nano)),
-		schema.CaptureMetaVdt:  strVal(in.Verdict),
-		schema.CaptureMetaTrig: strVal(in.Trigger),
+		schema.CaptureMetaType:            strVal(schema.CaptureType),
+		schema.CaptureMetaRule:            strVal(in.RuleID.String()),
+		schema.CaptureMetaTmpl:            strVal(in.TemplateKind),
+		schema.CaptureMetaPer:             strVal(in.PeriodID),
+		schema.CaptureMetaEval:            strVal(in.EvaluationID.String()),
+		schema.CaptureMetaAt:              strVal(in.CapturedAt.UTC().Format(time.RFC3339Nano)),
+		schema.CaptureMetaVdt:             strVal(in.Verdict),
+		schema.CaptureMetaTrig:            strVal(in.Trigger),
+		schema.CaptureMetaContractVersion: strVal(strconv.Itoa(int(in.ContractVersion.Effective()))),
+		schema.CaptureMetaRevision:        strVal(in.RuleRevision),
+		schema.CaptureMetaStartedAt:       strVal(in.StartedAt.UTC().Format(time.RFC3339Nano)),
+		schema.CaptureMetaPIT:             strVal(in.PIT.UTC().Format(time.RFC3339Nano)),
+		schema.CaptureMetaResult:          strVal(string(in.Result)),
+		schema.CaptureMetaError:           strVal(in.Error),
 	}
 	if len(in.Evidence) > 0 {
 		md[schema.CaptureMetaEvi] = strVal(string(in.Evidence))
 	}
 
 	rule := in.RuleID.String()
+	activity, err := activityMetadata("evaluation.completed", in.RuleID, in.ContractVersion, in.RuleRevision, in.EvaluationID.String(), in.CapturedAt, in)
+	if err != nil {
+		return fmt.Errorf("record capture activity: %w", err)
+	}
+	for k, v := range activity {
+		md[k] = v
+	}
 	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{
 		Ledger:        s.controlLedger,
 		ScriptName:    schema.NumscriptCapture,
 		ScriptVersion: schema.NumscriptVersion,
 		Vars: map[string]string{
-			schema.VarCapturePool: schema.CapturePool(rule),
-			schema.VarCapture:     schema.CaptureAccount(rule, in.PeriodID),
+			schema.VarCapturePool:  schema.CapturePool(rule),
+			schema.VarCapture:      schema.CaptureAccount(rule, in.PeriodID),
+			schema.VarActivityPool: schema.ActivityPool(rule),
+			schema.VarActivity:     schema.ActivityAccount(rule),
 		},
 		TxMetadata:     md,
 		IdempotencyKey: alertActionKey("capture", rule, in.PeriodID, in.EvaluationID.String()),
@@ -76,6 +92,9 @@ func (s *LedgerStore) ListCaptures(ctx context.Context, ruleID uuid.UUID, q stor
 	captures := make([]models.Capture, 0, 64)
 	if err := s.client.ListTransactionsFunc(ctx, s.controlLedger, schema.FilterAddressPrefix(prefix), func(tx *commonpb.Transaction) error {
 		if c, ok := captureFromTransaction(tx); ok {
+			if version := q.Options.Options.ContractVersion; version != nil && c.ContractVersion.Effective() != *version {
+				return nil
+			}
 			captures = append(captures, c)
 		}
 
@@ -109,11 +128,18 @@ func captureFromTransaction(tx *commonpb.Transaction) (models.Capture, bool) {
 	}
 
 	c := models.Capture{
-		TransactionID: tx.GetId(),
-		PeriodID:      getStr(md, schema.CaptureMetaPer),
-		TemplateKind:  getStr(md, schema.CaptureMetaTmpl),
-		Verdict:       getStr(md, schema.CaptureMetaVdt),
-		Trigger:       getStr(md, schema.CaptureMetaTrig),
+		TransactionID:   tx.GetId(),
+		ContractVersion: models.ContractVersionV1,
+		PeriodID:        getStr(md, schema.CaptureMetaPer),
+		TemplateKind:    getStr(md, schema.CaptureMetaTmpl),
+		Verdict:         getStr(md, schema.CaptureMetaVdt),
+		Trigger:         getStr(md, schema.CaptureMetaTrig),
+		RuleRevision:    getStr(md, schema.CaptureMetaRevision),
+		Result:          models.EvaluationResult(getStr(md, schema.CaptureMetaResult)),
+		Error:           getStr(md, schema.CaptureMetaError),
+	}
+	if version, err := strconv.Atoi(getStr(md, schema.CaptureMetaContractVersion)); err == nil && version > 0 {
+		c.ContractVersion = models.ContractVersion(version)
 	}
 
 	if id, err := uuid.Parse(getStr(md, schema.CaptureMetaRule)); err == nil {
@@ -126,6 +152,12 @@ func captureFromTransaction(tx *commonpb.Transaction) (models.Capture, bool) {
 
 	if t, err := time.Parse(time.RFC3339Nano, getStr(md, schema.CaptureMetaAt)); err == nil {
 		c.CapturedAt = t.UTC()
+	}
+	if t, err := time.Parse(time.RFC3339Nano, getStr(md, schema.CaptureMetaStartedAt)); err == nil {
+		c.StartedAt = t.UTC()
+	}
+	if t, err := time.Parse(time.RFC3339Nano, getStr(md, schema.CaptureMetaPIT)); err == nil {
+		c.PIT = t.UTC()
 	}
 
 	if ev := getStr(md, schema.CaptureMetaEvi); ev != "" {

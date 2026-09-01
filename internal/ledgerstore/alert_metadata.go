@@ -3,6 +3,7 @@ package ledgerstore
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
@@ -55,6 +56,8 @@ func alertToMetadata(a *models.Alert) (map[string]*commonpb.MetadataValue, error
 		schema.MetaLastSeenAt:       dtVal(a.LastSeenAt),
 		schema.MetaLastEvaluationID: strVal(a.LastEvaluationID.String()),
 		schema.MetaCreatedAt:        dtVal(a.CreatedAt),
+		schema.MetaUpdatedAt:        dtVal(a.UpdatedAt),
+		schema.MetaContractVersion:  strVal(strconv.Itoa(int(a.ContractVersion.Effective()))),
 	}
 
 	if len(a.Evidence) > 0 {
@@ -100,6 +103,7 @@ func alertFromAccount(acct *commonpb.Account) (*models.Alert, error) {
 
 	a := &models.Alert{
 		ID:              id,
+		ContractVersion: getContractVersion(md),
 		RuleID:          ruleID,
 		Fingerprint:     getStr(md, schema.MetaFingerprint),
 		PeriodID:        getStr(md, schema.MetaPeriod),
@@ -108,6 +112,7 @@ func alertFromAccount(acct *commonpb.Account) (*models.Alert, error) {
 		FirstSeenAt:     getTime(md, schema.MetaFirstSeenAt),
 		LastSeenAt:      getTime(md, schema.MetaLastSeenAt),
 		CreatedAt:       getTime(md, schema.MetaCreatedAt),
+		UpdatedAt:       getTime(md, schema.MetaUpdatedAt),
 		OccurrenceCount: occurrenceCount(acct),
 	}
 

@@ -1,14 +1,189 @@
 # API Reference
 
-Reconciliation exposes one API surface:
+Reconciliation exposes two isolated API surfaces:
 
 - **V1 Ledger Clarity** (`/rules` / `/alerts`) — EE-gated at V1 GA.
+- **V2 multi-source controls** (`/v2/rules` / `/v2/alerts`) — additive; V1 bodies are unchanged.
 
 It uses the auth scopes (`reconciliation:read`, `reconciliation:write`) and the `ErrorResponse` shape described below.
 
 > Status: the V1 endpoints are ✅ shipped; alert-transition events are delivered via the ledger's
-> native events sink (see [Events](#events) below). Evaluations are **non-durable** — there is no
-> evaluations read surface. OpenAPI lives in [openapi.yaml](../../openapi.yaml).
+> native events sink (see [Events](#events) below). Evaluations have no standalone evaluation
+> resource, but their immutable captures are available from each rule's `/captures` endpoint.
+> OpenAPI lives in [openapi.yaml](../../openapi.yaml).
+
+---
+
+<a id="v1v2-coexistence"></a>
+## V1/V2 coexistence
+
+The route selects the contract. Clients do not send `contractVersion` on create or patch:
+
+| Contract | Rule routes | Alert routes |
+|---|---|---|
+| V1 | `/rules`, `/rules/{id}`, `/rules/{id}/evaluate`, `/rules/{id}/captures`, `/rules/{id}/timeline` | `/alerts`, `/alerts/{id}`, `/events`, `/ack`, `/resolve`, `/accept`, `/snooze`, `/unsnooze` |
+| V2 | `/v2/rules`, `/v2/rules/{id}`, `/v2/rules/{id}/evaluate`, `/v2/rules/{id}/captures`, `/v2/rules/{id}/timeline` | `/v2/alerts`, `/v2/alerts/{id}`, `/ack`, `/resolve`, `/accept`, `/snooze`, `/unsnooze` |
+
+`contractVersion` is persisted immutably on rules, alerts, and captures. Missing markers on legacy
+records decode as version 1; new V1 writes store 1 and V2 writes store 2. V1 response bodies remain
+byte-shape compatible and do not gain the field. V2 rule, alert, and capture responses expose the
+required read-only value `"contractVersion": 2`.
+
+Version isolation is enforced before pagination and lookup results are returned. V1 lists never
+contain V2 resources and V2 lists never contain V1 resources. Fetching, patching, deleting,
+evaluating, listing captures for, or acting on an ID through the wrong version returns `404`; it does
+not disclose that the resource exists in another contract. A patch cannot change contract version.
+
+The legacy V1 per-alert `/events` endpoint remains a deferred compatibility surface. V2 does not
+duplicate that empty endpoint; V2 alert lifecycle items are available through the backed,
+rule-scoped `/v2/rules/{id}/timeline` journal.
+
+V1 `source_parity` remains binary and keeps `templateSpec.left` / `.right` plus its four legacy
+evidence keys. V2 uses named `sources[]` and does not accept V1 template kinds. There is no automatic
+rewrite of rules, captures, alerts, or accepted evidence snapshots. See
+[ADR-004](../prd/adr-004-multi-source-comparisons.md).
+
+V1 validation messages present those inputs as **Source A** and **Source B**, while retaining the
+stable machine path separately—for example, `Source A is missing an asset (field: left.asset)`.
+This is a presentation-only change: request fields, stored specifications, and evidence keys remain
+unchanged.
+
+---
+
+## V2 multi-source controls
+
+The lifecycle, cadence, severity, scheduling, pagination, alert actions, and auth scopes match V1;
+only the versioned route, typed template catalog, and evidence contracts differ.
+
+### Create a balance equation
+
+`POST /v2/rules`
+
+```json
+{
+  "name": "cash-plus-receivable-equals-obligation",
+  "templateKind": "balance_equation",
+  "templateSpec": {
+    "sources": [
+      { "id": "cash", "ledger": "main", "query": { "$match": { "address": "cash:*" } }, "asset": "USD/2" },
+      { "id": "receivable", "ledger": "main", "query": { "$match": { "address": "receivable:*" } }, "asset": "USD/2" },
+      { "id": "obligation", "ledger": "control", "query": { "$match": { "address": "liability:*" } }, "asset": "USD/2" }
+    ],
+    "terms": [
+      { "source": "cash", "coefficient": 1 },
+      { "source": "receivable", "coefficient": 1 },
+      { "source": "obligation", "coefficient": -1 }
+    ],
+    "tolerance": "0"
+  },
+  "severity": "high",
+  "cadence": "daily"
+}
+```
+
+The `201` rule contains `contractVersion: 2` and its exact `compiledCEL`. Evaluation evidence uses
+`schemaVersion: 2`, `operation: "balance_equation"`, named source values/contributions, residual,
+absolute residual, tolerance, and `compiledCEL`.
+
+### Create exchange-rate bounds
+
+`POST /v2/rules`
+
+```json
+{
+  "name": "eur-usd-valuation-band",
+  "templateKind": "exchange_rate_bounds",
+  "templateSpec": {
+    "sources": [
+      { "id": "eur", "ledger": "treasury", "query": { "$match": { "address": "position:eur" } }, "asset": "EUR/2" },
+      { "id": "usd", "ledger": "treasury", "query": { "$match": { "address": "valuation:usd" } }, "asset": "USD/2" }
+    ],
+    "baseSource": "eur",
+    "quoteSource": "usd",
+    "rate": { "target": "1.10", "toleranceBps": 25 }
+  }
+}
+```
+
+The observed rate means quote major units per base major unit. Bounds are inclusive and evaluated by
+exact CEL financial built-ins backed by `big.Int` / `big.Rat`; JSON decimal strings are never
+converted to binary floating point. A zero base produces a normal failed outcome with
+`undefinedReason: "base_balance_zero"`.
+
+### Create source consensus
+
+`POST /v2/rules`
+
+```json
+{
+  "name": "usd-record-consensus",
+  "templateKind": "source_consensus",
+  "templateSpec": {
+    "sources": [
+      { "id": "subledger", "ledger": "main", "query": { "$match": { "address": "customers:total" } }, "asset": "USD/2" },
+      { "id": "processor", "kind": "account_metadata", "ledger": "processor", "query": { "$match": { "address": "reported:balance" } }, "metadataKey": "reported_balance", "asset": "USD/2" },
+      { "id": "bank", "kind": "account_metadata", "ledger": "bank", "query": { "$match": { "address": "statement:closing" } }, "metadataKey": "closing_balance", "asset": "USD/2" }
+    ],
+    "tolerance": "100"
+  }
+}
+```
+
+Consensus passes only when every declared source is present and the widest balance spread is within
+tolerance. Evidence names the minimum and maximum sources and lists missing source IDs.
+
+### Create portfolio coverage bounds
+
+`POST /v2/rules`
+
+```json
+{
+  "name": "liquid-reserve-coverage",
+  "templateKind": "coverage_ratio_bounds",
+  "templateSpec": {
+    "sources": [
+      { "id": "cash", "ledger": "treasury", "query": { "$match": { "address": "assets:cash:*" } }, "asset": "USD/2" },
+      { "id": "securities", "ledger": "treasury", "query": { "$match": { "address": "assets:securities:*" } }, "asset": "USD/2" },
+      { "id": "liabilities", "ledger": "main", "query": { "$match": { "address": "liabilities:customers:*" } }, "asset": "USD/2" }
+    ],
+    "numeratorTerms": [
+      { "source": "cash", "coefficient": 1 },
+      { "source": "securities", "coefficient": 1 }
+    ],
+    "denominatorTerms": [
+      { "source": "liabilities", "coefficient": 1 }
+    ],
+    "ratio": { "min": "1.00", "max": "1.20" }
+  }
+}
+```
+
+Every source is assigned exactly once to a signed portfolio. Evidence preserves both totals, every
+contribution, and the exact reduced ratio. A zero denominator is a typed failed outcome.
+
+### V2 validation errors
+
+Invalid specs return the existing `400 VALIDATION` envelope. Human wording uses the source label or
+ID and retains a machine path in the detail:
+
+```json
+{
+  "errorCode": "VALIDATION",
+  "errorMessage": "templates: invalid spec",
+  "details": "Source \"obligation\" is missing an asset (field: sources[2].asset)"
+}
+```
+
+All source queries are validated before persistence. One invalid/unindexed query rejects the entire
+rule; transient ledger failures remain server errors rather than being misclassified as validation.
+
+See [templates.md](./templates.md#v2-catalog) for the complete specs, arithmetic,
+fingerprints, and evidence.
+
+`GET /v2/rules/{id}/captures` returns the same cursor envelope as V1, with
+`contractVersion: 2` on each capture and the V2 evidence object preserved unchanged. V2 alert
+evidence and `resolution.evidenceSnapshot` preserve that same object; they are never translated to
+V1 left/right keys.
 
 ---
 
@@ -90,11 +265,10 @@ the template's `tolerance`. Returns `200` + the evaluation result (not persisted
 }
 ```
 
-`evidence` records every failing fingerprint plus a passing fingerprint only when that pass
-automatically resolves an active alert. This bounded roster documents both the break and its later
-successful reconciliation without persisting thousands of unrelated passing fingerprints from a
-wide rule. An all-`PASS` evaluation with no active alert still has `"evidence": []`. The evaluation
-object itself is **not** a durable entity (a deterministic projection, RFC §4.4.2) — but each run's
+`evidence` records every passing and failing fingerprint and the exact values used for its verdict.
+This complete roster documents both breaks and successful reconciliations, including passes that do
+not mutate an alert. The evaluation object itself is **not** a durable entity (a deterministic
+projection, RFC §4.4.2) — but each run's
 **capture** is (ADR-003), queryable via `GET /rules/{id}/captures` below.
 
 #### `GET /rules/{id}/captures` — evaluation history (captures)
@@ -121,7 +295,16 @@ queryable **live** today — no event sink required. Cursor-paginated, most-rece
         "verdict":       "fail",
         "trigger":       "scheduled",
         "capturedAt":    "2026-03-01T00:00:00Z",
-        "evidence":      { "delta": "5" }
+        "evidence": {
+          "asset": "USD/2",
+          "leftSource": "ledger:main",
+          "leftBalance": "100",
+          "rightSource": "ledger:control",
+          "rightBalance": "95",
+          "difference": "5",
+          "signedDiff": "5",
+          "tolerance": 0
+        }
       }
     ]
   }
@@ -225,18 +408,46 @@ Clears an active snooze before its window elapses. Idempotent — unsnoozing an 
 <a id="events"></a>
 ## Events
 
+### Rule timeline
+
+`GET /rules/{ruleID}/timeline` and `GET /v2/rules/{ruleID}/timeline` return one
+newest-first, cursor-paginated history containing rule revisions, evaluation
+observations, and alert lifecycle activity. Every item uses a common envelope:
+
+```json
+{
+  "id": "8941:0",
+  "sequence": "8941",
+  "kind": "evaluation.completed",
+  "category": "evaluation",
+  "ruleID": "…",
+  "contractVersion": 2,
+  "ruleRevision": "sha256:…",
+  "correlationID": "evaluation UUID",
+  "occurredAt": "2026-07-18T10:30:00Z",
+  "recordedAt": "2026-07-18T10:30:00.042Z",
+  "payload": {}
+}
+```
+
+Read the current rule with `GET /rules/{id}` (or `/v2/rules/{id}`) and page the
+timeline independently below it. `revision` on the current rule and
+`ruleRevision` on an evaluation identify the exact effective configuration.
+The journal is forward-only: pre-rollout state is not presented as invented
+lifecycle activity.
+
 Reconciliation runs **no message bus of its own**. Every alert transition writes a self-describing
 `last_transition` envelope into the `alert:item` metadata in the same atomic batch as the state
 change, so the control-ledger's log entry for that write carries "what happened":
-`COMMITTED_TRANSACTION` for lifecycle moves (open/ack/resolve/accept/auto-resolve),
-`SAVED_METADATA`/`DELETED_METADATA` for snooze/unsnooze.
+`COMMITTED_TRANSACTION` for lifecycle moves and status-neutral snooze/unsnooze interactions.
 
 Delivery is the **ledger's native events sink**. When the operator sets `--events-sink-url`,
 reconciliation provisions an HTTP webhook sink at boot (name `reconciliation`, event types
 `[COMMITTED_TRANSACTION, SAVED_METADATA, DELETED_METADATA]`, optional `--events-sink-secret` for the
 `X-Webhook-Signature` HMAC). The ledger delivers each matching committed log entry to the endpoint
-(e.g. the Webhooks module). Sink filtering is by event *type*, not ledger, so consumers filter on
-`event.ledger == _recon`.
+(e.g. the Webhooks module). The metadata types remain subscribed for compatibility with older or
+direct metadata writers. Sink filtering is by event *type*, not ledger, so consumers filter on the
+configured control-ledger name (default `reconciliation`).
 
 | Transition (`type`) | Fires when |
 |---|---|
@@ -271,6 +482,9 @@ event per committed write; repeat-suppression and snooze *muting* are a **consum
 Webhooks module / a future digest), driven by the `occurred` bumps and the `snooze` metadata (see
 [notification-suppression.md](./notification-suppression.md)). This is a deliberate deferral (RFC §4.4);
 the write-side `notify` flag and the watermill publisher were removed with Postgres.
+
+The events sink remains delivery infrastructure. Product history reads use the
+rule-scoped activity account and do not scan the global Ledger log.
 
 ---
 

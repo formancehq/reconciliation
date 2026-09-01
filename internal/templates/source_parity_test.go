@@ -34,6 +34,26 @@ func TestSourceParity_Validate(t *testing.T) {
 	}
 }
 
+func TestSourceParity_ValidationUsesHumanLabelsAndMachinePaths(t *testing.T) {
+	tmpl := NewSourceParity()
+
+	err := tmpl.Validate(mustJSON(t, ParitySpec{
+		Left:  SourceSpec{Query: json.RawMessage(`{}`)},
+		Right: ledgerSource("control", `{}`),
+	}))
+	if err == nil || !strings.Contains(err.Error(), "Source A") || !strings.Contains(err.Error(), "field: left.ledger") {
+		t.Fatalf("left validation error = %v, want Source A and left.ledger", err)
+	}
+
+	err = tmpl.Validate(mustJSON(t, ParitySpec{
+		Left:  ledgerSource("book", `{}`),
+		Right: SourceSpec{Ledger: "control"},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "Source B") || !strings.Contains(err.Error(), "field: right.query") {
+		t.Fatalf("right validation error = %v, want Source B and right.query", err)
+	}
+}
+
 // TestSourceParity_Drift — the drift use case expressed as parity: two ledgers'
 // records of the same money should be equal within tolerance.
 func TestSourceParity_Drift(t *testing.T) {

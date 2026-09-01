@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
+	"github.com/formancehq/reconciliation/internal/contractversion"
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -116,10 +118,14 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", templates.ErrInvalidSpec, err)
 	}
+	contractVersion := createContractVersion(ctx)
 
 	ev, err := s.templates.Get(req.TemplateKind)
 	if err != nil {
 		return nil, err
+	}
+	if err := validateTemplateContract(contractVersion, req.TemplateKind); err != nil {
+		return nil, fmt.Errorf("%w: %v", templates.ErrInvalidSpec, err)
 	}
 	if err := ev.Validate(req.TemplateSpec); err != nil {
 		return nil, err
@@ -154,18 +160,21 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 	}
 
 	rule := &models.Rule{
-		ID:            uuid.New(),
-		Name:          req.Name,
-		TemplateKind:  req.TemplateKind,
-		TemplateSpec:  req.TemplateSpec,
-		CompiledCEL:   compiled,
-		Enabled:       enabled,
-		Severity:      severity,
-		Cadence:       cadence,
-		Schedule:      req.Schedule,
-		Notifications: req.Notifications,
-		Labels:        req.Labels,
+		ID:              uuid.New(),
+		ContractVersion: contractVersion,
+		Name:            req.Name,
+		TemplateKind:    req.TemplateKind,
+		TemplateSpec:    req.TemplateSpec,
+		CompiledCEL:     compiled,
+		Enabled:         enabled,
+		Severity:        severity,
+		Cadence:         cadence,
+		Schedule:        req.Schedule,
+		Notifications:   req.Notifications,
+		Labels:          req.Labels,
+		CreatedAt:       time.Now().UTC(),
 	}
+	rule.UpdatedAt = rule.CreatedAt
 	if err := s.store.CreateRule(ctx, rule); err != nil {
 		return nil, err
 	}
@@ -174,26 +183,29 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 
 // GetRule returns one rule or store.ErrNotFound.
 func (s *Service) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error) {
-	return s.store.GetRule(ctx, id)
+	return s.getRuleForContract(ctx, id)
 }
 
 // ListRules is a passthrough — the storage layer handles pagination + filters.
 func (s *Service) ListRules(ctx context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+	if version, ok := contractversion.FromContext(ctx); ok {
+		q.Options.Options.ContractVersion = &version
+	}
 	return s.store.ListRules(ctx, q)
 }
 
 // PatchRule applies a partial update. If templateKind or templateSpec changes,
 // the new spec is validated and the compiled_cel is rederived.
 func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch store.RulePatch) error {
+	rule, err := s.getRuleForContract(ctx, id)
+	if err != nil {
+		return err
+	}
 	// If the caller is changing the template surface, re-validate against the
 	// registry and rederive compiled_cel so explanations stay accurate.
 	if patch.TemplateKind != nil || patch.TemplateSpec != nil {
 		if s.templates == nil {
 			return errors.New("service: templates registry not configured")
-		}
-		rule, err := s.store.GetRule(ctx, id)
-		if err != nil {
-			return err
 		}
 		kind := rule.TemplateKind
 		if patch.TemplateKind != nil {
@@ -206,6 +218,9 @@ func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch store.RuleP
 		ev, err := s.templates.Get(kind)
 		if err != nil {
 			return err
+		}
+		if err := validateTemplateContract(rule.ContractVersion, kind); err != nil {
+			return fmt.Errorf("%w: %v", templates.ErrInvalidSpec, err)
 		}
 		if err := ev.Validate(spec); err != nil {
 			return err
@@ -229,6 +244,9 @@ func (s *Service) PatchRule(ctx context.Context, id uuid.UUID, patch store.RuleP
 
 // DeleteRule cascades to evaluations + alerts (and their events) via FK.
 func (s *Service) DeleteRule(ctx context.Context, id uuid.UUID) error {
+	if _, err := s.getRuleForContract(ctx, id); err != nil {
+		return err
+	}
 	return s.store.DeleteRule(ctx, id)
 }
 

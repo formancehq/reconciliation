@@ -22,9 +22,10 @@ const DefaultControlLedger = "reconciliation"
 // Assets minted in the control-ledger (precision 0 — they are markers/counters,
 // not money).
 const (
-	AssetAlert   = "ALERT"   // lifecycle marker: exactly one unit per live alert
-	AssetOcc     = "OCC"     // per-alert occurrence counter (balance on the item account)
-	AssetCapture = "CAPTURE" // one unit minted per recorded evaluation (capture counter)
+	AssetAlert    = "ALERT"    // lifecycle marker: exactly one unit per live alert
+	AssetOcc      = "OCC"      // per-alert occurrence counter (balance on the item account)
+	AssetCapture  = "CAPTURE"  // one unit minted per recorded evaluation (capture counter)
+	AssetActivity = "ACTIVITY" // one unit per rule lifecycle, evaluation, or alert activity
 )
 
 // Lifecycle states — the {state} segment of a marker account. The marker sits in
@@ -107,6 +108,12 @@ func CaptureAccount(ruleID, period string) string {
 func CapturePool(ruleID string) string {
 	return "capture:pool:rule:" + ruleID
 }
+
+// ActivityAccount is the single append-only transaction stream for a rule.
+func ActivityAccount(ruleID string) string { return "activity:rule:" + ruleID }
+
+// ActivityPool mints the precision-zero activity counter for a rule.
+func ActivityPool(ruleID string) string { return "activity:pool:rule:" + ruleID }
 
 // CaptureRulePrefix matches all capture buckets of a rule across every period
 // (`capture:rule:{ruleID}:per:*`). Used to list a rule's full capture history as

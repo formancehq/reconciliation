@@ -91,6 +91,26 @@ func TestAlertMetadataNoOccVolume(t *testing.T) {
 	require.Empty(t, got.Labels)
 }
 
+func TestAlertMetadataContractVersionCompatibility(t *testing.T) {
+	t.Parallel()
+
+	base := &models.Alert{ID: uuid.New(), RuleID: uuid.New()}
+	md, err := alertToMetadata(base)
+	require.NoError(t, err)
+	delete(md, schema.MetaContractVersion)
+	got, err := alertFromAccount(&commonpb.Account{Metadata: md})
+	require.NoError(t, err)
+	require.Equal(t, models.ContractVersionV1, got.ContractVersion)
+
+	base.ContractVersion = models.ContractVersionV2
+	md, err = alertToMetadata(base)
+	require.NoError(t, err)
+	require.Equal(t, "2", md[schema.MetaContractVersion].GetStringValue())
+	got, err = alertFromAccount(&commonpb.Account{Metadata: md})
+	require.NoError(t, err)
+	require.Equal(t, models.ContractVersionV2, got.ContractVersion)
+}
+
 func TestStatusStateMapping(t *testing.T) {
 	t.Parallel()
 

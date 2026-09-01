@@ -12,8 +12,9 @@ import (
 // first open, re-open, and on-going failures — the storage layer figures out
 // what kind of transition is happening based on the current row state.
 type OpenAlertInput struct {
-	RuleID      uuid.UUID
-	Fingerprint string
+	RuleID          uuid.UUID
+	ContractVersion models.ContractVersion
+	Fingerprint     string
 	// PeriodID scopes the alert to a reconciliation period. Empty defaults to
 	// models.ContinuousPeriod, which reproduces the original
 	// (rule_id, fingerprint) dedup. The caller (the evaluation service)

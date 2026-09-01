@@ -43,9 +43,9 @@ func addLedgerFlags(flags *pflag.FlagSet) {
 const reconciliationEventsSinkName = "reconciliation"
 
 // reconciliationSinkEventTypes are the ledger event types that carry alert
-// transitions: lifecycle moves (open/ack/resolve/accept/auto-resolve) are
-// COMMITTED_TRANSACTION (marker move + account_metadata), snooze/unsnooze are
-// SAVED_METADATA/DELETED_METADATA. Consumers filter on event.ledger == control.
+// transitions. Current lifecycle and snooze/unsnooze writes are
+// COMMITTED_TRANSACTION events because they append activity atomically. Metadata
+// events remain subscribed for compatibility with older or direct writers.
 func reconciliationSinkEventTypes() []commonpb.EventType {
 	return []commonpb.EventType{
 		commonpb.EventType_COMMITTED_TRANSACTION,

@@ -27,13 +27,14 @@ const (
 type Evaluation struct {
 	bun.BaseModel `bun:"reconciliations.evaluation" json:"-"`
 
-	ID        uuid.UUID        `bun:",pk,nullzero"                 json:"id"`
-	RuleID    uuid.UUID        `bun:"rule_id,notnull"              json:"ruleID"`
-	StartedAt time.Time        `bun:"started_at,notnull,nullzero"  json:"startedAt"`
-	EndedAt   time.Time        `bun:"ended_at,notnull,nullzero"    json:"endedAt"`
-	Result    EvaluationResult `bun:",notnull"                     json:"result"`
-	Evidence  json.RawMessage  `bun:",type:jsonb"                  json:"evidence,omitempty"`
-	Error     string           `bun:",nullzero"                    json:"error,omitempty"`
-	CostUnits int64            `bun:"cost_units,notnull"           json:"costUnits"`
-	CreatedAt time.Time        `bun:"created_at,notnull,nullzero"  json:"createdAt"`
+	ID              uuid.UUID        `bun:",pk,nullzero"                 json:"id"`
+	ContractVersion ContractVersion  `bun:"-" json:"-"`
+	RuleID          uuid.UUID        `bun:"rule_id,notnull"              json:"ruleID"`
+	StartedAt       time.Time        `bun:"started_at,notnull,nullzero"  json:"startedAt"`
+	EndedAt         time.Time        `bun:"ended_at,notnull,nullzero"    json:"endedAt"`
+	Result          EvaluationResult `bun:",notnull"                     json:"result"`
+	Evidence        json.RawMessage  `bun:",type:jsonb"                  json:"evidence,omitempty"`
+	Error           string           `bun:",nullzero"                    json:"error,omitempty"`
+	CostUnits       int64            `bun:"cost_units,notnull"           json:"costUnits"`
+	CreatedAt       time.Time        `bun:"created_at,notnull,nullzero"  json:"createdAt"`
 }

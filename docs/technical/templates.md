@@ -1,8 +1,12 @@
-# V1 GA Template Catalog
+# Template Catalog
 
-Templates are the **entire public V1 GA surface** — raw CEL is internal-only (see [ADR-001](../prd/adr-001-cel-kernel.md)). Each template is a typed spec, a validator, an explainer (for the persisted `compiled_cel`), and an end-to-end evaluator that produces one `Outcome` per fingerprint axis (per-asset for V1 GA).
+Templates are the public rule surface — raw CEL is internal-only (see
+[ADR-001](../prd/adr-001-cel-kernel.md)). Each template is a typed spec, a validator, an explainer
+(for the persisted `compiled_cel`), and an end-to-end evaluator that produces one `Outcome` per
+fingerprint axis.
 
-> Status: all three templates are ✅ shipped in [internal/templates/](../../internal/templates/), including `account_threshold` per-account mode.
+> Status: all three V1 templates and four additive V2 templates are ✅ implemented. V2 does not
+> rename or reinterpret any V1 field or evidence key.
 
 ---
 
@@ -12,15 +16,16 @@ Templates are the **entire public V1 GA surface** — raw CEL is internal-only (
 flowchart LR
     Spec[Typed Spec] --> Validate
     Spec --> Explain[Explain → representative CEL]
-    Explain --> Persist[Saved to rule.compiled_cel]
+    Explain --> Compile[Compile / type-check]
+    Compile --> Persist[Saved to rule.compiled_cel]
     Spec --> Evaluate
     Evaluate --> Scout["Scout via resolvers (ledgers, live)"]
     Scout --> Universe["Determine fingerprint axis<br/>(asset universe)"]
     Universe --> Loop[For each axis value]
-    Loop --> RenderCEL[Render per-axis CEL]
-    RenderCEL --> Compile[engine.Compile]
-    Compile --> Run[engine.Evaluate]
-    Run --> Outcome[Outcome: fingerprint + passed + evidence]
+    Loop --> Math[Exact typed arithmetic]
+    Loop --> RenderCEL[Render per-axis compiledCEL]
+    Math --> Outcome[Outcome: fingerprint + passed + evidence]
+    RenderCEL --> Outcome
     Loop --> Outcomes[List of Outcome]
 ```
 
@@ -29,12 +34,18 @@ Every template:
 1. **Validates** the spec at rule-create time. Failures return `ErrInvalidSpec` (→ HTTP 400).
 2. **Explains** itself — produces a representative CEL string for `rule.compiled_cel`. Not executed at runtime.
 3. **Scouts** the asset universe at evaluation time (queries resolvers).
-4. **Evaluates** per asset by rendering a fresh CEL string, compiling it via the kernel, and running it.
+4. **Evaluates** with exact typed arithmetic and renders the equivalent per-outcome `compiledCEL`.
 5. **Returns `[]Outcome`** — one per asset, with fingerprint, pass/fail, and evidence.
 
-A **kernel/template consistency guard** in each template double-checks the kernel's verdict against direct big.Int math and errors loudly on divergence. Catches future kernel drift.
+A golden **kernel/template consistency guard** checks rendered CEL against the authoritative direct
+math, catching future semantic drift without repeating live reads in production evaluation.
 
 Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a ledger account-set descriptor (`ledger` + `query`) that knows how to resolve to per-asset balances and render its `balance(ledgerSet…)` CEL term. `source_parity` composes sources through it, so there is one code path for "read a balance source".
+
+V2 builds on the same resolver boundary but uses **named aggregate sources**. Every source has a
+stable `id` and one declared `asset`; operations refer to IDs rather than positional left/right
+fields. The V2 shape and arithmetic are fixed by
+[ADR-004](../prd/adr-004-multi-source-comparisons.md).
 
 **Scope.** A ledger source can be read in one of two scopes, a native capability of the Source primitive:
 - **aggregate** (default): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
@@ -217,6 +228,342 @@ abs(balance(ledgerSet("book", "<query json>"), "USD/2") - metadataInt(ledgerSet(
 **The equality primitive** — `source_parity` is the cross-source equality check (`abs(left − right) ≤ tol`), resolving and rendering both sides through the shared `Source` primitive ([source.go](../../internal/templates/source.go)) — one code path for "read a balance source". `account_metadata` is the first non-ledger source kind; an external bank/PSP-account kind slots in the same way once it has a resolver + kernel builtin.
 
 **Code**: [internal/templates/source_parity.go](../../internal/templates/source_parity.go), [internal/templates/source.go](../../internal/templates/source.go)
+
+---
+
+## V2 catalog
+
+V2 templates are available only through the `/v2` API. They are aggregate-only and use the shared
+named-source shape below.
+
+### Named source
+
+```json
+{
+  "id": "book",
+  "label": "Customer balance",
+  "kind": "ledger",
+  "ledger": "main",
+  "query": { "$match": { "address": "accounts:customer:*" } },
+  "asset": "USD/2"
+}
+```
+
+| Field | Rules |
+|---|---|
+| `id` | Required, unique within the rule, `^[A-Za-z][A-Za-z0-9_-]{0,63}$`. This is the stable machine reference. |
+| `label` | Optional operator-facing name. It does not replace `id` in machine references. |
+| `kind` | Optional; defaults to `ledger`. Supported values are `ledger` and `account_metadata`. |
+| `ledger` | Required ledger name. |
+| `query` | Required, non-null query; validated against the ledger before persistence. |
+| `asset` | Required valid asset code. One V2 source produces one declared asset amount. |
+| `metadataKey` | Required only for `account_metadata`; the matched accounts' integer values are summed. |
+
+Each V2 spec accepts at most 32 sources and at least two unless the template is stricter;
+`exchange_rate_bounds` requires exactly two. A ledger source whose declared asset is absent resolves to
+`balance: "0"` and `present: false`. A missing or non-integer metadata value is an evaluation
+`ERROR`, not a silent zero. V2 does not support `per_account` scope.
+
+### 4. `balance_equation`
+
+Asserts that a signed sum of named source balances is within a minor-unit tolerance:
+
+```text
+abs(sum(coefficient_i * balance_i)) <= tolerance
+```
+
+The following rule expresses `receivable + cash = obligation`:
+
+```json
+{
+  "sources": [
+    {
+      "id": "receivable",
+      "label": "Open receivables",
+      "ledger": "main",
+      "query": { "$match": { "address": "receivable:*" } },
+      "asset": "USD/2"
+    },
+    {
+      "id": "cash",
+      "ledger": "main",
+      "query": { "$match": { "address": "cash:settlement" } },
+      "asset": "USD/2"
+    },
+    {
+      "id": "obligation",
+      "ledger": "control",
+      "query": { "$match": { "address": "customer:liability:*" } },
+      "asset": "USD/2"
+    }
+  ],
+  "terms": [
+    { "source": "receivable", "coefficient": 1 },
+    { "source": "cash", "coefficient": 1 },
+    { "source": "obligation", "coefficient": -1 }
+  ],
+  "tolerance": "0"
+}
+```
+
+**Validation**
+
+- Every source is referenced exactly once by `terms`; unknown, duplicate, or unused source IDs are rejected.
+- `coefficient` is a non-zero signed integer.
+- All sources declare the same asset.
+- `tolerance` is a non-negative base-10 integer string of at most 78 digits, in that asset's minor units.
+- Validation details identify the source for people and retain a machine path, for example:
+  `Source "obligation" requires an asset (field: sources[2].asset)`.
+
+**Fingerprint** — `asset:<asset>`
+
+**Evidence**
+
+```json
+{
+  "schemaVersion": 2,
+  "operation": "balance_equation",
+  "asset": "USD/2",
+  "sources": [
+    {
+      "id": "receivable",
+      "label": "Open receivables",
+      "kind": "ledger",
+      "asset": "USD/2",
+      "balance": "7000",
+      "present": true,
+      "coefficient": 1,
+      "contribution": "7000"
+    },
+    {
+      "id": "cash",
+      "kind": "ledger",
+      "asset": "USD/2",
+      "balance": "3000",
+      "present": true,
+      "coefficient": 1,
+      "contribution": "3000"
+    },
+    {
+      "id": "obligation",
+      "kind": "ledger",
+      "asset": "USD/2",
+      "balance": "9950",
+      "present": true,
+      "coefficient": -1,
+      "contribution": "-9950"
+    }
+  ],
+  "residual": "50",
+  "absoluteResidual": "50",
+  "tolerance": "0",
+  "compiledCEL": "balanceEquation(...)"
+}
+```
+
+Balances, contributions, and residuals are strings so JSON clients cannot lose integer precision.
+The evidence source array keeps term order. The fingerprint and source IDs, not array positions, are
+the stable identifiers.
+
+### 5. `exchange_rate_bounds`
+
+Compares two differently denominated balances using the convention **quote major units per one base
+major unit**. Given minor-unit balances `B` and `Q`, and asset precisions `pB` and `pQ`:
+
+```text
+observed rate = (Q * 10^pB) / (B * 10^pQ)
+```
+
+The evaluator uses exact `big.Int` cross-multiplication; it never uses binary floating point or a
+rounded display value.
+
+```json
+{
+  "sources": [
+    {
+      "id": "eur",
+      "label": "EUR position",
+      "ledger": "treasury",
+      "query": { "$match": { "address": "position:eur" } },
+      "asset": "EUR/2"
+    },
+    {
+      "id": "usd",
+      "label": "USD valuation",
+      "ledger": "treasury",
+      "query": { "$match": { "address": "valuation:usd" } },
+      "asset": "USD/2"
+    }
+  ],
+  "baseSource": "eur",
+  "quoteSource": "usd",
+  "rate": {
+    "target": "1.10",
+    "toleranceBps": 25
+  }
+}
+```
+
+`rate` has exactly one of two shapes:
+
+```json
+{ "min": "1.075", "max": "1.125" }
+```
+
+```json
+{ "target": "1.10", "toleranceBps": 25 }
+```
+
+**Validation and boundaries**
+
+- `baseSource` and `quoteSource` refer to different declared source IDs.
+- The source array contains exactly those two sources.
+- `min`, `max`, and `target` are positive plain-decimal strings, with no sign or exponent and at
+  most 18 fractional digits.
+- Explicit bounds require both values and `min <= max`.
+- Target mode requires `toleranceBps` from 0 through 10,000. Its exact inclusive bounds are
+  `target × (10,000 ± toleranceBps) / 10,000`.
+- A value exactly on either bound passes.
+- Signs are preserved. Two negative balances yield a positive ratio; opposite signs yield a
+  negative ratio and fail positive bounds.
+- A zero quote balance is the defined rate zero. A zero base balance is undefined and produces a
+  failed outcome with `undefinedReason: "base_balance_zero"`; it does not raise an engine error.
+
+**Fingerprint** — `baseSource:<base-id>|quoteSource:<quote-id>`
+
+**Evidence**
+
+```json
+{
+  "schemaVersion": 2,
+  "operation": "exchange_rate_bounds",
+  "base": {
+    "id": "eur",
+    "label": "EUR position",
+    "kind": "ledger",
+    "asset": "EUR/2",
+    "balance": "10000",
+    "present": true
+  },
+  "quote": {
+    "id": "usd",
+    "label": "USD valuation",
+    "kind": "ledger",
+    "asset": "USD/2",
+    "balance": "11000",
+    "present": true
+  },
+  "observedRate": {
+    "numerator": "11",
+    "denominator": "10"
+  },
+  "effectiveBounds": {
+    "min": "1.09725",
+    "max": "1.10275"
+  },
+  "compiledCEL": "exchangeRateWithin(...)"
+}
+```
+
+When the base balance is zero, evidence omits `observedRate` and adds
+`"undefinedReason": "base_balance_zero"`.
+
+V2 evidence is deliberately separate from V1: it carries `schemaVersion: 2`, an operation
+discriminator, and named sources; it never emits `leftSource`, `leftBalance`, `rightSource`, or
+`rightBalance`.
+
+V2's CEL financial built-ins use exact `big.Int` / `big.Rat` arithmetic. The rule and evidence retain
+`compiledCEL` as the canonical explanation and cross-check surface; no binary floating point is used.
+
+---
+
+### 6. `source_consensus`
+
+Checks that several independent records of the same asset all exist and agree symmetrically:
+
+```text
+all sources present AND max(balance_i) - min(balance_i) <= tolerance
+```
+
+This is useful for a subledger, custodian mirror, processor report, and bank-reported value that
+should describe the same money. It is deliberately not “compare B, C, and D with A”: the verdict is
+based on the widest disagreement across every source.
+
+```json
+{
+  "sources": [
+    { "id": "subledger", "label": "Customer subledger", "ledger": "main", "query": { "$match": { "address": "customers:total" } }, "asset": "USD/2" },
+    { "id": "processor", "label": "Processor report", "kind": "account_metadata", "ledger": "processor", "query": { "$match": { "address": "reported:balance" } }, "metadataKey": "reported_balance", "asset": "USD/2" },
+    { "id": "bank", "label": "Bank statement", "kind": "account_metadata", "ledger": "bank", "query": { "$match": { "address": "statement:closing" } }, "metadataKey": "closing_balance", "asset": "USD/2" }
+  ],
+  "tolerance": "100"
+}
+```
+
+**Validation and verdict**
+
+- Two through 32 sources, all declaring the same asset.
+- `tolerance` is a non-negative integer string in that asset's minor units.
+- A missing ledger asset is explicit evidence (`present: false`) and fails the outcome even when its
+  zero value would otherwise fall inside the spread.
+- There is no quorum or “ignore missing” mode. All declared records participate.
+- Ties for minimum or maximum use the first source in request order, keeping evidence deterministic.
+
+**Fingerprint** — `asset:<asset>`
+
+Evidence includes the ordered source snapshots, `minimumSource`, `minimumBalance`, `maximumSource`,
+`maximumBalance`, `spread`, `tolerance`, `missingSources`, and `compiledCEL`.
+
+### 7. `coverage_ratio_bounds`
+
+Checks an exact ratio between two signed, multi-source portfolios of the same asset:
+
+```text
+minRatio <= sum(numerator contributions) / sum(denominator contributions) <= maxRatio
+```
+
+For example, liquid cash plus eligible securities can be compared with customer liabilities:
+
+```json
+{
+  "sources": [
+    { "id": "cash", "label": "Bank cash", "ledger": "treasury", "query": { "$match": { "address": "assets:cash:*" } }, "asset": "USD/2" },
+    { "id": "securities", "label": "Eligible securities", "ledger": "treasury", "query": { "$match": { "address": "assets:securities:*" } }, "asset": "USD/2" },
+    { "id": "encumbered", "label": "Encumbered reserves", "ledger": "treasury", "query": { "$match": { "address": "assets:encumbered:*" } }, "asset": "USD/2" },
+    { "id": "liabilities", "label": "Customer liabilities", "ledger": "main", "query": { "$match": { "address": "liabilities:customers:*" } }, "asset": "USD/2" }
+  ],
+  "numeratorTerms": [
+    { "source": "cash", "coefficient": 1 },
+    { "source": "securities", "coefficient": 1 },
+    { "source": "encumbered", "coefficient": -1 }
+  ],
+  "denominatorTerms": [
+    { "source": "liabilities", "coefficient": 1 }
+  ],
+  "ratio": { "target": "1.10", "toleranceBps": 500 }
+}
+```
+
+**Validation and boundaries**
+
+- Every source declares the same asset and is assigned exactly once across `numeratorTerms` and
+  `denominatorTerms`; unused, duplicated, and unknown IDs are rejected.
+- Both portfolios contain at least one term. Coefficients are non-zero signed integers.
+- `ratio` accepts the same exact `{min,max}` or `{target,toleranceBps}` shapes as
+  `exchange_rate_bounds`; bounds are inclusive and no binary floating point is used.
+- Missing ledger assets contribute explicit zero with `present: false` evidence.
+- A denominator total of zero fails with `undefinedReason: "denominator_total_zero"` and no
+  `observedRatio`; it is not an engine error.
+
+**Fingerprint** — `asset:<asset>`
+
+Evidence contains numerator and denominator portfolio totals, every signed contribution, the exact
+reduced `observedRatio` numerator/denominator, effective bounds, and `compiledCEL`.
+
+This remains separate from `exchange_rate_bounds`: FX compares two differently denominated sources
+with asset-precision conversion, while coverage compares two same-asset portfolios. It also remains
+separate from `balance_equation`: a ratio bound is scale-invariant and cannot be represented by one
+fixed residual tolerance.
 
 ---
 

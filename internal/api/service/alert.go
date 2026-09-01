@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
+	"github.com/formancehq/reconciliation/internal/contractversion"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
@@ -58,6 +59,9 @@ func (s *Service) AckAlert(ctx context.Context, id uuid.UUID, req *AckAlertReque
 	if req == nil || req.By == "" {
 		return nil, errors.New("ack: 'by' is required")
 	}
+	if _, err := s.getAlertForContract(ctx, id); err != nil {
+		return nil, err
+	}
 	ack := &models.Ack{
 		By:   req.By,
 		At:   time.Now().UTC(),
@@ -72,6 +76,9 @@ func (s *Service) AckAlert(ctx context.Context, id uuid.UUID, req *AckAlertReque
 func (s *Service) ResolveAlert(ctx context.Context, id uuid.UUID, req *ResolveAlertRequest) (*models.Alert, error) {
 	if req == nil || req.By == "" {
 		return nil, errors.New("resolve: 'by' is required")
+	}
+	if _, err := s.getAlertForContract(ctx, id); err != nil {
+		return nil, err
 	}
 	resolution := &models.Resolution{
 		Kind:            models.ResolutionFixedByBooking,
@@ -94,7 +101,7 @@ func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAler
 		return nil, errors.New("accept: 'note' is required for business acceptance")
 	}
 
-	current, err := s.store.GetAlert(ctx, id)
+	current, err := s.getAlertForContract(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +133,9 @@ func (s *Service) SnoozeAlert(ctx context.Context, id uuid.UUID, req *SnoozeAler
 	if !req.Until.After(time.Now().UTC()) {
 		return nil, errors.New("snooze: 'until' must be in the future")
 	}
+	if _, err := s.getAlertForContract(ctx, id); err != nil {
+		return nil, err
+	}
 	return s.store.SnoozeAlert(ctx, id, req.Until, req.By, req.Note)
 }
 
@@ -135,16 +145,22 @@ func (s *Service) UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *Unsnooze
 	if req == nil || req.By == "" {
 		return nil, errors.New("unsnooze: 'by' is required")
 	}
+	if _, err := s.getAlertForContract(ctx, id); err != nil {
+		return nil, err
+	}
 	return s.store.UnsnoozeAlert(ctx, id, req.By)
 }
 
 // GetAlert returns the alert or store.ErrNotFound.
 func (s *Service) GetAlert(ctx context.Context, id uuid.UUID) (*models.Alert, error) {
-	return s.store.GetAlert(ctx, id)
+	return s.getAlertForContract(ctx, id)
 }
 
 // ListAlerts is a passthrough — filters live in store.
 func (s *Service) ListAlerts(ctx context.Context, q store.GetAlertsQuery) (*bunpaginate.Cursor[models.Alert], error) {
+	if version, ok := contractversion.FromContext(ctx); ok {
+		q.Options.Options.ContractVersion = &version
+	}
 	return s.store.ListAlerts(ctx, q)
 }
 
@@ -153,6 +169,9 @@ func (s *Service) ListAlerts(ctx context.Context, q store.GetAlertsQuery) (*bunp
 // unbounded (one row per failing evaluation). This is the API surface for the
 // "timeline" view and any future audit-export tooling.
 func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q store.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error) {
+	if _, err := s.getAlertForContract(ctx, alertID); err != nil {
+		return nil, err
+	}
 	return s.store.ListAlertEvents(ctx, alertID, q)
 }
 
@@ -161,6 +180,12 @@ func (s *Service) ListAlertEvents(ctx context.Context, alertID uuid.UUID, q stor
 // "reconciliation history" view: every run of a rule with its verdict, trigger
 // and observed evidence, read live from the control ledger.
 func (s *Service) ListCaptures(ctx context.Context, ruleID uuid.UUID, q store.GetCapturesQuery) (*bunpaginate.Cursor[models.Capture], error) {
+	if _, err := s.getRuleForContract(ctx, ruleID); err != nil {
+		return nil, err
+	}
+	if version, ok := contractversion.FromContext(ctx); ok {
+		q.Options.Options.ContractVersion = &version
+	}
 	return s.store.ListCaptures(ctx, ruleID, q)
 }
 

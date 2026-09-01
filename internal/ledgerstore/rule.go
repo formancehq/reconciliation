@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
+	"github.com/formancehq/reconciliation/internal/ledger"
+	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/store"
@@ -23,12 +25,26 @@ import (
 // collisions do not occur in practice; a guarded create would cost a
 // read-before-write round-trip on every call. See migration log F13.
 func (s *LedgerStore) CreateRule(ctx context.Context, r *models.Rule) error {
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = time.Now().UTC()
+	}
+	if r.UpdatedAt.IsZero() {
+		r.UpdatedAt = r.CreatedAt
+	}
+	revision, err := ruleRevision(r)
+	if err != nil {
+		return fmt.Errorf("create rule %s revision: %w", r.ID, err)
+	}
+	r.Revision = revision
 	md, err := ruleToMetadata(r)
 	if err != nil {
 		return fmt.Errorf("create rule %s: %w", r.ID, err)
 	}
-
-	if err := s.client.SaveAccountMetadataValues(ctx, s.controlLedger, schema.RuleAccount(r.ID.String()), md); err != nil {
+	txmd, err := activityMetadata("rule.created", r.ID, r.ContractVersion, r.Revision, "", r.CreatedAt, map[string]any{"snapshot": r})
+	if err != nil {
+		return fmt.Errorf("create rule %s event: %w", r.ID, err)
+	}
+	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{Ledger: s.controlLedger, ScriptName: schema.NumscriptActivity, ScriptVersion: schema.NumscriptVersion, Vars: activityVars(r.ID.String()), TxMetadata: txmd, AccountMetadata: map[string]*commonpb.MetadataMap{schema.RuleAccount(r.ID.String()): {Values: md}}, IdempotencyKey: alertActionKey("rule-create", r.ID.String())}); err != nil {
 		return fmt.Errorf("create rule %s: %w", r.ID, err)
 	}
 
@@ -69,24 +85,34 @@ func (s *LedgerStore) PatchRule(ctx context.Context, id uuid.UUID, patch store.R
 	}
 
 	oldLabels := rule.Labels
+	previousRevision := rule.Revision
 	applyRulePatch(rule, patch)
 	rule.UpdatedAt = time.Now().UTC()
+	rule.Revision, err = ruleRevision(rule)
+	if err != nil {
+		return fmt.Errorf("patch rule %s revision: %w", id, err)
+	}
+	if rule.Revision == previousRevision {
+		return nil
+	}
 
 	md, err := ruleToMetadata(rule)
 	if err != nil {
 		return fmt.Errorf("patch rule %s: %w", id, err)
 	}
 
-	if err := s.client.SaveAccountMetadataValues(ctx, s.controlLedger, schema.RuleAccount(id.String()), md); err != nil {
-		return fmt.Errorf("patch rule %s: %w", id, err)
-	}
-
+	var deletes map[string][]string
 	if patch.Labels != nil {
 		if removed := removedLabelKeys(oldLabels, rule.Labels); len(removed) > 0 {
-			if err := s.client.DeleteAccountMetadata(ctx, s.controlLedger, schema.RuleAccount(id.String()), removed...); err != nil {
-				return fmt.Errorf("patch rule %s: prune labels: %w", id, err)
-			}
+			deletes = map[string][]string{schema.RuleAccount(id.String()): removed}
 		}
+	}
+	txmd, err := activityMetadata("rule.updated", id, rule.ContractVersion, rule.Revision, "", rule.UpdatedAt, map[string]any{"previousRevision": previousRevision, "snapshot": rule})
+	if err != nil {
+		return fmt.Errorf("patch rule %s event: %w", id, err)
+	}
+	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{Ledger: s.controlLedger, ScriptName: schema.NumscriptActivity, ScriptVersion: schema.NumscriptVersion, Vars: activityVars(id.String()), TxMetadata: txmd, AccountMetadata: map[string]*commonpb.MetadataMap{schema.RuleAccount(id.String()): {Values: md}}, DeleteMetadata: deletes, IdempotencyKey: uniqueActionKey("rule-patch", id.String(), rule.Revision)}); err != nil {
+		return fmt.Errorf("patch rule %s: %w", id, err)
 	}
 
 	return nil
@@ -113,7 +139,16 @@ func (s *LedgerStore) DeleteRule(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("delete rule %s: %w", id, store.ErrNotFound)
 	}
 
-	if err := s.client.DeleteAccountMetadata(ctx, s.controlLedger, schema.RuleAccount(id.String()), keys...); err != nil {
+	rule, err := ruleFromAccount(acct)
+	if err != nil {
+		return fmt.Errorf("delete rule %s: decode: %w", id, err)
+	}
+	at := time.Now().UTC()
+	txmd, err := activityMetadata("rule.deleted", id, rule.ContractVersion, rule.Revision, "", at, map[string]any{"snapshot": rule})
+	if err != nil {
+		return fmt.Errorf("delete rule %s event: %w", id, err)
+	}
+	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{Ledger: s.controlLedger, ScriptName: schema.NumscriptActivity, ScriptVersion: schema.NumscriptVersion, Vars: activityVars(id.String()), TxMetadata: txmd, DeleteMetadata: map[string][]string{schema.RuleAccount(id.String()): keys}, IdempotencyKey: alertActionKey("rule-delete", id.String(), rule.Revision)}); err != nil {
 		return fmt.Errorf("delete rule %s: %w", id, err)
 	}
 
@@ -143,7 +178,9 @@ func (s *LedgerStore) ListRules(ctx context.Context, q store.GetRulesQuery) (*bu
 			return nil, fmt.Errorf("list rules: decode %s: %w", acct.GetAddress(), derr)
 		}
 
-		rules = append(rules, *r)
+		if version := q.Options.Options.ContractVersion; version == nil || r.ContractVersion.Effective() == *version {
+			rules = append(rules, *r)
+		}
 	}
 
 	slices.SortFunc(rules, func(a, b models.Rule) int { return b.CreatedAt.Compare(a.CreatedAt) })

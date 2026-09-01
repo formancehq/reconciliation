@@ -7,6 +7,7 @@ import (
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
+	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,13 @@ func TestCaptureFromTransaction_RoundTrip(t *testing.T) {
 	require.Equal(t, "scheduled", c.Trigger)
 	require.True(t, at.Equal(c.CapturedAt), "captured_at round-trips")
 	require.JSONEq(t, `{"delta":"5"}`, string(c.Evidence))
+	require.Equal(t, models.ContractVersionV1, c.ContractVersion, "legacy captures default to V1")
+
+	v2tx := captureTx(8, ruleID, "2026-03", evalID.String(), "fail", "scheduled", at, `{}`)
+	v2tx.Metadata[schema.CaptureMetaContractVersion] = strVal("2")
+	v2, ok := captureFromTransaction(v2tx)
+	require.True(t, ok)
+	require.Equal(t, models.ContractVersionV2, v2.ContractVersion)
 }
 
 func TestCaptureFromTransaction_NotACapture(t *testing.T) {

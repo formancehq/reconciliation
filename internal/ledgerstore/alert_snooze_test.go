@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
+	"github.com/formancehq/reconciliation/internal/ledger"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
 	recstore "github.com/formancehq/reconciliation/internal/store"
@@ -24,17 +24,16 @@ func TestSnoozeAlert_SetsSnoozeMetadata(t *testing.T) {
 	a := activeAlert(models.AlertOpen)
 	expectFindByID(t, client, a, "1")
 
-	client.EXPECT().
-		SaveAccountMetadataValues(gomock.Any(), testControl, itemAddrOf(a), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _, _ string, md map[string]*commonpb.MetadataValue) error {
-			// The snooze key + a self-describing transition record are written
-			// together (status-neutral, no marker move).
-			require.Contains(t, md, schema.MetaSnooze)
-			require.Contains(t, md, schema.MetaLastTransition)
-			require.Len(t, md, 2)
+	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tx ledger.CreateTransactionInput) error {
+		md := tx.AccountMetadata[itemAddrOf(a)].Values
+		// The snooze key + a self-describing transition record are written
+		// together (status-neutral, no marker move).
+		require.Contains(t, md, schema.MetaSnooze)
+		require.Contains(t, md, schema.MetaLastTransition)
+		require.Len(t, md, 3)
 
-			return nil
-		})
+		return nil
+	})
 
 	got, err := store.SnoozeAlert(context.Background(), a.ID, time.Now().Add(time.Hour), "ops", "on it")
 	require.NoError(t, err)
@@ -80,13 +79,13 @@ func TestUnsnoozeAlert_DeletesSnooze(t *testing.T) {
 
 	// Unsnooze records the transition (with the actor) and clears the snooze key
 	// in one atomic batch.
-	client.EXPECT().
-		ApplyMetadata(gomock.Any(), testControl, itemAddrOf(a), gomock.Any(), schema.MetaSnooze).
-		DoAndReturn(func(_ context.Context, _, _ string, set map[string]*commonpb.MetadataValue, _ ...string) error {
-			require.Contains(t, set, schema.MetaLastTransition)
+	client.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tx ledger.CreateTransactionInput) error {
+		set := tx.AccountMetadata[itemAddrOf(a)].Values
+		require.Contains(t, set, schema.MetaLastTransition)
+		require.Equal(t, []string{schema.MetaSnooze}, tx.DeleteMetadata[itemAddrOf(a)])
 
-			return nil
-		})
+		return nil
+	})
 
 	got, err := store.UnsnoozeAlert(context.Background(), a.ID, "ops")
 	require.NoError(t, err)

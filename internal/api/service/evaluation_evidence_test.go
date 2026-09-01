@@ -113,14 +113,14 @@ func TestEvaluateRule_RetainsFreshSuccessfulResolutionEvidence(t *testing.T) {
 	require.Equal(t, models.AlertResolved, fakeStore.alertFor(rule.ID, "asset:USD/2").Status)
 	require.Len(t, fakeStore.eventsFor(alertID), 2)
 
-	// A later successful evaluation sees no active transition to document. It
-	// records an empty evidence roster and does not create another pass event.
+	// A later successful evaluation sees no active transition to document. Its
+	// observation is still retained even though it creates no alert event.
 	retryEvaluation, err := svc.EvaluateRule(ctx, rule.ID, EvaluateRuleRequest{PIT: time.Now()})
 	require.NoError(t, err)
 	require.Equal(t, models.EvaluationPass, retryEvaluation.Result)
 	require.Len(t, fakeStore.captures, 3)
-	require.Empty(t, decodeRetainedOutcomes(t, fakeStore.captures[2].Evidence))
-	require.JSONEq(t, `[]`, string(retryEvaluation.Evidence))
+	require.Len(t, decodeRetainedOutcomes(t, fakeStore.captures[2].Evidence), 1)
+	require.JSONEq(t, string(passingEvaluation.Evidence), string(retryEvaluation.Evidence))
 	require.Len(t, fakeStore.eventsFor(alertID), 2)
 }
 
@@ -145,10 +145,10 @@ func TestEvaluateRule_MixedFailureAndSuccessfulResolutionEvidence(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, models.EvaluationFail, first.Result)
 	firstEvidence := retainedOutcomesByFingerprint(t, fakeStore.captures[0].Evidence)
-	require.Len(t, firstEvidence, 2)
+	require.Len(t, firstEvidence, 3)
 	require.Contains(t, firstEvidence, "asset:USD/2")
 	require.Contains(t, firstEvidence, "asset:EUR/2")
-	require.NotContains(t, firstEvidence, "asset:GBP/2", "unrelated passes must not be retained")
+	require.True(t, firstEvidence["asset:GBP/2"].Passed)
 
 	// USD now reconciles, EUR remains broken with a new observed value, and GBP
 	// remains an unrelated pass. The overall verdict stays FAIL.
@@ -160,14 +160,14 @@ func TestEvaluateRule_MixedFailureAndSuccessfulResolutionEvidence(t *testing.T) 
 	require.Len(t, fakeStore.captures, 2)
 
 	mixed := retainedOutcomesByFingerprint(t, fakeStore.captures[1].Evidence)
-	require.Len(t, mixed, 2)
+	require.Len(t, mixed, 3)
 	require.True(t, mixed["asset:USD/2"].Passed)
 	require.Equal(t, "350", mixed["asset:USD/2"].Evidence.RightBalance)
 	require.Equal(t, "0", mixed["asset:USD/2"].Evidence.Difference)
 	require.False(t, mixed["asset:EUR/2"].Passed)
 	require.Equal(t, "60", mixed["asset:EUR/2"].Evidence.RightBalance)
 	require.Equal(t, "30", mixed["asset:EUR/2"].Evidence.Difference)
-	require.NotContains(t, mixed, "asset:GBP/2")
+	require.True(t, mixed["asset:GBP/2"].Passed)
 	require.Nil(t, fakeStore.activeFor(rule.ID, "asset:USD/2"))
 	require.NotNil(t, fakeStore.activeFor(rule.ID, "asset:EUR/2"))
 }
