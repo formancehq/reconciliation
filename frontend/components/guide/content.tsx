@@ -116,6 +116,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 						[<strong key="invariant">Ledger invariant</strong>, 'prove that accounting account sets net to zero', 'Debit-normal assets against credit-normal liabilities, per asset'],
 						[<strong key="parity">Source parity</strong>, 'prove that two independently sourced balances agree', 'Posting-derived ledger balance against another ledger or an account-metadata balance'],
 						[<strong key="threshold">Account threshold</strong>, 'detect when balances leave an allowed range', 'A minimum reserve, maximum exposure, or both, aggregated or per account'],
+							[<strong key="multi">Multi-source (V2)</strong>, 'reconcile more than two named sources at once', 'A balance equation, exchange-rate bounds, source consensus, or a coverage ratio across named sources'],
 					]}
 				/>
 
