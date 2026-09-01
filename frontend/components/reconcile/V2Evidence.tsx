@@ -1,0 +1,791 @@
+import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react"
+import { Card } from "@/components/ui/card"
+import type {
+  BalanceEquationEvidenceSourceV2,
+  CoveragePortfolioV2,
+  EvidenceSourceV2,
+  EvidenceV2,
+  RationalV2,
+} from "@/lib/recon"
+import { sourceName } from "@/lib/recon/v2"
+
+export function isEvidenceV2(value: unknown): value is EvidenceV2 {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 2 ||
+    typeof value.operation !== "string"
+  )
+    return false
+  if (value.operation === "balance_equation") {
+    return (
+      Array.isArray(value.sources) &&
+      value.sources.every(isEquationSource) &&
+      strings(value, [
+        "asset",
+        "residual",
+        "absoluteResidual",
+        "tolerance",
+        "compiledCEL",
+      ])
+    )
+  }
+  if (value.operation === "exchange_rate_bounds") {
+    return (
+      isEvidenceSource(value.base) &&
+      isEvidenceSource(value.quote) &&
+      isBounds(value.effectiveBounds) &&
+      optionalRational(value.observedRate) &&
+      strings(value, ["compiledCEL"])
+    )
+  }
+  if (value.operation === "source_consensus") {
+    return (
+      Array.isArray(value.sources) &&
+      value.sources.every(isEvidenceSource) &&
+      Array.isArray(value.missingSources) &&
+      value.missingSources.every((source) => typeof source === "string") &&
+      strings(value, [
+        "asset",
+        "minimumSource",
+        "minimumBalance",
+        "maximumSource",
+        "maximumBalance",
+        "spread",
+        "tolerance",
+        "compiledCEL",
+      ])
+    )
+  }
+  if (value.operation === "coverage_ratio_bounds") {
+    return (
+      isPortfolio(value.numerator) &&
+      isPortfolio(value.denominator) &&
+      isBounds(value.effectiveBounds) &&
+      optionalRational(value.observedRatio) &&
+      strings(value, ["asset", "compiledCEL"])
+    )
+  }
+  return false
+}
+
+export function V2Evidence({
+  evidence,
+  compact = false,
+  passed,
+}: {
+  evidence: unknown
+  compact?: boolean
+  passed?: boolean
+}) {
+  if (!isEvidenceV2(evidence))
+    return <StructuredEvidenceFallback evidence={evidence} />
+  const outcomePassed = passed ?? inferEvidencePassed(evidence)
+  switch (evidence.operation) {
+    case "balance_equation":
+      return (
+        <BalanceEquationEvidence
+          evidence={evidence}
+          passed={outcomePassed}
+          compact={compact}
+        />
+      )
+    case "exchange_rate_bounds":
+      return (
+        <ExchangeRateEvidence
+          evidence={evidence}
+          passed={outcomePassed}
+          compact={compact}
+        />
+      )
+    case "source_consensus":
+      return (
+        <SourceConsensusEvidence
+          evidence={evidence}
+          passed={outcomePassed}
+          compact={compact}
+        />
+      )
+    case "coverage_ratio_bounds":
+      return (
+        <CoverageRatioEvidence
+          evidence={evidence}
+          passed={outcomePassed}
+          compact={compact}
+        />
+      )
+  }
+}
+
+type EvidenceOf<Operation extends EvidenceV2["operation"]> = Extract<
+  EvidenceV2,
+  { operation: Operation }
+>
+
+interface OperationEvidenceProps<Operation extends EvidenceV2["operation"]> {
+  evidence: EvidenceOf<Operation>
+  passed: boolean
+  compact: boolean
+}
+
+export function BalanceEquationEvidence({
+  evidence,
+  passed,
+  compact,
+}: OperationEvidenceProps<"balance_equation">) {
+  return (
+    <EvidenceShell
+      title="Balance equation"
+      summary={`|${evidence.residual}| = ${evidence.absoluteResidual}; tolerance ${evidence.tolerance} ${evidence.asset}`}
+      passed={passed}
+      verdict={`The signed equation ${passed ? "balances" : "does not balance"} within tolerance.`}
+      compiledCEL={evidence.compiledCEL}
+      compact={compact}
+    >
+      <SourceTable sources={evidence.sources} equation compact={compact} />
+      <MetricGrid
+        metrics={[
+          ["Residual", evidence.residual],
+          ["Absolute residual", evidence.absoluteResidual],
+          ["Tolerance", evidence.tolerance],
+        ]}
+      />
+    </EvidenceShell>
+  )
+}
+
+export function ExchangeRateEvidence({
+  evidence,
+  passed,
+  compact,
+}: OperationEvidenceProps<"exchange_rate_bounds">) {
+  return (
+    <EvidenceShell
+      title="Exchange-rate bounds"
+      summary="quote major units per base major unit"
+      passed={passed}
+      verdict={
+        evidence.undefinedReason === "base_balance_zero"
+          ? "Failed control: the quote-per-base rate is undefined."
+          : `${passed ? "Pass" : "Fail"}: the exact quote-per-base rate ${passed ? "is" : "is not"} inside the inclusive bounds.`
+      }
+      compiledCEL={evidence.compiledCEL}
+      compact={compact}
+    >
+      <div className="grid gap-2 sm:grid-cols-2">
+        <SnapshotCard role="Base source" source={evidence.base} />
+        <SnapshotCard role="Quote source" source={evidence.quote} />
+      </div>
+      {evidence.undefinedReason === "base_balance_zero" ? (
+        <ControlFailure>
+          Observed rate is undefined because the base source balance is zero.
+        </ControlFailure>
+      ) : (
+        <MetricGrid
+          metrics={[
+            ["Observed exact rate", exactRational(evidence.observedRate)],
+            ["Inclusive minimum", evidence.effectiveBounds.min],
+            ["Inclusive maximum", evidence.effectiveBounds.max],
+          ]}
+        />
+      )}
+    </EvidenceShell>
+  )
+}
+
+export function SourceConsensusEvidence({
+  evidence,
+  passed,
+  compact,
+}: OperationEvidenceProps<"source_consensus">) {
+  const missing = new Set(evidence.missingSources)
+  return (
+    <EvidenceShell
+      title="Source consensus"
+      summary={`maximum − minimum = ${evidence.spread} ≤ ${evidence.tolerance}`}
+      passed={passed}
+      verdict={`${passed ? "Pass" : "Fail"}: ${passed ? "every source is present and the widest spread is within tolerance" : "the all-sources consensus control is not satisfied"}.`}
+      compiledCEL={evidence.compiledCEL}
+      compact={compact}
+    >
+      {evidence.missingSources.length > 0 && (
+        <ControlFailure>
+          Missing sources:{" "}
+          {evidence.missingSources
+            .map((id) => displaySourceId(evidence.sources, id))
+            .join(", ")}
+          . Missing records fail the control and are not treated as healthy
+          zeroes.
+        </ControlFailure>
+      )}
+      <SourceTable
+        sources={evidence.sources}
+        missing={missing}
+        minimumSource={evidence.minimumSource}
+        maximumSource={evidence.maximumSource}
+        compact={compact}
+      />
+      <MetricGrid
+        metrics={[
+          [
+            "Minimum source",
+            displaySourceId(evidence.sources, evidence.minimumSource),
+          ],
+          ["Minimum balance", evidence.minimumBalance],
+          [
+            "Maximum source",
+            displaySourceId(evidence.sources, evidence.maximumSource),
+          ],
+          ["Maximum balance", evidence.maximumBalance],
+          ["Spread", evidence.spread],
+          ["Tolerance", evidence.tolerance],
+        ]}
+      />
+    </EvidenceShell>
+  )
+}
+
+export function CoverageRatioEvidence({
+  evidence,
+  passed,
+  compact,
+}: OperationEvidenceProps<"coverage_ratio_bounds">) {
+  return (
+    <EvidenceShell
+      title="Coverage-ratio bounds"
+      summary={evidence.asset}
+      passed={passed}
+      verdict={
+        evidence.undefinedReason === "denominator_total_zero"
+          ? "Failed control: the coverage ratio is undefined."
+          : `${passed ? "Pass" : "Fail"}: the exact portfolio ratio ${passed ? "is" : "is not"} inside the inclusive bounds.`
+      }
+      compiledCEL={evidence.compiledCEL}
+      compact={compact}
+    >
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Portfolio
+          title="Numerator portfolio"
+          portfolio={evidence.numerator}
+          compact={compact}
+        />
+        <Portfolio
+          title="Denominator portfolio"
+          portfolio={evidence.denominator}
+          compact={compact}
+        />
+      </div>
+      {evidence.undefinedReason === "denominator_total_zero" ? (
+        <ControlFailure>
+          Observed ratio is undefined because the denominator portfolio totals
+          zero.
+        </ControlFailure>
+      ) : (
+        <MetricGrid
+          metrics={[
+            ["Observed exact ratio", exactRational(evidence.observedRatio)],
+            ["Inclusive minimum", evidence.effectiveBounds.min],
+            ["Inclusive maximum", evidence.effectiveBounds.max],
+          ]}
+        />
+      )}
+    </EvidenceShell>
+  )
+}
+
+function EvidenceShell({
+  title,
+  summary,
+  passed,
+  verdict,
+  compiledCEL,
+  compact,
+  children,
+}: {
+  title: string
+  summary: string
+  passed: boolean
+  verdict: string
+  compiledCEL: string
+  compact: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div className="min-w-0 space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="text-sm font-medium">{title}</div>
+        <div className="font-mono text-xs break-words text-muted-foreground">
+          {summary}
+        </div>
+      </div>
+      <div
+        role="status"
+        className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+          passed
+            ? "border-green-foreground/30 bg-green-background text-green-foreground"
+            : "border-destructive-foreground/30 border-l-2 border-l-destructive-foreground bg-destructive text-destructive-foreground"
+        }`}
+      >
+        {passed ? (
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+        ) : (
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+        )}
+        <div className="min-w-0">
+          <div className="font-medium">
+            {passed ? "Control passed" : "Control failed"}
+          </div>
+          <div className="text-xs/5 opacity-90">{verdict}</div>
+        </div>
+      </div>
+      {children}
+      {!compact && (
+        <>
+          <p className="text-[10px] text-muted-foreground">
+            All balances, contributions, and exact rational parts are displayed
+            as received; no JavaScript floating-point conversion is used.
+          </p>
+          <details className="rounded-md border bg-muted/20 text-xs">
+            <summary className="cursor-pointer px-3 py-2 font-medium text-muted-foreground select-none hover:text-foreground">
+              Technical details (compiled CEL)
+            </summary>
+            <pre className="max-h-40 overflow-auto border-t px-3 py-2 font-mono text-[11px] break-all whitespace-pre-wrap text-muted-foreground">
+              {compiledCEL}
+            </pre>
+          </details>
+        </>
+      )}
+    </div>
+  )
+}
+
+function SourceTable({
+  sources,
+  equation = false,
+  missing = new Set<string>(),
+  minimumSource,
+  maximumSource,
+  compact = false,
+}: {
+  sources: Array<EvidenceSourceV2 | BalanceEquationEvidenceSourceV2>
+  equation?: boolean
+  missing?: Set<string>
+  minimumSource?: string
+  maximumSource?: string
+  compact?: boolean
+}) {
+  if (!Array.isArray(sources))
+    return <ControlFailure>Malformed source evidence.</ControlFailure>
+  const sourceRole = (id: string) =>
+    id === minimumSource && id === maximumSource
+      ? "Minimum and maximum"
+      : id === minimumSource
+        ? "Minimum"
+        : id === maximumSource
+          ? "Maximum"
+          : undefined
+  return (
+    <div data-testid="v2-responsive-source-table" className="min-w-0">
+      <div className="grid min-w-0 gap-2 md:hidden">
+        {sources.map((source) => (
+          <SnapshotCard
+            key={source.id}
+            source={source}
+            role={sourceRole(source.id)}
+            missing={missing.has(source.id)}
+            equation={equation}
+          />
+        ))}
+      </div>
+      <div className="hidden min-w-0 overflow-x-auto rounded-md border md:block">
+        <table className="w-full min-w-[42rem] text-left text-xs">
+          <thead className="bg-muted/35 text-[10px] tracking-wide text-muted-foreground uppercase">
+            <tr>
+              <th className="px-3 py-2 font-medium">Source</th>
+              <th className="px-3 py-2 font-medium">Balance</th>
+              {equation && (
+                <th className="px-3 py-2 font-medium">Coefficient</th>
+              )}
+              {equation && (
+                <th className="px-3 py-2 font-medium">Contribution</th>
+              )}
+              <th className="px-3 py-2 font-medium">Presence</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {sources.map((source) => {
+              const absent = missing.has(source.id) || !source.present
+              const coefficient =
+                equation && "coefficient" in source
+                  ? source.coefficient
+                  : undefined
+              const contribution =
+                equation && "contribution" in source
+                  ? source.contribution
+                  : undefined
+              return (
+                <tr
+                  key={source.id}
+                  className={absent ? "bg-destructive/5" : undefined}
+                >
+                  <td className="min-w-44 px-3 py-2">
+                    <div className="font-medium">{sourceName(source)}</div>
+                    {source.label && (
+                      <div className="font-mono text-[10px] text-muted-foreground">
+                        id: {source.id}
+                      </div>
+                    )}
+                    {sourceRole(source.id) && (
+                      <div className="mt-0.5 text-[10px] font-medium text-primary">
+                        {sourceRole(source.id)} source
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 font-mono break-all">
+                    {source.balance}
+                    <span className="ml-1 text-[10px] text-muted-foreground">
+                      {source.asset}
+                    </span>
+                  </td>
+                  {equation && (
+                    <td className="px-3 py-2 font-mono">{coefficient}</td>
+                  )}
+                  {equation && (
+                    <td className="px-3 py-2 font-mono break-all">
+                      {contribution}
+                    </td>
+                  )}
+                  <td className="px-3 py-2">
+                    <Presence present={!absent} />
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {compact && (
+        <span className="sr-only">Responsive source evidence table</span>
+      )}
+    </div>
+  )
+}
+
+function SnapshotCard({
+  source,
+  role,
+  missing = false,
+  equation = false,
+}: {
+  source: EvidenceSourceV2 | BalanceEquationEvidenceSourceV2
+  role?: string
+  missing?: boolean
+  equation?: boolean
+}) {
+  const contribution =
+    equation && "contribution" in source ? source.contribution : undefined
+  const coefficient =
+    equation && "coefficient" in source ? source.coefficient : undefined
+  return (
+    <Card
+      className={`min-w-0 p-3 ${missing || !source.present ? "border-destructive/50" : ""}`}
+    >
+      {role && (
+        <div className="mb-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+          {role}
+        </div>
+      )}
+      <div className="flex min-w-0 items-center gap-2">
+        {source.present && !missing ? (
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-foreground" />
+        ) : (
+          <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+        )}
+        <span
+          className="truncate text-sm font-medium"
+          title={sourceName(source)}
+        >
+          {sourceName(source)}
+        </span>
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+          {source.asset}
+        </span>
+      </div>
+      {source.label && (
+        <div className="truncate pl-5 font-mono text-[10px] text-muted-foreground">
+          id: {source.id}
+        </div>
+      )}
+      <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+        <dt className="text-muted-foreground">Kind</dt>
+        <dd>
+          {source.kind === "account_metadata"
+            ? "Account metadata"
+            : "Ledger balance"}
+        </dd>
+        <dt className="text-muted-foreground">Balance</dt>
+        <dd className="font-mono break-all">{source.balance}</dd>
+        <dt className="text-muted-foreground">Presence</dt>
+        <dd>
+          <Presence present={source.present && !missing} />
+        </dd>
+        {coefficient !== undefined && (
+          <>
+            <dt className="text-muted-foreground">Coefficient</dt>
+            <dd className="font-mono">{coefficient}</dd>
+          </>
+        )}
+        {contribution !== undefined && (
+          <>
+            <dt className="text-muted-foreground">Contribution</dt>
+            <dd className="font-mono break-all">{contribution}</dd>
+          </>
+        )}
+      </dl>
+    </Card>
+  )
+}
+
+function Portfolio({
+  title,
+  portfolio,
+  compact,
+}: {
+  title: string
+  portfolio: CoveragePortfolioV2
+  compact: boolean
+}) {
+  return (
+    <div className="min-w-0 rounded-md border p-3">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          {title}
+        </span>
+        <span className="font-mono text-sm font-medium">
+          Total {portfolio.total}
+        </span>
+      </div>
+      <SourceTable sources={portfolio.sources} equation compact={compact} />
+    </div>
+  )
+}
+
+function Presence({ present }: { present: boolean }) {
+  return present ? (
+    <span className="inline-flex items-center gap-1 text-green-foreground">
+      <CheckCircle2 className="h-3.5 w-3.5" /> Observed
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 font-medium text-destructive-foreground">
+      <XCircle className="h-3.5 w-3.5" /> Missing (not zero)
+    </span>
+  )
+}
+
+function MetricGrid({ metrics }: { metrics: Array<[string, string]> }) {
+  return (
+    <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      {metrics.map(([label, value]) => (
+        <div
+          key={label}
+          className="min-w-0 rounded-md border bg-muted/20 px-3 py-2"
+        >
+          <dt className="text-[10px] tracking-wide text-muted-foreground uppercase">
+            {label}
+          </dt>
+          <dd className="font-mono text-sm font-medium break-all">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function ControlFailure({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-destructive-foreground/30 border-l-2 border-l-destructive-foreground bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      {children}
+    </div>
+  )
+}
+
+function exactRational(value: RationalV2 | undefined): string {
+  return value ? `${value.numerator} / ${value.denominator}` : "—"
+}
+
+/** Infer a display verdict only when an enclosing OutcomeV2 did not provide it. */
+export function inferEvidencePassed(evidence: EvidenceV2): boolean {
+  try {
+    if (evidence.operation === "balance_equation") {
+      return (
+        evidence.sources.every((source) => source.present) &&
+        BigInt(evidence.absoluteResidual) <= BigInt(evidence.tolerance)
+      )
+    }
+    if (evidence.operation === "source_consensus") {
+      return (
+        evidence.missingSources.length === 0 &&
+        evidence.sources.every((source) => source.present) &&
+        BigInt(evidence.spread) <= BigInt(evidence.tolerance)
+      )
+    }
+    if (evidence.operation === "exchange_rate_bounds") {
+      return (
+        evidence.base.present &&
+        evidence.quote.present &&
+        evidence.undefinedReason === undefined &&
+        rationalWithinBounds(evidence.observedRate, evidence.effectiveBounds)
+      )
+    }
+    return (
+      evidence.numerator.sources.every((source) => source.present) &&
+      evidence.denominator.sources.every((source) => source.present) &&
+      evidence.undefinedReason === undefined &&
+      rationalWithinBounds(evidence.observedRatio, evidence.effectiveBounds)
+    )
+  } catch {
+    return false
+  }
+}
+
+function rationalWithinBounds(
+  value: RationalV2 | undefined,
+  bounds: { min: string; max: string }
+): boolean {
+  if (!value) return false
+  const numerator = BigInt(value.numerator)
+  let denominator = BigInt(value.denominator)
+  if (denominator === 0n) return false
+  let normalizedNumerator = numerator
+  if (denominator < 0n) {
+    normalizedNumerator = -normalizedNumerator
+    denominator = -denominator
+  }
+  const min = decimalFraction(bounds.min)
+  const max = decimalFraction(bounds.max)
+  return (
+    normalizedNumerator * min.denominator >= min.numerator * denominator &&
+    normalizedNumerator * max.denominator <= max.numerator * denominator
+  )
+}
+
+function decimalFraction(value: string): RationalV2AsBigInt {
+  if (!/^\d+(?:\.\d+)?$/.test(value)) throw new Error("invalid decimal")
+  const [whole, fraction = ""] = value.split(".")
+  const denominator = 10n ** BigInt(fraction.length)
+  return {
+    numerator: BigInt(`${whole}${fraction}`),
+    denominator,
+  }
+}
+
+interface RationalV2AsBigInt {
+  numerator: bigint
+  denominator: bigint
+}
+
+function displaySourceId(sources: EvidenceSourceV2[], id: string): string {
+  const source = sources.find((candidate) => candidate.id === id)
+  return source ? sourceName(source) : id
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+function strings(value: Record<string, unknown>, keys: string[]): boolean {
+  return keys.every((key) => typeof value[key] === "string")
+}
+
+function isEvidenceSource(value: unknown): value is EvidenceSourceV2 {
+  return (
+    isRecord(value) &&
+    strings(value, ["id", "kind", "asset", "balance"]) &&
+    (value.label === undefined || typeof value.label === "string") &&
+    (value.kind === "ledger" || value.kind === "account_metadata") &&
+    typeof value.present === "boolean"
+  )
+}
+
+function isEquationSource(
+  value: unknown
+): value is BalanceEquationEvidenceSourceV2 {
+  return (
+    isEvidenceSource(value) &&
+    "coefficient" in value &&
+    typeof value.coefficient === "number" &&
+    Number.isSafeInteger(value.coefficient) &&
+    "contribution" in value &&
+    typeof value.contribution === "string"
+  )
+}
+
+function isRational(value: unknown): value is RationalV2 {
+  return isRecord(value) && strings(value, ["numerator", "denominator"])
+}
+
+function optionalRational(value: unknown): boolean {
+  return value === undefined || isRational(value)
+}
+
+function isBounds(value: unknown): boolean {
+  return isRecord(value) && strings(value, ["min", "max"])
+}
+
+function isPortfolio(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.sources) &&
+    value.sources.every(isEquationSource) &&
+    typeof value.total === "string"
+  )
+}
+
+export function StructuredEvidenceFallback({
+  evidence,
+}: {
+  evidence: unknown
+}) {
+  const rows = flattenStructured(evidence)
+  if (rows.length === 0)
+    return (
+      <p className="text-sm text-muted-foreground">
+        No usable structured evidence was recorded.
+      </p>
+    )
+  return (
+    <div className="rounded-md border border-dashed p-3">
+      <div className="mb-2 text-xs font-medium text-muted-foreground">
+        Structured V2 evidence from an unknown or malformed operation
+      </div>
+      <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[minmax(8rem,auto)_minmax(0,1fr)]">
+        {rows.map(([key, value]) => (
+          <div key={key} className="contents">
+            <dt className="font-mono text-xs break-all text-muted-foreground">
+              {key}
+            </dt>
+            <dd className="font-mono text-xs break-all">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
+function flattenStructured(
+  value: unknown,
+  prefix = "",
+  depth = 0
+): Array<[string, string]> {
+  if (depth > 5) return [[prefix || "value", "[nested value]"]]
+  if (value === null || value === undefined)
+    return prefix ? [[prefix, String(value)]] : []
+  if (typeof value !== "object") return [[prefix || "value", String(value)]]
+  if (Array.isArray(value))
+    return value.flatMap((entry, index) =>
+      flattenStructured(entry, `${prefix}[${index}]`, depth + 1)
+    )
+  return Object.entries(value as Record<string, unknown>).flatMap(
+    ([key, entry]) =>
+      flattenStructured(entry, prefix ? `${prefix}.${key}` : key, depth + 1)
+  )
+}

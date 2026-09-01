@@ -14,9 +14,10 @@ paths:
           $ref: '#/components/responses/ServerInfo'
         default:
           $ref: '#/components/responses/ErrorResponse'
-      security:
-        - Authorization:
-            - reconciliation:read
+      # Public discovery endpoint: served outside the auth middleware (like
+      # /_healthcheck) so the console shell can probe it to discover this module
+      # before it holds a module-scoped token.
+      security: []
   /rules:
     post:
       summary: Create a rule
@@ -380,6 +381,61 @@ paths:
           schema: { type: string }
       responses:
         '200': { $ref: '#/components/responses/CapturesV2' }
+  # --- Ledger introspection (UI federation) ----------------------------------
+  # Read-only helpers the standalone UI's rule builder uses for live ledger-name
+  # / metadata-key / account autosuggest, sourced through this module's ledger
+  # gRPC connection. Best-effort: an unknown/unreachable ledger yields an empty
+  # set and the builder falls back to free-text.
+  /ledgers:
+    get:
+      summary: List ledger names
+      description: |
+        Live ledger names in the cluster (soft-deleted ledgers are skipped),
+        read through this module's ledger gRPC connection. Backs the rule
+        builder's ledger picker. Best-effort: an unreachable ledger yields [].
+      operationId: listLedgers
+      tags: [reconciliation.v1]
+      responses:
+        '200': { $ref: '#/components/responses/Ledgers' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+  /ledgers/{ledger}/meta-fields:
+    get:
+      summary: List a ledger's indexed account-metadata fields
+      description: |
+        Indexed account-metadata keys (+ value kind) and account types for a
+        data ledger, so the rule builder can offer a typed key picker. An
+        unknown ledger yields an empty set.
+      operationId: listLedgerMetaFields
+      tags: [reconciliation.v1]
+      parameters: [{ $ref: '#/components/parameters/Ledger' }]
+      responses:
+        '200': { $ref: '#/components/responses/LedgerMetaFields' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+  /ledgers/{ledger}/accounts:
+    get:
+      summary: List a ledger's accounts
+      description: |
+        Accounts (address + per-asset balance) for a data ledger, bounded by
+        limit and optionally filtered by an address prefix. Backs the UI's
+        account-selector autosuggest. An unknown ledger yields an empty list.
+      operationId: listLedgerAccounts
+      tags: [reconciliation.v1]
+      parameters:
+        - $ref: '#/components/parameters/Ledger'
+        - name: prefix
+          in: query
+          description: Restrict to accounts whose address starts with this prefix.
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: Maximum accounts to return (default 50, max 500).
+          schema: { type: integer, format: int64, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        '200': { $ref: '#/components/responses/LedgerAccounts' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
@@ -550,6 +606,12 @@ components:
       required: true
       description: The alert ID.
       schema: { type: string, format: uuid }
+    Ledger:
+      name: ledger
+      in: path
+      required: true
+      description: The data ledger name.
+      schema: { type: string }
   responses:
     NoContent:
       description: No content
@@ -635,6 +697,21 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/CapturesCursorResponseV2' }
+    Ledgers:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/LedgersResponse' }
+    LedgerMetaFields:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/LedgerMetaFieldsResponse' }
+    LedgerAccounts:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/LedgerAccountsResponse' }
   requestBodies:
     Rule:
       required: true
@@ -680,6 +757,71 @@ components:
           type: string
         details:
           type: string
+
+    # --- Ledger introspection schemas (UI federation) ----------------------
+
+    LedgersResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [ledgers]
+          properties:
+            ledgers:
+              type: array
+              items:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string }
+    LedgerMetaFieldsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [fields, accountTypes, addressIndexed]
+          properties:
+            fields:
+              type: array
+              items:
+                type: object
+                required: [key, kind, ready]
+                properties:
+                  key: { type: string }
+                  kind:
+                    type: string
+                    enum: [string, int, uint, bool, datetime]
+                  ready: { type: boolean }
+            accountTypes:
+              type: array
+              items:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string }
+                  pattern: { type: string }
+            addressIndexed: { type: boolean }
+    LedgerAccountsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [accounts]
+          properties:
+            accounts:
+              type: array
+              items:
+                type: object
+                required: [address, balances]
+                properties:
+                  address: { type: string }
+                  balances:
+                    type: object
+                    additionalProperties: { type: string }
+            capped: { type: boolean }
 
     # --- V1 Ledger Clarity schemas -----------------------------------------
 

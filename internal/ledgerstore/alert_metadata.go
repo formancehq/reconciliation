@@ -151,11 +151,16 @@ func alertFromAccount(acct *commonpb.Account) (*models.Alert, error) {
 	return a, nil
 }
 
-// occurrenceCount reads the alert's OCC balance (a decimal big.Int string).
+// occurrenceCount reads the alert's OCC balance, summing across colors since
+// volumes are now reported per (asset, color). BalancesByAsset does the summing
+// (and the input−output fallback) so color handling lives in one place.
 func occurrenceCount(acct *commonpb.Account) int64 {
-	n, _ := strconv.ParseInt(commonpb.BalanceByAsset(acct, schema.AssetOcc).String(), 10, 64)
+	occ := commonpb.BalancesByAsset(acct)[schema.AssetOcc]
+	if occ == nil {
+		return 0
+	}
 
-	return n
+	return occ.Int64()
 }
 
 // marshalOptional JSON-encodes a possibly-nil pointer; returns "" for nil.

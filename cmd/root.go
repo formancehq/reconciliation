@@ -14,6 +14,7 @@ var (
 
 const (
 	listenFlag = "listen"
+	uiURLFlag  = "ui-url"
 
 	// Control-ledger storage (ledger-native — replaces Postgres). The transport
 	// refuses an insecure connection unless --ledger-insecure is set (F2).

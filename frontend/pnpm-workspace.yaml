@@ -1,0 +1,12 @@
+# Force a patched sharp — it's Next's optional image-optimizer dependency and is
+# unused here (no next/image), so the advisory is inert, but this clears the alert.
+overrides:
+  sharp: '>=0.35.0'
+  # A transitive postcss@8.4.31 was still < the 8.5.10 XSS fix; force all instances.
+  postcss: '>=8.5.10'
+
+# Optional native build scripts we don't need; decline them explicitly so pnpm
+# stops prompting (verify-deps-before-run=false in .npmrc handles dev runs).
+allowBuilds:
+  sharp: false
+  unrs-resolver: false

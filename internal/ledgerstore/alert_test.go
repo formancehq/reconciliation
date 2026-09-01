@@ -43,9 +43,7 @@ func priorAccount(t *testing.T, a *models.Alert, occ string) *commonpb.Account {
 	return &commonpb.Account{
 		Address:  schema.AlertItemAccount(a.RuleID.String(), a.PeriodID, schema.FingerprintHash(a.Fingerprint)),
 		Metadata: md,
-		Volumes: []*commonpb.AccountVolume{
-			{Asset: schema.AssetOcc, Volumes: &commonpb.VolumesWithBalance{Balance: occ}},
-		},
+		Volumes:  []*commonpb.AccountVolume{{Asset: schema.AssetOcc, Volumes: &commonpb.VolumesWithBalance{Balance: occ}}},
 	}
 }
 

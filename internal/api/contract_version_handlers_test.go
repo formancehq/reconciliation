@@ -55,7 +55,7 @@ func TestV2DoesNotExposeDeferredAlertEventsRoute(t *testing.T) {
 	t.Parallel()
 
 	b, _ := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
 	req := httptest.NewRequest(http.MethodGet, "/v2/alerts/"+uuid.NewString()+"/events", nil)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
@@ -80,7 +80,7 @@ func TestV2CreateRouteScopesRequestAndRendersVersion(t *testing.T) {
 		}, nil
 	})
 
-	router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
 	req := httptest.NewRequest(http.MethodPost, "/v2/rules", strings.NewReader(`{"name":"eq","templateKind":"balance_equation","templateSpec":{}}`))
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)

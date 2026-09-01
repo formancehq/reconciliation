@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+
 	"github.com/formancehq/go-libs/aws/iam"
 
 	"github.com/formancehq/go-libs/licence"
@@ -25,6 +27,7 @@ func newServeCommand(version string) *cobra.Command {
 		RunE: runServer(version),
 	}
 	cmd.Flags().String(listenFlag, ":8080", "Listening address")
+	cmd.Flags().String(uiURLFlag, defaultUIURL(), "Base URL where this module's business UI is served (advertised at /_info for the console shell to embed)")
 	cmd.Flags().Bool(audit.AuditEnabledFlag, true, "Enable HTTP audit")
 
 	otlpmetrics.AddFlags(cmd.Flags())
@@ -40,6 +43,15 @@ func newServeCommand(version string) *cobra.Command {
 	return cmd
 }
 
+// defaultUIURL is the standalone frontend dev URL unless overridden by env.
+func defaultUIURL() string {
+	if v := os.Getenv("RECONCILIATION_UI_URL"); v != "" {
+		return v
+	}
+
+	return "http://localhost:3003"
+}
+
 func runServer(version string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		options := make([]fx.Option, 0)
@@ -51,12 +63,20 @@ func runServer(version string) func(cmd *cobra.Command, args []string) error {
 		)
 
 		listen, _ := cmd.Flags().GetString(listenFlag)
+		uiURL, _ := cmd.Flags().GetString(uiURLFlag)
 		auditEnabled, _ := cmd.Flags().GetBool(audit.AuditEnabledFlag)
 		options = append(options,
 			fx.Supply(audit.Config{Enabled: auditEnabled}),
 			api.HTTPModule(sharedapi.ServiceInfo{
 				Version: version,
 				Debug:   service.IsDebug(cmd),
+			}, api.ModuleInfo{
+				Version: version,
+				Debug:   service.IsDebug(cmd),
+				Name:    "reconciliation",
+				Label:   "Reconciliation",
+				Icon:    "scale",
+				UIURL:   uiURL,
 			}, listen),
 			messagingfx.PublishModuleFromFlags(cmd, service.IsDebug(cmd)),
 			licence.FXModuleFromFlags(cmd, ServiceName),
