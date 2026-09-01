@@ -15,7 +15,11 @@
  * Idempotent-ish: it deletes rules it previously created (matched by the
  * `demo=ledger-clarity` label) before re-seeding.
  *
- * Usage:  node scripts/seed-demo.mjs
+ * PREREQUISITE: the data ledger must exist and hold the loan:201:* book these
+ * rules read. On a fresh local cluster (no mortgage module running), seed it
+ * first with `./scripts/seed-data.sh` — otherwise evaluations produce no breaks.
+ *
+ * Usage:  ./scripts/seed-data.sh && node scripts/seed-demo.mjs
  *         RECON_API_URL=http://localhost:8081 LEDGER=mortgage node scripts/seed-demo.mjs
  */
 
