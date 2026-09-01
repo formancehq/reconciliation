@@ -17,6 +17,7 @@ import (
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
+	"github.com/formancehq/reconciliation/internal/ledgerpb/signaturepb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -52,7 +53,20 @@ const GRPCRetryPolicy = `{
 type Client struct {
 	conn    *grpc.ClientConn
 	service servicepb.BucketServiceClient
+
+	// signer, when set, makes every write commit as a SignedApplyBatch so the
+	// ledger stores an Ed25519 signature over the batch bytes on each log entry
+	// it produces — the native, externally-verifiable audit chain (EN-1930). Set
+	// once at construction via UseSigningKey, before the client is shared, then
+	// only read; nil preserves the original unsigned behaviour.
+	signer *SigningKey
 }
+
+// UseSigningKey activates content-signing for every subsequent write. It must be
+// called at construction — before the client is shared across request goroutines
+// — and paired with RegisterSigningKey so the ledger already knows the key when
+// the first signed batch arrives. Passing nil leaves the client unsigned.
+func (c *Client) UseSigningKey(key *SigningKey) { c.signer = key }
 
 // NewClient creates a new ledger gRPC client. If creds is nil, insecure
 // credentials are used. Extra dial options can carry Ed25519 request-signing
@@ -99,11 +113,129 @@ func (c *Client) Apply(ctx context.Context, requests ...*servicepb.Request) (*se
 // outcome instead of applying twice) — the at-least-once safety net for
 // crash-replays. An empty key disables dedup.
 func (c *Client) applyIdempotent(ctx context.Context, key string, requests ...*servicepb.Request) (*servicepb.ApplyResponse, error) {
+	batch := &servicepb.ApplyBatch{Requests: requests, IdempotencyKey: key}
+
+	// When a signing key is configured, commit as a SignedApplyBatch: serialize
+	// the batch once, Ed25519-sign those exact bytes, and ship them as the opaque
+	// signed payload. The ledger verifies the signature against the registered
+	// public key, unmarshals the same bytes (it never re-serializes), and records
+	// the signature on every log entry the batch produces — so a third party can
+	// later verify the entry from the public key alone (EN-1930, Phase 1).
+	if c.signer != nil && c.signer.CanSign() {
+		payload, err := batch.MarshalVT()
+		if err != nil {
+			return nil, fmt.Errorf("marshal apply batch for signing: %w", err)
+		}
+
+		signature, err := c.signer.Sign(payload)
+		if err != nil {
+			return nil, fmt.Errorf("sign apply batch: %w", err)
+		}
+
+		return c.service.Apply(ctx, &servicepb.ApplyRequest{
+			Variant: &servicepb.ApplyRequest_Signed{
+				Signed: &signaturepb.SignedApplyBatch{
+					KeyId:     c.signer.ID,
+					Signature: signature,
+					Payload:   payload,
+				},
+			},
+		})
+	}
+
 	return c.service.Apply(ctx, &servicepb.ApplyRequest{
+		Variant: &servicepb.ApplyRequest_Unsigned{Unsigned: batch},
+	})
+}
+
+// RegisterSigningKey registers the public half of an Ed25519 key with the ledger
+// so it will accept — and store — batches signed by the matching private key.
+//
+// Sent UNSIGNED by construction, bypassing c.signer: the key being registered is
+// not yet known to the ledger, so it cannot sign its own registration. Idempotent
+// — a key already registered is swallowed as AlreadyExists, so re-registering the
+// same key on every boot is a no-op.
+func (c *Client) RegisterSigningKey(ctx context.Context, key *SigningKey) error {
+	_, err := c.service.Apply(ctx, &servicepb.ApplyRequest{
 		Variant: &servicepb.ApplyRequest_Unsigned{
-			Unsigned: &servicepb.ApplyBatch{Requests: requests, IdempotencyKey: key},
+			Unsigned: &servicepb.ApplyBatch{
+				Requests: []*servicepb.Request{{
+					Type: &servicepb.Request_RegisterSigningKey{
+						RegisterSigningKey: &servicepb.RegisterSigningKeyRequest{
+							KeyId:     key.ID,
+							PublicKey: key.Public,
+						},
+					},
+				}},
+			},
 		},
 	})
+	if status.Code(err) == codes.AlreadyExists {
+		return nil
+	}
+
+	return err
+}
+
+// RegisterConfiguredSigningKey registers this client's own signing key (the one
+// set via UseSigningKey) with the ledger, if one is configured. Call it once at
+// startup, before the first signed write; a no-op when the client is unsigned.
+//
+// Idempotent across restarts, and it has to be by checking first: the ledger
+// accepts an UNSIGNED RegisterSigningKey only while its keystore is still empty
+// (the bootstrap window). Once our key is known, blindly re-registering it
+// unsigned would be rejected as a missing signature — not swallowed as
+// AlreadyExists — so we register only when the key is genuinely absent.
+func (c *Client) RegisterConfiguredSigningKey(ctx context.Context) error {
+	if c.signer == nil {
+		return nil
+	}
+
+	registered, err := c.signingKeyRegistered(ctx, c.signer.ID)
+	if err != nil {
+		return err
+	}
+	if registered {
+		return nil
+	}
+
+	return c.RegisterSigningKey(ctx, c.signer)
+}
+
+// signingKeyRegistered reports whether a key with the given id is already known
+// to the ledger's keystore. See RegisterConfiguredSigningKey for why the check
+// is load-bearing rather than a mere optimisation.
+func (c *Client) signingKeyRegistered(ctx context.Context, keyID string) (bool, error) {
+	var cursor string
+
+	for {
+		stream, err := c.service.ListSigningKeys(ctx, &servicepb.ListSigningKeysRequest{
+			Options: &commonpb.ListOptions{PageSize: queryPageSize, Cursor: cursor},
+		})
+		if err != nil {
+			return false, fmt.Errorf("list signing keys: %w", err)
+		}
+
+		for {
+			key, rerr := stream.Recv()
+			if errors.Is(rerr, io.EOF) {
+				break
+			}
+
+			if rerr != nil {
+				return false, fmt.Errorf("recv signing key: %w", rerr)
+			}
+
+			if key.GetKeyId() == keyID {
+				return true, nil
+			}
+		}
+
+		cursor = nextCursorFromTrailer(stream.Trailer())
+		if cursor == "" {
+			return false, nil
+		}
+	}
 }
 
 // CreateLedger creates a ledger with an initial metadata schema, account types,

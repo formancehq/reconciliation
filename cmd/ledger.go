@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 
 	v5log "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/api/service"
@@ -33,6 +34,7 @@ func addLedgerFlags(flags *pflag.FlagSet) {
 	flags.String(ledgerTLSServerNameFlag, "", "Override the TLS server name for the ledger handshake")
 	flags.Bool(ledgerTLSSkipVerifyFlag, false, "Disable ledger TLS certificate verification (dev only)")
 	flags.Bool(ledgerInsecureFlag, false, "Allow a plaintext, unauthenticated ledger connection (local/dev only)")
+	flags.String(auditSigningKeySeedFlag, "", "Ed25519 seed (base64 or hex) for signing control-ledger writes; empty generates one at boot and logs its seed")
 	flags.String(eventsSinkURLFlag, "", "HTTP webhook URL for the ledger events sink (alert transition delivery); empty disables the sink")
 	flags.String(eventsSinkSecretFlag, "", "Optional HMAC-SHA256 secret for the events sink X-Webhook-Signature header")
 }
@@ -59,7 +61,7 @@ func reconciliationSinkEventTypes() []commonpb.EventType {
 // control-ledger at startup.
 func ledgerClientModule(cmd *cobra.Command) fx.Option {
 	return fx.Options(
-		fx.Provide(func(lc fx.Lifecycle) (*ledger.Client, error) {
+		fx.Provide(func(lc fx.Lifecycle, logger v5log.Logger) (*ledger.Client, error) {
 			cfg := ledgerauth.Config{
 				Address:       flagStr(cmd, ledgerAddressFlag),
 				AllowInsecure: flagBool(cmd, ledgerInsecureFlag),
@@ -85,6 +87,24 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 				return nil, err
 			}
 
+			// Audit content-signing (EN-1930, Phase 1): load or mint the Ed25519
+			// key recon signs every control-ledger write with, and attach it before
+			// the client is shared. Registration with the ledger happens in the
+			// provisioning hook below, before the first signed batch.
+			signingKey, err := auditSigningKey(flagStr(cmd, auditSigningKeySeedFlag))
+			if err != nil {
+				return nil, err
+			}
+			client.UseSigningKey(&signingKey)
+			if flagStr(cmd, auditSigningKeySeedFlag) == "" {
+				// No pinned seed: a fresh key every boot means entries signed now
+				// can only be verified later if this seed is captured. Log it once,
+				// loudly, so an operator can pin it via --audit-signing-key-seed.
+				logger.Infof("audit: generated an ephemeral signing key %q — pin it across restarts with --audit-signing-key-seed=%s", signingKey.ID, signingKey.SeedBase64())
+			} else {
+				logger.Infof("audit: signing control-ledger writes with key %q (public key %s)", signingKey.ID, signingKey.PublicKeyBase64())
+			}
+
 			lc.Append(fx.Hook{OnStop: func(context.Context) error { return client.Close() }})
 			return client, nil
 		}),
@@ -99,6 +119,13 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 			control := flagStr(cmd, ledgerControlNameFlag)
 			lc.Append(fx.Hook{
 				OnStart: func(ctx context.Context) error {
+					// Register recon's signing key first, so provisioning and every
+					// operational write after it commit as verifiable signed batches
+					// (EN-1930). No-op when signing is disabled. Idempotent.
+					if err := client.RegisterConfiguredSigningKey(ctx); err != nil {
+						return fmt.Errorf("register audit signing key: %w", err)
+					}
+
 					prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 					if err := prov.Provision(ctx); err != nil {
 						return err
@@ -125,6 +152,26 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 			})
 		}),
 	)
+}
+
+// auditSigningKey resolves the Ed25519 key recon signs control-ledger writes
+// with: rebuilt from the operator-supplied seed when set, otherwise freshly
+// generated (dev/demo convenience — the caller logs the seed so it can be
+// pinned).
+func auditSigningKey(seed string) (ledger.SigningKey, error) {
+	if seed != "" {
+		key, err := ledger.SigningKeyFromSeed(seed)
+		if err != nil {
+			return ledger.SigningKey{}, fmt.Errorf("audit signing key: %w", err)
+		}
+		return key, nil
+	}
+
+	key, err := ledger.GenerateSigningKey()
+	if err != nil {
+		return ledger.SigningKey{}, fmt.Errorf("audit signing key: %w", err)
+	}
+	return key, nil
 }
 
 func flagStr(cmd *cobra.Command, name string) string {
