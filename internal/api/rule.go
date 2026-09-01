@@ -10,7 +10,6 @@ import (
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/reconciliation/internal/api/backend"
 	"github.com/formancehq/reconciliation/internal/api/service"
-	"github.com/formancehq/reconciliation/internal/contractversion"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -25,7 +24,7 @@ type ruleResponse struct {
 	CompiledCEL     string            `json:"compiledCEL,omitempty"`
 	Enabled         bool              `json:"enabled"`
 	Severity        string            `json:"severity"`
-	Cadence         string            `json:"cadence"`
+	PeriodType      string            `json:"periodType"`
 	Schedule        *models.Schedule  `json:"schedule,omitempty"`
 	Notifications   []string          `json:"notifications,omitempty"`
 	Labels          map[string]string `json:"labels,omitempty"`
@@ -44,7 +43,7 @@ func renderRule(r *models.Rule) *ruleResponse {
 		CompiledCEL:   r.CompiledCEL,
 		Enabled:       r.Enabled,
 		Severity:      string(r.Severity),
-		Cadence:       string(r.Cadence),
+		PeriodType:    string(r.PeriodType),
 		Schedule:      r.Schedule,
 		Notifications: r.Notifications,
 		Labels:        r.Labels,
@@ -177,13 +176,11 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 			handleServiceErrors(w, r, err)
 			return
 		}
-		if version, _ := contractversion.FromContext(r.Context()); version == models.ContractVersionV2 {
-			api.RenderCursor(w, *bunpaginate.MapCursor(cursor, func(rule models.Rule) *ruleResponse {
-				return renderRule(&rule)
-			}))
-			return
-		}
-		api.RenderCursor(w, *cursor)
+		// Render through renderRule on both contracts (it branches on the
+		// contract version internally for the V2-only fields).
+		api.RenderCursor(w, *bunpaginate.MapCursor(cursor, func(rule models.Rule) *ruleResponse {
+			return renderRule(&rule)
+		}))
 	}
 }
 

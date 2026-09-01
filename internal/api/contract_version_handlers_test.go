@@ -28,7 +28,7 @@ func TestV1RenderersDoNotExposeV2AuditFields(t *testing.T) {
 	ruleJSON, err := json.Marshal(renderRule(&models.Rule{
 		ID: uuid.New(), ContractVersion: models.ContractVersionV1, Revision: "sha256:revision",
 		Name: "v1", TemplateKind: models.TemplateSourceParity, TemplateSpec: json.RawMessage(`{}`),
-		Enabled: true, Severity: models.SeverityMedium, Cadence: models.CadenceContinuous,
+		Enabled: true, Severity: models.SeverityMedium, PeriodType: models.PeriodTypeContinuous,
 		CreatedAt: now, UpdatedAt: now,
 	}))
 	require.NoError(t, err)

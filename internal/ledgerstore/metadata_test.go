@@ -27,7 +27,7 @@ func TestRuleMetadataRoundTrip(t *testing.T) {
 		CompiledCEL:   "sum(x) == 0",
 		Enabled:       true,
 		Severity:      models.SeverityHigh,
-		Cadence:       models.CadenceContinuous,
+		PeriodType:    models.PeriodTypeContinuous,
 		Schedule:      &models.Schedule{Kind: models.ScheduleKind("cron"), Expr: "0 0 * * *", TZ: "UTC"},
 		Notifications: []string{"webhook-1", "email-ops"},
 		Labels:        map[string]string{"env": "prod", "team": "treasury"},
@@ -50,7 +50,7 @@ func TestRuleMetadataRoundTrip(t *testing.T) {
 	require.Equal(t, orig.CompiledCEL, got.CompiledCEL)
 	require.Equal(t, orig.Enabled, got.Enabled)
 	require.Equal(t, orig.Severity, got.Severity)
-	require.Equal(t, orig.Cadence, got.Cadence)
+	require.Equal(t, orig.PeriodType, got.PeriodType)
 	require.Equal(t, orig.Schedule, got.Schedule)
 	require.Equal(t, orig.Notifications, got.Notifications)
 	require.Equal(t, orig.Labels, got.Labels)
@@ -73,7 +73,7 @@ func TestRuleMetadataMinimal(t *testing.T) {
 		TemplateSpec: json.RawMessage(`{}`),
 		Enabled:      false,
 		Severity:     models.SeverityLow,
-		Cadence:      models.CadenceContinuous,
+		PeriodType:   models.PeriodTypeContinuous,
 		CreatedAt:    time.Now().Truncate(time.Microsecond).UTC(),
 		UpdatedAt:    time.Now().Truncate(time.Microsecond).UTC(),
 	}

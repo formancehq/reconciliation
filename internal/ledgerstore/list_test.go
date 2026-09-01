@@ -35,7 +35,7 @@ func TestListRules_SortedAndPaginated(t *testing.T) {
 	mk := func(name string, ageHours int) *models.Rule {
 		return &models.Rule{
 			ID: uuid.New(), Name: name, TemplateKind: models.TemplateLedgerInvariant,
-			Enabled: true, Severity: models.SeverityLow, Cadence: models.CadenceContinuous,
+			Enabled: true, Severity: models.SeverityLow, PeriodType: models.PeriodTypeContinuous,
 			CreatedAt: base.Add(-time.Duration(ageHours) * time.Hour), UpdatedAt: base,
 		}
 	}

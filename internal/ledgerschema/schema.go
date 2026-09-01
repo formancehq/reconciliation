@@ -76,7 +76,7 @@ const (
 	MetaTemplateKind    = "template_kind"
 	MetaEnabled         = "enabled"
 	MetaSchedule        = "schedule" // JSON
-	MetaCadence         = "cadence"
+	MetaPeriodType      = "period_type"
 	MetaSpec            = "spec" // JSON
 	MetaCompiledCEL     = "compiled_cel"
 	MetaNotifications   = "notifications" // JSON array
@@ -193,7 +193,7 @@ func MetadataSchema() []*commonpb.SetMetadataFieldTypeCommand {
 		{MetaEvidence, str}, {MetaResolution, str}, {MetaAck, str}, {MetaSnooze, str},
 		// rule
 		{MetaName, str}, {MetaTemplateKind, str}, {MetaEnabled, b}, {MetaSchedule, str},
-		{MetaCadence, str}, {MetaSpec, str}, {MetaCompiledCEL, str}, {MetaNotifications, str}, {MetaContractVersion, str},
+		{MetaPeriodType, str}, {MetaSpec, str}, {MetaCompiledCEL, str}, {MetaNotifications, str}, {MetaContractVersion, str},
 		{MetaCreatedAt, dt}, {MetaUpdatedAt, dt}, {MetaRevision, str},
 	}
 

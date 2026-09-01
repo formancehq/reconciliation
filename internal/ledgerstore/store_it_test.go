@@ -74,7 +74,7 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 		TemplateSpec: json.RawMessage(`{"tolerance":"0"}`),
 		Enabled:      true,
 		Severity:     models.SeverityHigh,
-		Cadence:      models.CadenceContinuous,
+		PeriodType:   models.PeriodTypeContinuous,
 		Labels:       map[string]string{"env": "it", "team": "recon"},
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -377,7 +377,7 @@ func TestIntegration_Lists(t *testing.T) {
 	now := time.Now().Truncate(time.Microsecond).UTC()
 	require.NoError(t, store.CreateRule(ctx, &models.Rule{
 		ID: uuid.New(), Name: name, TemplateKind: models.TemplateLedgerInvariant,
-		Enabled: true, Severity: models.SeverityHigh, Cadence: models.CadenceContinuous,
+		Enabled: true, Severity: models.SeverityHigh, PeriodType: models.PeriodTypeContinuous,
 		CreatedAt: now, UpdatedAt: now,
 	}))
 

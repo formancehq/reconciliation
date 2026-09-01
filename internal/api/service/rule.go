@@ -66,10 +66,11 @@ type CreateRuleRequest struct {
 	TemplateSpec json.RawMessage     `json:"templateSpec"`
 	Schedule     *models.Schedule    `json:"schedule,omitempty"`
 	Severity     models.Severity     `json:"severity,omitempty"`
-	// Cadence is the reconciliation rhythm — continuous (default), daily, or
-	// monthly. It scopes alerts into periods so each period is an
-	// independently-closable, immutable case. See models.Cadence.
-	Cadence       models.Cadence    `json:"cadence,omitempty"`
+	// PeriodType sets how long a reconciliation period is — continuous
+	// (default), daily, weekly or monthly. It scopes alerts into periods so each
+	// period is an independently-closable, immutable case. This is not how often
+	// the rule runs; that is Schedule. See models.PeriodType.
+	PeriodType    models.PeriodType `json:"periodType,omitempty"`
 	Notifications []string          `json:"notifications,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Enabled       *bool             `json:"enabled,omitempty"`
@@ -86,8 +87,8 @@ func (r *CreateRuleRequest) Validate() error {
 	if len(r.TemplateSpec) == 0 {
 		return errors.New("templateSpec is required")
 	}
-	if r.Cadence != "" && !r.Cadence.Valid() {
-		return fmt.Errorf("cadence must be one of continuous, daily, weekly, monthly (got %q)", r.Cadence)
+	if r.PeriodType != "" && !r.PeriodType.Valid() {
+		return fmt.Errorf("periodType must be one of continuous, daily, weekly, monthly (got %q)", r.PeriodType)
 	}
 	// Fail fast on a bad cron schedule at create time rather than letting the
 	// scheduler discover it (and skip the rule) at run time.
@@ -154,9 +155,9 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 	if severity == "" {
 		severity = models.SeverityMedium
 	}
-	cadence := req.Cadence
-	if cadence == "" {
-		cadence = models.CadenceContinuous
+	periodType := req.PeriodType
+	if periodType == "" {
+		periodType = models.PeriodTypeContinuous
 	}
 
 	rule := &models.Rule{
@@ -168,7 +169,7 @@ func (s *Service) CreateRule(ctx context.Context, req *CreateRuleRequest) (*mode
 		CompiledCEL:     compiled,
 		Enabled:         enabled,
 		Severity:        severity,
-		Cadence:         cadence,
+		PeriodType:      periodType,
 		Schedule:        req.Schedule,
 		Notifications:   req.Notifications,
 		Labels:          req.Labels,

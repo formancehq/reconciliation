@@ -18,7 +18,7 @@ type OpenAlertInput struct {
 	// PeriodID scopes the alert to a reconciliation period. Empty defaults to
 	// models.ContinuousPeriod, which reproduces the original
 	// (rule_id, fingerprint) dedup. The caller (the evaluation service)
-	// derives it from the rule's cadence and the evaluation PIT.
+	// derives it from the rule's period type and the evaluation PIT.
 	PeriodID     string
 	Severity     models.Severity
 	EvaluationID uuid.UUID

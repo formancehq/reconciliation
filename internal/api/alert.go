@@ -151,7 +151,7 @@ func listAlertsHandler(b backend.Backend) http.HandlerFunc {
 
 // listAlertEventsHandler returns the append-only timeline for a single alert,
 // cursor-paginated (most-recent-first). Pagination is required: a long-lived
-// alert (continuous-cadence rule, engine.error meta-alert) accumulates one row
+// alert (rule with periodType continuous, engine.error meta-alert) accumulates one row
 // per failing evaluation indefinitely — suppression keeps those off the bus but
 // not out of the table — so an unbounded response could be enormous.
 func listAlertEventsHandler(b backend.Backend) http.HandlerFunc {

@@ -62,7 +62,7 @@ func ruleToMetadata(r *models.Rule) (map[string]*commonpb.MetadataValue, error) 
 		schema.MetaSpec:            strVal(string(r.TemplateSpec)),
 		schema.MetaEnabled:         boolVal(r.Enabled),
 		schema.MetaSeverity:        strVal(string(r.Severity)),
-		schema.MetaCadence:         strVal(string(r.Cadence)),
+		schema.MetaPeriodType:      strVal(string(r.PeriodType)),
 		schema.MetaCreatedAt:       dtVal(r.CreatedAt),
 		schema.MetaUpdatedAt:       dtVal(r.UpdatedAt),
 		schema.MetaContractVersion: strVal(strconv.Itoa(int(r.ContractVersion.Effective()))),
@@ -118,7 +118,7 @@ func ruleFromAccount(acct *commonpb.Account) (*models.Rule, error) {
 		CompiledCEL:     getStr(md, schema.MetaCompiledCEL),
 		Enabled:         getBool(md, schema.MetaEnabled),
 		Severity:        models.Severity(getStr(md, schema.MetaSeverity)),
-		Cadence:         models.Cadence(getStr(md, schema.MetaCadence)),
+		PeriodType:      models.PeriodType(getStr(md, schema.MetaPeriodType)),
 		CreatedAt:       getTime(md, schema.MetaCreatedAt),
 		UpdatedAt:       getTime(md, schema.MetaUpdatedAt),
 	}

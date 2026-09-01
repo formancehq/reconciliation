@@ -44,7 +44,7 @@ func TestCreateRule_Nominal(t *testing.T) {
 		CompiledCEL:  `abs(...) <= 0`,
 		Enabled:      true,
 		Severity:     req.Severity,
-		Cadence:      models.CadenceMonthly,
+		PeriodType:   models.PeriodTypeMonthly,
 		CreatedAt:    time.Now().UTC(),
 		UpdatedAt:    time.Now().UTC(),
 	}
@@ -60,7 +60,7 @@ func TestCreateRule_Nominal(t *testing.T) {
 	sharedapi.Decode(t, rec.Body, &got)
 	require.Equal(t, resp.ID.String(), got.Data.ID)
 	require.Equal(t, resp.CompiledCEL, got.Data.CompiledCEL)
-	require.Equal(t, "monthly", got.Data.Cadence, "rule response must expose cadence")
+	require.Equal(t, "monthly", got.Data.PeriodType, "rule response must expose periodType")
 }
 
 func TestCreateRule_RejectsInvalidSpec(t *testing.T) {

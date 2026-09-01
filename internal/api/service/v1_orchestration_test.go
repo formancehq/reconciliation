@@ -884,7 +884,7 @@ func TestEvaluate_PeriodicOpensFreshCasePerPeriod(t *testing.T) {
 		TemplateKind: models.TemplateSourceParity,
 		TemplateSpec: paritySpec(t, "sub", "control", `"q"`, nil),
 		Severity:     models.SeverityHigh,
-		Cadence:      models.CadenceMonthly,
+		PeriodType:   models.PeriodTypeMonthly,
 	})
 	if err != nil {
 		t.Fatalf("CreateRule: %v", err)

@@ -31,11 +31,11 @@ func ruleRevision(r *models.Rule) (string, error) {
 		CompiledCEL   string              `json:"compiledCEL"`
 		Enabled       bool                `json:"enabled"`
 		Severity      models.Severity     `json:"severity"`
-		Cadence       models.Cadence      `json:"cadence"`
+		PeriodType    models.PeriodType   `json:"periodType"`
 		Schedule      *models.Schedule    `json:"schedule,omitempty"`
 		Notifications []string            `json:"notifications,omitempty"`
 		Labels        map[string]string   `json:"labels,omitempty"`
-	}{r.Name, r.TemplateKind, spec, r.CompiledCEL, r.Enabled, r.Severity, r.Cadence, r.Schedule, r.Notifications, r.Labels}
+	}{r.Name, r.TemplateKind, spec, r.CompiledCEL, r.Enabled, r.Severity, r.PeriodType, r.Schedule, r.Notifications, r.Labels}
 	b, err := json.Marshal(config)
 	if err != nil {
 		return "", err

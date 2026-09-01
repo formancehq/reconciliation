@@ -834,12 +834,14 @@ components:
         The V1 GA template catalog. (`ledger_vs_pool_drift` was removed in 6a-2,
         subsumed by `source_parity`.)
       enum: [ledger_invariant, source_parity, account_threshold]
-    Cadence:
+    PeriodType:
       type: string
       description: |
-        Reconciliation rhythm. Scopes each failing fingerprint into a period so a
-        March break and an April break are distinct, independently-closable cases.
-        `continuous` (default) is a single unbounded period (live monitoring).
+        How long a reconciliation period is. Scopes each failing fingerprint into
+        a period so a March break and an April break are distinct,
+        independently-closable cases. `continuous` (default) is a single unbounded
+        period (live monitoring). This is not how often the rule runs — that is
+        `schedule`, and the two are independent.
       enum: [continuous, daily, weekly, monthly]
       default: continuous
     Schedule:
@@ -886,7 +888,7 @@ components:
 
     Rule:
       type: object
-      required: [id, name, templateKind, templateSpec, enabled, severity, cadence, createdAt, updatedAt]
+      required: [id, name, templateKind, templateSpec, enabled, severity, periodType, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -897,7 +899,7 @@ components:
         compiledCEL: { type: string }
         enabled: { type: boolean }
         severity: { $ref: '#/components/schemas/Severity' }
-        cadence: { $ref: '#/components/schemas/Cadence' }
+        periodType: { $ref: '#/components/schemas/PeriodType' }
         schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
@@ -917,7 +919,7 @@ components:
           type: object
           additionalProperties: true
         severity: { $ref: '#/components/schemas/Severity' }
-        cadence: { $ref: '#/components/schemas/Cadence' }
+        periodType: { $ref: '#/components/schemas/PeriodType' }
         schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
@@ -1002,7 +1004,7 @@ components:
         reconciliation period. There is exactly one Alert per
         (ruleID, fingerprint, periodID) — within a period, re-opens after resolve
         flip the status back to OPEN in place; the same fingerprint failing in a
-        new period is a separate Alert. For a `continuous`-cadence rule there is
+        new period is a separate Alert. For a rule with `periodType: continuous` there is
         one unbounded period, so it behaves as one Alert per (ruleID, fingerprint).
         The full history of transitions lives in alert_event
         (see /alerts/{alertID}/events).
@@ -1016,7 +1018,7 @@ components:
         severity: { $ref: '#/components/schemas/Severity' }
         firstSeenAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
-        occurrenceCount: { type: integer, format: int64, description: "Count of FAIL events on this alert across reopen cycles within its period (lifetime, for a continuous-cadence rule)." }
+        occurrenceCount: { type: integer, format: int64, description: "Count of FAIL events on this alert across reopen cycles within its period (lifetime, for a rule with periodType continuous)." }
         lastEvaluationID: { type: string, format: uuid }
         evidence:
           type: object
@@ -1221,7 +1223,7 @@ components:
     SeverityV2:
       type: string
       enum: [info, low, medium, high, critical]
-    CadenceV2:
+    PeriodTypeV2:
       type: string
       enum: [continuous, daily, weekly, monthly]
       default: continuous
@@ -1405,7 +1407,7 @@ components:
       properties:
         name: { type: string, minLength: 1 }
         severity: { $ref: '#/components/schemas/SeverityV2' }
-        cadence: { $ref: '#/components/schemas/CadenceV2' }
+        periodType: { $ref: '#/components/schemas/PeriodTypeV2' }
         schedule: { $ref: '#/components/schemas/ScheduleV2' }
         notifications:
           type: array
@@ -1483,7 +1485,7 @@ components:
 
     RuleCommonV2:
       type: object
-      required: [id, contractVersion, name, enabled, severity, cadence, createdAt, updatedAt]
+      required: [id, contractVersion, name, enabled, severity, periodType, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         revision: { type: string, description: Content-derived identifier of the effective rule configuration. }
@@ -1492,7 +1494,7 @@ components:
         compiledCEL: { type: string, readOnly: true }
         enabled: { type: boolean }
         severity: { $ref: '#/components/schemas/SeverityV2' }
-        cadence: { $ref: '#/components/schemas/CadenceV2' }
+        periodType: { $ref: '#/components/schemas/PeriodTypeV2' }
         schedule: { $ref: '#/components/schemas/ScheduleV2' }
         notifications:
           type: array

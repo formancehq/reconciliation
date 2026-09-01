@@ -32,7 +32,7 @@ func newRule(id uuid.UUID) *models.Rule {
 		TemplateSpec: json.RawMessage(`{}`),
 		Enabled:      true,
 		Severity:     models.SeverityHigh,
-		Cadence:      models.CadenceContinuous,
+		PeriodType:   models.PeriodTypeContinuous,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

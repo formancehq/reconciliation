@@ -90,7 +90,7 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		if err := s.store.CreateEvaluation(ctx, evaluation); err != nil {
 			return nil, err
 		}
-		periodID := rule.Cadence.PeriodID(req.PIT)
+		periodID := rule.PeriodType.PeriodID(req.PIT)
 		if err := s.store.RecordCapture(ctx, captureInput(rule, evaluation, periodID, req.Trigger, req.PIT)); err != nil {
 			return nil, err
 		}
@@ -107,11 +107,11 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 			break
 		}
 	}
-	// The period this evaluation reconciles, derived from the rule's cadence
+	// The period this evaluation reconciles, derived from the rule's period type
 	// and the evaluation PIT. Every alert this evaluation opens/resolves is
 	// scoped to it, so a new period's run never rewrites a prior period's
-	// cases (see models.Cadence.PeriodID).
-	periodID := rule.Cadence.PeriodID(req.PIT)
+	// cases (see models.PeriodType.PeriodID).
+	periodID := rule.PeriodType.PeriodID(req.PIT)
 
 	// Plan alert transitions before recording the capture. The capture retains
 	// every exact outcome from this evaluation; the plan independently selects
@@ -324,7 +324,7 @@ func (s *Service) openEngineErrorAlert(ctx context.Context, rule *models.Rule, e
 		Fingerprint:     engineErrorFingerprint,
 		// Engine-health is operational, not a per-period reconciliation fact:
 		// a resolver timeout means "the check couldn't run", not "March didn't
-		// reconcile". Keep it in the continuous scope regardless of cadence.
+		// reconcile". Keep it in the continuous scope regardless of period type.
 		PeriodID:     models.ContinuousPeriod,
 		Severity:     models.SeverityHigh,
 		EvaluationID: ev.ID,
