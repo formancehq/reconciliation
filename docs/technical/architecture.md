@@ -136,7 +136,7 @@ recon; they are not part of this chart. The complete executable mapping is docum
 
 | Account | Type | Role |
 |---|---|---|
-| `rule:{id}` | NORMAL | the rule — typed metadata (spec, cadence, compiled CEL, notifications, labels) |
+| `rule:{id}` | NORMAL | the rule — typed metadata (spec, periodType, compiled CEL, notifications, labels) |
 | `alert:item:rule:{id}:per:{p}:fp:{h}` | NORMAL | **canonical alert record** — metadata (`status` mirror, severity, evidence, resolution, ack, snooze, **`last_transition`**, labels) + `OCC` balance = occurrence count |
 | `alert:st:{state}:rule:{id}:per:{p}:fp:{h}` | **EPHEMERAL** | the `ALERT` **marker** — source-of-truth for status; `state ∈ {open, ack}` |
 | `alert:pool:rule:{id}` | NORMAL | mint source for `ALERT`+`OCC` (overdraft) and free gauges |

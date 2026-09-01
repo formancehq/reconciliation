@@ -276,7 +276,7 @@ The module therefore owns two layers:
    (with persistence class + regex-constrained variables) and set **STRICT enforcement**
    (§4.1.3). Declare the typed metadata fields we
    query — on `alert:item:*`: `status`, `severity`, `rule_id`, `period`, `first_seen_at`,
-   `last_seen_at`, `label.*`; on `rule:*`: `enabled`, `template_kind`, `cadence`, `severity`.
+   `last_seen_at`, `label.*`; on `rule:*`: `enabled`, `template_kind`, `period_type`, `severity`.
    Register the standard prepared queries: `open-count` (`AGGREGATE_VOLUMES`,
    `address == "alert:st:open:*"`), `open-count-by-rule` (`… "alert:st:open:rule:$rule:*"`),
    `alerts-list` (`LIST`, `address == "alert:item:*" and metadata[status] == $status …`),
@@ -381,10 +381,10 @@ the evaluation/evidence for reproducibility. Interface change:
 `LedgerResolver.AggregateBalance(ctx, ledger, query, pit time.Time)` →
 `(…, checkpointID uint64)` (`0` = live).
 
-**Which checkpoint, by cadence:**
+**Which checkpoint, by period type:**
 - *Periodic rules* (daily/weekly/monthly) → **scheduled checkpoints**
   (`query-checkpoint set-schedule`), one per period boundary, shared by all rules of that
-  cadence → `checkpoint_id` ↔ `period_id`.
+  period type → `checkpoint_id` ↔ `period_id`.
 - *Continuous rules* → a **rolling `recon-current` checkpoint** refreshed every T seconds
   (create new, delete previous), read by all continuous evals in the window — amortises cost.
 - *Skew-tolerant* → live read + tolerance margin (legacy fallback).
@@ -549,7 +549,7 @@ codebase is storage-independent.
    filtering.
 4. Evidence → **by reference** (evaluation id + PIT, recompute on read) or on the evaluation
    account, not duplicated on every alert.
-5. Period retention → **EPHEMERAL / burn-on-close** per cadence → bounded hot set.
+5. Period retention → **EPHEMERAL / burn-on-close** per period type → bounded hot set.
 
 **Effort:** a working `LedgerStore` POC behind the current interface ≈ 2–3 weeks; the CEL
 kernel is untouched. The one true external dependency remains scheduler HA (§5, §8).

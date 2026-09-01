@@ -64,7 +64,7 @@ The four assets all have precision zero:
 ## Current state and immutable history
 
 Rule and alert accounts are current-state projections. Typed account metadata supports direct reads
-and filtering: rule fields include the template specification, contract version, revision, cadence,
+and filtering: rule fields include the template specification, contract version, revision, periodType,
 schedule, and labels; alert fields include status, evidence, acknowledgement, resolution, snooze,
 and the latest transition envelope.
 

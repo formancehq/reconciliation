@@ -56,27 +56,30 @@ identity = (rule_id, fingerprint, period_id)
 
 ## The mechanism
 
-### 1. Rule cadence → period id
+### 1. Rule period type → period id
 
-A rule declares a **cadence** ([models.Cadence](../../internal/models/rule.go)):
+A rule declares a **period type** ([models.PeriodType](../../internal/models/rule.go)),
+which sets how long a reconciliation period is. This is *not* how often the rule
+runs — that is its `schedule`, and the two are independent (an hourly schedule
+with a `monthly` period type is normal):
 
-| Cadence | `period_id` for a PIT of 2026-03-15T10:30Z | Meaning |
+| Period type | `period_id` for a PIT of 2026-03-15T10:30Z | Meaning |
 |---|---|---|
 | `continuous` *(default)* | `continuous` | Live monitoring — one unbounded scope; reopens in place forever. |
 | `daily` | `2026-03-15` | One case per UTC calendar day. |
 | `weekly` | `2026-W11` | One case per ISO week (ISO year + week number). |
 | `monthly` | `2026-03` | One case per UTC calendar month. |
 
-`Cadence.PeriodID(pit)` is **deterministic**: any instant in the same bucket
+`PeriodType.PeriodID(pit)` is **deterministic**: any instant in the same bucket
 yields the same id, so re-evaluating a period *continues* its existing case
-rather than spawning a new one. Bucketing is **UTC** — the accounting-period
-timezone is a known V1 simplification (a late-March instant in a western zone
-buckets to April).
+rather than spawning a new one. Bucketing is **UTC-only**, with no per-tenant
+timezone or fiscal calendar — a known V1 simplification (a late-March instant in
+a western zone buckets to April).
 
 ### 2. Evaluation derives and threads the period
 
 [`EvaluateRule`](../../internal/api/service/evaluation.go) computes
-`periodID = rule.Cadence.PeriodID(req.PIT)` once and threads it through
+`periodID = rule.PeriodType.PeriodID(req.PIT)` once and threads it through
 `driveAlerts` into every alert write. (`req.PIT` here is the **nominal evaluation
 instant** — it buckets the period and timestamps the capture; the ledger reads
 themselves are **live**, not anchored on this instant — see
@@ -96,7 +99,7 @@ themselves are **live**, not anchored on this instant — see
 
 The `engine.error` meta-alert (resolver timeout, kernel throw) is operational —
 "the check couldn't run", not "March didn't reconcile" — so it is always opened
-in the `continuous` scope regardless of the rule's cadence.
+in the `continuous` scope regardless of the rule's period type.
 
 ### 4. Period reconciliation status
 
@@ -113,7 +116,7 @@ rather than shipping an unwired method.)
 
 ## Backwards compatibility
 
-The default cadence is `continuous`, whose `period_id` is the constant
+The default period type is `continuous`, whose `period_id` is the constant
 `"continuous"`. Under it, `(rule_id, fingerprint, "continuous")` is exactly the
 old `(rule_id, fingerprint)` dedup — so the migration is **behaviour-preserving**
 for existing rules and rows. Periodic scoping is **opt-in per rule**.
@@ -125,7 +128,7 @@ for existing rules and rows. Periodic scoping is **opt-in per rule**.
 
 ## Trade-offs & known edges
 
-- **Daily cadence churns persistent breaks.** A break that persists five days
+- **A `daily` period type churns persistent breaks.** A break that persists five days
   becomes five daily cases. For reconciliation that's *correct* — each day
   independently certifies — but it's a conscious choice, the opposite of what
   you'd want in ops monitoring (where it would be noise).
@@ -144,9 +147,9 @@ payload, so consumers can route/aggregate by period. `reopened` now means a
 
 | Concern | Location |
 |---|---|
-| Cadence + `PeriodID` derivation | [internal/models/rule.go](../../internal/models/rule.go) |
+| `PeriodType` + `PeriodID` derivation | [internal/models/rule.go](../../internal/models/rule.go) |
 | `period_id` on the alert | [internal/models/alert.go](../../internal/models/alert.go) |
 | Period-scoped dedup / sweep / status | [internal/storage/alert.go](../../internal/storage/alert.go) |
 | Period derivation + threading | [internal/api/service/evaluation.go](../../internal/api/service/evaluation.go) |
-| Cadence on create | [internal/api/service/rule.go](../../internal/api/service/rule.go) |
+| `periodType` on create | [internal/api/service/rule.go](../../internal/api/service/rule.go) |
 | Schema | migration #7 in [internal/storage/migrations/migrations.go](../../internal/storage/migrations/migrations.go) |

@@ -5,7 +5,7 @@
 
 ## The problem
 
-Once rules evaluate on a [cadence](./scheduler.md), a rule that stays broken
+Once rules evaluate on a [schedule](./scheduler.md), a rule that stays broken
 produces a transition **every tick**: a 5-minute cron that keeps failing emits a
 `reconciliation.alert.occurred` event every 5 minutes, indefinitely. None of
 those repeats carry information the consumer doesn't already have. Delivered

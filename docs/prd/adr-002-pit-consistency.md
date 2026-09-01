@@ -1,6 +1,6 @@
 # ADR-002 — Consistency model: aligned checkpoint for same-cluster ledgers, per-source PIT for heterogeneous sources
 
-**Status:** Accepted — **revised for the ledger-native migration** (see [RFC: Ledger-native storage](../drafts/rfc-ledger-native-storage.md) §4.5). Supersedes the V1 per-source-only model for same-cluster Ledger↔Ledger reconciliation; the per-source model is retained for heterogeneous sources. **The Tier-1 aligned-checkpoint model below is itself superseded by [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md)**: reconciliation reads live and records an immutable `_recon` capture — query checkpoints are removed. §5's per-source + tolerance reasoning still holds for the cases that need a cut (multi-ledger); §6 (checkpoint interface flip), §7 (checkpoint cadence) and the checkpoint lifecycle commitments (§10.3) are obsolete.
+**Status:** Accepted — **revised for the ledger-native migration** (see [RFC: Ledger-native storage](../drafts/rfc-ledger-native-storage.md) §4.5). Supersedes the V1 per-source-only model for same-cluster Ledger↔Ledger reconciliation; the per-source model is retained for heterogeneous sources. **The Tier-1 aligned-checkpoint model below is itself superseded by [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md)**: reconciliation reads live and records an immutable `_recon` capture — query checkpoints are removed. §5's per-source + tolerance reasoning still holds for the cases that need a cut (multi-ledger); §6 (checkpoint interface flip), §7 (checkpoint period type) and the checkpoint lifecycle commitments (§10.3) are obsolete.
 
 > **Tier-2 has no current implementation (ledger-only, 2026-07-09).** The Payments-pool resolver
 > that motivated Tier-2 was removed — reconciliation is strictly **ledger↔ledger**. The Tier-2 model
@@ -86,9 +86,9 @@ flowchart LR
 
 ---
 
-## 7. Obtaining the checkpoint (by cadence)
+## 7. Obtaining the checkpoint (by period type)
 
-- **Periodic rules** (daily/weekly/monthly) → **scheduled checkpoints** (`query-checkpoint set-schedule`), one per period boundary, shared by all rules of that cadence → `checkpoint_id` ↔ `period_id`.
+- **Periodic rules** (daily/weekly/monthly) → **scheduled checkpoints** (`query-checkpoint set-schedule`), one per period boundary, shared by all rules of that period type → `checkpoint_id` ↔ `period_id`.
 - **Continuous rules** → a **rolling `recon-current` checkpoint** refreshed every *T* seconds (create new, delete previous), read by all continuous evaluations in the window.
 - **Skew-tolerant / heterogeneous** → live read + `tolerance` (Tier 2).
 
@@ -112,7 +112,7 @@ flowchart LR
 
 1. **Evaluations record the anchor**: `checkpoint_id` (+ sequence) for Tier 1, `pit_per_source` for Tier 2.
 2. **The engine offers an aligned-checkpoint mode** for same-cluster ledger sources and retains per-source PIT + tolerance for heterogeneous ones — chosen per `Source`.
-3. **Reconciliation owns checkpoint lifecycle/retention** (create/use/delete, cadence-aligned).
+3. **Reconciliation owns checkpoint lifecycle/retention** (create/use/delete, period-aligned).
 4. **Customer language is precise**: *atomic, reproducible invariants across ledgers in a stack*; *PIT-consistent, tolerance-bounded invariants across heterogeneous sources*.
 
 ---

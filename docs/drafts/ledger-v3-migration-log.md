@@ -928,7 +928,7 @@ Audit of every metadata key recon declares/writes/reads against the ledger's 11 
 ⇔ value read (`getStr`/`getBool`/`getTime`)** are coherent end-to-end for every field.
 
 **Conclusion: the control schema is already correctly typed** — no string↔int mismatch. UUIDs
-(`id`, `rule_id`, `last_evaluation_id`), enums (`status`, `severity`, `template_kind`, `cadence`),
+(`id`, `rule_id`, `last_evaluation_id`), enums (`status`, `severity`, `template_kind`, `period_type`),
 free text (`name`, `fingerprint`, `compiled_cel`), the `period` id (alnum+`-`, not an int), and all
 JSON blobs (`evidence`, `resolution`, `ack`, `snooze`, `schedule`, `spec`, `notifications`) are
 correctly **STRING** (the ledger has no UUID/enum/JSON metadata type). Timestamps are **DATETIME**

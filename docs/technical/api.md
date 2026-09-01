@@ -52,7 +52,7 @@ unchanged.
 
 ## V2 multi-source controls
 
-The lifecycle, cadence, severity, scheduling, pagination, alert actions, and auth scopes match V1;
+The lifecycle, periodType, severity, scheduling, pagination, alert actions, and auth scopes match V1;
 only the versioned route, typed template catalog, and evidence contracts differ.
 
 ### Create a balance equation
@@ -77,7 +77,7 @@ only the versioned route, typed template catalog, and evidence contracts differ.
     "tolerance": "0"
   },
   "severity": "high",
-  "cadence": "daily"
+  "periodType": "daily"
 }
 ```
 
@@ -210,7 +210,7 @@ EE-gated. The contracts below match what's wired in [`internal/api/router.go`](.
   },
   "schedule": { "kind": "on_demand" },
   "severity": "high",
-  "cadence": "monthly",
+  "periodType": "monthly",
   "notifications": ["wh_xyz", "email:ops@buildr.com"],
   "labels": { "team": "treasury", "env": "prod" }
 }
@@ -218,7 +218,7 @@ EE-gated. The contracts below match what's wired in [`internal/api/router.go`](.
 
 Returns `201` + the rule with `id` and the derived `compiledCEL` for explainability. Validation failures return `400 VALIDATION` (e.g. unknown `templateKind`, invalid spec).
 
-`cadence` (`continuous` *(default)* · `daily` · `weekly` · `monthly`) sets the reconciliation rhythm: it scopes each failing fingerprint into a period, so a March break and an April break are distinct, independently-closable cases and resolving April never rewrites March. `continuous` keeps a single ongoing case per fingerprint (live monitoring). See [alert-period-model.md](./alert-period-model.md).
+`periodType` (`continuous` *(default)* · `daily` · `weekly` · `monthly`) sets **how long a reconciliation period is**: it scopes each failing fingerprint into a period, so a March break and an April break are distinct, independently-closable cases and resolving April never rewrites March. `continuous` keeps a single ongoing case per fingerprint (live monitoring). It is not how often the rule runs — that is `schedule`, and the two are independent: an hourly `schedule` with a `monthly` `periodType` is normal. The period type determines the `periodID` an alert is filed under: `monthly` yields `2026-07`. See [alert-period-model.md](./alert-period-model.md).
 
 See [templates.md](./templates.md) for per-template spec schemas.
 
@@ -318,7 +318,7 @@ provisioning declares the transaction address index. Bounded to one rule's captu
 
 ### Alerts
 
-An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one alert per triple. Within a period, reopens after RESOLVED flip status back to OPEN **in place** (same id); the same fingerprint failing in a *new* period is a fresh case (new id). For a `continuous`-cadence rule there is a single ongoing period, so it behaves as one immortal case per `(rule, fingerprint)`. The transition history is the control-ledger's append-only log (see [Events](#events)). See [alert-period-model.md](./alert-period-model.md).
+An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one alert per triple. Within a period, reopens after RESOLVED flip status back to OPEN **in place** (same id); the same fingerprint failing in a *new* period is a fresh case (new id). For a rule with `periodType: continuous` there is a single ongoing period, so it behaves as one immortal case per `(rule, fingerprint)`. The transition history is the control-ledger's append-only log (see [Events](#events)). See [alert-period-model.md](./alert-period-model.md).
 
 #### `GET /alerts` — list
 
@@ -345,7 +345,7 @@ Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?periodID=2026-03`
 }
 ```
 
-`occurrenceCount` is the count of FAIL events on this alert across its reopen cycles **within its period** (for a `continuous`-cadence rule, that's the lifetime count, since there is one unbounded period). Finer per-episode counts can be derived from `/events`.
+`occurrenceCount` is the count of FAIL events on this alert across its reopen cycles **within its period** (for a rule with `periodType: continuous`, that's the lifetime count, since there is one unbounded period). Finer per-episode counts can be derived from `/events`.
 
 #### `GET /alerts/{id}/events` — append-only timeline (⏳ deferred)
 

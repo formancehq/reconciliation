@@ -97,4 +97,4 @@ This **revises the "evaluations non-durable" decision** (RFC §4.4.2): the durab
 ## 10. Relationship to ADR-001 / ADR-002
 
 - **ADR-001** (CEL kernel): unchanged as the authoring model; §11's "CEL is the runtime evaluator for built-ins" is narrowed — built-ins evaluate in typed Go, CEL runs only in the future power mode.
-- **ADR-002** (consistency): its **Tier-1 aligned-checkpoint** anchor is **retired** by this ADR. Its Tier-2 (per-source PIT + tolerance) reasoning now applies uniformly to the cases that need a cut (multi-ledger); §7 (checkpoint cadence) and the checkpoint lifecycle commitments are obsolete.
+- **ADR-002** (consistency): its **Tier-1 aligned-checkpoint** anchor is **retired** by this ADR. Its Tier-2 (per-source PIT + tolerance) reasoning now applies uniformly to the cases that need a cut (multi-ledger); §7 (checkpoint period type) and the checkpoint lifecycle commitments are obsolete.
