@@ -182,7 +182,14 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 			handleServiceErrors(w, r, err)
 			return
 		}
-		api.RenderCursor(w, *cursor)
+		// Map through renderRule rather than serialising models.Rule directly:
+		// the response DTO is what carries the deprecated `cadence` mirror, and
+		// the OpenAPI Rule schema marks it required. Serialising the model here
+		// would emit `periodType` alone and break pre-2.4.2 clients on list
+		// responses only, while create/get/patch kept working.
+		api.RenderCursor(w, *bunpaginate.MapCursor(cursor, func(rule models.Rule) *ruleResponse {
+			return renderRule(&rule)
+		}))
 	}
 }
 

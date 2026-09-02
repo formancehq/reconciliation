@@ -925,9 +925,15 @@ components:
           deprecated: true
           description: |
             Deprecated alias of `periodType`, still accepted so clients
-            generated before 2.4.2 keep working. Sending both is rejected with
-            400 unless the two values are equal. Prefer `periodType`; this
-            field is removed at the next API major.
+            generated before 2.4.2 keep working. If both keys carry a value and
+            the values differ, the request is rejected with 400 rather than one
+            being chosen silently. An empty or null `cadence` counts as unset,
+            not as a conflicting value. Prefer `periodType`; this field is
+            removed at the next API major.
+
+            An explicit `periodType: ""` is rejected as an invalid enum value.
+            `null` is treated as unset on either key, so an SDK that serialises
+            an unset optional as null behaves as if it had been omitted.
 
             Servers before 2.4.2 do not know `periodType` and ignore it,
             falling back to the `continuous` default. Normally that cannot bite

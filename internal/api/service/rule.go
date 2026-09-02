@@ -33,10 +33,42 @@ type CreateRuleRequest struct {
 	//
 	// Deprecated: send periodType. Validate folds this into PeriodType; see
 	// resolvePeriodType for the conflict rules.
-	Cadence       models.PeriodType `json:"cadence,omitempty"`
-	Notifications []string          `json:"notifications,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	Enabled       *bool             `json:"enabled,omitempty"`
+	Cadence models.PeriodType `json:"cadence,omitempty"`
+	// PeriodTypeWasProvided records whether `periodType` was actually present in
+	// the request body, which the zero value alone cannot express: it separates
+	// an explicit `"periodType": ""` (an invalid enum value, so a 400) from an
+	// absent key (which defaults). Same idiom as
+	// models.Schedule.SafetyMarginWasProvided.
+	//
+	// An explicit JSON `null` counts as absent, deliberately: SDKs routinely
+	// serialise an unset optional as null, and rejecting it would break clients
+	// for no gain. UnmarshalJSON sets this.
+	PeriodTypeWasProvided bool              `json:"-"`
+	Notifications         []string          `json:"notifications,omitempty"`
+	Labels                map[string]string `json:"labels,omitempty"`
+	Enabled               *bool             `json:"enabled,omitempty"`
+}
+
+// UnmarshalJSON decodes the request and records whether `periodType` was
+// present, which the zero value alone cannot express.
+func (r *CreateRuleRequest) UnmarshalJSON(data []byte) error {
+	// plain drops the method set so this does not recurse.
+	type plain CreateRuleRequest
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	var probe struct {
+		PeriodType *models.PeriodType `json:"periodType"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	decoded.PeriodTypeWasProvided = probe.PeriodType != nil
+
+	*r = CreateRuleRequest(decoded)
+	return nil
 }
 
 // Validate is invoked at the API boundary; surface the result as 400 VALIDATION.
@@ -50,9 +82,18 @@ func (r *CreateRuleRequest) Validate() error {
 	if len(r.TemplateSpec) == 0 {
 		return errors.New("templateSpec is required")
 	}
+	// Judge an explicitly supplied periodType before folding the legacy key, so
+	// an invalid value is always an error rather than something a valid
+	// `cadence` could paper over. "" is not an enum member, so
+	// `{"periodType":""}` is a 400 rather than a silent default.
+	if r.PeriodTypeWasProvided && !r.PeriodType.Valid() {
+		return fmt.Errorf("periodType must be one of continuous, daily, weekly, monthly (got %q)", r.PeriodType)
+	}
 	if err := r.resolvePeriodType(); err != nil {
 		return err
 	}
+	// Catches a value set programmatically rather than decoded from JSON, where
+	// PeriodTypeWasProvided is not set.
 	if r.PeriodType != "" && !r.PeriodType.Valid() {
 		return fmt.Errorf("periodType must be one of continuous, daily, weekly, monthly (got %q)", r.PeriodType)
 	}
@@ -65,25 +106,33 @@ func (r *CreateRuleRequest) Validate() error {
 // resolvePeriodType folds the deprecated `cadence` key into PeriodType so the
 // rest of the service only ever reads one field.
 //
-// Both keys are accepted during the deprecation window, but if both are present
-// they must agree. Silently picking a winner is the failure mode worth avoiding:
-// a client that sends a stale `cadence` alongside a new `periodType` would
-// otherwise get a rule that buckets differently from what it asked for, with no
-// error — discovered at period close rather than at create time.
+// Both keys are accepted during the deprecation window, but if both carry a
+// value they must agree. Silently picking a winner is the failure mode worth
+// avoiding: a client that sends a stale `cadence` alongside a new `periodType`
+// would otherwise get a rule that buckets differently from what it asked for,
+// with no error — discovered at period close rather than at create time.
+//
+// An empty `cadence` is treated as unset rather than rejected. Tightening the
+// deprecated key is the one thing this deprecation must not do: a pre-2.4.2
+// client that sends `"cadence": ""` for "no selection" kept working before, and
+// turning that into a 400 would break exactly the callers the alias exists to
+// protect. `periodType`, being new, is held to the enum strictly.
 //
 // Called from Validate, which CreateRule invokes itself, so there is no path
 // that reaches persistence with the legacy key unresolved.
 func (r *CreateRuleRequest) resolvePeriodType() error {
 	switch {
 	case r.Cadence == "":
-		return nil
-	case r.PeriodType == "":
-		r.PeriodType = r.Cadence
-	case r.PeriodType != r.Cadence:
+		// Absent, or explicitly empty — treated the same, so nothing to fold.
+	case r.PeriodType != "" && r.PeriodType != r.Cadence:
 		return fmt.Errorf(
 			"cadence and periodType disagree (%q vs %q); cadence is deprecated, send periodType alone",
 			r.Cadence, r.PeriodType)
+	default:
+		r.PeriodType = r.Cadence
+		r.PeriodTypeWasProvided = true
 	}
+
 	r.Cadence = ""
 	return nil
 }

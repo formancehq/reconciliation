@@ -540,8 +540,8 @@ func TestListRules_Nominal(t *testing.T) {
 	cursor := &bunpaginate.Cursor[models.Rule]{
 		PageSize: 15,
 		Data: []models.Rule{
-			{ID: uuid.New(), Name: "a", TemplateKind: models.TemplateLedgerInvariant},
-			{ID: uuid.New(), Name: "b", TemplateKind: models.TemplateAccountThreshold},
+			{ID: uuid.New(), Name: "a", TemplateKind: models.TemplateLedgerInvariant, PeriodType: models.PeriodTypeMonthly},
+			{ID: uuid.New(), Name: "b", TemplateKind: models.TemplateAccountThreshold, PeriodType: models.PeriodTypeDaily},
 		},
 	}
 	mockSvc.EXPECT().ListRules(gomock.Any(), gomock.Any()).Return(cursor, nil)
@@ -551,9 +551,25 @@ func TestListRules_Nominal(t *testing.T) {
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	var got sharedapi.BaseResponse[models.Rule]
+	// Captured before Decode, which consumes the buffer.
+	body := rec.Body.String()
+	var got sharedapi.BaseResponse[ruleResponse]
 	sharedapi.Decode(t, rec.Body, &got)
 	require.Len(t, got.Cursor.Data, 2)
+
+	// List items must go through renderRule, not serialise models.Rule
+	// directly: the OpenAPI Rule schema marks both `periodType` and the
+	// deprecated `cadence` required, and a pre-2.4.2 client reads the latter.
+	// Serialising the model emitted `periodType` alone, breaking list responses
+	// while create/get/patch kept working.
+	require.Equal(t, "monthly", got.Cursor.Data[0].PeriodType)
+	require.Equal(t, "daily", got.Cursor.Data[1].PeriodType)
+	for i, item := range got.Cursor.Data {
+		require.Equal(t, item.PeriodType, item.Cadence,
+			"item %d: the deprecated alias must mirror periodType", i)
+	}
+	require.Contains(t, body, `"cadence"`,
+		"list responses must still emit the deprecated alias")
 }
 
 // TestListRules_InvalidPageSize the pageSize param must reject non-integer
@@ -715,6 +731,9 @@ func TestCreateRule_PeriodTypeWireContract(t *testing.T) {
 		TemplateKind: models.TemplateLedgerInvariant,
 		TemplateSpec: json.RawMessage(`{"terms":[],"tolerance":{}}`),
 		PeriodType:   models.PeriodTypeWeekly,
+		// Set because the body carries the key explicitly; UnmarshalJSON
+		// records presence so an explicit "" is distinguishable from absent.
+		PeriodTypeWasProvided: true,
 	}
 	resp := &models.Rule{
 		ID:           uuid.New(),
@@ -783,4 +802,86 @@ func TestCreateRule_LegacyCadenceKeyReachesService(t *testing.T) {
 	// client reading `periodType` each see monthly.
 	require.Contains(t, rec.Body.String(), `"periodType":"monthly"`)
 	require.Contains(t, rec.Body.String(), `"cadence":"monthly"`)
+}
+
+// TestCreateRule_PeriodTypeKeyEdgeCases pins the presence semantics at the HTTP
+// boundary, where the JSON actually gets decoded — a service-level test cannot
+// tell an absent key from an explicit empty one, which is the whole point here.
+func TestCreateRule_PeriodTypeKeyEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	spec := `"templateSpec":{"terms":[],"tolerance":{}}`
+	base := `"name":"edge","templateKind":"ledger_invariant",` + spec
+
+	cases := []struct {
+		name string
+		body string
+		// want is the PeriodType the service should receive; "" means the
+		// request must be rejected before reaching the service.
+		want     models.PeriodType
+		wantCode int
+	}{
+		{
+			name:     "explicit empty periodType is rejected, not defaulted",
+			body:     `{` + base + `,"periodType":""}`,
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:     "null periodType counts as absent and defaults",
+			body:     `{` + base + `,"periodType":null}`,
+			want:     "",
+			wantCode: http.StatusCreated,
+		},
+		{
+			name:     "empty cadence beside a real periodType is not a conflict",
+			body:     `{` + base + `,"periodType":"monthly","cadence":""}`,
+			want:     models.PeriodTypeMonthly,
+			wantCode: http.StatusCreated,
+		},
+		{
+			name:     "null cadence beside a real periodType is not a conflict",
+			body:     `{` + base + `,"periodType":"monthly","cadence":null}`,
+			want:     models.PeriodTypeMonthly,
+			wantCode: http.StatusCreated,
+		},
+		{
+			name:     "empty cadence alone is treated as unset",
+			body:     `{` + base + `,"cadence":""}`,
+			want:     "",
+			wantCode: http.StatusCreated,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b, mockSvc := newTestingBackend(t)
+			router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+
+			if tc.wantCode == http.StatusCreated {
+				mockSvc.EXPECT().
+					CreateRule(gomock.Any(), gomock.Cond(func(req *service.CreateRuleRequest) bool {
+						// Validate runs inside the real service, so assert on
+						// the decoded request the handler forwards.
+						return req.PeriodType == tc.want
+					})).
+					Return(&models.Rule{
+						ID: uuid.New(), Name: "edge", TemplateKind: models.TemplateLedgerInvariant,
+						PeriodType: models.PeriodTypeContinuous,
+						CreatedAt:  time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+					}, nil)
+			} else {
+				mockSvc.EXPECT().
+					CreateRule(gomock.Any(), gomock.Any()).
+					Return(nil, templates.ErrInvalidSpec).
+					AnyTimes()
+			}
+
+			r := httptest.NewRequest(http.MethodPost, "/rules", bytes.NewReader([]byte(tc.body)))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, r)
+
+			require.Equal(t, tc.wantCode, rec.Code, "body: %s", rec.Body.String())
+		})
+	}
 }

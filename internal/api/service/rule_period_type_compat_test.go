@@ -71,6 +71,29 @@ func TestCreateRule_AcceptsEitherPeriodTypeKey(t *testing.T) {
 			req:     &CreateRuleRequest{Cadence: models.PeriodType("hourly")},
 			wantErr: "periodType must be one of",
 		},
+		{
+			// An explicitly-present periodType must be a real enum member, even
+			// when a valid legacy value sits beside it — an invalid value is
+			// always an error rather than something `cadence` can paper over.
+			name: "an explicitly empty periodType is rejected even beside a valid cadence",
+			req: &CreateRuleRequest{
+				PeriodType:            "",
+				PeriodTypeWasProvided: true,
+				Cadence:               models.PeriodTypeMonthly,
+			},
+			wantErr: "periodType must be one of",
+		},
+		{
+			// Empty is treated as unset on the deprecated key: tightening it
+			// would break the pre-2.4.2 callers the alias exists to protect.
+			name: "an empty legacy value is unset, not a conflict",
+			req: &CreateRuleRequest{
+				PeriodType:            models.PeriodTypeMonthly,
+				PeriodTypeWasProvided: true,
+				Cadence:               "",
+			},
+			want: models.PeriodTypeMonthly,
+		},
 	}
 
 	for _, tc := range cases {
