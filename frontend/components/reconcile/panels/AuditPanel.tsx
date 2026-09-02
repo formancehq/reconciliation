@@ -257,9 +257,11 @@ function AuditTrailCard({
         <Hash className="mt-px h-3.5 w-3.5 shrink-0" />
         <span>
           <span className="font-medium">#sequence</span> is the ledger’s global
-          audit position, shared with other ledgers in the bucket — so numbers may
-          skip. Each entry’s signature is verified on its own; contiguity is a
-          separate, per-bucket property.
+          audit position, shared with its other ledgers — so numbers skip here,
+          and that’s expected. <span className="font-medium">Verify all</span>{" "}
+          checks each entry’s signature on its own; whether the record is
+          <em> complete</em> is a separate question answered against the ledger’s
+          own audit trail, not these numbers.
         </span>
       </p>
     </Card>
