@@ -85,10 +85,25 @@ export interface Schedule {
   tz?: string; // e.g. "UTC"
 }
 
+/** How an actor identity was obtained, and therefore how far it can be trusted. */
+export type ActorSource = "token" | "declared";
+
+/**
+ * Who performed a lifecycle transition, with provenance. `source: "token"` means
+ * `subject` is the verified subject of an authenticated token (authoritative);
+ * `source: "declared"` means only the self-declared `declared` name is known.
+ */
+export interface Actor {
+  source: ActorSource;
+  subject?: string;
+  declared?: string;
+}
+
 export interface Ack {
   by: string;
   at: string;
   note?: string;
+  actor?: Actor;
 }
 
 export interface Resolution {
@@ -99,6 +114,7 @@ export interface Resolution {
   transactionRefs?: string[];
   evidenceSnapshot?: Record<string, unknown>;
   expiresAt?: string;
+  actor?: Actor;
 }
 
 export interface Snooze {
@@ -401,3 +417,14 @@ export type RuleActivitiesResponse = CursorResponse<RuleActivity>;
 export type AlertResponse = Data<Alert>;
 export type AlertsResponse = CursorResponse<Alert>;
 export type AlertEventsResponse = CursorResponse<AlertEvent>; // empty today
+
+/**
+ * A public signing key the control-ledger writes are signed with. `publicKey`
+ * is standard base64 — what an auditor feeds to ed25519.Verify.
+ */
+export interface SigningKey {
+  keyId: string;
+  publicKey: string;
+  parentKeyId?: string;
+}
+export type SigningKeysResponse = Data<{ keys: SigningKey[] }>;

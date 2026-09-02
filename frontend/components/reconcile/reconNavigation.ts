@@ -1,4 +1,4 @@
-export type ReconTab = "overview" | "rules" | "alerts" | "insights"
+export type ReconTab = "overview" | "rules" | "alerts" | "insights" | "audit"
 export type ReconAlertFilter = "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "ALL"
 
 export interface ReconNav {
@@ -9,7 +9,13 @@ export interface ReconNav {
   contractVersion?: 1 | 2
 }
 
-const TABS = new Set<ReconTab>(["overview", "rules", "alerts", "insights"])
+const TABS = new Set<ReconTab>([
+  "overview",
+  "rules",
+  "alerts",
+  "insights",
+  "audit",
+])
 const ALERT_FILTERS = new Set<ReconAlertFilter>([
   "OPEN",
   "ACKNOWLEDGED",

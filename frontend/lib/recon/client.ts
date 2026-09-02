@@ -19,6 +19,8 @@ import type {
   Alert,
   AlertResponse,
   AlertsResponse,
+  SigningKey,
+  SigningKeysResponse,
   Capture,
   CapturesResponse,
   Cursor,
@@ -294,6 +296,16 @@ export const reconClient = {
       { body }
     )
     return r.data
+  },
+
+  // --- audit --------------------------------------------------------------
+  async getSigningKeys(signal?: AbortSignal): Promise<SigningKey[]> {
+    const r = await reconRequest<SigningKeysResponse>(
+      "GET",
+      "/audit/signing-keys",
+      { signal }
+    )
+    return r.data.keys ?? []
   },
 }
 

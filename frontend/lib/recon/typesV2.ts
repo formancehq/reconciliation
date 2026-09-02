@@ -1,6 +1,7 @@
 import type {
   AckAlertRequest,
   AcceptAlertRequest,
+  Actor,
   AlertEventType,
   AlertStatus,
   PeriodType,
@@ -292,6 +293,7 @@ interface AckV2 {
   by: string
   at: string
   note?: string
+  actor?: Actor
 }
 interface ResolutionV2 {
   kind: "auto" | "fixed_by_booking" | "accepted_by_business"
@@ -301,6 +303,7 @@ interface ResolutionV2 {
   transactionRefs?: string[]
   evidenceSnapshot?: EvidenceV2
   expiresAt?: string
+  actor?: Actor
 }
 interface SnoozeV2 {
   until: string

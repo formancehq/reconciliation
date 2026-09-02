@@ -11,7 +11,7 @@
  * Structurally mirrors the V3 Ledger Explorer (same DS tab-bar primitives) so
  * it feels native next to "Explore Ledger" in the sidebar.
  */
-import { LayoutDashboard, ListChecks, Bell, LineChart, AlertTriangle } from 'lucide-react';
+import { LayoutDashboard, ListChecks, Bell, LineChart, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TABBAR_ROW, TABBAR_LIST, TABBAR_TRIGGER, TABBAR_ICON } from '@/lib/uiClasses';
 import { ReconProvider, useReconNav, type ReconTab } from './ReconContext';
@@ -21,12 +21,14 @@ import { OverviewPanel } from './panels/OverviewPanel';
 import { RulesPanel } from './panels/RulesPanel';
 import { AlertsPanel } from './panels/AlertsPanel';
 import { InsightsPanel } from './panels/InsightsPanel';
+import { AuditPanel } from './panels/AuditPanel';
 
 const TABS: { id: ReconTab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'rules', label: 'Rules', icon: ListChecks },
   { id: 'alerts', label: 'Alerts', icon: Bell },
   { id: 'insights', label: 'Insights', icon: LineChart },
+  { id: 'audit', label: 'Audit', icon: ShieldCheck },
 ];
 
 function ReconcileInner() {
@@ -67,6 +69,7 @@ function ReconcileInner() {
         {nav.tab === 'rules' && <RulesPanel />}
         {nav.tab === 'alerts' && <AlertsPanel />}
         {nav.tab === 'insights' && <InsightsPanel />}
+        {nav.tab === 'audit' && <AuditPanel />}
       </div>
     </div>
   );
