@@ -14,7 +14,7 @@
 // Section/GuideTable/AppLink/SubHeading). Rendered by ./guide-shell.
 
 import * as React from 'react'
-import { Scale, ListChecks, History, Bell, LineChart } from 'lucide-react'
+import { Scale, ListChecks, History, Bell, LineChart, ShieldCheck } from 'lucide-react'
 import { Section, SubHeading, P, Callout, GuideTable, AppLink, Code } from './primitives'
 
 export interface GuideSection {
@@ -61,7 +61,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					]}
 				/>
 
-				<SubHeading id="v3-rec-tabs">The four tabs</SubHeading>
+				<SubHeading id="v3-rec-tabs">The five tabs</SubHeading>
 				<GuideTable
 					caption="Reconcile tabs"
 					columns={['Tab', 'Purpose']}
@@ -69,7 +69,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 						[<strong key="overview">Overview</strong>, 'Clickable shortcuts to open alerts, handled alerts, rules, and the most recent break activity'],
 						[<strong key="rules">Rules</strong>, <span key="rules-purpose">The checks you define, with an enable toggle and one-click evaluation (see <AppLink href="/guide?section=rules">Rules & templates</AppLink>)</span>],
 						[<strong key="alerts">Alerts</strong>, <span key="alerts-purpose">The inbox of breaks to triage and resolve (see <AppLink href="/guide?section=alerts">Alerts & resolution</AppLink>)</span>],
-						[<strong key="insights">Insights</strong>, <span key="insights-purpose">Deviation, cumulative drift, and break distribution built from reconciliation history (see <AppLink href="/guide?section=insights">Insights</AppLink>)</span>],
+						[<strong key="insights">Insights</strong>, <span key="insights-purpose">Deviation and break distribution built from reconciliation history (see <AppLink href="/guide?section=insights">Insights</AppLink>)</span>],
+						[<strong key="audit">Audit</strong>, <span key="audit-purpose">The signed, independently verifiable record of what Reconcile did, and who did it (see <AppLink href="/guide?section=audit">Audit & verification</AppLink>)</span>],
 					]}
 				/>
 
@@ -400,6 +401,75 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					Evaluate the rule from its detail screen to create an evaluation receipt in rule activity. Ledger-invariant rules still
 					contribute to break distribution, but their normalized sum is not currently plotted in the
 					deviation chart.
+				</Callout>
+			</Section>
+		),
+	},
+	{
+		id: 'audit',
+		group: 'Reconciliation',
+		label: 'Audit & verification',
+		icon: <ShieldCheck className="size-4" aria-hidden />,
+		render: () => (
+			<Section
+				id="audit"
+				eyebrow="Reconciliation"
+				title="Audit & verification"
+				intro="Every action Reconcile records — each evaluation, each break, each resolution — is cryptographically signed on its control ledger. The Audit tab turns that into something a third party can check for themselves: the record is verifiable without trusting Formance, the ledger operator, or this screen."
+			>
+				<SubHeading id="v3-rec-audit-what">What is signed, and why it matters</SubHeading>
+				<P>
+					Reconcile writes its state to a dedicated control ledger and signs every write with an Ed25519 key
+					it holds privately. The signature travels with the entry. Anyone holding the matching{' '}
+					<em>public</em> key can confirm two things about any entry: that Reconcile produced it
+					(authorship), and that nothing has altered it since (integrity). A missing, reordered, or edited
+					record fails the check — so the trail cannot be quietly rewritten after the fact.
+				</P>
+
+				<SubHeading id="v3-rec-audit-panel">What the Audit tab shows</SubHeading>
+				<GuideTable
+					caption="The Audit tab"
+					columns={['Panel', 'What it gives you']}
+					rows={[
+						[<strong key="verify">Verification</strong>, 'The public signing key (copyable) and a short recipe for checking any entry yourself'],
+						[<strong key="activity">Signed activity</strong>, 'The breaks that have been handled, each showing who acted and how trustworthy that identity is'],
+					]}
+				/>
+
+				<SubHeading id="v3-rec-audit-actor">Who did what: verified vs declared</SubHeading>
+				<P>
+					Each handling action carries a provenance badge. <strong>Verified</strong> means the actor is the
+					subject of an authenticated access token, bound inside the signature — the record proves the named
+					person acted. <strong>Declared</strong> means only a self-typed name was supplied (for example,
+					when Reconcile runs without authentication in a local environment); it is kept for display but is
+					not a trust anchor.
+				</P>
+
+				<SubHeading id="v3-rec-audit-auditor">For an external auditor</SubHeading>
+				<P>
+					The point of signing is that your auditor does not have to take our word for anything. Hand them the
+					public key from the verification panel and they can check the reconciliation record end to end, with
+					no access to our systems and no involvement from us:
+				</P>
+				<ol className="list-decimal space-y-1 pl-7 text-sm">
+					<li>Copy the <strong>public key</strong> from the verification panel.</li>
+					<li>Read a control-ledger entry — its signed payload (the exact bytes of the batch that was committed) and its signature.</li>
+					<li>Run <Code>ed25519.Verify(publicKey, payload, signature)</Code> in any language. It passes only if Reconcile wrote that exact entry and nothing changed it afterwards.</li>
+					<li>Follow the entries in sequence order to confirm the record is complete — a gap would mean an action went unrecorded.</li>
+				</ol>
+
+				<Callout kind="info" title="Why this beats a report">
+					A dashboard that says &quot;all reconciled&quot; asks you to trust the dashboard. A signed ledger
+					hands the auditor the evidence <em>and</em> the means to check it independently: the public key is
+					the whole trust anchor, and Formance is never in the loop. That is the difference between being told
+					the books reconcile and being able to prove it.
+				</Callout>
+
+				<Callout kind="tip" title="What’s here now, and what’s next">
+					Today the tab publishes the key and recipe and shows the signed handling of each break with its
+					verified/declared attribution. A later step surfaces each entry’s sequence number and signature in
+					the tab itself, with a one-click check and a completeness (no-gaps) indicator — so an auditor can
+					verify from the screen as well as from their own tools.
 				</Callout>
 			</Section>
 		),
