@@ -457,6 +457,34 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
+  /audit/entries:
+    get:
+      summary: List signed audit entries
+      description: |
+        Reconciliation's own control-ledger audit entries — the ledger's native
+        AuditEntry stream scoped to the control ledger, newest first. Each entry
+        carries the exact signed `payload` (the committed batch bytes) and its
+        Ed25519 `signature`, so an external auditor verifies any write from the
+        published public key — `ed25519.Verify(publicKey, payload, signature)` —
+        with no ledger access and nobody from Formance in the loop.
+
+        Note: `sequence` is the ledger's dense, bucket-wide audit sequence, shared
+        with any other ledgers in the same bucket; per-entry authenticity is
+        absolute, but a gapless subset requires an isolated bucket (see the audit
+        docs). Best-effort: an unreachable ledger yields [].
+      operationId: listAuditEntries
+      tags: [reconciliation.v1]
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum entries to return (default 50, max 500).
+          schema: { type: integer, format: int64, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        '200': { $ref: '#/components/responses/AuditEntries' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
   /v2/rules/{ruleID}/timeline:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
@@ -724,6 +752,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/SigningKeysResponse' }
+    AuditEntries:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AuditEntriesResponse' }
     LedgerMetaFields:
       description: OK
       content:
@@ -822,6 +855,45 @@ components:
                   parentKeyId:
                     type: string
                     description: For a rotated key, the id of the key it descends from.
+    AuditEntriesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [entries]
+          properties:
+            entries:
+              type: array
+              items:
+                type: object
+                required: [sequence, signed, outcome]
+                properties:
+                  sequence:
+                    type: integer
+                    format: int64
+                    description: The ledger's dense, bucket-wide audit sequence number.
+                  timestamp: { type: string, format: date-time }
+                  keyId:
+                    type: string
+                    description: The signing key this entry was signed with (matches /audit/signing-keys).
+                  payload:
+                    type: string
+                    description: The signed batch bytes, standard base64 — the `payload` for ed25519.Verify.
+                  signature:
+                    type: string
+                    description: The Ed25519 signature over `payload`, standard base64.
+                  signed:
+                    type: boolean
+                    description: False for a rare unsigned bootstrap write (e.g. the signing-key registration).
+                  outcome:
+                    type: string
+                    enum: [success, failure]
+                    description: Whether the batch applied; a failed attempt is still signed and audited.
+                  orderCount: { type: integer, format: int64 }
+                  ledgers:
+                    type: array
+                    items: { type: string }
     LedgerMetaFieldsResponse:
       type: object
       required: [data]
@@ -1305,7 +1377,7 @@ components:
       readOnly: true
     TemplateKindV2:
       type: string
-      enum: [balance_equation, exchange_rate_bounds, source_consensus, coverage_ratio_bounds]
+      enum: [balance_equation, exchange_rate_bounds, source_consensus, coverage_ratio_bounds, stale_holds]
     SeverityV2:
       type: string
       enum: [info, low, medium, high, critical]
@@ -1487,6 +1559,83 @@ components:
           items: { $ref: '#/components/schemas/BalanceEquationTermV2' }
         ratio: { $ref: '#/components/schemas/ExchangeRateV2' }
 
+    HoldDeadlineV2:
+      type: object
+      description: |
+        Where a hold's deadline comes from. Declare `expiryKey` for an
+        issuer-supplied expiry, `createdKey` + `maxAge` for an age-based
+        fallback, or both — the expiry then wins for every hold that carries
+        one, and the fallback covers the rest.
+      properties:
+        expiryKey:
+          type: string
+          minLength: 1
+          description: Account metadata key holding the instant the hold expires.
+          example: hold_expires_at
+        createdKey:
+          type: string
+          minLength: 1
+          description: Account metadata key holding the instant the hold was placed.
+          example: hold_created_at
+        maxAge:
+          type: string
+          description: |
+            How long a hold may live once created, as a Go duration ("48h",
+            "90m"). Required with `createdKey`, and rejected without it.
+          example: 48h
+        encoding:
+          type: string
+          enum: [datetime, epoch_seconds, epoch_millis, epoch_micros]
+          default: datetime
+          description: |
+            How the deadline keys are written. `datetime` is a key the ledger
+            declares as a datetime; the `epoch_*` encodings are integer keys in
+            the named unit. Epoch nanoseconds are not supported — query values
+            travel as JSON numbers and are rejected past 2^53.
+    StaleHoldsSpecV2:
+      type: object
+      description: |
+        Flags held funds whose deadline has passed (`mode: stale`) or is about to
+        (`mode: approaching`). A hold is one ledger account with a non-zero
+        balance and a deadline in its metadata; released holds — zero balance,
+        metadata retained — are ignored. The deadline predicate is pushed into
+        the ledger query, so a rule's cost scales with the number of stale holds
+        rather than the number of holds. Severity is declared per rule, so
+        "warn early, page late" is two rules: an `approaching` rule at a low
+        severity and a `stale` rule at a high one.
+      required: [source, deadline]
+      properties:
+        source:
+          allOf:
+            - $ref: '#/components/schemas/LedgerNamedSourceV2'
+          description: The hold universe — one ledger account set, one asset. Metadata sources are not accepted.
+        deadline: { $ref: '#/components/schemas/HoldDeadlineV2' }
+        mode:
+          type: string
+          enum: [stale, approaching]
+          default: stale
+          description: |
+            `stale` flags holds whose deadline has passed. `approaching` flags
+            the warning *band* — `now < deadline <= now + warnWithin` — so a
+            hold crossing into stale leaves this rule and its warning alert
+            auto-resolves as the stale rule's alert opens.
+        warnWithin:
+          type: string
+          description: |
+            How far ahead to warn, as a Go duration. Required with
+            `mode: approaching`, rejected otherwise. Set it longer than the
+            rule's evaluation interval, or a hold can cross the band between
+            two runs without ever warning.
+          example: 6h
+        scope:
+          type: string
+          enum: [per_hold, aggregate]
+          default: per_hold
+          description: |
+            `per_hold` opens one alert per stuck hold, each auto-resolving when
+            that hold clears. `aggregate` opens one alert per asset carrying the
+            count and the total amount trapped.
+
     RuleRequestCommonV2:
       type: object
       required: [name]
@@ -1534,12 +1683,21 @@ components:
           properties:
             templateKind: { type: string, enum: [coverage_ratio_bounds] }
             templateSpec: { $ref: '#/components/schemas/CoverageRatioBoundsSpecV2' }
+    StaleHoldsRuleRequestV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [stale_holds] }
+            templateSpec: { $ref: '#/components/schemas/StaleHoldsSpecV2' }
     RuleRequestV2:
       oneOf:
         - $ref: '#/components/schemas/BalanceEquationRuleRequestV2'
         - $ref: '#/components/schemas/ExchangeRateBoundsRuleRequestV2'
         - $ref: '#/components/schemas/SourceConsensusRuleRequestV2'
         - $ref: '#/components/schemas/CoverageRatioBoundsRuleRequestV2'
+        - $ref: '#/components/schemas/StaleHoldsRuleRequestV2'
       discriminator:
         propertyName: templateKind
         mapping:
@@ -1547,6 +1705,7 @@ components:
           exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsRuleRequestV2'
           source_consensus: '#/components/schemas/SourceConsensusRuleRequestV2'
           coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsRuleRequestV2'
+          stale_holds: '#/components/schemas/StaleHoldsRuleRequestV2'
     RulePatchRequestV2:
       type: object
       description: Partial update. A changed definition is validated as a complete V2 definition; contractVersion is immutable and cannot be supplied.
@@ -1559,6 +1718,7 @@ components:
             - $ref: '#/components/schemas/ExchangeRateBoundsSpecV2'
             - $ref: '#/components/schemas/SourceConsensusSpecV2'
             - $ref: '#/components/schemas/CoverageRatioBoundsSpecV2'
+            - $ref: '#/components/schemas/StaleHoldsSpecV2'
         enabled: { type: boolean }
         severity: { $ref: '#/components/schemas/SeverityV2' }
         schedule: { $ref: '#/components/schemas/ScheduleV2' }

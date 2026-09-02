@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	v5log "github.com/formancehq/go-libs/v5/pkg/observe/log"
+	"github.com/formancehq/reconciliation/internal/api"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerauth"
@@ -112,6 +113,10 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 		fx.Provide(func(client *ledger.Client) service.Store {
 			return ledgerstore.New(client, flagStr(cmd, ledgerControlNameFlag))
 		}),
+
+		// Expose the control-ledger name to the HTTP layer so the audit handlers
+		// can scope the ledger's bucket-wide audit trail to recon's own entries.
+		fx.Supply(api.ControlLedger(flagStr(cmd, ledgerControlNameFlag))),
 
 		// Provision the control-ledger (chart + metadata indexes + numscripts) at
 		// startup. Idempotent: a restart against an existing ledger is a no-op.

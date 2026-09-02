@@ -26,6 +26,9 @@ type fakeIntrospector struct {
 	accountsErr error
 	signingKeys []ledger.SigningKeyInfo
 	signingErr  error
+	auditItems  []ledger.AuditEntryInfo
+	auditErr    error
+	auditLimit  int
 }
 
 func (f *fakeIntrospector) ListLedgers(context.Context) ([]string, error) {
@@ -38,6 +41,11 @@ func (f *fakeIntrospector) GetLedgerInfo(context.Context, string) (*commonpb.Led
 
 func (f *fakeIntrospector) ListSigningKeys(context.Context) ([]ledger.SigningKeyInfo, error) {
 	return f.signingKeys, f.signingErr
+}
+
+func (f *fakeIntrospector) ListAuditEntries(_ context.Context, _ string, limit int) ([]ledger.AuditEntryInfo, error) {
+	f.auditLimit = limit
+	return f.auditItems, f.auditErr
 }
 
 // QueryAccountsFunc mirrors the real streaming contract: it invokes fn per

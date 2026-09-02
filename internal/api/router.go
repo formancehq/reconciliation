@@ -56,6 +56,7 @@ func newRouter(
 	serviceInfo api.ServiceInfo,
 	moduleInfo ModuleInfo,
 	ledgerClient *ledger.Client,
+	controlLedger ControlLedger,
 	authenticator auth.Authenticator,
 	healthController *health.HealthController,
 	publisher message.Publisher,
@@ -113,8 +114,11 @@ func newRouter(
 		r.Get("/ledgers/{ledger}/accounts", listLedgerAccountsHandler(ledgerClient))
 
 		// Audit: the public signing keys the control-ledger writes are signed
-		// with, so the audit tab can publish "verify it yourself" (EN-1930).
+		// with, plus the signed entries themselves — so the audit tab (and an
+		// external auditor) can verify each write from the public key alone, with
+		// no ledger access (EN-1930, P1.3).
 		r.Get("/audit/signing-keys", listSigningKeysHandler(ledgerClient))
+		r.Get("/audit/entries", listAuditEntriesHandler(ledgerClient, controlLedger))
 	})
 
 	return r

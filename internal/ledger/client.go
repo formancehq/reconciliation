@@ -14,6 +14,7 @@ import (
 	"maps"
 	"math/big"
 	"slices"
+	"time"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
@@ -250,6 +251,112 @@ func (c *Client) ListSigningKeys(ctx context.Context) ([]SigningKeyInfo, error) 
 			return keys, nil
 		}
 	}
+}
+
+// AuditEntryInfo is one entry of the ledger's native audit trail, as served to
+// an external auditor: the externally-verifiable {Payload, Signature} — over
+// which ed25519.Verify(publicKey, Payload, Signature) is the whole check — plus
+// the dense Sequence and the outcome. Payload is the exact serialized ApplyBatch
+// the signature commits to. All of this is the ledger's own AuditEntry, read
+// back verbatim; reconciliation stores no parallel audit log of its own.
+type AuditEntryInfo struct {
+	Sequence   uint64
+	Timestamp  time.Time
+	KeyID      string
+	Signature  []byte
+	Payload    []byte
+	Signed     bool
+	Outcome    string
+	OrderCount uint32
+	Ledgers    []string
+}
+
+// ListAuditEntries returns the ledger's audit entries for one ledger (recon's
+// control ledger), newest first, up to limit. Each entry carries the batch
+// Ed25519 signature the ledger stored, so a third party can verify it from the
+// public key with no ledger access. The audit sequence is bucket-wide, so a
+// filtered subset is authentic per-entry but not necessarily gapless — see the
+// P1.3 completeness note.
+func (c *Client) ListAuditEntries(ctx context.Context, ledgerName string, limit int) ([]AuditEntryInfo, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	filter := &commonpb.QueryFilter{
+		Filter: &commonpb.QueryFilter_Audit{
+			Audit: &commonpb.AuditCondition{
+				Field: commonpb.AuditField_AUDIT_FIELD_LEDGER,
+				Condition: &commonpb.AuditCondition_StringCond{
+					StringCond: &commonpb.StringCondition{
+						Value: &commonpb.StringCondition_Hardcoded{Hardcoded: ledgerName},
+					},
+				},
+			},
+		},
+	}
+
+	var (
+		entries []AuditEntryInfo
+		cursor  string
+	)
+
+	for len(entries) < limit {
+		pageSize := limit - len(entries)
+		if pageSize > queryPageSize {
+			pageSize = queryPageSize
+		}
+
+		stream, err := c.service.ListAuditEntries(ctx, &servicepb.ListAuditEntriesRequest{
+			Options: &commonpb.ListOptions{
+				PageSize: uint32(pageSize),
+				Cursor:   cursor,
+				Reverse:  true, // newest first
+				Filter:   filter,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list audit entries: %w", err)
+		}
+
+		for len(entries) < limit {
+			entry, rerr := stream.Recv()
+			if errors.Is(rerr, io.EOF) {
+				break
+			}
+
+			if rerr != nil {
+				return nil, fmt.Errorf("recv audit entry: %w", rerr)
+			}
+
+			info := AuditEntryInfo{
+				Sequence:   entry.GetSequence(),
+				OrderCount: entry.GetOrderCount(),
+				Ledgers:    entry.GetLedgers(),
+				Outcome:    "success",
+			}
+			if entry.GetFailure() != nil {
+				info.Outcome = "failure"
+			}
+			if ts := entry.GetTimestamp(); ts != nil {
+				info.Timestamp = time.UnixMicro(int64(ts.GetData())).UTC()
+			}
+			if sig := entry.GetSignature(); sig != nil {
+				info.KeyID = sig.GetKeyId()
+				info.Signature = sig.GetSignature()
+				info.Payload = sig.GetPayload()
+				info.Signed = len(sig.GetSignature()) > 0
+			}
+
+			entries = append(entries, info)
+		}
+
+		cursor = nextCursorFromTrailer(stream.Trailer())
+		if cursor == "" {
+			break
+		}
+	}
+
+	return entries, nil
 }
 
 // signingKeyRegistered reports whether a key with the given id is already known
