@@ -1143,54 +1143,14 @@ function AlertDetail({
             onLoadEarlier={() => {}}
           />
 
-          {/* Lifecycle */}
-          {(alert.ack || alert.resolution || alert.snooze) && (
-            <Section title="Lifecycle">
-              <div className="space-y-2 text-sm">
-                {alert.ack && (
-                  <LifecycleRow
-                    label="Acknowledged"
-                    by={alert.ack.by}
-                    at={alert.ack.at}
-                    note={alert.ack.note}
-                  />
-                )}
-                {alert.resolution && (
-                  <div className="space-y-2">
-                    <LifecycleRow
-                      label={
-                        alert.resolution.kind === "accepted_by_business"
-                          ? "Accepted"
-                          : alert.resolution.kind === "fixed_by_booking"
-                            ? "Resolved (fixed by booking)"
-                            : "Resolved"
-                      }
-                      by={alert.resolution.by}
-                      at={alert.resolution.at}
-                      note={alert.resolution.note}
-                      extra={
-                        alert.resolution.transactionRefs?.length
-                          ? `refs: ${alert.resolution.transactionRefs.join(", ")}`
-                          : undefined
-                      }
-                    />
-                    {alert.resolution.evidenceSnapshot && (
-                      <ResolutionEvidenceSnapshot
-                        evidence={alert.resolution.evidenceSnapshot}
-                      />
-                    )}
-                  </div>
-                )}
-                {alert.snooze && (
-                  <LifecycleRow
-                    label="Snoozed"
-                    by={alert.snooze.by}
-                    at={alert.snooze.at}
-                    note={alert.snooze.note}
-                    extra={`until ${formatDateTime(alert.snooze.until)}`}
-                  />
-                )}
-              </div>
+          {/* The ack / resolve / snooze narrative now lives in the Timeline
+              above. The one fact it doesn't surface is the evidence frozen at
+              business acceptance, so keep just that. */}
+          {alert.resolution?.evidenceSnapshot && (
+            <Section title="Evidence at resolution">
+              <ResolutionEvidenceSnapshot
+                evidence={alert.resolution.evidenceSnapshot}
+              />
             </Section>
           )}
         </div>
@@ -1464,39 +1424,6 @@ function EvidenceDescription({
         </Fragment>
       ))}
     </DescriptionList>
-  )
-}
-
-function LifecycleRow({
-  label,
-  by,
-  at,
-  note,
-  extra,
-}: {
-  label: string
-  by: string
-  at: string
-  note?: string
-  extra?: string
-}) {
-  return (
-    <Card className="p-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium">{label}</span>
-        <span
-          className="text-xs text-muted-foreground"
-          title={formatDateTime(at)}
-        >
-          {formatRelative(at)}
-        </span>
-      </div>
-      <div className="mt-0.5 text-xs text-muted-foreground">
-        by {by}
-        {extra ? ` · ${extra}` : ""}
-      </div>
-      {note && <p className="mt-1 text-sm">{note}</p>}
-    </Card>
   )
 }
 
