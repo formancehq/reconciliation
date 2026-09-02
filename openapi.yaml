@@ -921,27 +921,20 @@ components:
         severity: { $ref: '#/components/schemas/Severity' }
         periodType:
           allOf: [{ $ref: '#/components/schemas/PeriodType' }]
-          nullable: true
           description: |
-            Omit to accept the default. `null` is accepted and treated as unset,
-            so an SDK that serialises an unset optional as null behaves as if
-            the key had been omitted. An explicit `""` is rejected as an invalid
-            enum value.
+            Omit the key to accept the `continuous` default. Any value sent must
+            be one of the enum members — `""` is not one of them and is
+            rejected.
         cadence:
           allOf: [{ $ref: '#/components/schemas/PeriodType' }]
           deprecated: true
-          nullable: true
           description: |
             Deprecated alias of `periodType`, still accepted so clients
             generated before 2.4.2 keep working. If both keys carry a value and
             the values differ, the request is rejected with 400 rather than one
-            being chosen silently. An empty or null `cadence` counts as unset,
-            not as a conflicting value. Prefer `periodType`; this field is
+            being chosen silently; an empty `cadence` counts as unset rather
+            than as a conflicting value. Prefer `periodType`; this field is
             removed at the next API major.
-
-            An explicit `periodType: ""` is rejected as an invalid enum value.
-            `null` is treated as unset on either key, so an SDK that serialises
-            an unset optional as null behaves as if it had been omitted.
 
             Servers before 2.4.2 do not know `periodType` and ignore it,
             falling back to the `continuous` default. Normally that cannot bite

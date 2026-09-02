@@ -839,7 +839,11 @@ func TestCreateRule_PeriodTypeKeyEdgeCases(t *testing.T) {
 			wantCode:              http.StatusBadRequest,
 		},
 		{
-			name:                   "null periodType counts as absent and defaults",
+			// Runtime leniency, deliberately not a spec promise: the OpenAPI
+			// enum has no `null` member, so this pins what the server does with
+			// input the contract does not describe rather than a guarantee
+			// clients may rely on.
+			name:                   "null periodType is tolerated as absent and defaults",
 			body:                   `{` + base + `,"periodType":null}`,
 			wantDecodedProvided:    false,
 			wantResolvedPeriodType: "",
@@ -854,7 +858,7 @@ func TestCreateRule_PeriodTypeKeyEdgeCases(t *testing.T) {
 			wantCode:               http.StatusCreated,
 		},
 		{
-			name:                   "null cadence beside a real periodType is not a conflict",
+			name:                   "null cadence is tolerated beside a real periodType",
 			body:                   `{` + base + `,"periodType":"monthly","cadence":null}`,
 			wantDecodedPeriodType:  models.PeriodTypeMonthly,
 			wantDecodedProvided:    true,
