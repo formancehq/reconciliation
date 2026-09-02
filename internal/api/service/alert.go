@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
@@ -56,16 +57,21 @@ type UnsnoozeAlertRequest struct {
 // storage layer — a second ack on an already-ACKNOWLEDGED alert preserves the
 // original metadata and does NOT append a new event.
 func (s *Service) AckAlert(ctx context.Context, id uuid.UUID, req *AckAlertRequest) (*models.Alert, error) {
-	if req == nil || req.By == "" {
-		return nil, errors.New("ack: 'by' is required")
+	if req == nil {
+		return nil, errors.New("ack: request is required")
+	}
+	by, actor, err := resolveActor(ctx, req.By)
+	if err != nil {
+		return nil, fmt.Errorf("ack: %w", err)
 	}
 	if _, err := s.getAlertForContract(ctx, id); err != nil {
 		return nil, err
 	}
 	ack := &models.Ack{
-		By:   req.By,
-		At:   time.Now().UTC(),
-		Note: req.Note,
+		By:    by,
+		At:    time.Now().UTC(),
+		Note:  req.Note,
+		Actor: actor,
 	}
 	return s.store.AckAlert(ctx, id, ack)
 }
@@ -74,18 +80,23 @@ func (s *Service) AckAlert(ctx context.Context, id uuid.UUID, req *AckAlertReque
 // `auto` path lives at the storage layer (AutoResolveAlert), invoked by the
 // evaluation loop on PASS.
 func (s *Service) ResolveAlert(ctx context.Context, id uuid.UUID, req *ResolveAlertRequest) (*models.Alert, error) {
-	if req == nil || req.By == "" {
-		return nil, errors.New("resolve: 'by' is required")
+	if req == nil {
+		return nil, errors.New("resolve: request is required")
+	}
+	by, actor, err := resolveActor(ctx, req.By)
+	if err != nil {
+		return nil, fmt.Errorf("resolve: %w", err)
 	}
 	if _, err := s.getAlertForContract(ctx, id); err != nil {
 		return nil, err
 	}
 	resolution := &models.Resolution{
 		Kind:            models.ResolutionFixedByBooking,
-		By:              req.By,
+		By:              by,
 		At:              time.Now().UTC(),
 		Note:            req.Note,
 		TransactionRefs: req.TransactionRefs,
+		Actor:           actor,
 	}
 	return s.store.ResolveAlertManual(ctx, id, resolution)
 }
@@ -94,11 +105,15 @@ func (s *Service) ResolveAlert(ctx context.Context, id uuid.UUID, req *ResolveAl
 // alert's current evidence onto the resolution so the audit trail is
 // reproducible even after the underlying balances change.
 func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAlertRequest) (*models.Alert, error) {
-	if req == nil || req.By == "" {
-		return nil, errors.New("accept: 'by' is required")
+	if req == nil {
+		return nil, errors.New("accept: request is required")
 	}
 	if req.Note == "" {
 		return nil, errors.New("accept: 'note' is required for business acceptance")
+	}
+	by, actor, err := resolveActor(ctx, req.By)
+	if err != nil {
+		return nil, fmt.Errorf("accept: %w", err)
 	}
 
 	current, err := s.getAlertForContract(ctx, id)
@@ -112,11 +127,12 @@ func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAler
 
 	resolution := &models.Resolution{
 		Kind:             models.ResolutionAcceptedByBusiness,
-		By:               req.By,
+		By:               by,
 		At:               time.Now().UTC(),
 		Note:             req.Note,
 		EvidenceSnapshot: snapshot,
 		ExpiresAt:        req.ExpiresAt,
+		Actor:            actor,
 	}
 	return s.store.AcceptAlert(ctx, id, resolution)
 }

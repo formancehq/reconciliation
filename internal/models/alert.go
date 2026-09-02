@@ -45,13 +45,43 @@ const (
 	ResolutionAcceptedByBusiness ResolutionKind = "accepted_by_business"
 )
 
+// ActorSource records how an actor identity was obtained, and therefore how far
+// it can be trusted. It travels inside the signed transition metadata, so an
+// auditor reading a `_recon` entry can tell a cryptographically-grounded actor
+// apart from a free-text claim.
+type ActorSource string
+
+const (
+	// ActorSourceToken means Subject is the verified subject of the caller's
+	// authenticated access token — the authoritative actor, bound into the
+	// signed write. Only reconciliation's own service identity is what the
+	// ledger's CallerSnapshot records; this is what pins the *human*.
+	ActorSourceToken ActorSource = "token"
+	// ActorSourceDeclared means no verified subject was available and the actor
+	// is only the self-declared `by` from the request body — spoofable, kept for
+	// display but never a trust anchor.
+	ActorSourceDeclared ActorSource = "declared"
+)
+
+// Actor is who performed a lifecycle transition, carrying its provenance so the
+// signed record is self-describing (EN-1930, P1.2). When Source is
+// ActorSourceToken, Subject is the authenticated principal and is authoritative;
+// Declared preserves any self-declared display name the caller also sent. When
+// Source is ActorSourceDeclared, only Declared is meaningful.
+type Actor struct {
+	Subject  string      `json:"subject,omitempty"`
+	Source   ActorSource `json:"source"`
+	Declared string      `json:"declared,omitempty"`
+}
+
 // Ack captures who acknowledged an alert and when. The CURRENT ack lives on
 // the Alert row; historical acks (e.g. an alert acked, resolved, re-opened,
 // acked again) are preserved as AlertEvent rows with type='ack'.
 type Ack struct {
-	By   string    `json:"by"`
-	At   time.Time `json:"at"`
-	Note string    `json:"note,omitempty"`
+	By    string    `json:"by"`
+	At    time.Time `json:"at"`
+	Note  string    `json:"note,omitempty"`
+	Actor *Actor    `json:"actor,omitempty"`
 }
 
 // Snooze is a time-boxed, operator-initiated mute of an alert's notifications.
@@ -67,6 +97,7 @@ type Snooze struct {
 	By    string    `json:"by"`
 	At    time.Time `json:"at"`
 	Note  string    `json:"note,omitempty"`
+	Actor *Actor    `json:"actor,omitempty"`
 }
 
 // Resolution is the audit-trailed closure of an alert. Stored as JSONB on
@@ -84,6 +115,7 @@ type Resolution struct {
 	TransactionRefs  []string        `json:"transactionRefs,omitempty"`
 	EvidenceSnapshot json.RawMessage `json:"evidenceSnapshot,omitempty"`
 	ExpiresAt        *time.Time      `json:"expiresAt,omitempty"`
+	Actor            *Actor          `json:"actor,omitempty"`
 }
 
 // Alert is the stable, dedup'd record of a failing fingerprint within a

@@ -87,6 +87,10 @@ func newRouter(
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(authenticator))
+		// After auth has verified the token, bind its subject onto the context so
+		// lifecycle writes can attribute the action to the authenticated human
+		// (EN-1930, P1.2). Must follow auth.Middleware — see subjectMiddleware.
+		r.Use(subjectMiddleware)
 		r.Use(service.OTLPMiddleware("reconciliation", serviceInfo.Debug))
 
 		// V1 (default, unprefixed) and V2 (/v2) rule/alert surfaces, each scoped

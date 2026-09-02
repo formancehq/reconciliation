@@ -851,19 +851,51 @@ components:
         kind: { type: string, enum: [on_demand, cron] }
         expr: { type: string, example: "*/15 * * * *" }
         tz: { type: string, example: "UTC" }
+    Actor:
+      type: object
+      description: |
+        Who performed a lifecycle transition, and how far that identity can be
+        trusted. It travels inside the cryptographically-signed control-ledger
+        entry, so an auditor can tell a verified actor from a self-declared claim.
+      required: [source]
+      properties:
+        source:
+          type: string
+          enum: [token, declared]
+          description: |
+            `token`: `subject` is the verified subject of the caller's
+            authenticated access token — the authoritative actor.
+            `declared`: no verified subject was available; only the self-declared
+            `declared` name is known, and it is not a trust anchor.
+        subject:
+          type: string
+          description: The authenticated principal (present only when source=token).
+        declared:
+          type: string
+          description: The self-declared name from the request body, kept as a note.
     Ack:
       type: object
       required: [by, at]
       properties:
-        by: { type: string, example: "ops@buildr.com" }
+        by:
+          type: string
+          example: "ops@buildr.com"
+          description: >
+            The authoritative actor: the verified token subject when the caller is
+            authenticated, otherwise the self-declared name. See `actor` for provenance.
         at: { type: string, format: date-time }
         note: { type: string }
+        actor: { $ref: '#/components/schemas/Actor' }
     Resolution:
       type: object
       required: [kind, by, at]
       properties:
         kind: { type: string, enum: [auto, fixed_by_booking, accepted_by_business] }
-        by: { type: string }
+        by:
+          type: string
+          description: >
+            The authoritative actor: the verified token subject when the caller is
+            authenticated, otherwise the self-declared name. See `actor` for provenance.
         at: { type: string, format: date-time }
         note: { type: string }
         transactionRefs:
@@ -873,6 +905,7 @@ components:
           type: object
           additionalProperties: true
         expiresAt: { type: string, format: date-time }
+        actor: { $ref: '#/components/schemas/Actor' }
     Snooze:
       type: object
       description: |
@@ -1169,16 +1202,19 @@ components:
 
     AckAlertRequest:
       type: object
-      required: [by]
+      description: >
+        `by` is required only when the caller is not authenticated. When an access
+        token is present its verified subject is the authoritative actor and `by`,
+        if sent, is kept as a display note.
       properties:
         by: { type: string, example: "ops@buildr.com" }
         note: { type: string }
     ResolveAlertRequest:
       type: object
-      required: [by]
       description: |
         Mark an alert resolved. When `transactionRefs` is non-empty the
-        resolution kind is recorded as `fixed_by_booking`.
+        resolution kind is recorded as `fixed_by_booking`. `by` is required only
+        when the caller is not authenticated (see AckAlertRequest).
       properties:
         by: { type: string }
         note: { type: string }
@@ -1187,8 +1223,11 @@ components:
           items: { type: string }
     AcceptAlertRequest:
       type: object
-      required: [by, note]
-      description: Business acceptance. `note` is required and the evidence is snapshotted onto the resolution.
+      required: [note]
+      description: >
+        Business acceptance. `note` is required and the evidence is snapshotted
+        onto the resolution. `by` is required only when the caller is not
+        authenticated (see AckAlertRequest).
       properties:
         by: { type: string }
         note: { type: string, minLength: 1 }
