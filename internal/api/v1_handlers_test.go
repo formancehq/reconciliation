@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -807,6 +808,12 @@ func TestCreateRule_LegacyCadenceKeyReachesService(t *testing.T) {
 // TestCreateRule_PeriodTypeKeyEdgeCases pins the presence semantics at the HTTP
 // boundary, where the JSON actually gets decoded — a service-level test cannot
 // tell an absent key from an explicit empty one, which is the whole point here.
+//
+// The mock runs the real CreateRuleRequest.Validate and wraps its error exactly
+// as Service.CreateRule does, so the status codes below come from production
+// validation rather than a handcrafted mock error. Stop setting
+// PeriodTypeWasProvided in UnmarshalJSON and the `periodType: ""` case returns
+// 201 and fails, which is the property that makes this test load-bearing.
 func TestCreateRule_PeriodTypeKeyEdgeCases(t *testing.T) {
 	t.Parallel()
 
@@ -816,39 +823,66 @@ func TestCreateRule_PeriodTypeKeyEdgeCases(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
-		// want is the PeriodType the service should receive; "" means the
-		// request must be rejected before reaching the service.
-		want     models.PeriodType
-		wantCode int
+		// As decoded by UnmarshalJSON, before Validate folds and clears.
+		wantDecodedPeriodType models.PeriodType
+		wantDecodedProvided   bool
+		wantDecodedCadence    models.PeriodType
+		// After the real Validate; only checked when the request is accepted.
+		wantResolvedPeriodType models.PeriodType
+		wantCode               int
 	}{
 		{
-			name:     "explicit empty periodType is rejected, not defaulted",
-			body:     `{` + base + `,"periodType":""}`,
-			wantCode: http.StatusBadRequest,
+			name:                  "explicit empty periodType is rejected, not defaulted",
+			body:                  `{` + base + `,"periodType":""}`,
+			wantDecodedPeriodType: "",
+			wantDecodedProvided:   true,
+			wantCode:              http.StatusBadRequest,
 		},
 		{
-			name:     "null periodType counts as absent and defaults",
-			body:     `{` + base + `,"periodType":null}`,
-			want:     "",
-			wantCode: http.StatusCreated,
+			name:                   "null periodType counts as absent and defaults",
+			body:                   `{` + base + `,"periodType":null}`,
+			wantDecodedProvided:    false,
+			wantResolvedPeriodType: "",
+			wantCode:               http.StatusCreated,
 		},
 		{
-			name:     "empty cadence beside a real periodType is not a conflict",
-			body:     `{` + base + `,"periodType":"monthly","cadence":""}`,
-			want:     models.PeriodTypeMonthly,
-			wantCode: http.StatusCreated,
+			name:                   "empty cadence beside a real periodType is not a conflict",
+			body:                   `{` + base + `,"periodType":"monthly","cadence":""}`,
+			wantDecodedPeriodType:  models.PeriodTypeMonthly,
+			wantDecodedProvided:    true,
+			wantResolvedPeriodType: models.PeriodTypeMonthly,
+			wantCode:               http.StatusCreated,
 		},
 		{
-			name:     "null cadence beside a real periodType is not a conflict",
-			body:     `{` + base + `,"periodType":"monthly","cadence":null}`,
-			want:     models.PeriodTypeMonthly,
-			wantCode: http.StatusCreated,
+			name:                   "null cadence beside a real periodType is not a conflict",
+			body:                   `{` + base + `,"periodType":"monthly","cadence":null}`,
+			wantDecodedPeriodType:  models.PeriodTypeMonthly,
+			wantDecodedProvided:    true,
+			wantResolvedPeriodType: models.PeriodTypeMonthly,
+			wantCode:               http.StatusCreated,
 		},
 		{
-			name:     "empty cadence alone is treated as unset",
-			body:     `{` + base + `,"cadence":""}`,
-			want:     "",
-			wantCode: http.StatusCreated,
+			name:                   "empty cadence alone is treated as unset",
+			body:                   `{` + base + `,"cadence":""}`,
+			wantDecodedProvided:    false,
+			wantResolvedPeriodType: "",
+			wantCode:               http.StatusCreated,
+		},
+		{
+			name:                   "legacy cadence alone is folded into periodType",
+			body:                   `{` + base + `,"cadence":"monthly"}`,
+			wantDecodedProvided:    false,
+			wantDecodedCadence:     models.PeriodTypeMonthly,
+			wantResolvedPeriodType: models.PeriodTypeMonthly,
+			wantCode:               http.StatusCreated,
+		},
+		{
+			name:                  "two real values that disagree are rejected",
+			body:                  `{` + base + `,"periodType":"daily","cadence":"monthly"}`,
+			wantDecodedPeriodType: models.PeriodTypeDaily,
+			wantDecodedProvided:   true,
+			wantDecodedCadence:    models.PeriodTypeMonthly,
+			wantCode:              http.StatusBadRequest,
 		},
 	}
 
@@ -858,30 +892,44 @@ func TestCreateRule_PeriodTypeKeyEdgeCases(t *testing.T) {
 			b, mockSvc := newTestingBackend(t)
 			router := newRouter(b, sharedapi.ServiceInfo{}, auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
 
-			if tc.wantCode == http.StatusCreated {
-				mockSvc.EXPECT().
-					CreateRule(gomock.Any(), gomock.Cond(func(req *service.CreateRuleRequest) bool {
-						// Validate runs inside the real service, so assert on
-						// the decoded request the handler forwards.
-						return req.PeriodType == tc.want
-					})).
-					Return(&models.Rule{
+			var decoded, resolved service.CreateRuleRequest
+			mockSvc.EXPECT().
+				CreateRule(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, req *service.CreateRuleRequest) (*models.Rule, error) {
+					decoded = *req // copied before Validate folds and clears
+					if err := req.Validate(); err != nil {
+						// Mirrors Service.CreateRule's wrapping, which
+						// handleServiceErrors maps to 400.
+						return nil, fmt.Errorf("%w: %v", templates.ErrInvalidSpec, err)
+					}
+					resolved = *req
+					return &models.Rule{
 						ID: uuid.New(), Name: "edge", TemplateKind: models.TemplateLedgerInvariant,
-						PeriodType: models.PeriodTypeContinuous,
+						PeriodType: req.PeriodType,
 						CreatedAt:  time.Now().UTC(), UpdatedAt: time.Now().UTC(),
-					}, nil)
-			} else {
-				mockSvc.EXPECT().
-					CreateRule(gomock.Any(), gomock.Any()).
-					Return(nil, templates.ErrInvalidSpec).
-					AnyTimes()
-			}
+					}, nil
+				})
 
 			r := httptest.NewRequest(http.MethodPost, "/rules", bytes.NewReader([]byte(tc.body)))
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, r)
 
 			require.Equal(t, tc.wantCode, rec.Code, "body: %s", rec.Body.String())
+
+			// Decoding is what the HTTP layer owns: presence must survive it.
+			require.Equal(t, tc.wantDecodedPeriodType, decoded.PeriodType, "decoded periodType")
+			require.Equal(t, tc.wantDecodedProvided, decoded.PeriodTypeWasProvided,
+				"presence tracking must survive UnmarshalJSON")
+			// Reading the deprecated alias is the point: this test pins how it
+			// decodes during the deprecation window.
+			require.Equal(t, tc.wantDecodedCadence, decoded.Cadence, "decoded cadence") //nolint:staticcheck
+
+			if tc.wantCode == http.StatusCreated {
+				require.Equal(t, tc.wantResolvedPeriodType, resolved.PeriodType, "resolved periodType")
+				// Asserting the alias is cleared is what guarantees nothing
+				// downstream ever reads two sources of truth.
+				require.Empty(t, resolved.Cadence, "the legacy key must be cleared after resolution") //nolint:staticcheck
+			}
 		})
 	}
 }

@@ -919,10 +919,18 @@ components:
           additionalProperties: true
           description: Parameters for the chosen template, whose shape depends on templateKind
         severity: { $ref: '#/components/schemas/Severity' }
-        periodType: { $ref: '#/components/schemas/PeriodType' }
+        periodType:
+          allOf: [{ $ref: '#/components/schemas/PeriodType' }]
+          nullable: true
+          description: |
+            Omit to accept the default. `null` is accepted and treated as unset,
+            so an SDK that serialises an unset optional as null behaves as if
+            the key had been omitted. An explicit `""` is rejected as an invalid
+            enum value.
         cadence:
           allOf: [{ $ref: '#/components/schemas/PeriodType' }]
           deprecated: true
+          nullable: true
           description: |
             Deprecated alias of `periodType`, still accepted so clients
             generated before 2.4.2 keep working. If both keys carry a value and
