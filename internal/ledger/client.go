@@ -202,18 +202,30 @@ func (c *Client) RegisterConfiguredSigningKey(ctx context.Context) error {
 	return c.RegisterSigningKey(ctx, c.signer)
 }
 
-// signingKeyRegistered reports whether a key with the given id is already known
-// to the ledger's keystore. See RegisterConfiguredSigningKey for why the check
-// is load-bearing rather than a mere optimisation.
-func (c *Client) signingKeyRegistered(ctx context.Context, keyID string) (bool, error) {
-	var cursor string
+// SigningKeyInfo is a registered signing key as served to callers: the key id,
+// the raw Ed25519 public key, and the parent key id (set on a rotated key that
+// descends from an earlier one). The public key is what an external auditor uses
+// to verify a `_recon` entry.
+type SigningKeyInfo struct {
+	KeyID       string
+	PublicKey   []byte
+	ParentKeyID string
+}
+
+// ListSigningKeys returns every signing key the ledger has registered. Few in
+// practice (one, plus any rotation ancestors), but paginated for correctness.
+func (c *Client) ListSigningKeys(ctx context.Context) ([]SigningKeyInfo, error) {
+	var (
+		keys   []SigningKeyInfo
+		cursor string
+	)
 
 	for {
 		stream, err := c.service.ListSigningKeys(ctx, &servicepb.ListSigningKeysRequest{
 			Options: &commonpb.ListOptions{PageSize: queryPageSize, Cursor: cursor},
 		})
 		if err != nil {
-			return false, fmt.Errorf("list signing keys: %w", err)
+			return nil, fmt.Errorf("list signing keys: %w", err)
 		}
 
 		for {
@@ -223,19 +235,39 @@ func (c *Client) signingKeyRegistered(ctx context.Context, keyID string) (bool, 
 			}
 
 			if rerr != nil {
-				return false, fmt.Errorf("recv signing key: %w", rerr)
+				return nil, fmt.Errorf("recv signing key: %w", rerr)
 			}
 
-			if key.GetKeyId() == keyID {
-				return true, nil
-			}
+			keys = append(keys, SigningKeyInfo{
+				KeyID:       key.GetKeyId(),
+				PublicKey:   key.GetPublicKey(),
+				ParentKeyID: key.GetParentKeyId(),
+			})
 		}
 
 		cursor = nextCursorFromTrailer(stream.Trailer())
 		if cursor == "" {
-			return false, nil
+			return keys, nil
 		}
 	}
+}
+
+// signingKeyRegistered reports whether a key with the given id is already known
+// to the ledger's keystore. See RegisterConfiguredSigningKey for why the check
+// is load-bearing rather than a mere optimisation.
+func (c *Client) signingKeyRegistered(ctx context.Context, keyID string) (bool, error) {
+	keys, err := c.ListSigningKeys(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	for _, k := range keys {
+		if k.KeyID == keyID {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // CreateLedger creates a ledger with an initial metadata schema, account types,

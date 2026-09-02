@@ -10,6 +10,7 @@ import (
 
 	"github.com/formancehq/go-libs/api"
 	v5log "github.com/formancehq/go-libs/v5/pkg/observe/log"
+	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	"github.com/go-chi/chi/v5"
 )
@@ -22,6 +23,7 @@ type ledgerIntrospector interface {
 	ListLedgers(ctx context.Context) ([]string, error)
 	GetLedgerInfo(ctx context.Context, name string) (*commonpb.LedgerInfo, error)
 	QueryAccountsFunc(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, fn func(*commonpb.Account) error) error
+	ListSigningKeys(ctx context.Context) ([]ledger.SigningKeyInfo, error)
 }
 
 // This file surfaces read-only ledger introspection so the standalone

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	sharedapi "github.com/formancehq/go-libs/api"
+	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,8 @@ type fakeIntrospector struct {
 	infoErr     error
 	accounts    []*commonpb.Account
 	accountsErr error
+	signingKeys []ledger.SigningKeyInfo
+	signingErr  error
 }
 
 func (f *fakeIntrospector) ListLedgers(context.Context) ([]string, error) {
@@ -31,6 +34,10 @@ func (f *fakeIntrospector) ListLedgers(context.Context) ([]string, error) {
 
 func (f *fakeIntrospector) GetLedgerInfo(context.Context, string) (*commonpb.LedgerInfo, error) {
 	return f.info, f.infoErr
+}
+
+func (f *fakeIntrospector) ListSigningKeys(context.Context) ([]ledger.SigningKeyInfo, error) {
+	return f.signingKeys, f.signingErr
 }
 
 // QueryAccountsFunc mirrors the real streaming contract: it invokes fn per

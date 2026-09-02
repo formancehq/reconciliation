@@ -111,6 +111,10 @@ func newRouter(
 		r.Get("/ledgers", listLedgersHandler(ledgerClient))
 		r.Get("/ledgers/{ledger}/meta-fields", listLedgerMetaFieldsHandler(ledgerClient))
 		r.Get("/ledgers/{ledger}/accounts", listLedgerAccountsHandler(ledgerClient))
+
+		// Audit: the public signing keys the control-ledger writes are signed
+		// with, so the audit tab can publish "verify it yourself" (EN-1930).
+		r.Get("/audit/signing-keys", listSigningKeysHandler(ledgerClient))
 	})
 
 	return r

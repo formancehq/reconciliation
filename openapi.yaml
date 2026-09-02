@@ -440,6 +440,23 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
+  /audit/signing-keys:
+    get:
+      summary: List audit signing keys
+      description: |
+        The public Ed25519 keys reconciliation signs its control-ledger writes
+        with. An external auditor uses the base64 `publicKey` to verify any
+        `_recon` entry themselves — `ed25519.Verify(publicKey, payload, signature)`
+        — with nobody from Formance in the loop. Backs the audit tab's
+        "verify it yourself" panel. Best-effort: an unreachable ledger yields [].
+      operationId: listAuditSigningKeys
+      tags: [reconciliation.v1]
+      responses:
+        '200': { $ref: '#/components/responses/SigningKeys' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
   /v2/rules/{ruleID}/timeline:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
@@ -702,6 +719,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/LedgersResponse' }
+    SigningKeys:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/SigningKeysResponse' }
     LedgerMetaFields:
       description: OK
       content:
@@ -775,6 +797,31 @@ components:
                 required: [name]
                 properties:
                   name: { type: string }
+    SigningKeysResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [keys]
+          properties:
+            keys:
+              type: array
+              items:
+                type: object
+                required: [keyId, publicKey]
+                properties:
+                  keyId:
+                    type: string
+                    description: Short fingerprint identifying the key.
+                    example: "6d00a939e0c68f7a"
+                  publicKey:
+                    type: string
+                    description: The Ed25519 public key, standard base64 — feed this to ed25519.Verify.
+                    example: "Qqrq1yzuqflCPygUQMbPrHpfmbeWuBhi9FIyiXKyG2E="
+                  parentKeyId:
+                    type: string
+                    description: For a rotated key, the id of the key it descends from.
     LedgerMetaFieldsResponse:
       type: object
       required: [data]
