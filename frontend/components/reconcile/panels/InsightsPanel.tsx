@@ -5,19 +5,21 @@
  * client-side from the raw API (no aggregation endpoint exists); see
  * lib/recon/analytics.ts.
  *
- * Per-rule (driven by the rule selector):
- *   1. "Deviation over time" — parity signedDiff vs ± tolerance band,
+ * Kept intentionally lean — two essential charts, one per question:
+ *   1. "Deviation over time" (per-rule) — parity signedDiff vs ± tolerance band,
  *      threshold balance vs [min, max]. Magnitudes exist on FAIL captures only
  *      (a pass records no value), so the line plots breaks; passes are shown as
  *      low-emphasis markers inside the safe zone.
- *   2. "Cumulative drift" — running sum of the signed gap (bias over time).
- * Global:
- *   3. "Breaks by rule type" — alerts grouped by the violated template kind.
+ *   2. "Breaks by rule type" (global) — alerts grouped by the violated template.
+ *
+ * A cumulative-drift chart (running sum of the signed gap) lived here too; it was
+ * removed to keep the first version simple — it is a power-user refinement of the
+ * deviation trend. buildDriftSeries in lib/recon/analytics.ts is retained for when
+ * it returns.
  */
 import { useMemo, useState } from "react"
 import {
   ComposedChart,
-  Area,
   Line,
   Scatter,
   Bar,
@@ -30,7 +32,6 @@ import {
 } from "recharts"
 import {
   LineChart as LineChartIcon,
-  TrendingUp,
   PieChart as PieChartIcon,
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
@@ -53,7 +54,6 @@ import {
   listCapturesByContract,
   contractVersionOf,
   buildDeviationModel,
-  buildDriftSeries,
   breaksByTemplateKind,
   formatAmount,
   assetCode,
@@ -68,7 +68,6 @@ import {
   type DeviationModel,
   type DeviationSeries,
   type DeviationPoint,
-  type DriftPoint,
   type BreaksByKind,
 } from "@/lib/recon"
 import { useReconNav } from "../ReconContext"
@@ -77,7 +76,6 @@ import { Loading, ErrorState, EmptyState } from "../ui"
 const CHART_CONFIG: TChartConfig = {
   value: { label: "Deviation", color: "var(--chart-4)" },
   passY: { label: "Pass", color: "var(--color-green-foreground)" },
-  cumulative: { label: "Cumulative drift", color: "var(--chart-2)" },
 }
 
 interface TopData {
@@ -152,10 +150,9 @@ export function InsightsPanel() {
       <section className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           <div>
-            <h2 className="text-base font-semibold">Deviation &amp; drift</h2>
+            <h2 className="text-base font-semibold">Deviation over time</h2>
             <p className="text-xs text-muted-foreground">
-              How far each reconciliation run drifts from its tolerance, per
-              rule.
+              How far each reconciliation run sits from its tolerance, per rule.
             </p>
           </div>
           <div className="w-full sm:ml-auto sm:w-auto">
@@ -294,21 +291,6 @@ function DeviationCard({
         <>
           <DeviationChart model={model} series={series} />
           <ChartCaption model={model} series={series} />
-
-          {contractVersionOf(rule) === 1 && (
-            <div className="mt-5 border-t pt-4">
-              <div className="mb-1 flex items-center gap-2">
-                <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
-                <h4 className="text-sm font-medium">Cumulative drift</h4>
-              </div>
-              <p className="mb-2 text-[11px] text-muted-foreground">
-                Running sum of the signed gap — a line that keeps climbing (or
-                falling) reveals a one-sided bias rather than noise that cancels
-                out.
-              </p>
-              <DriftChart model={model} series={series} />
-            </div>
-          )}
         </>
       ) : null}
     </Card>
@@ -533,116 +515,6 @@ function DeviationChart({
         )}
       </ComposedChart>
     </ChartContainer>
-  )
-}
-
-function DriftChart({
-  model,
-  series,
-}: {
-  model: DeviationModel
-  series: DeviationSeries
-}) {
-  const drift = useMemo(() => buildDriftSeries(model, series), [model, series])
-  if (drift.length === 0) {
-    return (
-      <p className="rounded-md border border-dashed px-3 py-8 text-center text-xs text-muted-foreground">
-        No runs to accumulate yet.
-      </p>
-    )
-  }
-  const times = drift.map((d) => d.t)
-  const xDomain: [number, number] = [Math.min(...times), Math.max(...times)]
-  const spanMs = xDomain[1] - xDomain[0]
-  const cums = drift.map((d) => d.cumulative)
-  const lo = Math.min(0, ...cums)
-  const hi = Math.max(0, ...cums)
-  const pad = (hi - lo || Math.abs(hi) || 1) * 0.12
-  const yDomain: [number, number] = [lo - pad, hi + pad]
-
-  return (
-    <ChartContainer
-      config={CHART_CONFIG}
-      className="aspect-auto h-[240px] w-full"
-    >
-      <ComposedChart
-        data={drift}
-        margin={{ top: 8, right: 16, bottom: 4, left: 4 }}
-      >
-        <CartesianGrid vertical={false} strokeDasharray="3 3" />
-        <XAxis
-          dataKey="t"
-          type="number"
-          scale="time"
-          domain={xDomain}
-          tickFormatter={(v: number) => fmtAxis(v, spanMs)}
-          tickLine={false}
-          axisLine={false}
-          minTickGap={48}
-          tickMargin={8}
-        />
-        <YAxis
-          type="number"
-          domain={yDomain}
-          width={72}
-          tickLine={false}
-          axisLine={false}
-          tickFormatter={(v: number) => formatAmount(v, series.asset)}
-        />
-        <ReferenceLine y={0} stroke="var(--color-border)" />
-        <ChartTooltip
-          cursor={{ stroke: "var(--border)" }}
-          content={<DriftTooltip series={series} />}
-        />
-        <Area
-          type="monotone"
-          dataKey="cumulative"
-          baseValue={0}
-          stroke="var(--chart-2)"
-          strokeWidth={2}
-          fill="var(--chart-2)"
-          fillOpacity={0.15}
-          dot={false}
-          activeDot={{ r: 4 }}
-          isAnimationActive={false}
-        />
-      </ComposedChart>
-    </ChartContainer>
-  )
-}
-
-function DriftTooltip({
-  active,
-  payload,
-  series,
-}: {
-  active?: boolean
-  payload?: Array<{ payload?: DriftPoint }>
-  series: DeviationSeries
-}) {
-  if (!active || !payload?.length) return null
-  const row = payload[0]?.payload
-  if (!row) return null
-  const sign = (n: number) => (n > 0 ? "+" : "")
-  return (
-    <div className="grid min-w-[11rem] gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
-      <div className="font-medium">{fmtFull(row.t)}</div>
-      <Line2
-        label="cumulative"
-        value={`${sign(row.cumulative)}${formatAmount(row.cumulative, series.asset)}`}
-      />
-      <Line2
-        label="this run"
-        value={
-          row.verdict === "pass"
-            ? "pass (0)"
-            : `${sign(row.contribution)}${formatAmount(row.contribution, series.asset)}`
-        }
-        tone={
-          row.verdict === "pass" ? "text-green-foreground" : "text-destructive"
-        }
-      />
-    </div>
   )
 }
 
