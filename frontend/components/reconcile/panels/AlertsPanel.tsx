@@ -1133,6 +1133,7 @@ function AlertDetail({
               reusing the rule-detail timeline rendering. */}
           <RuleTimeline
             heading="Timeline"
+            dense
             activities={timeline}
             hasMore={false}
             loading={res.refreshing && timeline.length === 0}

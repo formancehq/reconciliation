@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment } from "react"
+import { Fragment, useState } from "react"
 import {
   AlertCircle,
   Bell,
@@ -62,6 +62,7 @@ export function RuleTimeline({
   onLoadEarlier,
   onOpenAlert,
   heading = "Combined history",
+  dense = false,
 }: {
   activities: RuleActivity[]
   currentRevision?: string
@@ -73,6 +74,9 @@ export function RuleTimeline({
   onLoadEarlier: () => void
   onOpenAlert?: (alertID: string, contractVersion: 1 | 2) => void
   heading?: string
+  /** Collapse each entry's detail (facts, evidence, snapshots) behind a compact,
+   *  expandable summary — for space-constrained surfaces like the alert detail. */
+  dense?: boolean
 }) {
   const items = groupRuleActivities(activities)
   const legacyStart = legacyTimelineStart(activities, hasMore)
@@ -130,6 +134,7 @@ export function RuleTimeline({
                   activities={item.activities}
                   currentRevision={currentRevision}
                   onOpenAlert={onOpenAlert}
+                  dense={dense}
                 />
               ) : (
                 <StandaloneActivityCard
@@ -178,12 +183,15 @@ function RunGroupCard({
   activities,
   currentRevision,
   onOpenAlert,
+  dense = false,
 }: {
   correlationID: string
   activities: RuleActivity[]
   currentRevision?: string
   onOpenAlert?: (alertID: string, contractVersion: 1 | 2) => void
+  dense?: boolean
 }) {
+  const [open, setOpen] = useState(false)
   const evaluation = activities.find(
     (activity): activity is EvaluationCompletedActivity =>
       activity.kind === "evaluation.completed"
@@ -198,26 +206,115 @@ function RunGroupCard({
       currentRevision !== details.ruleRevision
   )
 
+  const tone =
+    details?.result === "PASS"
+      ? "success"
+      : details?.result === "ERROR"
+        ? "warning"
+        : "danger"
+  const icon =
+    details?.result === "PASS" ? (
+      <CheckCircle2 />
+    ) : details?.result === "ERROR" ? (
+      <TriangleAlert />
+    ) : (
+      <XCircle />
+    )
+
+  const facts = (
+    <div className="grid gap-2 border-b px-3 py-2.5 text-xs sm:grid-cols-2 lg:grid-cols-4">
+      <RunFact label="Evaluation" value={shortID(correlationID)} title={correlationID} />
+      <RunFact
+        label="Template"
+        value={details?.templateKind ? templateLabel(details.templateKind) : "Pending older activity"}
+      />
+      <RunFact label="Duration" value={formatDuration(duration)} />
+      <div className="min-w-0">
+        <div className="text-[10px] tracking-wide text-muted-foreground uppercase">Rule revision</div>
+        <RevisionValue revision={details?.ruleRevision} />
+      </div>
+    </div>
+  )
+  const mismatchBanner = revisionMismatch ? (
+    <div className="border-b border-amber-foreground/30 bg-warning px-3 py-2 text-xs text-warning-foreground">
+      This evaluation used a different rule revision from the current configuration.
+    </div>
+  ) : null
+  const activityList = (
+    <ol aria-label={`Activity for evaluation ${correlationID}`} className="divide-y">
+      {activities.map((activity) => (
+        <li key={activity.id} className="min-w-0 px-3 py-3">
+          {activity.kind === "evaluation.completed" ? (
+            <EvaluationActivityBody activity={activity} />
+          ) : (
+            <AlertActivityBody
+              activity={activity as AlertLifecycleActivity}
+              onOpenAlert={onOpenAlert}
+            />
+          )}
+        </li>
+      ))}
+    </ol>
+  )
+
+  // Dense: lead with the alert transition(s) this run produced (the narrative)
+  // and tuck the facts + evidence behind a click. Falls back to the evaluation
+  // result when the run carries no alert transition.
+  if (dense) {
+    const transitions = activities.filter(
+      (activity) => activity.category === "alert"
+    )
+    const summary =
+      transitions.length > 0
+        ? transitions.map((activity) => activityLabel(activity.kind)).join(" · ")
+        : details
+          ? `Evaluation ${details.result.toLowerCase()}`
+          : "Evaluation activity"
+    return (
+      <li className="relative min-w-0">
+        <TimelineDot tone={tone} icon={icon} />
+        <Card className="min-w-0 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/25"
+          >
+            <ChevronDown
+              className={cn(
+                "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+                !open && "-rotate-90"
+              )}
+            />
+            {details && <ResultBadge result={details.result} />}
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              {summary}
+            </span>
+            {details?.periodID && (
+              <span className="hidden text-xs text-muted-foreground sm:inline">
+                {details.periodID}
+              </span>
+            )}
+            <ActivityTime
+              className="shrink-0"
+              value={details?.capturedAt ?? activities[0]!.occurredAt}
+            />
+          </button>
+          {open && (
+            <div className="border-t">
+              {facts}
+              {mismatchBanner}
+              {activityList}
+            </div>
+          )}
+        </Card>
+      </li>
+    )
+  }
+
   return (
     <li className="relative min-w-0">
-      <TimelineDot
-        tone={
-          details?.result === "PASS"
-            ? "success"
-            : details?.result === "ERROR"
-              ? "warning"
-              : "danger"
-        }
-        icon={
-          details?.result === "PASS" ? (
-            <CheckCircle2 />
-          ) : details?.result === "ERROR" ? (
-            <TriangleAlert />
-          ) : (
-            <XCircle />
-          )
-        }
-      />
+      <TimelineDot tone={tone} icon={icon} />
       <Card className="min-w-0 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b bg-muted/25 px-3 py-2.5">
           {details ? <ResultBadge result={details.result} /> : <span className="text-xs font-medium">Evaluation activity</span>}
@@ -230,46 +327,12 @@ function RunGroupCard({
             <span className="text-xs text-muted-foreground">· {details.periodID}</span>
           )}
           {details && (
-            <ActivityTime
-              className="ml-auto"
-              value={details.capturedAt}
-            />
+            <ActivityTime className="ml-auto" value={details.capturedAt} />
           )}
         </div>
-
-        <div className="grid gap-2 border-b px-3 py-2.5 text-xs sm:grid-cols-2 lg:grid-cols-4">
-          <RunFact label="Evaluation" value={shortID(correlationID)} title={correlationID} />
-          <RunFact
-            label="Template"
-            value={details?.templateKind ? templateLabel(details.templateKind) : "Pending older activity"}
-          />
-          <RunFact label="Duration" value={formatDuration(duration)} />
-          <div className="min-w-0">
-            <div className="text-[10px] tracking-wide text-muted-foreground uppercase">Rule revision</div>
-            <RevisionValue revision={details?.ruleRevision} />
-          </div>
-        </div>
-
-        {revisionMismatch && (
-          <div className="border-b border-amber-foreground/30 bg-warning px-3 py-2 text-xs text-warning-foreground">
-            This evaluation used a different rule revision from the current configuration.
-          </div>
-        )}
-
-        <ol aria-label={`Activity for evaluation ${correlationID}`} className="divide-y">
-          {activities.map((activity) => (
-            <li key={activity.id} className="min-w-0 px-3 py-3">
-              {activity.kind === "evaluation.completed" ? (
-                <EvaluationActivityBody activity={activity} />
-              ) : (
-                <AlertActivityBody
-                  activity={activity as AlertLifecycleActivity}
-                  onOpenAlert={onOpenAlert}
-                />
-              )}
-            </li>
-          ))}
-        </ol>
+        {facts}
+        {mismatchBanner}
+        {activityList}
       </Card>
     </li>
   )
