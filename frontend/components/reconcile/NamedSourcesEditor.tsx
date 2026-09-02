@@ -27,7 +27,12 @@ import {
 import { AccountSelectorInput } from "./AccountSelectorInput"
 import { LedgerCombobox } from "./LedgerCombobox"
 import { MetaFilterBuilder } from "./MetaFilterBuilder"
-import { compileReconQuery, parseReconQuery } from "@/lib/recon/querySpec"
+import {
+  compileReconQuery,
+  parseReconQuery,
+  type MetaRule,
+  type MetaCombinator,
+} from "@/lib/recon/querySpec"
 
 export const emptyNamedSource = emptyNamedSourceV2
 
@@ -51,6 +56,14 @@ export function NamedSourcesEditor({
   backendError?: string
 }) {
   const [idErrors, setIdErrors] = useState<Record<number, string>>({})
+  // A source's query is persisted only in compiled form (source.query), and
+  // compiling prunes incomplete metadata rows — so a freshly-added (empty)
+  // condition would round-trip away and never render ("Add metadata condition"
+  // appears to do nothing). Hold the in-progress rows here, per source, and use
+  // them for rendering while they still compile to the persisted query.
+  const [metaDrafts, setMetaDrafts] = useState<
+    Record<number, { meta: MetaRule[]; metaComb: MetaCombinator }>
+  >({})
   const update = (index: number, source: NamedSourceV2) =>
     onChange(
       sources.map((item, itemIndex) => (itemIndex === index ? source : item))
@@ -80,6 +93,26 @@ export function NamedSourcesEditor({
           update(index, {
             ...source,
             query: compileReconQuery(next.address, next.meta, next.metaComb),
+          })
+        }
+        // Use the local draft only while it still compiles to the persisted
+        // query (i.e. it is the same query plus in-progress empty rows); if the
+        // source changed elsewhere (Load example, reset) the draft is stale and
+        // the persisted query wins.
+        const draft = metaDrafts[index]
+        const draftLive =
+          draft !== undefined &&
+          JSON.stringify(
+            compileReconQuery(query.address, draft.meta, draft.metaComb)
+          ) === JSON.stringify(source.query)
+        const workingMeta = draftLive
+          ? draft
+          : { meta: query.meta, metaComb: query.metaComb }
+        const setMeta = (meta: MetaRule[], metaComb: MetaCombinator) => {
+          setMetaDrafts((drafts) => ({ ...drafts, [index]: { meta, metaComb } }))
+          update(index, {
+            ...source,
+            query: compileReconQuery(query.address, meta, metaComb),
           })
         }
         return (
@@ -275,10 +308,10 @@ export function NamedSourcesEditor({
                 <div className="mt-2">
                   <MetaFilterBuilder
                     ledger={source.ledger}
-                    rules={query.meta}
-                    setRules={(meta) => setQuery({ meta })}
-                    combinator={query.metaComb}
-                    setCombinator={(metaComb) => setQuery({ metaComb })}
+                    rules={workingMeta.meta}
+                    setRules={(meta) => setMeta(meta, workingMeta.metaComb)}
+                    combinator={workingMeta.metaComb}
+                    setCombinator={(metaComb) => setMeta(workingMeta.meta, metaComb)}
                   />
                 </div>
               </div>
