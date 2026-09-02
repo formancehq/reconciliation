@@ -61,6 +61,7 @@ export function RuleTimeline({
   onRetry,
   onLoadEarlier,
   onOpenAlert,
+  heading = "Combined history",
 }: {
   activities: RuleActivity[]
   currentRevision?: string
@@ -71,6 +72,7 @@ export function RuleTimeline({
   onRetry?: () => void
   onLoadEarlier: () => void
   onOpenAlert?: (alertID: string, contractVersion: 1 | 2) => void
+  heading?: string
 }) {
   const items = groupRuleActivities(activities)
   const legacyStart = legacyTimelineStart(activities, hasMore)
@@ -80,7 +82,7 @@ export function RuleTimeline({
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <History className="h-4 w-4 text-muted-foreground" />
         <h3 id="rule-activity-heading" className="text-sm font-semibold">
-          Combined history
+          {heading}
         </h3>
         <span className="text-xs text-muted-foreground">
           {activities.length} activit{activities.length === 1 ? "y" : "ies"}
