@@ -810,6 +810,19 @@ components:
       type: string
       description: Which built-in check a rule applies, determining the shape of its templateSpec
       enum: [ledger_vs_pool_drift, ledger_invariant, account_threshold, source_parity]
+    Cadence:
+      type: string
+      deprecated: true
+      description: |
+        Deprecated alias of `PeriodType`, kept so SDKs regenerated for 2.4.2 keep
+        emitting the `Cadence` type and its constants. Removing it would delete
+        `CadenceMonthly` and friends from generated clients and break code that
+        compiles today, even though the wire contract stays compatible.
+
+        Same members as `PeriodType`. Use `PeriodType`; this goes at the next
+        API major.
+      enum: [continuous, daily, weekly, monthly]
+      default: continuous
     PeriodType:
       type: string
       description: |
@@ -890,7 +903,7 @@ components:
         severity: { $ref: '#/components/schemas/Severity' }
         periodType: { $ref: '#/components/schemas/PeriodType' }
         cadence:
-          allOf: [{ $ref: '#/components/schemas/PeriodType' }]
+          allOf: [{ $ref: '#/components/schemas/Cadence' }]
           deprecated: true
           description: |
             Deprecated alias of `periodType`, retained so clients generated
@@ -926,7 +939,7 @@ components:
             be one of the enum members — `""` is not one of them and is
             rejected.
         cadence:
-          allOf: [{ $ref: '#/components/schemas/PeriodType' }]
+          allOf: [{ $ref: '#/components/schemas/Cadence' }]
           deprecated: true
           description: |
             Deprecated alias of `periodType`, still accepted so clients
