@@ -428,3 +428,22 @@ export interface SigningKey {
   parentKeyId?: string;
 }
 export type SigningKeysResponse = Data<{ keys: SigningKey[] }>;
+
+/**
+ * One entry of the ledger's native audit trail, scoped to the control ledger.
+ * `payload` (the committed batch bytes) and `signature` are standard base64; an
+ * auditor verifies with ed25519.Verify(publicKey, payload, signature). `sequence`
+ * is the ledger's dense, bucket-wide audit sequence.
+ */
+export interface AuditEntry {
+  sequence: number;
+  timestamp?: string;
+  keyId?: string;
+  payload?: string;
+  signature?: string;
+  signed: boolean;
+  outcome: "success" | "failure";
+  orderCount: number;
+  ledgers?: string[];
+}
+export type AuditEntriesResponse = Data<{ entries: AuditEntry[] }>;
