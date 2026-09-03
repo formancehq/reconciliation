@@ -48,6 +48,18 @@ func (f *fakeIntrospector) ListAuditEntries(_ context.Context, _ string, limit i
 	return f.auditItems, f.auditErr
 }
 
+func (f *fakeIntrospector) GetAuditEntry(_ context.Context, sequence uint64) (ledger.AuditEntryInfo, error) {
+	if f.auditErr != nil {
+		return ledger.AuditEntryInfo{}, f.auditErr
+	}
+	for _, e := range f.auditItems {
+		if e.Sequence == sequence {
+			return e, nil
+		}
+	}
+	return ledger.AuditEntryInfo{}, errors.New("not found")
+}
+
 // QueryAccountsFunc mirrors the real streaming contract: it invokes fn per
 // account and surfaces fn's error verbatim (the handler stops early by returning
 // errStopScan), so the limit/cap path is exercised faithfully.

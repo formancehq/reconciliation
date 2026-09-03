@@ -16,6 +16,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/formancehq/reconciliation/internal/ledgerpb/auditpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/signaturepb"
@@ -269,6 +270,10 @@ type AuditEntryInfo struct {
 	Outcome    string
 	OrderCount uint32
 	Ledgers    []string
+	// Failure detail (outcome == "failure"): the ledger's own reason enum name
+	// and human message — e.g. why a guarded write was rejected.
+	FailureReason  string
+	FailureMessage string
 }
 
 // ListAuditEntries returns the ledger's audit entries for one ledger (recon's
@@ -328,26 +333,7 @@ func (c *Client) ListAuditEntries(ctx context.Context, ledgerName string, limit 
 				return nil, fmt.Errorf("recv audit entry: %w", rerr)
 			}
 
-			info := AuditEntryInfo{
-				Sequence:   entry.GetSequence(),
-				OrderCount: entry.GetOrderCount(),
-				Ledgers:    entry.GetLedgers(),
-				Outcome:    "success",
-			}
-			if entry.GetFailure() != nil {
-				info.Outcome = "failure"
-			}
-			if ts := entry.GetTimestamp(); ts != nil {
-				info.Timestamp = time.UnixMicro(int64(ts.GetData())).UTC()
-			}
-			if sig := entry.GetSignature(); sig != nil {
-				info.KeyID = sig.GetKeyId()
-				info.Signature = sig.GetSignature()
-				info.Payload = sig.GetPayload()
-				info.Signed = len(sig.GetSignature()) > 0
-			}
-
-			entries = append(entries, info)
+			entries = append(entries, auditEntryInfoFrom(entry))
 		}
 
 		cursor = nextCursorFromTrailer(stream.Trailer())
@@ -357,6 +343,47 @@ func (c *Client) ListAuditEntries(ctx context.Context, ledgerName string, limit 
 	}
 
 	return entries, nil
+}
+
+// GetAuditEntry returns one audit entry by sequence, with the detail the stream
+// omits — notably the failure reason and message on a rejected write (the ledger
+// populates those, like the per-order items, only on the single-entry read).
+func (c *Client) GetAuditEntry(ctx context.Context, sequence uint64) (AuditEntryInfo, error) {
+	entry, err := c.service.GetAuditEntry(ctx, &servicepb.GetAuditEntryRequest{Sequence: sequence})
+	if err != nil {
+		return AuditEntryInfo{}, fmt.Errorf("get audit entry %d: %w", sequence, err)
+	}
+
+	return auditEntryInfoFrom(entry), nil
+}
+
+// auditEntryInfoFrom maps a ledger AuditEntry to the caller-facing shape. Shared
+// by the stream (ListAuditEntries) and the single-entry read (GetAuditEntry);
+// the failure reason/message are empty on the streamed form and populated on the
+// single read.
+func auditEntryInfoFrom(entry *auditpb.AuditEntry) AuditEntryInfo {
+	info := AuditEntryInfo{
+		Sequence:   entry.GetSequence(),
+		OrderCount: entry.GetOrderCount(),
+		Ledgers:    entry.GetLedgers(),
+		Outcome:    "success",
+	}
+	if failure := entry.GetFailure(); failure != nil {
+		info.Outcome = "failure"
+		info.FailureReason = failure.GetReason().String()
+		info.FailureMessage = failure.GetMessage()
+	}
+	if ts := entry.GetTimestamp(); ts != nil {
+		info.Timestamp = time.UnixMicro(int64(ts.GetData())).UTC()
+	}
+	if sig := entry.GetSignature(); sig != nil {
+		info.KeyID = sig.GetKeyId()
+		info.Signature = sig.GetSignature()
+		info.Payload = sig.GetPayload()
+		info.Signed = len(sig.GetSignature()) > 0
+	}
+
+	return info
 }
 
 // signingKeyRegistered reports whether a key with the given id is already known

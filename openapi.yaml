@@ -485,6 +485,32 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
+  /audit/entries/{sequence}:
+    get:
+      summary: Get one audit entry
+      description: |
+        One audit entry by sequence, with the detail the list omits — notably the
+        failure reason and message on a rejected write. Backs the audit tab's
+        expand-a-row interaction.
+      operationId: getAuditEntry
+      tags: [reconciliation.v1]
+      parameters:
+        - name: sequence
+          in: path
+          required: true
+          description: The ledger audit sequence number.
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditEntryResponse' }
+        '404': { $ref: '#/components/responses/ErrorResponse' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
   /v2/rules/{ruleID}/timeline:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
@@ -855,6 +881,41 @@ components:
                   parentKeyId:
                     type: string
                     description: For a rotated key, the id of the key it descends from.
+    AuditEntry:
+      type: object
+      required: [sequence, signed, outcome]
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          description: The ledger's dense, bucket-wide audit sequence number.
+        timestamp: { type: string, format: date-time }
+        keyId:
+          type: string
+          description: The signing key this entry was signed with (matches /audit/signing-keys).
+        payload:
+          type: string
+          description: The signed batch bytes, standard base64 — the `payload` for ed25519.Verify.
+        signature:
+          type: string
+          description: The Ed25519 signature over `payload`, standard base64.
+        signed:
+          type: boolean
+          description: False for a rare unsigned bootstrap write (e.g. the signing-key registration).
+        outcome:
+          type: string
+          enum: [success, failure]
+          description: Whether the batch applied; a failed attempt is still signed and audited.
+        orderCount: { type: integer, format: int64 }
+        ledgers:
+          type: array
+          items: { type: string }
+        failureReason:
+          type: string
+          description: Populated for outcome=failure — a readable label for why the ledger rejected the write. Full detail is populated on GET /audit/entries/{sequence}.
+        failureMessage:
+          type: string
+          description: Populated for outcome=failure — the ledger's human-readable rejection message.
     AuditEntriesResponse:
       type: object
       required: [data]
@@ -865,35 +926,12 @@ components:
           properties:
             entries:
               type: array
-              items:
-                type: object
-                required: [sequence, signed, outcome]
-                properties:
-                  sequence:
-                    type: integer
-                    format: int64
-                    description: The ledger's dense, bucket-wide audit sequence number.
-                  timestamp: { type: string, format: date-time }
-                  keyId:
-                    type: string
-                    description: The signing key this entry was signed with (matches /audit/signing-keys).
-                  payload:
-                    type: string
-                    description: The signed batch bytes, standard base64 — the `payload` for ed25519.Verify.
-                  signature:
-                    type: string
-                    description: The Ed25519 signature over `payload`, standard base64.
-                  signed:
-                    type: boolean
-                    description: False for a rare unsigned bootstrap write (e.g. the signing-key registration).
-                  outcome:
-                    type: string
-                    enum: [success, failure]
-                    description: Whether the batch applied; a failed attempt is still signed and audited.
-                  orderCount: { type: integer, format: int64 }
-                  ledgers:
-                    type: array
-                    items: { type: string }
+              items: { $ref: '#/components/schemas/AuditEntry' }
+    AuditEntryResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/AuditEntry' }
     LedgerMetaFieldsResponse:
       type: object
       required: [data]

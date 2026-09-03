@@ -25,6 +25,7 @@ type ledgerIntrospector interface {
 	QueryAccountsFunc(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, fn func(*commonpb.Account) error) error
 	ListSigningKeys(ctx context.Context) ([]ledger.SigningKeyInfo, error)
 	ListAuditEntries(ctx context.Context, ledgerName string, limit int) ([]ledger.AuditEntryInfo, error)
+	GetAuditEntry(ctx context.Context, sequence uint64) (ledger.AuditEntryInfo, error)
 }
 
 // This file surfaces read-only ledger introspection so the standalone

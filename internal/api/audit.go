@@ -2,12 +2,16 @@ package api
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/formancehq/go-libs/api"
 	v5log "github.com/formancehq/go-libs/v5/pkg/observe/log"
+	"github.com/formancehq/reconciliation/internal/ledger"
+	"github.com/go-chi/chi/v5"
 )
 
 // ControlLedger is the name of reconciliation's control ledger, injected from
@@ -79,10 +83,24 @@ type auditEntry struct {
 	Outcome    string   `json:"outcome"`
 	OrderCount uint32   `json:"orderCount"`
 	Ledgers    []string `json:"ledgers,omitempty"`
+	// Populated only for outcome == "failure": why the write was rejected.
+	FailureReason  string `json:"failureReason,omitempty"`
+	FailureMessage string `json:"failureMessage,omitempty"`
 }
 
 type auditEntriesResponse struct {
 	Entries []auditEntry `json:"entries"`
+}
+
+// prettyFailureReason turns the ledger's ErrorReason enum name
+// (e.g. "ERROR_REASON_INSUFFICIENT_FUNDS") into a readable label
+// ("insufficient funds"). Empty for the unspecified/zero reason.
+func prettyFailureReason(reason string) string {
+	if reason == "" || reason == "ERROR_REASON_UNSPECIFIED" {
+		return ""
+	}
+	trimmed := strings.TrimPrefix(reason, "ERROR_REASON_")
+	return strings.ToLower(strings.ReplaceAll(trimmed, "_", " "))
 }
 
 // listAuditEntriesHandler serves reconciliation's own control-ledger audit
@@ -114,26 +132,57 @@ func listAuditEntriesHandler(client ledgerIntrospector, control ControlLedger) h
 		}
 
 		for _, e := range entries {
-			row := auditEntry{
-				Sequence:   e.Sequence,
-				KeyID:      e.KeyID,
-				Signed:     e.Signed,
-				Outcome:    e.Outcome,
-				OrderCount: e.OrderCount,
-				Ledgers:    e.Ledgers,
-			}
-			if !e.Timestamp.IsZero() {
-				row.Timestamp = e.Timestamp.UTC().Format(time.RFC3339Nano)
-			}
-			if len(e.Payload) > 0 {
-				row.Payload = base64.StdEncoding.EncodeToString(e.Payload)
-			}
-			if len(e.Signature) > 0 {
-				row.Signature = base64.StdEncoding.EncodeToString(e.Signature)
-			}
-			resp.Entries = append(resp.Entries, row)
+			resp.Entries = append(resp.Entries, toAuditEntryRow(e))
 		}
 
 		api.Ok(w, resp)
 	}
+}
+
+// getAuditEntryHandler serves one audit entry by sequence, with the detail the
+// list omits — the failure reason/message on a rejected write. Backs the audit
+// tab's expand-a-row interaction. Best-effort: a read error is a 404-ish empty
+// (debug-logged) rather than a page failure.
+func getAuditEntryHandler(client ledgerIntrospector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		seq, err := strconv.ParseUint(chi.URLParam(r, "sequence"), 10, 64)
+		if err != nil {
+			api.BadRequest(w, ErrValidation, fmt.Errorf("invalid sequence %q", chi.URLParam(r, "sequence")))
+			return
+		}
+
+		entry, err := client.GetAuditEntry(r.Context(), seq)
+		if err != nil {
+			v5log.FromContext(r.Context()).Debugf("get audit entry %d failed: %v", seq, err)
+			api.NotFound(w, fmt.Errorf("audit entry %d not found", seq))
+			return
+		}
+
+		api.Ok(w, toAuditEntryRow(entry))
+	}
+}
+
+// toAuditEntryRow renders one entry for the API (base64 payload/signature,
+// prettified failure reason). Shared by the list and single-entry handlers.
+func toAuditEntryRow(e ledger.AuditEntryInfo) auditEntry {
+	row := auditEntry{
+		Sequence:       e.Sequence,
+		KeyID:          e.KeyID,
+		Signed:         e.Signed,
+		Outcome:        e.Outcome,
+		OrderCount:     e.OrderCount,
+		Ledgers:        e.Ledgers,
+		FailureReason:  prettyFailureReason(e.FailureReason),
+		FailureMessage: e.FailureMessage,
+	}
+	if !e.Timestamp.IsZero() {
+		row.Timestamp = e.Timestamp.UTC().Format(time.RFC3339Nano)
+	}
+	if len(e.Payload) > 0 {
+		row.Payload = base64.StdEncoding.EncodeToString(e.Payload)
+	}
+	if len(e.Signature) > 0 {
+		row.Signature = base64.StdEncoding.EncodeToString(e.Signature)
+	}
+	return row
 }
