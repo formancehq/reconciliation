@@ -30,7 +30,7 @@ func compatSpec() json.RawMessage {
 }
 
 // TestCreateRule_AcceptsEitherPeriodTypeKey covers the deprecation window: a
-// client still on the pre-2.4.2 contract sends `cadence`, a current client sends
+// client still on the pre-2.5.0 contract sends `cadence`, a current client sends
 // `periodType`, and both must produce the same rule. Before dual-accept, the
 // legacy key was silently dropped and the rule fell back to `continuous` — a
 // monthly reconciliation quietly becoming one unbounded period.
@@ -85,7 +85,7 @@ func TestCreateRule_AcceptsEitherPeriodTypeKey(t *testing.T) {
 		},
 		{
 			// Empty is treated as unset on the deprecated key: tightening it
-			// would break the pre-2.4.2 callers the alias exists to protect.
+			// would break the pre-2.5.0 callers the alias exists to protect.
 			name: "an empty legacy value is unset, not a conflict",
 			req: &CreateRuleRequest{
 				PeriodType:            models.PeriodTypeMonthly,

@@ -27,7 +27,7 @@ type ruleResponse struct {
 	Enabled        bool            `json:"enabled"`
 	Severity       string          `json:"severity"`
 	PeriodType     string          `json:"periodType"`
-	// Cadence mirrors PeriodType under its pre-2.4.2 name. It stays in the V1
+	// Cadence mirrors PeriodType under its pre-2.5.0 name. It stays in the V1
 	// `required` set so clients generated against the older contract keep
 	// deserializing responses.
 	//
@@ -185,7 +185,7 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 		// Map through renderRule rather than serialising models.Rule directly:
 		// the response DTO is what carries the deprecated `cadence` mirror, and
 		// the OpenAPI Rule schema marks it required. Serialising the model here
-		// would emit `periodType` alone and break pre-2.4.2 clients on list
+		// would emit `periodType` alone and break pre-2.5.0 clients on list
 		// responses only, while create/get/patch kept working.
 		api.RenderCursor(w, *bunpaginate.MapCursor(cursor, func(rule models.Rule) *ruleResponse {
 			return renderRule(&rule)

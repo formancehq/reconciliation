@@ -28,7 +28,7 @@ type CreateRuleRequest struct {
 	// period is an independently-closable, immutable case. This is not how often
 	// the rule runs; that is Schedule. See models.PeriodType.
 	PeriodType models.PeriodType `json:"periodType,omitempty"`
-	// Cadence is the pre-2.4.2 name for PeriodType, still accepted so clients
+	// Cadence is the pre-2.5.0 name for PeriodType, still accepted so clients
 	// generated against the older contract keep working.
 	//
 	// Deprecated: send periodType. Validate folds this into PeriodType; see
@@ -113,7 +113,7 @@ func (r *CreateRuleRequest) Validate() error {
 // with no error — discovered at period close rather than at create time.
 //
 // An empty `cadence` is treated as unset rather than rejected. Tightening the
-// deprecated key is the one thing this deprecation must not do: a pre-2.4.2
+// deprecated key is the one thing this deprecation must not do: a pre-2.5.0
 // client that sends `"cadence": ""` for "no selection" kept working before, and
 // turning that into a 400 would break exactly the callers the alias exists to
 // protect. `periodType`, being new, is held to the enum strictly.

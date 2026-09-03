@@ -814,7 +814,7 @@ components:
       type: string
       deprecated: true
       description: |
-        Deprecated alias of `PeriodType`, kept so SDKs regenerated for 2.4.2 keep
+        Deprecated alias of `PeriodType`, kept so SDKs regenerated for 2.5.0 keep
         emitting the `Cadence` type and its constants. Removing it would delete
         `CadenceMonthly` and friends from generated clients and break code that
         compiles today, even though the wire contract stays compatible.
@@ -907,7 +907,7 @@ components:
           deprecated: true
           description: |
             Deprecated alias of `periodType`, retained so clients generated
-            before 2.4.2 keep deserializing responses. Always mirrors
+            before 2.5.0 keep deserializing responses. Always mirrors
             `periodType`. Read `periodType`; this field is removed at the next
             API major.
         schedule: { $ref: '#/components/schemas/Schedule' }
@@ -943,16 +943,16 @@ components:
           deprecated: true
           description: |
             Deprecated alias of `periodType`, still accepted so clients
-            generated before 2.4.2 keep working. If both keys carry a value and
+            generated before 2.5.0 keep working. If both keys carry a value and
             the values differ, the request is rejected with 400 rather than one
             being chosen silently; an empty `cadence` counts as unset rather
             than as a conflicting value. Prefer `periodType`; this field is
             removed at the next API major.
 
-            Servers before 2.4.2 do not know `periodType` and ignore it,
+            Servers before 2.5.0 do not know `periodType` and ignore it,
             falling back to the `continuous` default. Normally that cannot bite
             you: `periodType` reaches clients via an SDK regenerated from this
-            spec, which only exists once 2.4.2 is released. If you do need
+            spec, which only exists once 2.5.0 is released. If you do need
             determinism while a fleet is mid-upgrade, send both keys with equal
             values — explicitly accepted, and every server version reads one of
             them.

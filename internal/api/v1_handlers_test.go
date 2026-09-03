@@ -560,7 +560,7 @@ func TestListRules_Nominal(t *testing.T) {
 
 	// List items must go through renderRule, not serialise models.Rule
 	// directly: the OpenAPI Rule schema marks both `periodType` and the
-	// deprecated `cadence` required, and a pre-2.4.2 client reads the latter.
+	// deprecated `cadence` required, and a pre-2.5.0 client reads the latter.
 	// Serialising the model emitted `periodType` alone, breaking list responses
 	// while create/get/patch kept working.
 	require.Equal(t, "monthly", got.Cursor.Data[0].PeriodType)
@@ -758,7 +758,7 @@ func TestCreateRule_PeriodTypeWireContract(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code)
 	require.Contains(t, rec.Body.String(), `"periodType":"weekly"`)
 	// `cadence` is still emitted, deprecated, mirroring periodType — dropping it
-	// would break clients generated against the pre-2.4.2 V1 contract, where it
+	// would break clients generated against the pre-2.5.0 V1 contract, where it
 	// is a required response field.
 	require.Contains(t, rec.Body.String(), `"cadence":"weekly"`,
 		"the deprecated mirror must keep V1 responses deserializable")
@@ -799,7 +799,7 @@ func TestCreateRule_LegacyCadenceKeyReachesService(t *testing.T) {
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
-	// Both keys come back, so a pre-2.4.2 client reading `cadence` and a current
+	// Both keys come back, so a pre-2.5.0 client reading `cadence` and a current
 	// client reading `periodType` each see monthly.
 	require.Contains(t, rec.Body.String(), `"periodType":"monthly"`)
 	require.Contains(t, rec.Body.String(), `"cadence":"monthly"`)
