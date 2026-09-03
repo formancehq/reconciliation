@@ -356,7 +356,22 @@ function AuditEntryDetail({ entry }: { entry: AuditEntry }) {
   return (
     <div className="space-y-2 border-t bg-muted/15 px-3 py-3 pl-10 text-xs">
       <DetailRow label="Recorded" value={entry.timestamp ? formatDateTime(entry.timestamp) : "—"} />
-      <DetailRow label="Ledger actions" value={String(entry.orderCount)} />
+      {entry.actions && entry.actions.length > 0 ? (
+        <div className="flex flex-wrap gap-x-2">
+          <span className="w-28 shrink-0 text-muted-foreground">Actions</span>
+          <div className="flex min-w-0 flex-col gap-1">
+            {entry.actions.map((a, i) => (
+              <div key={i} className="flex flex-wrap items-baseline gap-x-1.5">
+                <span className="font-medium">{a.kind}</span>
+                {a.ledger && <span className="text-muted-foreground">· {a.ledger}</span>}
+                {a.detail && <span className="font-mono text-muted-foreground">· {a.detail}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <DetailRow label="Actions" value={`${entry.orderCount} order${entry.orderCount === 1 ? "" : "s"}`} />
+      )}
       {entry.ledgers && entry.ledgers.length > 0 && (
         <DetailRow label="Ledgers" value={entry.ledgers.join(", ")} />
       )}

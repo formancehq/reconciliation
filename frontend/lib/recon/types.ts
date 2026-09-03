@@ -448,6 +448,19 @@ export interface AuditEntry {
   /** Populated only for outcome === "failure": why the write was rejected. */
   failureReason?: string;
   failureMessage?: string;
+  /**
+   * Decoded per-order business intent. Populated only on the single-entry read
+   * (getAuditEntry); the list omits it. An Apply batch is one action, reported
+   * without decoding its numscript.
+   */
+  actions?: AuditAction[];
+}
+
+/** The human-readable intent of one order in an audit proposal. */
+export interface AuditAction {
+  kind: string;
+  ledger?: string;
+  detail?: string;
 }
 export type AuditEntriesResponse = Data<{ entries: AuditEntry[] }>;
 export type AuditEntryResponse = Data<AuditEntry>;
