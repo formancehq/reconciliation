@@ -86,6 +86,16 @@ type auditEntry struct {
 	// Populated only for outcome == "failure": why the write was rejected.
 	FailureReason  string `json:"failureReason,omitempty"`
 	FailureMessage string `json:"failureMessage,omitempty"`
+	// Decoded per-order business intent. Populated only on the single-entry read
+	// (the list omits the items these are decoded from).
+	Actions []auditAction `json:"actions,omitempty"`
+}
+
+// auditAction is the human-readable intent of one order in a proposal.
+type auditAction struct {
+	Kind   string `json:"kind"`
+	Ledger string `json:"ledger,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
 type auditEntriesResponse struct {
@@ -183,6 +193,9 @@ func toAuditEntryRow(e ledger.AuditEntryInfo) auditEntry {
 	}
 	if len(e.Signature) > 0 {
 		row.Signature = base64.StdEncoding.EncodeToString(e.Signature)
+	}
+	for _, a := range e.Actions {
+		row.Actions = append(row.Actions, auditAction{Kind: a.Kind, Ledger: a.Ledger, Detail: a.Detail})
 	}
 	return row
 }

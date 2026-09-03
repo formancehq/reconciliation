@@ -916,6 +916,27 @@ components:
         failureMessage:
           type: string
           description: Populated for outcome=failure — the ledger's human-readable rejection message.
+        actions:
+          type: array
+          description: >-
+            Decoded per-order business intent (kind of write, target ledger, and a
+            cheap identifier where the order carries one). Populated only on GET
+            /audit/entries/{sequence}; an Apply batch is reported as one action
+            without decoding its numscript.
+          items: { $ref: '#/components/schemas/AuditAction' }
+    AuditAction:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          description: Short human label, e.g. "Apply batch", "Register numscript".
+        ledger:
+          type: string
+          description: Target ledger for a ledger-scoped order; empty for system-scoped orders.
+        detail:
+          type: string
+          description: An identifier the order carries cheaply, e.g. a numscript "name v2.0.0".
     AuditEntriesResponse:
       type: object
       required: [data]

@@ -18,6 +18,7 @@ import (
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/auditpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
+	"github.com/formancehq/reconciliation/internal/ledgerpb/raftcmdpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/signaturepb"
 	"google.golang.org/grpc"
@@ -274,6 +275,26 @@ type AuditEntryInfo struct {
 	// and human message — e.g. why a guarded write was rejected.
 	FailureReason  string
 	FailureMessage string
+	// Actions is the decoded per-order business intent of the proposal. Populated
+	// only on the single-entry read (GetAuditEntry) — the stream omits the items
+	// these are decoded from. Usually one entry (a batch is one Apply order).
+	Actions []AuditAction
+}
+
+// AuditAction is the human-readable intent of one order in an audit proposal,
+// decoded from its business-intent bytes. Deliberately shallow: it names the
+// kind of write (Apply batch, register numscript, register signing key, …) and,
+// where the order carries them cheaply, a couple of identifying fields — it does
+// not crack open an Apply batch's numscript/postings.
+type AuditAction struct {
+	// Kind is a short human label, e.g. "Apply batch" or "Register numscript".
+	Kind string
+	// Ledger is the target ledger for a ledger-scoped order; empty for
+	// system-scoped orders (signing keys, sinks, cluster policy, …).
+	Ledger string
+	// Detail is an optional identifier the order carries cheaply, e.g. a
+	// numscript "name v2.0.0" or a prepared-query name. Empty when there is none.
+	Detail string
 }
 
 // ListAuditEntries returns the ledger's audit entries for one ledger (recon's
@@ -382,8 +403,66 @@ func auditEntryInfoFrom(entry *auditpb.AuditEntry) AuditEntryInfo {
 		info.Payload = sig.GetPayload()
 		info.Signed = len(sig.GetSignature()) > 0
 	}
+	// Items are populated only on the single-entry read; decode each order's
+	// business intent for the audit-tab detail. Best-effort — an order we can't
+	// decode is skipped rather than failing the whole entry.
+	for _, item := range entry.GetItems() {
+		if action, ok := decodeAuditAction(item.GetSerializedOrder()); ok {
+			info.Actions = append(info.Actions, action)
+		}
+	}
 
 	return info
+}
+
+// decodeAuditAction turns one order's business-intent bytes into a shallow,
+// human-readable AuditAction. It names the kind of write (and, where cheap, an
+// identifier) but deliberately does NOT decode an Apply batch's numscript or
+// postings — that intent lives in the batch and cracking it open would couple the
+// audit view to the transaction model. Returns ok=false when the bytes don't
+// decode, so the caller skips the order rather than surfacing a bogus label.
+func decodeAuditAction(serialized []byte) (AuditAction, bool) {
+	if len(serialized) == 0 {
+		return AuditAction{}, false
+	}
+	order := &raftcmdpb.Order{}
+	if err := order.UnmarshalVT(serialized); err != nil {
+		return AuditAction{}, false
+	}
+
+	switch scoped := order.GetType().(type) {
+	case *raftcmdpb.Order_LedgerScoped:
+		ls := scoped.LedgerScoped
+		action := AuditAction{Ledger: ls.GetLedger()}
+		switch payload := ls.GetPayload().(type) {
+		case *raftcmdpb.LedgerScopedOrder_Apply:
+			action.Kind = "Apply batch"
+		case *raftcmdpb.LedgerScopedOrder_SaveNumscript:
+			action.Kind = "Register numscript"
+			if n := payload.SaveNumscript.GetName(); n != "" {
+				action.Detail = n
+				if v := payload.SaveNumscript.GetVersion(); v != "" {
+					action.Detail = n + " v" + v
+				}
+			}
+		case *raftcmdpb.LedgerScopedOrder_CreatePreparedQuery:
+			action.Kind = "Create prepared query"
+		case *raftcmdpb.LedgerScopedOrder_UpdatePreparedQuery:
+			action.Kind = "Update prepared query"
+		default:
+			action.Kind = "Ledger write"
+		}
+		return action, true
+	case *raftcmdpb.Order_SystemScoped:
+		switch scoped.SystemScoped.GetPayload().(type) {
+		case *raftcmdpb.SystemScopedOrder_RegisterSigningKey:
+			return AuditAction{Kind: "Register signing key"}, true
+		default:
+			return AuditAction{Kind: "System write"}, true
+		}
+	default:
+		return AuditAction{}, false
+	}
 }
 
 // signingKeyRegistered reports whether a key with the given id is already known
