@@ -23,6 +23,7 @@ import type {
   SigningKeysResponse,
   AuditEntry,
   AuditEntriesResponse,
+  AuditEntryResponse,
   Capture,
   CapturesResponse,
   Cursor,
@@ -316,6 +317,14 @@ export const reconClient = {
       { query: { limit }, signal }
     )
     return r.data.entries ?? []
+  },
+  async getAuditEntry(sequence: number, signal?: AbortSignal): Promise<AuditEntry> {
+    const r = await reconRequest<AuditEntryResponse>(
+      "GET",
+      `/audit/entries/${sequence}`,
+      { signal }
+    )
+    return r.data
   },
 }
 

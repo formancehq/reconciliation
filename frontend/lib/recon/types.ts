@@ -445,5 +445,9 @@ export interface AuditEntry {
   outcome: "success" | "failure";
   orderCount: number;
   ledgers?: string[];
+  /** Populated only for outcome === "failure": why the write was rejected. */
+  failureReason?: string;
+  failureMessage?: string;
 }
 export type AuditEntriesResponse = Data<{ entries: AuditEntry[] }>;
+export type AuditEntryResponse = Data<AuditEntry>;

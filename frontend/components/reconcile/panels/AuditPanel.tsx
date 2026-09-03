@@ -34,6 +34,7 @@ import {
   listAllRules,
   contractVersionOf,
   formatRelative,
+  formatDateTime,
   resourceKey,
   type AnyAlert,
   type AnyRule,
@@ -54,7 +55,7 @@ export function AuditPanel() {
   const res = useReconResource<Data>(async (signal) => {
     const [keys, entries, alerts, rules] = await Promise.all([
       reconClient.getSigningKeys(signal),
-      reconClient.getAuditEntries(50, signal),
+      reconClient.getAuditEntries(100, signal),
       listAllAlerts(signal),
       listAllRules(signal),
     ])
@@ -137,6 +138,7 @@ export function AuditPanel() {
 // ── Audit trail (the real signed entries + in-browser verify) ────────────────
 
 type VerifyState = "checking" | "valid" | "invalid"
+type TrailFilter = "all" | "committed" | "rejected"
 
 function AuditTrailCard({
   entries,
@@ -148,6 +150,22 @@ function AuditTrailCard({
   const [results, setResults] = useState<Record<number, VerifyState>>({})
   const [running, setRunning] = useState(false)
   const [unsupported, setUnsupported] = useState(false)
+  const [filter, setFilter] = useState<TrailFilter>("all")
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({})
+  // The list omits the failure reason/message (and per-order detail); fetch the
+  // full entry lazily when a row is first expanded.
+  const [details, setDetails] = useState<Record<number, AuditEntry>>({})
+
+  const toggle = (seq: number) => {
+    const willOpen = !expanded[seq]
+    setExpanded((m) => ({ ...m, [seq]: !m[seq] }))
+    if (willOpen && details[seq] === undefined) {
+      reconClient.getAuditEntry(seq).then(
+        (full) => setDetails((d) => ({ ...d, [seq]: full })),
+        () => {} // best-effort — the row's list fields still render
+      )
+    }
+  }
 
   const verifiable = entries.filter((e) => e.signed && e.payload && e.signature)
 
@@ -174,13 +192,23 @@ function AuditTrailCard({
   const validCount = checked.filter((s) => s === "valid").length
   const invalidCount = checked.filter((s) => s === "invalid").length
 
+  const committedCount = entries.filter((e) => e.outcome !== "failure").length
+  const rejectedCount = entries.filter((e) => e.outcome === "failure").length
+  const shown = entries.filter((e) =>
+    filter === "all"
+      ? true
+      : filter === "rejected"
+        ? e.outcome === "failure"
+        : e.outcome !== "failure"
+  )
+
   return (
     <Card className="space-y-3 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <Hash className="h-5 w-5 text-muted-foreground" />
         <span className="text-base font-medium">Audit trail</span>
         <span className="text-xs text-muted-foreground">
-          {entries.length} most recent signed {entries.length === 1 ? "write" : "writes"}
+          {entries.length} most recent {entries.length === 1 ? "write" : "writes"}
         </span>
         <div className="ml-auto flex items-center gap-2">
           {invalidCount > 0 ? (
@@ -208,6 +236,14 @@ function AuditTrailCard({
         </div>
       </div>
 
+      {/* Filter by outcome. Both committed and rejected writes are signed — the
+          signature verifies regardless; this filters what the ledger *applied*. */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <TrailFilterChip label="All" count={entries.length} active={filter === "all"} onClick={() => setFilter("all")} />
+        <TrailFilterChip label="Committed" count={committedCount} active={filter === "committed"} onClick={() => setFilter("committed")} />
+        <TrailFilterChip label="Rejected" count={rejectedCount} active={filter === "rejected"} onClick={() => setFilter("rejected")} />
+      </div>
+
       {unsupported && (
         <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
           In-browser verification isn’t available here. Use the recipe above with
@@ -215,42 +251,59 @@ function AuditTrailCard({
         </p>
       )}
 
-      {entries.length === 0 ? (
+      {shown.length === 0 ? (
         <p className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-          No signed entries yet. Evaluate a rule or work a break to record one.
+          {entries.length === 0
+            ? "No signed entries yet. Evaluate a rule or work a break to record one."
+            : "No entries match this filter."}
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <ul className="divide-y rounded-md border">
-            {entries.map((e) => (
-              <li
-                key={e.sequence}
-                className="flex flex-wrap items-center gap-3 px-3 py-2"
-              >
-                <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">
-                  #{e.sequence}
-                </span>
-                <div className="min-w-32 flex-1">
-                  <span className="text-sm">
-                    {e.outcome === "failure" ? "Rejected write" : "Signed write"}
-                  </span>
-                  {e.outcome === "failure" && (
-                    <Badge variant="outline" className="ml-2 text-destructive-foreground">
-                      failed
-                    </Badge>
-                  )}
-                </div>
-                <VerifyCell signed={e.signed} state={results[e.sequence]} />
-                <span
-                  className="w-20 shrink-0 text-right text-xs text-muted-foreground"
-                  title={e.timestamp}
+        <ul className="divide-y overflow-hidden rounded-md border">
+          {shown.map((e) => {
+            const isOpen = !!expanded[e.sequence]
+            return (
+              <li key={e.sequence} className="min-w-0">
+                <button
+                  type="button"
+                  onClick={() => toggle(e.sequence)}
+                  aria-expanded={isOpen}
+                  className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/25"
                 >
-                  {e.timestamp ? formatRelative(e.timestamp) : "—"}
-                </span>
+                  <ChevronRight
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+                      isOpen && "rotate-90"
+                    )}
+                  />
+                  <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">
+                    #{e.sequence}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-sm">
+                      {e.outcome === "failure" ? "Rejected" : "Committed"}
+                    </span>
+                    {e.outcome === "failure" && e.failureReason && (
+                      <span className="ml-2 text-xs text-destructive-foreground">
+                        {e.failureReason}
+                      </span>
+                    )}
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      · {e.orderCount} action{e.orderCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <VerifyCell signed={e.signed} state={results[e.sequence]} />
+                  <span
+                    className="w-20 shrink-0 text-right text-xs text-muted-foreground"
+                    title={e.timestamp}
+                  >
+                    {e.timestamp ? formatRelative(e.timestamp) : "—"}
+                  </span>
+                </button>
+                {isOpen && <AuditEntryDetail entry={details[e.sequence] ?? e} />}
               </li>
-            ))}
-          </ul>
-        </div>
+            )
+          })}
+        </ul>
       )}
 
       <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
@@ -265,6 +318,99 @@ function AuditTrailCard({
         </span>
       </p>
     </Card>
+  )
+}
+
+function TrailFilterChip({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string
+  count: number
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "rounded-full border px-2.5 py-1 text-xs transition-colors",
+        active
+          ? "border-transparent bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-accent"
+      )}
+    >
+      {label} <span className="tabular-nums opacity-70">{count}</span>
+    </button>
+  )
+}
+
+// AuditEntryDetail is the expanded row: the facts a consumer needs plus the raw
+// {payload, signature} so an auditor can verify with their own Ed25519 tooling,
+// and the ledger's own reason when a write was rejected.
+function AuditEntryDetail({ entry }: { entry: AuditEntry }) {
+  return (
+    <div className="space-y-2 border-t bg-muted/15 px-3 py-3 pl-10 text-xs">
+      <DetailRow label="Recorded" value={entry.timestamp ? formatDateTime(entry.timestamp) : "—"} />
+      <DetailRow label="Ledger actions" value={String(entry.orderCount)} />
+      {entry.ledgers && entry.ledgers.length > 0 && (
+        <DetailRow label="Ledgers" value={entry.ledgers.join(", ")} />
+      )}
+      {entry.keyId && <DetailRow label="Signing key" value={entry.keyId} mono />}
+
+      {entry.outcome === "failure" && (entry.failureReason || entry.failureMessage) && (
+        <div className="rounded-md border border-destructive/40 bg-muted/40 px-2.5 py-2">
+          <div className="font-medium text-destructive-foreground">
+            Rejected by the ledger{entry.failureReason ? ` · ${entry.failureReason}` : ""}
+          </div>
+          {entry.failureMessage && (
+            <p className="mt-0.5 break-words text-muted-foreground">
+              {entry.failureMessage}
+            </p>
+          )}
+        </div>
+      )}
+
+      {entry.signed && entry.payload && entry.signature ? (
+        <div className="space-y-1.5">
+          <CopyField label="Signed payload (base64)" value={entry.payload} />
+          <CopyField label="Signature (base64)" value={entry.signature} />
+        </div>
+      ) : (
+        <p className="text-muted-foreground">Unsigned entry — no signature to verify.</p>
+      )}
+    </div>
+  )
+}
+
+function DetailRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
+  return (
+    <div className="flex flex-wrap gap-x-2">
+      <span className="w-28 shrink-0 text-muted-foreground">{label}</span>
+      <span className={cn("min-w-0 break-all", mono && "font-mono")}>{value}</span>
+    </div>
+  )
+}
+
+function CopyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-md bg-muted/40 px-2 py-1.5">
+      <span className="w-28 shrink-0 text-muted-foreground">{label}</span>
+      <code className="min-w-0 flex-1 truncate font-mono text-[11px]">{value}</code>
+      <CopyButton value={value} label={label} />
+    </div>
   )
 }
 
