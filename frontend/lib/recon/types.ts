@@ -65,7 +65,14 @@ export type Trigger = "scheduled" | "manual";
 
 export type EvaluationResult = "PASS" | "FAIL" | "ERROR";
 
-/** Only relevant once /alerts/{id}/events is backed — it is a stub today (empty). */
+/**
+ * Only relevant once /alerts/{id}/events is backed. The endpoint returns []
+ * today, but NOT because no history exists: every alert transition is already
+ * written to the `reconciliation` ledger as SAVED_METADATA (see the Go
+ * stampTransition path). What is deferred is the queryable, alert-scoped
+ * projection of that stream (RFC §4.4, phase 3-4). Until it lands, the alert
+ * detail reconstructs the timeline from the rule-scoped timeline instead.
+ */
 export type AlertEventType =
   | "fail"
   | "pass"
@@ -359,7 +366,11 @@ export interface Alert {
   updatedAt: string;
 }
 
-/** One row of the alert timeline. STUB: /alerts/{id}/events returns [] today. */
+/**
+ * One row of the alert timeline. The /alerts/{id}/events reader returns []
+ * today (the projection is deferred — see AlertEventType); the underlying
+ * transition history lives in the ledger and is surfaced via the rule timeline.
+ */
 export interface AlertEvent {
   id: string;
   alertID: string;
@@ -416,7 +427,7 @@ export type CapturesResponse = CursorResponse<Capture>;
 export type RuleActivitiesResponse = CursorResponse<RuleActivity>;
 export type AlertResponse = Data<Alert>;
 export type AlertsResponse = CursorResponse<Alert>;
-export type AlertEventsResponse = CursorResponse<AlertEvent>; // empty today
+export type AlertEventsResponse = CursorResponse<AlertEvent>; // reader deferred — see AlertEvent
 
 /**
  * A public signing key the control-ledger writes are signed with. `publicKey`

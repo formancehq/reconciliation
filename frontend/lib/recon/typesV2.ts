@@ -333,6 +333,10 @@ export interface AlertV2 {
   updatedAt: string
 }
 
+/**
+ * See AlertEvent (V1) for why the events reader is deferred. Note the /events
+ * route is mounted for V1 only today; V2 has no alert-events endpoint yet.
+ */
 export interface AlertEventV2 {
   id: string
   alertID: string
