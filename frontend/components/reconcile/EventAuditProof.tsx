@@ -14,7 +14,7 @@ import { cn } from "@workspace/ui/lib/utils"
 import { reconClient, type AuditEntry } from "@/lib/recon"
 import { importEd25519PublicKey, verifyEntry } from "./panels/AuditPanel"
 
-type Verify = "checking" | "valid" | "invalid" | "unsigned" | "nokey"
+type Verify = "checking" | "valid" | "invalid" | "unsigned" | "nokey" | "unavailable"
 
 /**
  * Resolves one alert event's control-ledger write to its signed audit entry
@@ -31,25 +31,36 @@ export function EventAuditProof({ transactionId }: { transactionId: string }) {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      // Hop 1 — resolve the entry. A failure here (and only here) means "not found".
+      let resolved
       try {
-        const resolved = await reconClient.getAuditEntryByTransaction(transactionId)
-        let result: Verify = "unsigned"
-        if (resolved.signed && resolved.payload && resolved.signature && resolved.keyId) {
-          const keys = await reconClient.getSigningKeys()
-          const match = keys.find((k) => k.keyId === resolved.keyId)
-          if (!match) result = "nokey"
-          else {
-            const key = await importEd25519PublicKey(match.publicKey)
-            result = (await verifyEntry(key, resolved)) ? "valid" : "invalid"
-          }
-        }
-        if (!cancelled) {
-          setEntry(resolved)
-          setVerify(result)
-          setStatus("ready")
-        }
+        resolved = await reconClient.getAuditEntryByTransaction(transactionId)
       } catch {
         if (!cancelled) setStatus("error")
+        return
+      }
+      if (cancelled) return
+      setEntry(resolved)
+      setStatus("ready")
+
+      // Hop 2 — verify separately, so a crypto/keys failure degrades the verify
+      // pill (to "unavailable") instead of masquerading as a missing entry.
+      if (!(resolved.signed && resolved.payload && resolved.signature && resolved.keyId)) {
+        if (!cancelled) setVerify("unsigned")
+        return
+      }
+      try {
+        const keys = await reconClient.getSigningKeys()
+        const match = keys.find((k) => k.keyId === resolved.keyId)
+        if (!match) {
+          if (!cancelled) setVerify("nokey")
+          return
+        }
+        const key = await importEd25519PublicKey(match.publicKey)
+        const ok = await verifyEntry(key, resolved)
+        if (!cancelled) setVerify(ok ? "valid" : "invalid")
+      } catch {
+        if (!cancelled) setVerify("unavailable")
       }
     })()
     return () => {
@@ -123,6 +134,11 @@ function VerifyPill({ verify }: { verify: Verify }) {
     nokey: {
       label: "Key not published",
       className: "text-amber-foreground",
+      icon: <ShieldAlert className="h-3 w-3" />,
+    },
+    unavailable: {
+      label: "Verify unavailable — use the recipe",
+      className: "text-muted-foreground",
       icon: <ShieldAlert className="h-3 w-3" />,
     },
   }

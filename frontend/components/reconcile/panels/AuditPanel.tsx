@@ -69,7 +69,6 @@ export function AuditPanel() {
   const entries = res.data?.entries ?? []
   const alerts = res.data?.alerts ?? []
   const rules = res.data?.rules ?? []
-  const publicKey = keys[0]?.publicKey
 
   const ruleName = (a: AnyAlert) =>
     rules.find(
@@ -87,7 +86,7 @@ export function AuditPanel() {
     <div className="mx-auto max-w-6xl space-y-6 p-3 sm:p-4">
       <VerificationCard keys={keys} />
 
-      <AuditTrailCard entries={entries} publicKey={publicKey} />
+      <AuditTrailCard entries={entries} keys={keys} />
 
       <section>
         <h3 className="mb-3 text-sm font-semibold">Who handled what</h3>
@@ -137,15 +136,15 @@ export function AuditPanel() {
 
 // ── Audit trail (the real signed entries + in-browser verify) ────────────────
 
-type VerifyState = "checking" | "valid" | "invalid"
+type VerifyState = "checking" | "valid" | "invalid" | "nokey"
 type TrailFilter = "all" | "committed" | "rejected"
 
 function AuditTrailCard({
   entries,
-  publicKey,
+  keys,
 }: {
   entries: AuditEntry[]
-  publicKey?: string
+  keys: SigningKey[]
 }) {
   const [results, setResults] = useState<Record<number, VerifyState>>({})
   const [running, setRunning] = useState(false)
@@ -170,14 +169,19 @@ function AuditTrailCard({
   const verifiable = entries.filter((e) => e.signed && e.payload && e.signature)
 
   async function verifyAll() {
-    if (!publicKey || running) return
+    if (keys.length === 0 || running) return
     setRunning(true)
     setResults({})
     try {
-      const key = await importEd25519PublicKey(publicKey)
+      // Import each published key once, by id. Entries may be signed by different
+      // keys across a rotation, so each entry verifies against ITS OWN key — an
+      // entry whose keyId isn't published is "nokey", not a false "invalid".
+      const byId = new Map<string, CryptoKey>()
+      for (const k of keys) byId.set(k.keyId, await importEd25519PublicKey(k.publicKey))
       const next: Record<number, VerifyState> = {}
       for (const e of verifiable) {
-        next[e.sequence] = (await verifyEntry(key, e)) ? "valid" : "invalid"
+        const key = e.keyId ? byId.get(e.keyId) : undefined
+        next[e.sequence] = key ? ((await verifyEntry(key, e)) ? "valid" : "invalid") : "nokey"
         setResults({ ...next })
       }
     } catch {
@@ -224,7 +228,7 @@ function AuditTrailCard({
             size="sm"
             variant="outline"
             onClick={verifyAll}
-            disabled={!publicKey || running || verifiable.length === 0}
+            disabled={keys.length === 0 || running || verifiable.length === 0}
           >
             {running ? (
               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -454,6 +458,15 @@ function VerifyCell({
     return (
       <span className="flex w-24 shrink-0 items-center justify-end text-xs text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      </span>
+    )
+  if (state === "nokey")
+    return (
+      <span
+        className="w-24 shrink-0 text-right text-xs text-amber-foreground"
+        title="Signed with a key that is not in /audit/signing-keys — cannot verify"
+      >
+        key?
       </span>
     )
   return <span className="w-24 shrink-0 text-right text-xs text-muted-foreground">signed</span>
