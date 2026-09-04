@@ -137,14 +137,6 @@ func accountFromProto(ledgerName string, acct *commonpb.Account) Account {
 	}
 }
 
-// volumeBalance derives an asset balance from a per-account volume: the
-// ledger-provided Balance when present, else input − output. The fields are
-// arbitrary-precision integers encoded as decimal strings; an empty or
-// unparseable string is treated as 0.
-func volumeBalance(v *commonpb.VolumesWithBalance) *big.Int {
-	return commonpb.VolumeBalance(v)
-}
-
 // dataLedgerLeaf maps a data-ledger source predicate (the query DSL a template
 // emits) to a ledger filter. The operator set mirrors what the ledger's account
 // filter supports, subject to the metadata key's declared type + accounts index
