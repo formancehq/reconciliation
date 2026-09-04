@@ -98,10 +98,14 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 			}
 			client.UseSigningKey(&signingKey)
 			if flagStr(cmd, auditSigningKeySeedFlag) == "" {
-				// No pinned seed: a fresh key every boot means entries signed now
-				// can only be verified later if this seed is captured. Log it once,
-				// loudly, so an operator can pin it via --audit-signing-key-seed.
-				logger.Infof("audit: generated an ephemeral signing key %q — pin it across restarts with --audit-signing-key-seed=%s", signingKey.ID, signingKey.SeedBase64())
+				// No pinned seed: a fresh key every boot, so entries signed now
+				// cannot be verified after a restart. Warn — but NEVER log the seed:
+				// the private half in centralized logs, next to the openly-served
+				// public key, would let anyone with log access forge signed entries
+				// and defeat the whole non-repudiation guarantee. Pin a key by
+				// supplying --audit-signing-key-seed from a secrets manager (any
+				// 32-byte base64/hex value, e.g. `openssl rand -base64 32`).
+				logger.Infof("audit: generated an EPHEMERAL signing key %q (public key %s); it will not survive a restart — set --audit-signing-key-seed to pin one", signingKey.ID, signingKey.PublicKeyBase64())
 			} else {
 				logger.Infof("audit: signing control-ledger writes with key %q (public key %s)", signingKey.ID, signingKey.PublicKeyBase64())
 			}
