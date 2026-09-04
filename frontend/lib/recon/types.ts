@@ -66,12 +66,11 @@ export type Trigger = "scheduled" | "manual";
 export type EvaluationResult = "PASS" | "FAIL" | "ERROR";
 
 /**
- * Only relevant once /alerts/{id}/events is backed. The endpoint returns []
- * today, but NOT because no history exists: every alert transition is already
- * written to the `reconciliation` ledger as SAVED_METADATA (see the Go
- * stampTransition path). What is deferred is the queryable, alert-scoped
- * projection of that stream (RFC §4.4, phase 3-4). Until it lands, the alert
- * detail reconstructs the timeline from the rule-scoped timeline instead.
+ * The trigger of an alert event. /alerts/{id}/events is backed by a projection
+ * of the control ledger's activity stream (ledgerstore.ListAlertEvents): every
+ * alert transition is a committed ledger write, and the reader filters that
+ * stream to one alert, newest-first, cursor-paginated. Each event carries the
+ * `transactionId` of its ledger write (covered by the signed audit chain).
  */
 export type AlertEventType =
   | "fail"
@@ -366,11 +365,7 @@ export interface Alert {
   updatedAt: string;
 }
 
-/**
- * One row of the alert timeline. The /alerts/{id}/events reader returns []
- * today (the projection is deferred — see AlertEventType); the underlying
- * transition history lives in the ledger and is surfaced via the rule timeline.
- */
+/** One row of the alert's append-only timeline (see AlertEventType). */
 export interface AlertEvent {
   id: string;
   alertID: string;
@@ -382,6 +377,12 @@ export interface AlertEvent {
   at: string;
   isReopen: boolean;
   notify: boolean;
+  /**
+   * Control-ledger transaction id of the write behind this event. That write is
+   * covered by the signed audit chain; it is the tx id, not the audit sequence
+   * that indexes GET /audit/entries.
+   */
+  transactionId?: string;
 }
 
 // --- Alert action request bodies -------------------------------------------
@@ -427,7 +428,7 @@ export type CapturesResponse = CursorResponse<Capture>;
 export type RuleActivitiesResponse = CursorResponse<RuleActivity>;
 export type AlertResponse = Data<Alert>;
 export type AlertsResponse = CursorResponse<Alert>;
-export type AlertEventsResponse = CursorResponse<AlertEvent>; // reader deferred — see AlertEvent
+export type AlertEventsResponse = CursorResponse<AlertEvent>;
 
 /**
  * A public signing key the control-ledger writes are signed with. `publicKey`

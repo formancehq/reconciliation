@@ -19,6 +19,8 @@ import type {
   Alert,
   AlertResponse,
   AlertsResponse,
+  AlertEvent,
+  AlertEventsResponse,
   SigningKey,
   SigningKeysResponse,
   AuditEntry,
@@ -299,6 +301,23 @@ export const reconClient = {
       { body }
     )
     return r.data
+  },
+  /**
+   * One page of an alert's append-only event log, newest-first. Backed by a
+   * projection of the control-ledger activity stream; each event carries the
+   * `transactionId` of its ledger write. Page with the cursor.
+   */
+  async listAlertEvents(
+    id: string,
+    cursor?: string,
+    signal?: AbortSignal
+  ): Promise<Cursor<AlertEvent>> {
+    const response = await reconRequest<AlertEventsResponse>(
+      "GET",
+      `/alerts/${encodeURIComponent(id)}/events`,
+      { query: { pageSize: 50, cursor }, signal }
+    )
+    return { ...response.cursor, data: cursorItems(response.cursor) }
   },
 
   // --- audit --------------------------------------------------------------

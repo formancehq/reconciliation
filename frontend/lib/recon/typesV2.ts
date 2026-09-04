@@ -333,10 +333,7 @@ export interface AlertV2 {
   updatedAt: string
 }
 
-/**
- * See AlertEvent (V1) for why the events reader is deferred. Note the /events
- * route is mounted for V1 only today; V2 has no alert-events endpoint yet.
- */
+/** V2 alert event — see AlertEvent (V1); /events is mounted for V1 and V2. */
 export interface AlertEventV2 {
   id: string
   alertID: string
@@ -348,6 +345,8 @@ export interface AlertEventV2 {
   at: string
   isReopen: boolean
   notify: boolean
+  /** Control-ledger transaction id of the write behind this event (see AlertEvent). */
+  transactionId?: string
 }
 
 export type RuleResponseV2 = Data<RuleV2>
