@@ -11,28 +11,33 @@ export function V2RulePresentation({
   compact?: boolean
   sourcesFirst?: boolean
 }) {
-  const sources = rule.templateSpec.sources
-  const sourceGrid = (
-    <div
-      className={
-        compact
-          ? "grid min-w-0 gap-2 sm:grid-cols-2"
-          : "grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3"
-      }
-    >
-      {sources.map((source) => (
-        <NamedSourceCard key={source.id} source={source} compact={compact} />
-      ))}
-    </div>
-  )
-  const operation = (
+  // Not every V2 template carries named sources (e.g. account_threshold,
+  // stale_holds) — guard rather than assume the array is present.
+  const sources = rule.templateSpec.sources ?? []
+  const sourceGrid =
+    sources.length > 0 ? (
+      <div
+        className={
+          compact
+            ? "grid min-w-0 gap-2 sm:grid-cols-2"
+            : "grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3"
+        }
+      >
+        {sources.map((source) => (
+          <NamedSourceCard key={source.id} source={source} compact={compact} />
+        ))}
+      </div>
+    ) : null
+  // describeRuleV2 covers the multi-source kinds; a kind it doesn't describe
+  // (e.g. stale_holds) yields no invariant text, so skip the box rather than
+  // render an empty one.
+  const invariant = describeRuleV2(rule)
+  const operation = !invariant ? null : (
     <div className="rounded-md border bg-muted/25 px-3 py-2">
       <div className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
         Invariant
       </div>
-      <div className="mt-1 text-sm font-medium break-words">
-        {describeRuleV2(rule)}
-      </div>
+      <div className="mt-1 text-sm font-medium break-words">{invariant}</div>
       {rule.templateKind === "exchange_rate_bounds" && (
         <div className="mt-1 text-xs text-muted-foreground">
           Convention: quote asset major units per base asset major unit
