@@ -458,6 +458,12 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					<li>Repeat for any entries you like — each one verifies on its own, proving authorship and integrity from the public key alone.</li>
 				</ol>
 
+				<Callout kind="tip" title="Verify a single action from the timeline">
+					You don&apos;t have to start from the entry list. On an alert&apos;s timeline, expand any event —
+					opened, acknowledged, resolved — to resolve it to its signed audit entry and verify the signature
+					in-browser, right there. It is the same check as the recipe above, scoped to one action.
+				</Callout>
+
 				<Callout kind="info" title="Why this beats a report">
 					A dashboard that says &quot;all reconciled&quot; asks you to trust the dashboard. A signed ledger
 					hands the auditor the evidence <em>and</em> the means to check it independently: the public key is
