@@ -1289,6 +1289,15 @@ components:
         at: { type: string, format: date-time }
         isReopen: { type: boolean }
         notify: { type: boolean, description: "Whether this transition was published to the message bus. false = recorded for audit but suppressed." }
+        transactionId:
+          type: string
+          description: >-
+            The control-ledger transaction id of the write that recorded this
+            event — the identifier of the exact ledger write behind the
+            transition. That write is covered by the ledger's signed audit chain,
+            so an auditor with the ledger can locate and verify it. Note this is
+            the transaction id, not the bucket-wide audit sequence that indexes
+            GET /audit/entries.
     AlertEventsCursorResponse:
       type: object
       required: [cursor]

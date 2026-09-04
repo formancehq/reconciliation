@@ -11,6 +11,7 @@ import (
 
 	sharedapi "github.com/formancehq/go-libs/api"
 	"github.com/formancehq/go-libs/auth"
+	"github.com/formancehq/go-libs/bun/bunpaginate"
 	"github.com/formancehq/go-libs/v5/pkg/audit"
 	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
 	"github.com/formancehq/reconciliation/internal/api/service"
@@ -51,15 +52,20 @@ func TestV1RenderersDoNotExposeV2AuditFields(t *testing.T) {
 	}
 }
 
-func TestV2DoesNotExposeDeferredAlertEventsRoute(t *testing.T) {
+func TestV2ExposesAlertEventsRoute(t *testing.T) {
 	t.Parallel()
 
-	b, _ := newTestingBackend(t)
+	// The alert event log is now backed (a projection of the control-ledger
+	// activity stream), so it is mounted for V2 as well as V1.
+	b, svc := newTestingBackend(t)
+	svc.EXPECT().ListAlertEvents(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&bunpaginate.Cursor[models.AlertEvent]{Data: []models.AlertEvent{}}, nil)
+
 	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
 	req := httptest.NewRequest(http.MethodGet, "/v2/alerts/"+uuid.NewString()+"/events", nil)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
-	require.Equal(t, http.StatusNotFound, res.Code)
+	require.Equal(t, http.StatusOK, res.Code)
 }
 
 func TestV2CreateRouteScopesRequestAndRendersVersion(t *testing.T) {

@@ -75,6 +75,10 @@ type alertEventResponse struct {
 	At           time.Time       `json:"at"`
 	IsReopen     bool            `json:"isReopen"`
 	Notify       bool            `json:"notify"`
+	// TransactionID identifies the control-ledger write behind this event. That
+	// write is covered by the signed audit chain; it is the transaction id, not
+	// the bucket-wide audit sequence that indexes GET /audit/entries.
+	TransactionID string `json:"transactionId,omitempty"`
 }
 
 func renderAlertEvent(e *models.AlertEvent) *alertEventResponse {
@@ -89,16 +93,17 @@ func renderAlertEvent(e *models.AlertEvent) *alertEventResponse {
 		prev = &s
 	}
 	return &alertEventResponse{
-		ID:           e.ID.String(),
-		AlertID:      e.AlertID.String(),
-		EvaluationID: evalID,
-		Type:         string(e.Type),
-		PrevStatus:   prev,
-		NewStatus:    string(e.NewStatus),
-		Payload:      e.Payload,
-		At:           e.At,
-		IsReopen:     e.IsReopen(),
-		Notify:       e.Notify,
+		ID:            e.ID.String(),
+		AlertID:       e.AlertID.String(),
+		EvaluationID:  evalID,
+		Type:          string(e.Type),
+		PrevStatus:    prev,
+		NewStatus:     string(e.NewStatus),
+		Payload:       e.Payload,
+		At:            e.At,
+		IsReopen:      e.IsReopen(),
+		Notify:        e.Notify,
+		TransactionID: e.TransactionID,
 	}
 }
 

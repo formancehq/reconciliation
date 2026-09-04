@@ -29,7 +29,7 @@ func contractVersionMiddleware(version models.ContractVersion) func(http.Handler
 	}
 }
 
-func mountRuleAndAlertRoutes(r chi.Router, b backend.Backend, includeDeferredAlertEvents bool) {
+func mountRuleAndAlertRoutes(r chi.Router, b backend.Backend) {
 	r.Post("/rules", createRuleHandler(b))
 	r.Get("/rules", listRulesHandler(b))
 	r.Get("/rules/{ruleID}", getRuleHandler(b))
@@ -41,9 +41,10 @@ func mountRuleAndAlertRoutes(r chi.Router, b backend.Backend, includeDeferredAle
 
 	r.Get("/alerts", listAlertsHandler(b))
 	r.Get("/alerts/{alertID}", getAlertHandler(b))
-	if includeDeferredAlertEvents {
-		r.Get("/alerts/{alertID}/events", listAlertEventsHandler(b))
-	}
+	// The alert event log is projected from the control ledger's activity stream
+	// (ledgerstore.ListAlertEvents); each event carries the ledger sequence, so it
+	// cross-references to the signed audit chain. Mounted for V1 and V2.
+	r.Get("/alerts/{alertID}/events", listAlertEventsHandler(b))
 	r.Post("/alerts/{alertID}/ack", ackAlertHandler(b))
 	r.Post("/alerts/{alertID}/resolve", resolveAlertHandler(b))
 	r.Post("/alerts/{alertID}/accept", acceptAlertHandler(b))
@@ -98,11 +99,11 @@ func newRouter(
 		// by its contract version so the shared handlers serialize the right shape.
 		r.Group(func(r chi.Router) {
 			r.Use(contractVersionMiddleware(models.ContractVersionV1))
-			mountRuleAndAlertRoutes(r, b, true)
+			mountRuleAndAlertRoutes(r, b)
 		})
 		r.Route("/v2", func(r chi.Router) {
 			r.Use(contractVersionMiddleware(models.ContractVersionV2))
-			mountRuleAndAlertRoutes(r, b, false)
+			mountRuleAndAlertRoutes(r, b)
 		})
 
 		// Ledger introspection — read-only helpers that let the standalone UI's

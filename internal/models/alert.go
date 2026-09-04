@@ -205,6 +205,14 @@ type AlertEvent struct {
 	Notify    bool      `bun:"notify,notnull"              json:"notify"`
 	At        time.Time `bun:",notnull,nullzero"          json:"at"`
 	CreatedAt time.Time `bun:"created_at,notnull,nullzero" json:"createdAt"`
+	// TransactionID is the control-ledger transaction id of the write that
+	// recorded this event — the identifier of the exact ledger write behind the
+	// transition. That write is covered by the ledger's signed audit chain (every
+	// control-ledger write is audited), so an auditor with the ledger can locate
+	// and verify it; note this is the transaction id, NOT the bucket-wide audit
+	// sequence that indexes GET /audit/entries. Projection-only: set by the
+	// ledger-backed reader, never persisted.
+	TransactionID string `bun:"-" json:"transactionId,omitempty"`
 }
 
 // IsReopen returns true when this fail event lands on a previously-resolved
