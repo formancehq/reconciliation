@@ -3,6 +3,7 @@ import { collectReconPages } from "./pagination"
 import type {
   AckAlertRequest,
   AcceptAlertRequest,
+  AlertEventsResponseV2,
   AlertResponseV2,
   AlertsResponseV2,
   CapturesResponseV2,
@@ -82,6 +83,14 @@ export const reconClientV2 = {
       ...response.cursor,
       data: cursorItems(response.cursor),
     }
+  },
+  async listAlertEvents(alertId: string, cursor?: string, signal?: AbortSignal) {
+    const response = await reconRequest<AlertEventsResponseV2>(
+      "GET",
+      path(`/alerts/${encodeURIComponent(alertId)}/events`),
+      { query: { pageSize: 50, cursor }, signal }
+    )
+    return { ...response.cursor, data: cursorItems(response.cursor) }
   },
   async listCaptures(
     ruleId: string,

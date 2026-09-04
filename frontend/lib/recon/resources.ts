@@ -4,6 +4,7 @@ import type {
   AcceptAlertRequest,
   AckAlertRequest,
   Alert,
+  AlertEvent,
   Capture,
   ResolveAlertRequest,
   Rule,
@@ -122,6 +123,21 @@ export function listRuleTimelineByContract(
     : signal
       ? reconClient.listRuleTimeline(ruleId, cursor, signal)
       : reconClient.listRuleTimeline(ruleId, cursor)
+}
+
+export function listAlertEventsByContract(
+  alertId: string,
+  contractVersion: 1 | 2,
+  cursor?: string,
+  signal?: AbortSignal
+): Promise<Cursor<AlertEvent>> {
+  return contractVersion === 2
+    ? signal
+      ? reconClientV2.listAlertEvents(alertId, cursor, signal)
+      : reconClientV2.listAlertEvents(alertId, cursor)
+    : signal
+      ? reconClient.listAlertEvents(alertId, cursor, signal)
+      : reconClient.listAlertEvents(alertId, cursor)
 }
 
 export async function listAlertsByContract(

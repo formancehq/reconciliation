@@ -5,9 +5,9 @@
  *
  * The break-management surface of the human-first workflow: triage open alerts,
  * inspect evidence, then acknowledge / resolve (fixed by booking) / accept
- * (business acceptance) / snooze. We do NOT render a per-alert transition
- * timeline — GET /alerts/{id}/events is a stub returning []; the durable history
- * lives on the rule's captures.
+ * (business acceptance) / snooze. The detail's timeline is the alert's own
+ * append-only event log, paged from GET /alerts/{id}/events (a projection of the
+ * control-ledger activity stream) — see AlertEventsTimeline.
  */
 import { Fragment, useCallback, useEffect, useState } from "react"
 import {
@@ -60,9 +60,7 @@ import {
   getAlertByContract,
   getRuleByContract,
   listCapturesByContract,
-  listRuleTimelineByContract,
-  appendRuleActivities,
-  alertActivityDetails,
+  listAlertEventsByContract,
   contractVersionOf,
   resourceKey,
   ruleResourceKey,
@@ -77,8 +75,8 @@ import {
   type AlertCaptureEvidenceSelection,
   type AnyAlert,
   type AnyCapture,
-  type RuleActivity,
-  type AlertLifecycleActivity,
+  type AlertEvent,
+  type Cursor,
 } from "@/lib/recon"
 import { getConnectedUserEmail } from "@/lib/formance/helpers"
 import { useReconNav } from "../ReconContext"
@@ -105,7 +103,7 @@ import {
 import { cn } from "@workspace/ui/lib/utils"
 import { ReconFilterMenu } from "../ReconFilterMenu"
 import { V2Evidence, isEvidenceV2 } from "../V2Evidence"
-import { RuleTimeline } from "../RuleTimeline"
+import { AlertEventsTimeline } from "../AlertEventsTimeline"
 
 const log = createLogger("Recon")
 
@@ -889,65 +887,9 @@ type CaptureLoadState =
   | { status: "ready"; captures: AnyCapture[] }
   | { status: "error"; error: unknown }
 
-// fetchAlertTimeline builds one alert's chronological journal — its lifecycle
-// activities (opened, occurred, ack, resolved, …) plus the evaluations that drove
-// them — from the rule-scoped timeline. The per-alert /events endpoint is a stub,
-// so we page the rule timeline back to the alert's first occurrence (bounded) and
-// filter, reusing the same RuleTimeline rendering the rule detail uses.
-async function fetchAlertTimeline(
-  alert: AnyAlert,
-  contractVersion: 1 | 2,
-  signal?: AbortSignal
-): Promise<RuleActivity[]> {
-  const floor = new Date(alert.firstSeenAt).getTime() - 60_000 // small margin
-  let all: RuleActivity[] = []
-  let cursor: string | undefined
-  for (let page = 0; page < 12; page++) {
-    const response = await listRuleTimelineByContract(
-      alert.ruleID,
-      contractVersion,
-      cursor,
-      signal
-    )
-    all = appendRuleActivities(all, response.data ?? [])
-    const oldest = all[all.length - 1]
-    const covered =
-      oldest !== undefined && new Date(oldest.occurredAt).getTime() < floor
-    cursor = response.next
-    if (!response.hasMore || covered || !cursor) break
-  }
-  return filterTimelineToAlert(all, alert.id)
-}
-
-// filterTimelineToAlert keeps this alert's own lifecycle activities and the
-// evaluations (matched by correlation id) that produced them, preserving the
-// API's newest-first order that RuleTimeline groups on.
-function filterTimelineToAlert(
-  all: RuleActivity[],
-  alertId: string
-): RuleActivity[] {
-  const keep = new Set<string>()
-  const correlations = new Set<string>()
-  for (const activity of all) {
-    if (
-      activity.category === "alert" &&
-      alertActivityDetails(activity as AlertLifecycleActivity).alertID === alertId
-    ) {
-      keep.add(activity.id)
-      if (activity.correlationID) correlations.add(activity.correlationID)
-    }
-  }
-  for (const activity of all) {
-    if (
-      activity.kind === "evaluation.completed" &&
-      activity.correlationID &&
-      correlations.has(activity.correlationID)
-    ) {
-      keep.add(activity.id)
-    }
-  }
-  return all.filter((activity) => keep.has(activity.id))
-}
+// The alert timeline is now the alert's own event log (GET /alerts/{id}/events,
+// a ledger projection) — see AlertEventsTimeline — instead of a client-side
+// reconstruction from the rule-scoped stream.
 
 function AlertDetail({
   alertId,
@@ -963,24 +905,19 @@ function AlertDetail({
     alert: AnyAlert
     ruleName?: string
     captureLoad: CaptureLoadState
-    timeline: RuleActivity[]
-    timelineError?: unknown
   }>(async (signal) => {
     const alert = await getAlertByContract(alertId, contractVersion, signal)
-    const [ruleR, capsR, timelineR] = await Promise.allSettled([
+    const [ruleR, capsR] = await Promise.allSettled([
       getRuleByContract(alert.ruleID, contractVersion, signal),
       listCapturesByContract(alert.ruleID, contractVersion, {
         period: alert.periodID,
         signal,
       }),
-      fetchAlertTimeline(alert, contractVersion, signal),
     ])
     if (ruleR.status === "rejected")
       log.debug("getRule for alert failed (rule may be gone)", {
         ruleId: alert.ruleID,
       })
-    if (timelineR.status === "rejected")
-      log.debug("alert timeline load failed", { alertId })
     return {
       alert,
       ruleName: ruleR.status === "fulfilled" ? ruleR.value.name : undefined,
@@ -988,17 +925,54 @@ function AlertDetail({
         capsR.status === "fulfilled"
           ? { status: "ready", captures: capsR.value }
           : { status: "error", error: capsR.reason },
-      timeline: timelineR.status === "fulfilled" ? timelineR.value : [],
-      timelineError:
-        timelineR.status === "rejected" ? timelineR.reason : undefined,
     }
   }, [alertId, contractVersion, dataVersion])
+
+  // The alert timeline is its own paginated event log (a ledger projection):
+  // first page via useReconResource, then accumulate older pages via the cursor.
+  const eventsRes = useReconResource<Cursor<AlertEvent>>(
+    (signal) => listAlertEventsByContract(alertId, contractVersion, undefined, signal),
+    [alertId, contractVersion, dataVersion]
+  )
+  const eventsKey = `${contractVersion}:${alertId}:${dataVersion}`
+  const [eventPages, setEventPages] = useState<{
+    key: string
+    older: AlertEvent[]
+    next?: string
+    hasMore?: boolean
+  }>({ key: eventsKey, older: [] })
+  if (eventPages.key !== eventsKey) setEventPages({ key: eventsKey, older: [] })
+  const [loadingMoreEvents, setLoadingMoreEvents] = useState(false)
+  const events = [...(eventsRes.data?.data ?? []), ...eventPages.older]
+  const eventsNext = eventPages.next ?? eventsRes.data?.next
+  const eventsHasMore = eventPages.hasMore ?? eventsRes.data?.hasMore ?? false
+  const onLoadMoreEvents = async () => {
+    if (!eventsNext || loadingMoreEvents) return
+    setLoadingMoreEvents(true)
+    try {
+      const page = await listAlertEventsByContract(alertId, contractVersion, eventsNext)
+      setEventPages((cur) => ({
+        ...cur,
+        older: [...cur.older, ...(page.data ?? [])],
+        next: page.next,
+        hasMore: page.hasMore,
+      }))
+    } catch (err) {
+      toast.error(
+        err instanceof ReconError
+          ? err.message
+          : "Older events could not be loaded"
+      )
+    } finally {
+      setLoadingMoreEvents(false)
+    }
+  }
 
   if (res.loading) return <Loading label="Loading alert…" />
   if (res.error) return <ErrorState error={res.error} onRetry={res.refetch} />
   if (!res.data) return null
 
-  const { alert, ruleName, captureLoad, timeline, timelineError } = res.data
+  const { alert, ruleName, captureLoad } = res.data
   const captures = captureLoad.status === "ready" ? captureLoad.captures : []
   const evidence = alert.evidence
   const snoozed = !!alert.snooze && isFuture(alert.snooze.until)
@@ -1129,18 +1103,16 @@ function AlertDetail({
             />
           )}
 
-          {/* Chronological journal: this alert's evaluations + state changes,
-              reusing the rule-detail timeline rendering. */}
-          <RuleTimeline
-            heading="Timeline"
-            dense
-            activities={timeline}
-            hasMore={false}
-            loading={res.refreshing && timeline.length === 0}
-            loadingEarlier={false}
-            error={timeline.length === 0 ? timelineError : undefined}
-            onRetry={res.refetch}
-            onLoadEarlier={() => {}}
+          {/* Chronological journal: this alert's own append-only event log,
+              paged from GET /alerts/{id}/events (a ledger projection). */}
+          <AlertEventsTimeline
+            events={events}
+            hasMore={eventsHasMore}
+            loading={eventsRes.loading}
+            loadingMore={loadingMoreEvents}
+            error={events.length === 0 ? eventsRes.error : undefined}
+            onRetry={eventsRes.refetch}
+            onLoadMore={onLoadMoreEvents}
           />
 
           {/* The ack / resolve / snooze narrative now lives in the Timeline
