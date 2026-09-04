@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import {
   AlertCircle,
   Bell,
@@ -34,6 +35,8 @@ export function AlertEventsTimeline({
   onRetry,
   onLoadMore,
   heading = "Timeline",
+  hasEvidence,
+  renderEvidence,
 }: {
   events: AlertEvent[]
   hasMore: boolean
@@ -43,6 +46,10 @@ export function AlertEventsTimeline({
   onRetry?: () => void
   onLoadMore: () => void
   heading?: string
+  /** True when the event's evaluation has retained evidence to expand. */
+  hasEvidence?: (evaluationID?: string) => boolean
+  /** The evaluation's evidence for this alert, rendered lazily on expand. */
+  renderEvidence?: (evaluationID?: string) => React.ReactNode
 }) {
   return (
     <section aria-labelledby="alert-events-heading" className="min-w-0">
@@ -91,7 +98,12 @@ export function AlertEventsTimeline({
             className="relative touch-pan-y space-y-3 border-l pl-5"
           >
             {events.map((event) => (
-              <AlertEventRow key={event.id} event={event} />
+              <AlertEventRow
+                key={event.id}
+                event={event}
+                hasEvidence={hasEvidence}
+                renderEvidence={renderEvidence}
+              />
             ))}
           </ol>
 
@@ -121,54 +133,97 @@ export function AlertEventsTimeline({
 
 type Tone = "success" | "danger" | "warning" | "neutral"
 
-function AlertEventRow({ event }: { event: AlertEvent }) {
+function AlertEventRow({
+  event,
+  hasEvidence,
+  renderEvidence,
+}: {
+  event: AlertEvent
+  hasEvidence?: (evaluationID?: string) => boolean
+  renderEvidence?: (evaluationID?: string) => React.ReactNode
+}) {
+  const [open, setOpen] = useState(false)
   const { label, tone, icon } = describeEvent(event)
   const narrative = eventNarrative(event)
+  const evaluationID = event.evaluationID ?? undefined
+  // Expandable only when this event's evaluation has retained evidence to show.
+  const expandable = !!evaluationID && (hasEvidence?.(evaluationID) ?? false)
+
+  const header = (
+    <>
+      <div className="flex flex-wrap items-start gap-2">
+        {expandable && (
+          <ChevronDown
+            className={cn(
+              "mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+              !open && "-rotate-90"
+            )}
+          />
+        )}
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{label}</div>
+          {event.prevStatus && (
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              {event.prevStatus} → {event.newStatus}
+            </div>
+          )}
+        </div>
+        <time
+          className="ml-auto shrink-0 text-xs text-muted-foreground"
+          dateTime={event.at}
+          title={formatDateTime(event.at)}
+        >
+          {formatRelative(event.at)}
+        </time>
+      </div>
+
+      {narrative && (
+        <p className="mt-1.5 text-xs break-words text-muted-foreground">
+          {narrative}
+        </p>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-muted-foreground">
+        {event.transactionId && (
+          <span title="Control-ledger transaction id of this write (in the signed audit chain)">
+            tx {event.transactionId}
+          </span>
+        )}
+        {event.evaluationID && (
+          <span title={event.evaluationID}>
+            eval {event.evaluationID.slice(0, 8)}
+          </span>
+        )}
+        {!event.notify && (
+          <span className="rounded-full border px-1.5 py-px" title="Recorded for audit but not published to the message bus">
+            suppressed
+          </span>
+        )}
+      </div>
+    </>
+  )
+
   return (
     <li className="relative min-w-0">
       <TimelineDot tone={tone} icon={icon} />
-      <Card className="min-w-0 p-3">
-        <div className="flex flex-wrap items-start gap-2">
-          <div className="min-w-0">
-            <div className="text-sm font-medium">{label}</div>
-            {event.prevStatus && (
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                {event.prevStatus} → {event.newStatus}
-              </div>
-            )}
-          </div>
-          <time
-            className="ml-auto shrink-0 text-xs text-muted-foreground"
-            dateTime={event.at}
-            title={formatDateTime(event.at)}
+      <Card className="min-w-0 overflow-hidden">
+        {expandable ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="w-full p-3 text-left transition-colors hover:bg-muted/25"
           >
-            {formatRelative(event.at)}
-          </time>
-        </div>
-
-        {narrative && (
-          <p className="mt-1.5 text-xs break-words text-muted-foreground">
-            {narrative}
-          </p>
+            {header}
+          </button>
+        ) : (
+          <div className="p-3">{header}</div>
         )}
-
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-muted-foreground">
-          {event.transactionId && (
-            <span title="Control-ledger transaction id of this write (in the signed audit chain)">
-              tx {event.transactionId}
-            </span>
-          )}
-          {event.evaluationID && (
-            <span title={event.evaluationID}>
-              eval {event.evaluationID.slice(0, 8)}
-            </span>
-          )}
-          {!event.notify && (
-            <span className="rounded-full border px-1.5 py-px" title="Recorded for audit but not published to the message bus">
-              suppressed
-            </span>
-          )}
-        </div>
+        {expandable && open && (
+          <div className="border-t bg-muted/15 p-3">
+            {renderEvidence?.(evaluationID)}
+          </div>
+        )}
       </Card>
     </li>
   )

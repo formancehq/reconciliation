@@ -988,6 +988,35 @@ function AlertDetail({
       findCaptureEvidenceOutcome(capture, alert.fingerprint)
   )
 
+  // Inline evidence for the timeline: an alert event carries its evaluation id
+  // but not the break evidence; recover it from the captures already loaded above
+  // (this alert's fingerprint), so a fail/pass row expands to show what it saw.
+  const capturesByEvaluation = new Map<string, AnyCapture>()
+  for (const capture of captures) {
+    if (capture.evaluationID) capturesByEvaluation.set(capture.evaluationID, capture)
+  }
+  const eventEvidenceOutcome = (evaluationID?: string) => {
+    if (!evaluationID) return undefined
+    const capture = capturesByEvaluation.get(evaluationID)
+    return capture ? findCaptureEvidenceOutcome(capture, alert.fingerprint) : undefined
+  }
+  const hasEventEvidence = (evaluationID?: string) => {
+    const outcome = eventEvidenceOutcome(evaluationID)
+    return (
+      !!outcome &&
+      (isEvidenceV2(outcome.evidence) ||
+        orderedEvidenceEntries(outcome.evidence).length > 0)
+    )
+  }
+  const renderEventEvidence = (evaluationID?: string) => {
+    const outcome = eventEvidenceOutcome(evaluationID)
+    if (!outcome) return null
+    if (isEvidenceV2(outcome.evidence))
+      return <V2Evidence evidence={outcome.evidence} compact passed={outcome.passed} />
+    const entries = orderedEvidenceEntries(outcome.evidence)
+    return entries.length > 0 ? <EvidenceDescription entries={entries} /> : null
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -1113,6 +1142,8 @@ function AlertDetail({
             error={events.length === 0 ? eventsRes.error : undefined}
             onRetry={eventsRes.refetch}
             onLoadMore={onLoadMoreEvents}
+            hasEvidence={hasEventEvidence}
+            renderEvidence={renderEventEvidence}
           />
 
           {/* The ack / resolve / snooze narrative now lives in the Timeline
