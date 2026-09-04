@@ -172,6 +172,34 @@ func getAuditEntryHandler(client ledgerIntrospector) http.HandlerFunc {
 	}
 }
 
+// getAuditEntryByTransactionHandler resolves a control-ledger transaction id (the
+// `transactionId` recon carries on each alert event) to its signed audit entry, so
+// the UI can jump from a business action to its cryptographic proof. The audit
+// entry's own `sequence` is a different, bucket-wide number — this bridges them.
+func getAuditEntryByTransactionHandler(client ledgerIntrospector, control ControlLedger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw := chi.URLParam(r, "transactionId")
+		txID, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			api.BadRequest(w, ErrValidation, fmt.Errorf("invalid transaction id %q", raw))
+			return
+		}
+
+		entry, found, err := client.ResolveAuditEntryByTransaction(r.Context(), string(control), txID)
+		if err != nil {
+			v5log.FromContext(r.Context()).Debugf("resolve audit entry for tx %d failed: %v", txID, err)
+			api.NotFound(w, fmt.Errorf("no audit entry for transaction %d", txID))
+			return
+		}
+		if !found {
+			api.NotFound(w, fmt.Errorf("no audit entry for transaction %d", txID))
+			return
+		}
+
+		api.Ok(w, toAuditEntryRow(entry))
+	}
+}
+
 // toAuditEntryRow renders one entry for the API (base64 payload/signature,
 // prettified failure reason). Shared by the list and single-entry handlers.
 func toAuditEntryRow(e ledger.AuditEntryInfo) auditEntry {

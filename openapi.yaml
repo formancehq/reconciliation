@@ -485,6 +485,34 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
+  /audit/entries/by-transaction/{transactionId}:
+    get:
+      summary: Resolve a transaction to its signed audit entry
+      description: |
+        Given a control-ledger transaction id (the `transactionId` an alert event
+        carries — which equals the write's log sequence), return the signed audit
+        entry for that write. The audit entry's own `sequence` is a different,
+        bucket-wide number; this bridges a business action to its cryptographic
+        proof. 404 when no entry matches.
+      operationId: getAuditEntryByTransaction
+      tags: [reconciliation.v1]
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          description: The control-ledger transaction id (log sequence) from an alert event.
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditEntryResponse' }
+        '404': { $ref: '#/components/responses/ErrorResponse' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
   /audit/entries/{sequence}:
     get:
       summary: Get one audit entry

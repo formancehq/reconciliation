@@ -308,18 +308,7 @@ func (c *Client) ListAuditEntries(ctx context.Context, ledgerName string, limit 
 		limit = 50
 	}
 
-	filter := &commonpb.QueryFilter{
-		Filter: &commonpb.QueryFilter_Audit{
-			Audit: &commonpb.AuditCondition{
-				Field: commonpb.AuditField_AUDIT_FIELD_LEDGER,
-				Condition: &commonpb.AuditCondition_StringCond{
-					StringCond: &commonpb.StringCondition{
-						Value: &commonpb.StringCondition_Hardcoded{Hardcoded: ledgerName},
-					},
-				},
-			},
-		},
-	}
+	filter := auditLedgerFilter(ledgerName)
 
 	var (
 		entries []AuditEntryInfo
@@ -376,6 +365,83 @@ func (c *Client) GetAuditEntry(ctx context.Context, sequence uint64) (AuditEntry
 	}
 
 	return auditEntryInfoFrom(entry), nil
+}
+
+// ResolveAuditEntryByTransaction finds the signed audit entry for a control-ledger
+// write, given the transaction id an alert event carries. It bridges an event to
+// its entry in the signed audit chain — whose own `sequence` is a different,
+// bucket-wide number. Returns ok=false when nothing matches.
+func (c *Client) ResolveAuditEntryByTransaction(ctx context.Context, ledgerName string, transactionID uint64) (AuditEntryInfo, bool, error) {
+	// The transaction id is per-ledger (it equals the ledger-local log id); the
+	// audit chain keys on the bucket-wide log sequence, a different number. So it
+	// takes two hops:
+	//   1. the ledger-local log with LogId == transactionID → its bucket-wide
+	//      Sequence (this is the write's log sequence);
+	//   2. the audit entry whose item carries that log sequence.
+	// The AUDIT_FIELD_LOG_SEQUENCE index does not support ANDing a ledger
+	// condition (an And of audit conditions matches nothing), so we scope hop 1 by
+	// ledger and confirm the resolved entry's ledgers client-side.
+	logID := transactionID
+	logStream, err := c.service.ListLogs(ctx, &servicepb.ListLogsRequest{
+		Ledger: ledgerName,
+		Options: &commonpb.ListOptions{PageSize: 1, Filter: &commonpb.QueryFilter{
+			Filter: &commonpb.QueryFilter_LogId{LogId: &commonpb.LogIdCondition{
+				Cond: &commonpb.UintCondition{Min: &logID, Max: &logID},
+			}},
+		}},
+	})
+	if err != nil {
+		return AuditEntryInfo{}, false, fmt.Errorf("resolve log for transaction %d: %w", transactionID, err)
+	}
+	logEntry, lerr := logStream.Recv()
+	if errors.Is(lerr, io.EOF) {
+		return AuditEntryInfo{}, false, nil // no such transaction on this ledger
+	}
+	if lerr != nil {
+		return AuditEntryInfo{}, false, fmt.Errorf("recv log for transaction %d: %w", transactionID, lerr)
+	}
+	bucketLogSeq := logEntry.GetSequence()
+
+	auditStream, err := c.service.ListAuditEntries(ctx, &servicepb.ListAuditEntriesRequest{
+		Options: &commonpb.ListOptions{PageSize: 10, Filter: &commonpb.QueryFilter{
+			Filter: &commonpb.QueryFilter_Audit{Audit: &commonpb.AuditCondition{
+				Field:     commonpb.AuditField_AUDIT_FIELD_LOG_SEQUENCE,
+				Condition: &commonpb.AuditCondition_UintCond{UintCond: &commonpb.UintCondition{Min: &bucketLogSeq, Max: &bucketLogSeq}},
+			}},
+		}},
+	})
+	if err != nil {
+		return AuditEntryInfo{}, false, fmt.Errorf("resolve audit entry for log sequence %d: %w", bucketLogSeq, err)
+	}
+	for {
+		entry, rerr := auditStream.Recv()
+		if errors.Is(rerr, io.EOF) {
+			return AuditEntryInfo{}, false, nil
+		}
+		if rerr != nil {
+			return AuditEntryInfo{}, false, fmt.Errorf("recv audit entry for log sequence %d: %w", bucketLogSeq, rerr)
+		}
+		if !slices.Contains(entry.GetLedgers(), ledgerName) {
+			continue // a batch on another ledger sharing the log-sequence page — skip
+		}
+		// The filtered stream omits per-order items; re-read by sequence for the
+		// full detail (decoded actions, failure reason/message).
+		full, err := c.GetAuditEntry(ctx, entry.GetSequence())
+		if err != nil {
+			return AuditEntryInfo{}, false, err
+		}
+		return full, true, nil
+	}
+}
+
+// auditLedgerFilter is the QueryFilter scoping audit entries to one ledger.
+func auditLedgerFilter(ledgerName string) *commonpb.QueryFilter {
+	return &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_Audit{Audit: &commonpb.AuditCondition{
+		Field: commonpb.AuditField_AUDIT_FIELD_LEDGER,
+		Condition: &commonpb.AuditCondition_StringCond{StringCond: &commonpb.StringCondition{
+			Value: &commonpb.StringCondition_Hardcoded{Hardcoded: ledgerName},
+		}},
+	}}}
 }
 
 // auditEntryInfoFrom maps a ledger AuditEntry to the caller-facing shape. Shared

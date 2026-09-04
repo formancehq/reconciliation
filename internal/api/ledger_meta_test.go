@@ -29,6 +29,7 @@ type fakeIntrospector struct {
 	auditItems  []ledger.AuditEntryInfo
 	auditErr    error
 	auditLimit  int
+	resolveByTx map[uint64]ledger.AuditEntryInfo
 }
 
 func (f *fakeIntrospector) ListLedgers(context.Context) ([]string, error) {
@@ -58,6 +59,16 @@ func (f *fakeIntrospector) GetAuditEntry(_ context.Context, sequence uint64) (le
 		}
 	}
 	return ledger.AuditEntryInfo{}, errors.New("not found")
+}
+
+func (f *fakeIntrospector) ResolveAuditEntryByTransaction(_ context.Context, _ string, txID uint64) (ledger.AuditEntryInfo, bool, error) {
+	if f.auditErr != nil {
+		return ledger.AuditEntryInfo{}, false, f.auditErr
+	}
+	if e, ok := f.resolveByTx[txID]; ok {
+		return e, true, nil
+	}
+	return ledger.AuditEntryInfo{}, false, nil
 }
 
 // QueryAccountsFunc mirrors the real streaming contract: it invokes fn per

@@ -120,6 +120,7 @@ func newRouter(
 		// no ledger access (EN-1930, P1.3).
 		r.Get("/audit/signing-keys", listSigningKeysHandler(ledgerClient))
 		r.Get("/audit/entries", listAuditEntriesHandler(ledgerClient, controlLedger))
+		r.Get("/audit/entries/by-transaction/{transactionId}", getAuditEntryByTransactionHandler(ledgerClient, controlLedger))
 		r.Get("/audit/entries/{sequence}", getAuditEntryHandler(ledgerClient))
 	})
 

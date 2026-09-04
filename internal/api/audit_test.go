@@ -10,6 +10,7 @@ import (
 
 	sharedapi "github.com/formancehq/go-libs/api"
 	"github.com/formancehq/reconciliation/internal/ledger"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -101,5 +102,51 @@ func TestListAuditEntriesHandler(t *testing.T) {
 		var got sharedapi.BaseResponse[auditEntriesResponse]
 		sharedapi.Decode(t, rec.Body, &got)
 		require.Empty(t, got.Data.Entries)
+	})
+}
+
+func TestGetAuditEntryByTransactionHandler(t *testing.T) {
+	t.Parallel()
+
+	serve := func(fake *fakeIntrospector, target string) *httptest.ResponseRecorder {
+		r := chi.NewRouter()
+		r.Get("/audit/entries/by-transaction/{transactionId}",
+			getAuditEntryByTransactionHandler(fake, ControlLedger("reconciliation")))
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		return rec
+	}
+
+	t.Run("resolves a transaction id to its signed audit entry", func(t *testing.T) {
+		t.Parallel()
+		// tx (log sequence) 38 -> audit entry with the bucket-wide sequence 41.
+		fake := &fakeIntrospector{resolveByTx: map[uint64]ledger.AuditEntryInfo{
+			38: {Sequence: 41, KeyID: "6d00a939e0c68f7a", Payload: []byte{0x0a}, Signature: []byte{0x0c}, Signed: true, Outcome: "success"},
+		}}
+		rec := serve(fake, "/audit/entries/by-transaction/38")
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got sharedapi.BaseResponse[auditEntry]
+		sharedapi.Decode(t, rec.Body, &got)
+		assert.Equal(t, uint64(41), got.Data.Sequence, "returns the audit sequence, not the tx id")
+		assert.True(t, got.Data.Signed)
+	})
+
+	t.Run("404 when no entry matches the transaction", func(t *testing.T) {
+		t.Parallel()
+		rec := serve(&fakeIntrospector{resolveByTx: map[uint64]ledger.AuditEntryInfo{}}, "/audit/entries/by-transaction/999")
+		require.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("400 on a non-numeric transaction id", func(t *testing.T) {
+		t.Parallel()
+		rec := serve(&fakeIntrospector{}, "/audit/entries/by-transaction/not-a-number")
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("404 on a resolver read error (best-effort, no 500)", func(t *testing.T) {
+		t.Parallel()
+		rec := serve(&fakeIntrospector{auditErr: errors.New("ledger unreachable")}, "/audit/entries/by-transaction/38")
+		require.Equal(t, http.StatusNotFound, rec.Code)
 	})
 }
