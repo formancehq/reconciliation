@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { cn } from "@workspace/ui/lib/utils"
 import { formatDateTime, formatRelative, type AlertEvent } from "@/lib/recon"
+import { EventAuditProof } from "./EventAuditProof"
 
 /**
  * The alert's own append-only event log, straight from GET /alerts/{id}/events
@@ -146,8 +147,10 @@ function AlertEventRow({
   const { label, tone, icon } = describeEvent(event)
   const narrative = eventNarrative(event)
   const evaluationID = event.evaluationID ?? undefined
-  // Expandable only when this event's evaluation has retained evidence to show.
-  const expandable = !!evaluationID && (hasEvidence?.(evaluationID) ?? false)
+  const showEvidence = !!evaluationID && (hasEvidence?.(evaluationID) ?? false)
+  // Expandable when there is evidence to show and/or a ledger write to resolve to
+  // its signed audit entry — every recorded event has the latter.
+  const expandable = showEvidence || !!event.transactionId
 
   const header = (
     <>
@@ -220,8 +223,11 @@ function AlertEventRow({
           <div className="p-3">{header}</div>
         )}
         {expandable && open && (
-          <div className="border-t bg-muted/15 p-3">
-            {renderEvidence?.(evaluationID)}
+          <div className="space-y-3 border-t bg-muted/15 p-3">
+            {showEvidence && <div>{renderEvidence?.(evaluationID)}</div>}
+            {event.transactionId && (
+              <EventAuditProof transactionId={event.transactionId} />
+            )}
           </div>
         )}
       </Card>

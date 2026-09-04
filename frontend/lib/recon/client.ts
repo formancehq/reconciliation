@@ -345,6 +345,22 @@ export const reconClient = {
     )
     return r.data
   },
+  /**
+   * Resolve a control-ledger transaction id (an alert event's `transactionId`)
+   * to its signed audit entry — bridging a business action to its cryptographic
+   * proof. Throws ReconError with status 404 when no entry matches.
+   */
+  async getAuditEntryByTransaction(
+    transactionId: string,
+    signal?: AbortSignal
+  ): Promise<AuditEntry> {
+    const r = await reconRequest<AuditEntryResponse>(
+      "GET",
+      `/audit/entries/by-transaction/${encodeURIComponent(transactionId)}`,
+      { signal }
+    )
+    return r.data
+  },
 }
 
 export type ReconClient = typeof reconClient

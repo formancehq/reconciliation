@@ -472,13 +472,13 @@ function b64ToBuffer(b64: string): ArrayBuffer {
   return buf
 }
 
-async function importEd25519PublicKey(b64: string): Promise<CryptoKey> {
+export async function importEd25519PublicKey(b64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", b64ToBuffer(b64), { name: "Ed25519" }, false, [
     "verify",
   ])
 }
 
-async function verifyEntry(key: CryptoKey, entry: AuditEntry): Promise<boolean> {
+export async function verifyEntry(key: CryptoKey, entry: AuditEntry): Promise<boolean> {
   if (!entry.payload || !entry.signature) return false
   return crypto.subtle.verify(
     { name: "Ed25519" },
