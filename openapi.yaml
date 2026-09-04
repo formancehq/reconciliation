@@ -584,6 +584,26 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
+  /v2/alerts/{alertID}/events:
+    parameters: [{ $ref: '#/components/parameters/AlertID' }]
+    get:
+      summary: List V2 alert events (append-only timeline)
+      operationId: listAlertEventsV2
+      description: |
+        Same as the V1 alert-events endpoint, for a V2 alert: a page of the
+        events recorded for this alert (evaluations + manual transitions),
+        most-recent-first and cursor-paginated. Each event carries the
+        `transactionId` of its control-ledger write for audit-chain resolution.
+      tags: [reconciliation.v2]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200': { $ref: '#/components/responses/AlertEvents' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:read]
+
   /v2/alerts/{alertID}/ack:
     post:
       summary: Acknowledge a V2 alert
