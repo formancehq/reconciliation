@@ -298,12 +298,11 @@ func (f *fakeV1Store) applyFakeResolution(id uuid.UUID, res *models.Resolution, 
 	return &copy, nil
 }
 
-func (f *fakeV1Store) SnoozeAlert(_ context.Context, id uuid.UUID, until time.Time, by, note string) (*models.Alert, error) {
+func (f *fakeV1Store) SnoozeAlert(_ context.Context, id uuid.UUID, snooze *models.Snooze) (*models.Alert, error) {
 	alert, ok := f.alerts[id]
 	if !ok || alert.Status == models.AlertResolved {
 		return nil, store.ErrNotFound
 	}
-	snooze := &models.Snooze{Until: until, By: by, At: time.Now().UTC(), Note: note}
 	alert.Snooze = snooze
 	prev := alert.Status
 	payload, _ := json.Marshal(snooze)
@@ -312,7 +311,7 @@ func (f *fakeV1Store) SnoozeAlert(_ context.Context, id uuid.UUID, until time.Ti
 	return &copy, nil
 }
 
-func (f *fakeV1Store) UnsnoozeAlert(_ context.Context, id uuid.UUID, by string) (*models.Alert, error) {
+func (f *fakeV1Store) UnsnoozeAlert(_ context.Context, id uuid.UUID, by string, actor *models.Actor) (*models.Alert, error) {
 	alert, ok := f.alerts[id]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -323,7 +322,7 @@ func (f *fakeV1Store) UnsnoozeAlert(_ context.Context, id uuid.UUID, by string) 
 	}
 	alert.Snooze = nil
 	prev := alert.Status
-	payload, _ := json.Marshal(map[string]string{"by": by})
+	payload, _ := json.Marshal(map[string]any{"by": by, "actor": actor})
 	f.recordEvent(alert.ID, models.AlertEventUnsnooze, &prev, alert.Status, nil, payload, time.Now().UTC())
 	copy := *alert
 	return &copy, nil

@@ -18,9 +18,9 @@ import (
 // — no marker move. An activity transaction sets the `snooze` metadata on the
 // item and records the manual interaction atomically. Re-snoozing overwrites the window. Rejects a
 // non-future `until` and any non-active (RESOLVED) alert.
-func (s *LedgerStore) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.Time, by, note string) (*models.Alert, error) {
-	now := time.Now().UTC()
-	if !until.After(now) {
+func (s *LedgerStore) SnoozeAlert(ctx context.Context, id uuid.UUID, snooze *models.Snooze) (*models.Alert, error) {
+	now := snooze.At
+	if !snooze.Until.After(now) {
 		return nil, fmt.Errorf("SnoozeAlert: until must be in the future")
 	}
 
@@ -32,8 +32,6 @@ func (s *LedgerStore) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.
 	if alert.Status == models.AlertResolved {
 		return nil, fmt.Errorf("snooze alert %s: %w", id, store.ErrNotFound)
 	}
-
-	snooze := &models.Snooze{Until: until.UTC(), By: by, At: now, Note: note}
 
 	b, err := json.Marshal(snooze)
 	if err != nil {
@@ -55,7 +53,7 @@ func (s *LedgerStore) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.
 	if err != nil {
 		return nil, fmt.Errorf("snooze alert %s activity: %w", id, err)
 	}
-	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{Ledger: s.controlLedger, ScriptName: schema.NumscriptActivity, ScriptVersion: schema.NumscriptVersion, Vars: activityVars(alert.RuleID.String()), TxMetadata: txmd, AccountMetadata: map[string]*commonpb.MetadataMap{itemAddr: {Values: md}}, IdempotencyKey: uniqueActionKey("snooze", id.String(), until.UTC().Format(time.RFC3339Nano))}); err != nil {
+	if err := s.client.CreateTransaction(ctx, ledger.CreateTransactionInput{Ledger: s.controlLedger, ScriptName: schema.NumscriptActivity, ScriptVersion: schema.NumscriptVersion, Vars: activityVars(alert.RuleID.String()), TxMetadata: txmd, AccountMetadata: map[string]*commonpb.MetadataMap{itemAddr: {Values: md}}, IdempotencyKey: uniqueActionKey("snooze", id.String(), snooze.Until.UTC().Format(time.RFC3339Nano))}); err != nil {
 		return nil, fmt.Errorf("snooze alert %s: %w", id, err)
 	}
 
@@ -68,7 +66,7 @@ func (s *LedgerStore) SnoozeAlert(ctx context.Context, id uuid.UUID, until time.
 //
 // The snooze delete and the self-describing transition record land in one atomic
 // activity transaction, so `by` is attributed in the history payload.
-func (s *LedgerStore) UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string) (*models.Alert, error) {
+func (s *LedgerStore) UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string, actor *models.Actor) (*models.Alert, error) {
 	alert, fpHash, err := s.loadAlertForTransition(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("unsnooze alert %s: %w", id, err)
@@ -79,12 +77,17 @@ func (s *LedgerStore) UnsnoozeAlert(ctx context.Context, id uuid.UUID, by string
 	}
 
 	// Status-neutral: prev == new. Record the transition (with the actor) and
-	// clear the snooze key atomically.
+	// clear the snooze key atomically. Unsnooze has no durable model to hang the
+	// actor on (it clears the snooze), so it rides the transition payload.
+	unsnoozePayload := map[string]any{"by": by}
+	if actor != nil {
+		unsnoozePayload["actor"] = actor
+	}
 	md := map[string]*commonpb.MetadataValue{}
 	now := time.Now().UTC()
 	alert.UpdatedAt = now
 	md[schema.MetaUpdatedAt] = dtVal(now)
-	if err := stampTransition(md, transitionUnsnoozed, alert, alert.Status, "", now, map[string]any{"by": by}); err != nil {
+	if err := stampTransition(md, transitionUnsnoozed, alert, alert.Status, "", now, unsnoozePayload); err != nil {
 		return nil, fmt.Errorf("unsnooze alert %s: %w", id, err)
 	}
 

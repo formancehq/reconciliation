@@ -35,10 +35,14 @@ func TestSnoozeAlert_SetsSnoozeMetadata(t *testing.T) {
 		return nil
 	})
 
-	got, err := store.SnoozeAlert(context.Background(), a.ID, time.Now().Add(time.Hour), "ops", "on it")
+	got, err := store.SnoozeAlert(context.Background(), a.ID, &models.Snooze{
+		Until: time.Now().Add(time.Hour), By: "ops", At: time.Now().UTC(), Note: "on it",
+		Actor: &models.Actor{Subject: "ops", Source: models.ActorSourceToken},
+	})
 	require.NoError(t, err)
 	require.NotNil(t, got.Snooze)
 	require.Equal(t, "ops", got.Snooze.By)
+	require.NotNil(t, got.Snooze.Actor, "the actor rides into the persisted snooze")
 }
 
 func TestSnoozeAlert_RejectsPastUntil(t *testing.T) {
@@ -48,7 +52,9 @@ func TestSnoozeAlert_RejectsPastUntil(t *testing.T) {
 	// No ledger call — the past-until guard fires before any lookup.
 	store := New(NewMockledgerClient(ctrl), testControl)
 
-	_, err := store.SnoozeAlert(context.Background(), uuid.New(), time.Now().Add(-time.Hour), "ops", "")
+	_, err := store.SnoozeAlert(context.Background(), uuid.New(), &models.Snooze{
+		Until: time.Now().Add(-time.Hour), By: "ops", At: time.Now().UTC(),
+	})
 	require.Error(t, err)
 }
 
@@ -62,7 +68,9 @@ func TestSnoozeAlert_Resolved_NotFound(t *testing.T) {
 	a := activeAlert(models.AlertResolved)
 	expectFindByID(t, client, a, "1")
 
-	_, err := store.SnoozeAlert(context.Background(), a.ID, time.Now().Add(time.Hour), "ops", "")
+	_, err := store.SnoozeAlert(context.Background(), a.ID, &models.Snooze{
+		Until: time.Now().Add(time.Hour), By: "ops", At: time.Now().UTC(),
+	})
 	require.ErrorIs(t, err, recstore.ErrNotFound)
 }
 
@@ -87,7 +95,7 @@ func TestUnsnoozeAlert_DeletesSnooze(t *testing.T) {
 		return nil
 	})
 
-	got, err := store.UnsnoozeAlert(context.Background(), a.ID, "ops")
+	got, err := store.UnsnoozeAlert(context.Background(), a.ID, "ops", nil)
 	require.NoError(t, err)
 	require.Nil(t, got.Snooze)
 }
@@ -103,7 +111,7 @@ func TestUnsnoozeAlert_NoSnooze_NoOp(t *testing.T) {
 	expectFindByID(t, client, a, "1")
 	// No DeleteAccountMetadata expected.
 
-	got, err := store.UnsnoozeAlert(context.Background(), a.ID, "ops")
+	got, err := store.UnsnoozeAlert(context.Background(), a.ID, "ops", nil)
 	require.NoError(t, err)
 	require.Nil(t, got.Snooze)
 }

@@ -140,8 +140,8 @@ func (s *Service) AcceptAlert(ctx context.Context, id uuid.UUID, req *AcceptAler
 // SnoozeAlert mutes an alert's notifications until req.Until. The alert keeps
 // failing and stays counted against period-green; only its webhooks go quiet.
 func (s *Service) SnoozeAlert(ctx context.Context, id uuid.UUID, req *SnoozeAlertRequest) (*models.Alert, error) {
-	if req == nil || req.By == "" {
-		return nil, errors.New("snooze: 'by' is required")
+	if req == nil {
+		return nil, errors.New("snooze: request is required")
 	}
 	if req.Until.IsZero() {
 		return nil, errors.New("snooze: 'until' is required")
@@ -149,22 +149,36 @@ func (s *Service) SnoozeAlert(ctx context.Context, id uuid.UUID, req *SnoozeAler
 	if !req.Until.After(time.Now().UTC()) {
 		return nil, errors.New("snooze: 'until' must be in the future")
 	}
+	by, actor, err := resolveActor(ctx, req.By)
+	if err != nil {
+		return nil, fmt.Errorf("snooze: %w", err)
+	}
 	if _, err := s.getAlertForContract(ctx, id); err != nil {
 		return nil, err
 	}
-	return s.store.SnoozeAlert(ctx, id, req.Until, req.By, req.Note)
+	return s.store.SnoozeAlert(ctx, id, &models.Snooze{
+		Until: req.Until.UTC(),
+		By:    by,
+		At:    time.Now().UTC(),
+		Note:  req.Note,
+		Actor: actor,
+	})
 }
 
 // UnsnoozeAlert lifts a snooze early. Idempotent — unsnoozing an alert that is
 // not snoozed returns it unchanged.
 func (s *Service) UnsnoozeAlert(ctx context.Context, id uuid.UUID, req *UnsnoozeAlertRequest) (*models.Alert, error) {
-	if req == nil || req.By == "" {
-		return nil, errors.New("unsnooze: 'by' is required")
+	if req == nil {
+		return nil, errors.New("unsnooze: request is required")
+	}
+	by, actor, err := resolveActor(ctx, req.By)
+	if err != nil {
+		return nil, fmt.Errorf("unsnooze: %w", err)
 	}
 	if _, err := s.getAlertForContract(ctx, id); err != nil {
 		return nil, err
 	}
-	return s.store.UnsnoozeAlert(ctx, id, req.By)
+	return s.store.UnsnoozeAlert(ctx, id, by, actor)
 }
 
 // GetAlert returns the alert or store.ErrNotFound.
