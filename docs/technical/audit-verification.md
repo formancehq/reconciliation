@@ -55,6 +55,10 @@ take the same raw public key, payload, and signature.
 - **Key rotation.** Retired public keys stay published and stay verifiable; an
   entry names the `keyId` that signed it, so historical entries verify against the
   key that was active when they were written.
+- **Spot-check from the screen.** In the app, expanding any event on an alert's
+  timeline resolves that action to its signed audit entry and verifies the
+  signature in-browser — the same check as the script, per action. That path is a
+  convenience over the public verification here, not a substitute for it.
 
 ## What this does *not* prove: completeness
 

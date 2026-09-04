@@ -123,3 +123,39 @@ Two separate guarantees an auditor wants from the served entries, and they have 
 **Where completeness actually lives — the ledger.** The audit log is the ledger's own cryptographic source of truth; the ledger, not recon's endpoint, is the completeness anchor. An auditor who needs "nothing was dropped" reads the ledger's audit trail directly — `ListAuditEntries` (the dense, full chain) plus `CheckStore`, which recomputes the keyed hash chain and cross-checks ~20 projections (`internal/application/check/checker.go`). This needs ledger read-access, which is the correct scope for a rigorous completeness audit; recon's endpoint remains the zero-credential path for per-entry authenticity. The UI and guide state exactly this split.
 
 **Future hardening (if a customer needs recon-endpoint-only completeness).** Have reconciliation embed its **own** monotonic counter inside each signed batch's metadata. Then completeness is self-contained: the signed counters must be contiguous, so a hidden entry leaves a signed gap and the counter cannot be forged — no ledger access, no bucket isolation. The cost is a serialization point: every `_recon` write must CAS-increment the counter (a guarded Numscript on a counter account, the same bare-source CAS the alert lifecycle already uses), so writes no longer parallelise. Given recon's write volume this is likely acceptable, but it is a deliberate trade to make only when the requirement is real.
+
+## 10. Per-event verification — resolving an alert event to its audit entry
+
+Phase 1 lets an auditor verify the *stream*; this closes the loop from a single
+business action to its cryptographic proof. Each alert timeline event carries the
+control-ledger `transactionId` of the write behind it (open / occurred / ack /
+resolve / accept / snooze). `GET /audit/entries/by-transaction/{transactionId}`
+returns the signed audit entry for that write, and the UI verifies its Ed25519
+signature in-browser (`EventAuditProof`) — a per-action "verify this write".
+
+**The ids are three different number spaces**, which is the whole subtlety (a
+live spike disproved the naive assumption that they coincide — they only do when
+reconciliation is the sole writer in the bucket):
+
+- **transaction id** — per *ledger*; equals the **ledger-local log id**.
+- **log sequence** — per *bucket* (the FSM's single log); what `AuditItem.log_sequence` and the `AUDIT_FIELD_LOG_SEQUENCE` index carry.
+- **audit sequence** — per *bucket*; indexes `GET /audit/entries/{sequence}`. Assigned after signing (§9), so unsigned.
+
+So the resolver (`ledger.ResolveAuditEntryByTransaction`) is a **two-hop**:
+
+1. `ListLogs(ledger, filter LogId == transactionId)` → the write's log, whose
+   `Sequence` is the bucket-wide log sequence.
+2. `ListAuditEntries(filter AUDIT_FIELD_LOG_SEQUENCE == that sequence)` → the
+   audit entry carrying it; re-read by its sequence for the full signed detail.
+
+The audit index does **not** support ANDing a ledger condition with the
+log-sequence condition (an `And` of audit conditions matches nothing), so hop 1
+is scoped by ledger and hop 2's match is confirmed against the control ledger
+client-side. Note an audit *proposal* can batch several consecutive log entries,
+so multiple transactions can resolve to the same audit entry — that entry is
+still the correct, signed record that committed the write.
+
+This adds no write-path change and no new ledger capability — it composes the
+existing `ListLogs` + `AUDIT_FIELD_LOG_SEQUENCE` indexes. It does not change the
+completeness story (§9): it verifies authorship + integrity of one write, on
+demand, from the public key.
