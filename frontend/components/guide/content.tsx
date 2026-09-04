@@ -455,7 +455,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					<li>Copy the <strong>public key</strong> from the verification panel.</li>
 					<li>Read a control-ledger entry — its signed payload (the exact bytes of the batch that was committed) and its signature.</li>
 					<li>Run <Code>ed25519.Verify(publicKey, payload, signature)</Code> in any language. It passes only if Reconcile wrote that exact entry and nothing changed it afterwards.</li>
-					<li>Follow the entries in sequence order to confirm the record is complete — a gap would mean an action went unrecorded.</li>
+					<li>Repeat for any entries you like — each one verifies on its own, proving authorship and integrity from the public key alone.</li>
 				</ol>
 
 				<Callout kind="info" title="Why this beats a report">
@@ -465,11 +465,12 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					the books reconcile and being able to prove it.
 				</Callout>
 
-				<Callout kind="tip" title="What’s here now, and what’s next">
-					Today the tab publishes the key and recipe and shows the signed handling of each break with its
-					verified/declared attribution. A later step surfaces each entry’s sequence number and signature in
-					the tab itself, with a one-click check and a completeness (no-gaps) indicator — so an auditor can
-					verify from the screen as well as from their own tools.
+				<Callout kind="info" title="What signing proves — and what it doesn’t">
+					Verifying an entry proves <strong>authorship and integrity</strong>: Reconcile wrote it and nothing
+					changed it, provable from the public key alone. <strong>Completeness</strong> — that no action went
+					unrecorded — is a separate guarantee. The entry sequence is shared across every ledger in the bucket,
+					so gaps in the reconciliation entries are expected and a &quot;no-gaps&quot; check on them proves
+					nothing; completeness is anchored in the ledger, not the public key.
 				</Callout>
 			</Section>
 		),
