@@ -112,7 +112,7 @@ and the adapter [ledgerresolver/resolver.go](../../internal/ledgerresolver/resol
 
 ## Contract-version isolation
 
-V1 and V2 share lifecycle machinery and the control-ledger, but not resource visibility. Rules,
+One contract is live. The contract stamp still scopes resource visibility, so rules,
 alerts, and captures persist an immutable integer `contract_version`. A missing marker on a legacy
 record means V1. The unprefixed handlers scope every operation to version 1; `/v2` handlers scope to
 version 2. Lists apply the version predicate before cursor construction, avoiding both data leakage

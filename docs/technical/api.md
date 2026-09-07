@@ -38,9 +38,10 @@ The legacy V1 per-alert `/events` endpoint remains a deferred compatibility surf
 duplicate that empty endpoint; V2 alert lifecycle items are available through the backed,
 rule-scoped `/v2/rules/{id}/timeline` journal.
 
-V1 `source_parity` remains binary and keeps `templateSpec.left` / `.right` plus its four legacy
-evidence keys. V2 uses named `sources[]` and does not accept V1 template kinds. There is no automatic
-rewrite of rules, captures, alerts, or accepted evidence snapshots. See
+Every template uses named sources. The positional V1 kinds — `ledger_invariant`,
+`account_threshold`, `source_parity` — are retired, and a persisted rule naming one is not rewritten:
+it evaluates to an ERROR with an `engine.error` meta-alert saying the kind is unavailable. Captures,
+alerts and accepted evidence snapshots keep the shape they were written with. See
 [ADR-004](../prd/adr-004-multi-source-comparisons.md).
 
 V1 validation messages present those inputs as **Source A** and **Source B**, while retaining the
@@ -195,18 +196,22 @@ EE-gated. The contracts below match what's wired in [`internal/api/router.go`](.
 
 ### Rules
 
-#### `POST /rules` — create
+#### `POST /v2/rules` — create
 
 ```json
 {
   "name": "buildr-trust-integrity",
-  "templateKind": "ledger_invariant",
+  "templateKind": "balance_equation",
   "templateSpec": {
-    "terms": [
-      { "ledger": "buildr", "query": { "$match": { "metadata[trust]": "held" } },       "sign":  1 },
-      { "ledger": "buildr", "query": { "$match": { "metadata[trust]": "obligation" } }, "sign": -1 }
+    "sources": [
+      { "id": "held",       "ledger": "buildr", "query": { "$match": { "metadata[trust]": "held" } },       "asset": "USD/2" },
+      { "id": "obligation", "ledger": "buildr", "query": { "$match": { "metadata[trust]": "obligation" } }, "asset": "USD/2" }
     ],
-    "tolerance": { "USD/2": 0 }
+    "terms": [
+      { "source": "held",       "coefficient":  1 },
+      { "source": "obligation", "coefficient": -1 }
+    ],
+    "tolerance": "0"
   },
   "schedule": { "kind": "on_demand" },
   "severity": "high",
@@ -224,7 +229,7 @@ See [templates.md](./templates.md) for per-template spec schemas.
 
 #### `GET /rules` — cursor-paginated list
 
-Filterable via query builder: `?type=ledger_invariant`, `?ledger=buildr`, `?enabled=true`, `?label.team=treasury`.
+Filterable via query builder: `?type=balance_equation`, `?ledger=buildr`, `?enabled=true`, `?label.team=treasury`.
 
 #### `GET /rules/{id}` — fetch one
 
@@ -291,7 +296,7 @@ queryable **live** today — no event sink required. Cursor-paginated, most-rece
         "ruleID":        "rul_…",
         "periodID":      "2026-03",
         "evaluationID":  "ev_…",
-        "templateKind":  "source_parity",
+        "templateKind":  "balance_equation",
         "verdict":       "fail",
         "trigger":       "scheduled",
         "capturedAt":    "2026-03-01T00:00:00Z",

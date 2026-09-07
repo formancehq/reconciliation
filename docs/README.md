@@ -46,7 +46,7 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | 1 | Local docker stack isolated from `stack/` | ✅ shipped |
 | 2 | Migrations + Go models for `Rule` / `Evaluation` / `Alert` / `AlertEvent` / `Resolution` | ✅ shipped |
 | 3 | Internal CEL kernel (`internal/engine/`) — types, Source, builtins, resolvers, budget | ✅ shipped |
-| 4 | V1 GA template catalog — `source_parity` / `ledger_invariant` / `account_threshold` | ✅ shipped (incl. account_threshold + source_parity per-account scope) |
+| 4 | Template catalogue — six named-source templates | ✅ shipped (the three positional V1 templates were retired; per-account fan-out dropped with them, see the ADR-004 amendment) |
 | 5 | Service layer — Rule / Evaluation / Alert orchestration + resolution paths + event-log append | ✅ shipped |
 | 6 | API endpoints + OpenAPI | ✅ shipped |
 | 7 | End-to-end demo UI ([poc-reconciliation-demo](../../poc-reconciliation-demo)) — replaces the planned dockertest harness | ✅ shipped |

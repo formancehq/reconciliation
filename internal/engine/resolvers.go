@@ -19,7 +19,7 @@ type LedgerResolver interface {
 	AggregateBalance(ctx context.Context, ledger string, query json.RawMessage) (map[string]*big.Int, error)
 
 	// ListAccounts returns the accounts matched by the query, read live. Used for
-	// per-account templates (account_threshold / source_parity per_account). The
+	// templates that read a source account by account (stale_holds). The
 	// engine enforces a max-accounts-scanned budget (passed as limit); the
 	// resolver errors rather than truncating past it.
 	ListAccounts(ctx context.Context, ledger string, query json.RawMessage, limit int) ([]Account, error)

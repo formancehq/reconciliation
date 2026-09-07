@@ -91,8 +91,8 @@ type Service struct {
 //
 // This guards a resource the engine's accounts budget does not: that budget caps
 // how much of the *ledger* one evaluation may read, while a fan-out rule
-// (account_threshold per_account, source_parity per_account, stale_holds
-// per_hold) turns matched accounts into alerts — each a control-ledger read and
+// (stale_holds per_hold, or any rule whose sources declare asset "*") turns
+// matched accounts or assets into alerts — each a control-ledger read and
 // write, a notification, and a line in an inbox someone is meant to triage. A
 // rule that finds hundreds of new breaks at once is reporting one systemic
 // failure; opening hundreds of tickets buries it.

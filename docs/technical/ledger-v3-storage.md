@@ -140,9 +140,10 @@ field, or changing an account type that already contains accounts—are not sile
 need an explicit migration plan. The server currently provisions with chart enforcement `AUDIT`;
 the code does not yet enable `STRICT` enforcement.
 
-Contract evolution is independent from the chart. A missing persisted `contract_version` is read
-as V1. V1 keeps `source_parity.left`/`.right` and the legacy evidence keys; V2 stores named
-multi-source specifications and is isolated by route and persisted contract version.
+Contract evolution is independent from the chart. A missing persisted `contract_version` is read as
+the live contract — it used to mean V1, which after retirement named a version with no template
+catalogue, so such a record would have been filtered out of every list while still being fetched.
+Records stamped V1 keep the shape they were written with; they are not rewritten.
 
 ## Verification
 

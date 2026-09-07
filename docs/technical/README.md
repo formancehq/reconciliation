@@ -1,9 +1,9 @@
 # Technical Documentation
 
-Engineering reference for the reconciliation service. The unprefixed V1 API remains the compatibility
-surface for existing rules; the `/v2` API adds aggregate multi-source equations and exchange-rate
-bounds. Start with the architecture doc if you're new to the project; use the topical docs as reference
-once you have the shape.
+Engineering reference for the reconciliation service. There is one API surface, mounted at `/v2`;
+the unprefixed V1 surface and its three positional templates were retired once `balance_bounds`
+gave the last of them a target. Start with the architecture doc if you're new to the project; use the
+topical docs as reference once you have the shape.
 
 ## Documents
 
@@ -11,9 +11,9 @@ once you have the shape.
 |---|---|
 | [architecture.md](./architecture.md) | How the CEL kernel, templates, the ledger-native store (`_recon`), and the service layer fit together — plus the account model + transition workflow. |
 | [ledger-v3-storage.md](./ledger-v3-storage.md) | Exact Ledger v3 account types, assets, Numscript programs, indexes, queries, provisioning, and timeline persistence. |
-| [api.md](./api.md) | V1/V2 API coexistence, route isolation, rule/evaluation/alert contracts, and the events sink. |
+| [api.md](./api.md) | The API surface, rule/evaluation/alert contracts, and the events sink. |
 | [workflows.md](./workflows.md) | Lifecycle flows: versioned rule create → live evaluation + capture → alert → resolve / accept, plus reopen, engine-error, and event delivery. |
-| [templates.md](./templates.md) | V1 templates and V2 multi-source controls — spec shapes, exact arithmetic, validation, fingerprints, and evidence. |
+| [templates.md](./templates.md) | The template catalogue — spec shapes, exact arithmetic, validation, fingerprints, and evidence. |
 | [alert-period-model.md](./alert-period-model.md) | Why alerts are scoped by reconciliation period (`periodType`), and how it's implemented. |
 | [scheduler.md](./scheduler.md) | The in-process cron scheduler — how rules fire automatically, and the single-instance caveat. |
 | [notification-suppression.md](./notification-suppression.md) | Why a still-broken alert shouldn't re-page on every tick — and why suppression now lives at the consumer. |

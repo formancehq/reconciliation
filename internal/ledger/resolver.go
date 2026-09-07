@@ -55,7 +55,7 @@ func (r *Reader) AggregateBalance(ctx context.Context, ledgerName string, query 
 
 // ListAccounts returns the accounts in ledgerName matching query, read live,
 // each carrying its per-asset balance. Used by per-account templates
-// (source_parity / account_threshold per_account). It aborts with an error —
+// (stale_holds, and any rule reading a source per account). It aborts with an error —
 // never silently truncates — once more than limit accounts have been seen,
 // enforcing the evaluation's accounts budget mid-stream (no fetch-all).
 func (r *Reader) ListAccounts(ctx context.Context, ledgerName string, query json.RawMessage, limit int) ([]Account, error) {

@@ -128,7 +128,7 @@ func captureFromTransaction(tx *commonpb.Transaction) (models.Capture, bool) {
 	}
 
 	c := models.Capture{
-		TransactionID:   tx.GetId(),
+		TransactionID: tx.GetId(),
 		// Absent means the capture predates the stamp; V1 is retired, so it
 		// resolves to the live contract (see models.ContractVersion.Effective).
 		ContractVersion: models.ContractVersionV2,

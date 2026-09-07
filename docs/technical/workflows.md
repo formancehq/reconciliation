@@ -1,6 +1,6 @@
 # Lifecycle Workflows
 
-The V1 and V2 product surfaces share a **business lifecycle**, not a generic rules engine. This document is the visual reference for that lifecycle:
+The product surface is a **business lifecycle**, not a generic rules engine. This document is the visual reference for that lifecycle:
 
 > **Observe → Detect → Alert → Evidence → Resolve or Accept**
 
@@ -45,7 +45,7 @@ sequenceDiagram
 **Notes**
 
 - The rule is a typed-metadata account `rule:{id}` on `_recon` — no relational row.
-- V1 and V2 use separate route-scoped registries. The version predicate is applied before lists and
+- The route-scoped registry applies its version predicate before lists and
   point operations; an ID used through the wrong version returns `404`.
 - `Explain()` returns one representative CEL string for `compiled_cel` (explainability); real
   evaluation re-renders the per-asset CEL at run time.
@@ -239,8 +239,8 @@ flowchart TB
     Hold -.evaluation + capture still recorded.- Rec[(_recon)]
 ```
 
-A fan-out rule — `account_threshold` mode `per_account`, `source_parity` scope `per_account`,
-`stale_holds` scope `per_hold` — turns matched accounts into alerts. The engine's accounts budget
+A fan-out rule — `stale_holds` scope `per_hold`, or any rule whose sources declare asset `*` —
+turns matched accounts or assets into alerts. The engine's accounts budget
 caps how much of the *ledger* one evaluation may read (50 000); it says nothing about how many alerts
 that read becomes, and each alert is a control-ledger read and write, a notification, and a line in
 an inbox someone must triage. A rule that finds hundreds of new breaks at once is reporting one
