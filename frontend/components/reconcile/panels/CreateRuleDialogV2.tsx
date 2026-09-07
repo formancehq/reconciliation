@@ -57,7 +57,7 @@ import {
   SourceConsensusEditorV2,
   StaleHoldsEditorV2,
 } from "../v2/V2TemplateEditors"
-import { RunTimingFields } from "./CreateRuleDialog"
+import { RunTimingFields } from "../RunTimingFields"
 
 const log = createLogger("Recon")
 
