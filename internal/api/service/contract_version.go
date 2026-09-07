@@ -35,7 +35,8 @@ func validateTemplateContract(version models.ContractVersion, kind models.Templa
 	case models.ContractVersionV2:
 		switch kind {
 		case models.TemplateBalanceEquation, models.TemplateExchangeRateBounds,
-			models.TemplateSourceConsensus, models.TemplateCoverageRatioBounds:
+			models.TemplateSourceConsensus, models.TemplateCoverageRatioBounds,
+			models.TemplateStaleHolds:
 			return nil
 		}
 	}

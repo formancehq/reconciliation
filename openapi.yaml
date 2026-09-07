@@ -1751,6 +1751,39 @@ components:
             `per_hold` opens one alert per stuck hold, each auto-resolving when
             that hold clears. `aggregate` opens one alert per asset carrying the
             count and the total amount trapped.
+        maxHoldsScanned:
+          type: integer
+          minimum: 1
+          description: |
+            Caps how many hold accounts one evaluation reads, below the
+            engine-wide accounts budget. It bounds the **read**, not the number
+            of alerts — though in `per_hold` scope the alert count follows the
+            matched set, so it bounds the blast radius of a systemic failure.
+            Exceeding it fails the evaluation (recorded as ERROR, with an
+            engine-health alert) instead of truncating: a truncated outcome list
+            would auto-resolve the holds it dropped. It never raises the
+            engine's own budget.
+
+            Defaults: `per_hold` scope caps itself at **1000** — in that scope
+            every matched hold can become an alert, so it does not inherit a
+            limit sized to protect the ledger rather than the operator. Set this
+            explicitly for a rule that legitimately watches more. `aggregate`
+            scope emits one outcome however large the set, so it keeps the
+            engine's budget.
+          example: 500
+        identityKeys:
+          type: array
+          maxItems: 8
+          items: { type: string, minLength: 1 }
+          description: |
+            Account-metadata keys copied into each flagged hold's evidence, so an
+            alert names the hold in business terms — the authorization id, the
+            card, the merchant — rather than only a ledger address. These are
+            labels, not predicates: they are read from the account already
+            fetched, need no metadata index, and a key a hold does not carry is
+            omitted from its evidence rather than failing it. Alert evidence is
+            durable and widely readable, so keep cardholder PII out of it.
+          example: [enfuce_auth_id, card_id]
 
     RuleRequestCommonV2:
       type: object
