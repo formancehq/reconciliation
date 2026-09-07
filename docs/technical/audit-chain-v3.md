@@ -124,6 +124,12 @@ Two separate guarantees an auditor wants from the served entries, and they have 
 
 **Future hardening (if a customer needs recon-endpoint-only completeness).** Have reconciliation embed its **own** monotonic counter inside each signed batch's metadata. Then completeness is self-contained: the signed counters must be contiguous, so a hidden entry leaves a signed gap and the counter cannot be forged — no ledger access, no bucket isolation. The cost is a serialization point: every `_recon` write must CAS-increment the counter (a guarded Numscript on a counter account, the same bare-source CAS the alert lifecycle already uses), so writes no longer parallelise. Given recon's write volume this is likely acceptable, but it is a deliberate trade to make only when the requirement is real.
 
+**Interaction with EN-1932 (Ledger 3.1 K/V store).** EN-1932 moves reconciliation's *mutable* control state (rule defs/versions, alert lifecycle, closure single-open) onto the 3.1 K/V store's CAS + atomic batches, deliberately keeping the *immutable* audit trail on the ledger's transaction/audit log. The completeness counter straddles that split: it is a mutable counter whose value must live **inside the signed audit entry**. So the K/V store helps only conditionally, and the pivot is EN-1932's own open question — *can a K/V CAS and a ledger transaction commit in one atomic batch?*
+- If **yes**: sequence the counter with a first-class `CAS(recon:seq, N→N+1)` and land it atomically with the signed write — cleaner than a bare-source Numscript, no saga.
+- If **no**: a K/V bump + a separate signed write reopens a gap/duplicate window (a saga), which is worse than staying ledger-native.
+
+Either way the counter value must be stamped into the **ledger** entry's signed metadata (the K/V value is never what the auditor verifies), so the on-entry format is identical regardless of substrate. The **ledger-native counter-account CAS is therefore the recommended route for EN-1941** — it needs no cross-store atomicity, ships independent of 3.1, and is forward-compatible: if EN-1932 later lands cross-store atomic batches, only the *sequencing mechanism* swaps, not the signed-entry shape. The remaining serialization cost is inherent to any dense self-assigned sequence and unaffected by the choice of store.
+
 ## 10. Per-event verification — resolving an alert event to its audit entry
 
 Phase 1 lets an auditor verify the *stream*; this closes the loop from a single
