@@ -102,13 +102,17 @@ func (t *BalanceEquation) Evaluate(ctx context.Context, raw json.RawMessage, eng
 		return nil, err
 	}
 
-	expression := buildBalanceEquationExpression(&spec)
-
 	// One outcome per asset. A fixed-asset spec has an asset universe of one, so
 	// this is unchanged for it; a wildcard spec fans out the way a V1 rule with a
 	// per-asset tolerance map always did.
 	return evaluatePerAsset(ctx, spec.Sources, resolvers, eng.MaxAccountsScanned(),
 		func(asset string, resolved map[string]resolvedV2Source) (Outcome, error) {
+			// Rendered per asset: under a wildcard the spec's own sources all read
+			// "*", which would give every outcome the same meaningless expression.
+			perAsset := spec
+			perAsset.Sources = sourcesForAsset(spec.Sources, asset)
+			expression := buildBalanceEquationExpression(&perAsset)
+
 			residual := new(big.Int)
 			sourceEvidence := make([]map[string]any, 0, len(spec.Terms))
 			for _, term := range spec.Terms {

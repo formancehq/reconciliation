@@ -127,3 +127,15 @@ func unmarshalSpec(raw json.RawMessage, into any) error {
 	}
 	return nil
 }
+
+// mustSpecJSON re-marshals a typed spec so a template can reuse its own Explain
+// on a derived copy (e.g. one narrowed to a single asset). The value came from
+// json.Unmarshal, so it round-trips; a failure would be a programming error and
+// yields an empty spec, which Explain reports rather than hides.
+func mustSpecJSON(spec any) json.RawMessage {
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return raw
+}

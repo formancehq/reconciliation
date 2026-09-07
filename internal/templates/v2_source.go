@@ -31,6 +31,27 @@ const AssetWildcard = "*"
 // wildcard reports whether this source fans out across every asset it holds.
 func (s V2NamedSource) wildcard() bool { return s.Asset == AssetWildcard }
 
+// forAsset resolves a wildcard source to one concrete denomination.
+//
+// Everything an outcome shows a human is about a single asset — its evidence,
+// and above all its rendered compiledCEL, which is supposed to be an exact
+// record of the predicate that ran. Rendering the spec's sources verbatim under
+// a wildcard would put "*" in all of them and give every asset's outcome the
+// same expression, which records nothing.
+func (s V2NamedSource) forAsset(asset string) V2NamedSource {
+	s.Asset = asset
+	return s
+}
+
+// sourcesForAsset resolves a whole source list to one denomination.
+func sourcesForAsset(sources []V2NamedSource, asset string) []V2NamedSource {
+	out := make([]V2NamedSource, len(sources))
+	for i, source := range sources {
+		out[i] = source.forAsset(asset)
+	}
+	return out
+}
+
 var v2SourceIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
 
 // V2NamedSource is the common scalar balance input for V2 templates. Unlike

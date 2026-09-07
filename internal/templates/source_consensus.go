@@ -52,11 +52,16 @@ func (*SourceConsensus) Explain(raw json.RawMessage) (string, error) {
 	if err := unmarshalSpec(raw, &spec); err != nil {
 		return "", err
 	}
-	balances := make([]string, 0, len(spec.Sources))
-	for _, source := range spec.Sources {
+	return buildSourceConsensusExpression(spec.Sources, spec.Tolerance), nil
+}
+
+// buildSourceConsensusExpression renders the kernel form for one source list.
+func buildSourceConsensusExpression(sources []V2NamedSource, tolerance string) string {
+	balances := make([]string, 0, len(sources))
+	for _, source := range sources {
 		balances = append(balances, source.exactBalanceCEL())
 	}
-	return fmt.Sprintf("sourceConsensus([%s], %s)", strings.Join(balances, ", "), celString(spec.Tolerance)), nil
+	return fmt.Sprintf("sourceConsensus([%s], %s)", strings.Join(balances, ", "), celString(tolerance))
 }
 
 func (t *SourceConsensus) Evaluate(ctx context.Context, raw json.RawMessage, eng *engine.Engine, resolvers engine.Resolvers, _ engine.EvalInput) ([]Outcome, error) {
@@ -72,10 +77,11 @@ func (t *SourceConsensus) Evaluate(ctx context.Context, raw json.RawMessage, eng
 		return nil, err
 	}
 
-	expression, _ := t.Explain(raw)
-
 	return evaluatePerAsset(ctx, spec.Sources, resolvers, eng.MaxAccountsScanned(),
 		func(asset string, resolvedSources map[string]resolvedV2Source) (Outcome, error) {
+			// Rendered per asset so a wildcard rule's outcomes do not all carry
+			// the same "*" expression.
+			expression := buildSourceConsensusExpression(sourcesForAsset(spec.Sources, asset), spec.Tolerance)
 			return sourceConsensusOutcome(&spec, asset, resolvedSources, tolerance, expression), nil
 		})
 }

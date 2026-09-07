@@ -132,10 +132,13 @@ func (t *CoverageRatioBounds) Evaluate(ctx context.Context, raw json.RawMessage,
 	if err != nil {
 		return nil, err
 	}
-	expression, _ := t.Explain(raw)
-
 	return evaluatePerAsset(ctx, spec.Sources, resolvers, eng.MaxAccountsScanned(),
 		func(asset string, resolved map[string]resolvedV2Source) (Outcome, error) {
+			// Rendered per asset so a wildcard rule's outcomes do not all carry
+			// the same "*" expression.
+			perAsset := spec
+			perAsset.Sources = sourcesForAsset(spec.Sources, asset)
+			expression, _ := t.Explain(mustSpecJSON(&perAsset))
 			return coverageRatioOutcome(&spec, asset, resolved, minimum, maximum, expression), nil
 		})
 }

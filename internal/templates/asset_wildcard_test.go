@@ -204,3 +204,69 @@ func TestAssetWildcard_MatchesV1MultiAssetParity(t *testing.T) {
 		}
 	}
 }
+
+// evidence.compiledCEL is meant to be an exact record of the predicate that ran
+// for THAT outcome. Under a wildcard the spec's own sources all read "*", so a
+// naive render gives every asset the same expression and records nothing.
+func TestAssetWildcard_RendersTheConcreteAssetInCEL(t *testing.T) {
+	t.Parallel()
+
+	balances := map[string]map[string]*big.Int{
+		"a|{}": {"USD/2": big.NewInt(10), "EUR/2": big.NewInt(5)},
+		"b|{}": {"USD/2": big.NewInt(10), "EUR/2": big.NewInt(5)},
+	}
+	wildcardSourcePair := []V2NamedSource{
+		v2LedgerSource("a", "a", `{}`, AssetWildcard),
+		v2LedgerSource("b", "b", `{}`, AssetWildcard),
+	}
+
+	specs := map[string]json.RawMessage{
+		"balance_equation": mustJSON(t, BalanceEquationSpec{
+			Sources:   wildcardSourcePair,
+			Terms:     []BalanceEquationTerm{{Source: "a", Coefficient: 1}, {Source: "b", Coefficient: -1}},
+			Tolerance: "0",
+		}),
+		"source_consensus": mustJSON(t, SourceConsensusSpec{
+			Sources: wildcardSourcePair, Tolerance: "0",
+		}),
+		"coverage_ratio_bounds": mustJSON(t, CoverageRatioBoundsSpec{
+			Sources:          wildcardSourcePair,
+			NumeratorTerms:   []BalanceEquationTerm{{Source: "a", Coefficient: 1}},
+			DenominatorTerms: []BalanceEquationTerm{{Source: "b", Coefficient: 1}},
+			Ratio:            RateConstraint{Min: "0.5", Max: "2"},
+		}),
+	}
+	evaluators := map[string]Evaluator{
+		"balance_equation":      NewBalanceEquation(),
+		"source_consensus":      NewSourceConsensus(),
+		"coverage_ratio_bounds": NewCoverageRatioBounds(),
+	}
+
+	for kind, spec := range specs {
+		t.Run(kind, func(t *testing.T) {
+			eng, resolvers := newTestEngine(t, &fakeLedger{balances: balances})
+			outcomes, err := evaluators[kind].Evaluate(context.Background(), spec, eng, resolvers, engine.EvalInput{})
+			if err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			if len(outcomes) != 2 {
+				t.Fatalf("expected one outcome per asset, got %d", len(outcomes))
+			}
+			seen := map[string]string{}
+			for _, outcome := range outcomes {
+				cel, _ := outcome.Evidence["compiledCEL"].(string)
+				if strings.Contains(cel, `"*"`) {
+					t.Errorf("%s renders the wildcard instead of its asset:\n%s", outcome.Fingerprint, cel)
+				}
+				asset, _ := outcome.Evidence["asset"].(string)
+				if !strings.Contains(cel, asset) {
+					t.Errorf("%s should name %s in its expression:\n%s", outcome.Fingerprint, asset, cel)
+				}
+				seen[outcome.Fingerprint] = cel
+			}
+			if seen["asset:EUR/2"] == seen["asset:USD/2"] {
+				t.Error("two assets must not share one expression — it would record nothing")
+			}
+		})
+	}
+}
