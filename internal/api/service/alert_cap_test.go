@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/formancehq/reconciliation/internal/engine"
@@ -250,5 +251,39 @@ func TestNewService_AppliesTheDefaultCap(t *testing.T) {
 	svc := NewService(newFakeV1Store(), nil, nil, engine.Resolvers{})
 	if svc.maxNewAlerts != DefaultMaxNewAlertsPerEvaluation {
 		t.Errorf("maxNewAlerts = %d, want the default %d", svc.maxNewAlerts, DefaultMaxNewAlertsPerEvaluation)
+	}
+}
+
+// A rule whose template kind this binary does not know must surface the same way
+// as any other engine failure. It used to return before persisting anything, so
+// a scheduled rule failed once a tick with nothing on any channel — the exact
+// hazard that makes retiring a template kind dangerous.
+func TestEvaluate_UnknownTemplateKind_IsAnEngineError(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newCapService(t, &capLedger{}, 0)
+	rule := capRule(t, svc)
+
+	// Simulate the kind having been retired (or the binary rolled back) while a
+	// rule still references it.
+	persisted := store.rules[rule.ID]
+	persisted.TemplateKind = models.TemplateKind("account_threshold_v0")
+
+	evaluation, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{})
+	if err != nil {
+		t.Fatalf("an unknown kind must not fail the call outright: %v", err)
+	}
+	if evaluation.Result != models.EvaluationError {
+		t.Errorf("result = %v, want ERROR", evaluation.Result)
+	}
+	if !strings.Contains(evaluation.Error, "not available in this build") {
+		t.Errorf("the error should name the cause, got %q", evaluation.Error)
+	}
+	if len(store.captures) != 1 {
+		t.Errorf("the run must still be captured, got %d captures", len(store.captures))
+	}
+	byFP := alertsByFingerprint(store)
+	if _, ok := byFP[engineErrorFingerprint]; !ok {
+		t.Errorf("expected an %s meta-alert, got %v", engineErrorFingerprint, byFP)
 	}
 }

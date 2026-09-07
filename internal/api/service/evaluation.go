@@ -52,10 +52,14 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		return nil, fmt.Errorf("rule %s is disabled", rule.ID)
 	}
 
-	ev, err := s.templates.Get(rule.TemplateKind)
-	if err != nil {
-		return nil, err
-	}
+	// A rule whose template kind this binary does not know is an engine-health
+	// condition, not a caller error: it happens on a rollback past the release
+	// that introduced the kind, or after a kind is retired while rules still
+	// reference it. Returning early here persisted nothing at all — no
+	// evaluation, no capture, no alert — so a *scheduled* rule failed silently
+	// once a tick, forever, while still reading healthy in the UI. Route it
+	// through the same ERROR path as any other engine failure instead.
+	ev, evaluatorErr := s.templates.Get(rule.TemplateKind)
 
 	if req.PIT.IsZero() {
 		req.PIT = time.Now().UTC()
@@ -65,9 +69,15 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 	}
 
 	started := time.Now().UTC()
-	outcomes, evalErr := ev.Evaluate(ctx, rule.TemplateSpec, s.engine, s.resolvers, engine.EvalInput{
-		PIT: req.PIT,
-	})
+	var outcomes []templates.Outcome
+	evalErr := evaluatorErr
+	if evaluatorErr != nil {
+		evalErr = fmt.Errorf("template kind %q is not available in this build: %w", rule.TemplateKind, evaluatorErr)
+	} else {
+		outcomes, evalErr = ev.Evaluate(ctx, rule.TemplateSpec, s.engine, s.resolvers, engine.EvalInput{
+			PIT: req.PIT,
+		})
+	}
 	ended := time.Now().UTC()
 
 	evaluation := &models.Evaluation{
