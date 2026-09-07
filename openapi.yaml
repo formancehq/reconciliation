@@ -814,29 +814,44 @@ components:
       type: string
       deprecated: true
       description: |
-        Deprecated alias of `PeriodType`, kept so SDKs regenerated for 2.5.0 keep
-        emitting the `Cadence` type and its constants. Removing it would delete
+        Deprecated alias of `periodType`. Same members. Use `periodType`; this is
+        removed at the next API major.
+
+        Kept as its own component so regenerated SDKs keep emitting the
+        `Cadence` type and its constants — dropping it would delete
         `CadenceMonthly` and friends from generated clients and break code that
         compiles today, even though the wire contract stays compatible.
 
-        Same members as `PeriodType`. Use `PeriodType`; this goes at the next
-        API major.
+        On requests either key is accepted. If both carry a value and the values
+        differ the request is rejected with 400 rather than one being chosen
+        silently; an empty `cadence` counts as unset rather than as a
+        conflicting value. On responses both are always emitted, mirroring.
+
+        Servers before 2.5.0 do not know `periodType` and ignore it, falling
+        back to `continuous`. Normally that cannot bite you: `periodType`
+        reaches clients via an SDK regenerated from this spec, which only exists
+        once 2.5.0 is released. If you need determinism while a fleet is
+        mid-upgrade, send both keys with equal values — accepted on every
+        version.
       enum: [continuous, daily, weekly, monthly]
-      default: continuous
     PeriodType:
       type: string
       description: |
         How long a reconciliation period lasts. Scopes each failing fingerprint
         into a period so a March break and an April break are distinct,
-        independently-closable cases. `continuous` (default) is a single
-        unbounded period (live monitoring).
+        independently-closable cases.
+
+        Omit the key to get `continuous`, a single unbounded period (live
+        monitoring). There is deliberately no schema-level `default`: SDK
+        generators materialize defaults into the serialized body, which would
+        make an omitted key indistinguishable from an explicit one and collide
+        with the deprecated `cadence` alias. The server owns the default.
 
         This is not how often the rule runs — that is `schedule`, and the two are
         independent: an hourly schedule with a `monthly` period type is normal.
         The period type determines the `periodID` an alert is filed under:
         `monthly` yields `2026-07`.
       enum: [continuous, daily, weekly, monthly]
-      default: continuous
     Schedule:
       type: object
       description: When a rule runs, either on demand or on a cron expression
@@ -887,7 +902,7 @@ components:
     Rule:
       type: object
       description: A monitoring rule evaluated on a schedule, raising alerts when it fails
-      required: [id, name, templateKind, templateSpec, enabled, severity, periodType, cadence, createdAt, updatedAt]
+      required: [id, name, templateKind, templateSpec, enabled, severity, cadence, createdAt, updatedAt]
       properties:
         id: {type: string, format: uuid, description: "Unique identifier of the rule"}
         name: {type: string, description: "Human-readable name of the rule"}
@@ -902,14 +917,7 @@ components:
         enabled: {type: boolean, description: "Whether the rule is evaluated. Disabled rules produce no evaluations"}
         severity: { $ref: '#/components/schemas/Severity' }
         periodType: { $ref: '#/components/schemas/PeriodType' }
-        cadence:
-          allOf: [{ $ref: '#/components/schemas/Cadence' }]
-          deprecated: true
-          description: |
-            Deprecated alias of `periodType`, retained so clients generated
-            before 2.5.0 keep deserializing responses. Always mirrors
-            `periodType`. Read `periodType`; this field is removed at the next
-            API major.
+        cadence: { $ref: '#/components/schemas/Cadence' }
         schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
@@ -932,30 +940,8 @@ components:
           additionalProperties: true
           description: Parameters for the chosen template, whose shape depends on templateKind
         severity: { $ref: '#/components/schemas/Severity' }
-        periodType:
-          allOf: [{ $ref: '#/components/schemas/PeriodType' }]
-          description: |
-            Omit the key to accept the `continuous` default. Any value sent must
-            be one of the enum members — `""` is not one of them and is
-            rejected.
-        cadence:
-          allOf: [{ $ref: '#/components/schemas/Cadence' }]
-          deprecated: true
-          description: |
-            Deprecated alias of `periodType`, still accepted so clients
-            generated before 2.5.0 keep working. If both keys carry a value and
-            the values differ, the request is rejected with 400 rather than one
-            being chosen silently; an empty `cadence` counts as unset rather
-            than as a conflicting value. Prefer `periodType`; this field is
-            removed at the next API major.
-
-            Servers before 2.5.0 do not know `periodType` and ignore it,
-            falling back to the `continuous` default. Normally that cannot bite
-            you: `periodType` reaches clients via an SDK regenerated from this
-            spec, which only exists once 2.5.0 is released. If you do need
-            determinism while a fleet is mid-upgrade, send both keys with equal
-            values — explicitly accepted, and every server version reads one of
-            them.
+        periodType: { $ref: '#/components/schemas/PeriodType' }
+        cadence: { $ref: '#/components/schemas/Cadence' }
         schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array

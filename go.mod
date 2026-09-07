@@ -26,6 +26,7 @@ require (
 	go.uber.org/mock v0.6.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -221,5 +222,4 @@ require (
 	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
