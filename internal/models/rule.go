@@ -15,13 +15,21 @@ import (
 type ContractVersion int
 
 const (
+	// ContractVersionV1 is retired: nothing writes it and no template catalogue
+	// answers to it. It remains declared because it is stamped into signed
+	// control-ledger metadata that cannot be rewritten.
 	ContractVersionV1 ContractVersion = 1
 	ContractVersionV2 ContractVersion = 2
 )
 
+// Effective resolves an unset stamp. It used to mean V1 — records written before
+// the field existed. V1 is retired, so an unset stamp now resolves to the one
+// live contract rather than naming a version that no longer has a catalogue; a
+// legacy record is surfaced and evaluated (its retired kind takes the
+// engine-error path) instead of being silently filtered out of every list.
 func (v ContractVersion) Effective() ContractVersion {
 	if v == 0 {
-		return ContractVersionV1
+		return ContractVersionV2
 	}
 	return v
 }
@@ -33,17 +41,6 @@ func (v ContractVersion) Effective() ContractVersion {
 type TemplateKind string
 
 const (
-	// TemplateLedgerInvariant asserts that a signed sum of balance(source)
-	// terms is within tolerance — the Buildr-style trust integrity check.
-	TemplateLedgerInvariant TemplateKind = "ledger_invariant"
-	// TemplateAccountThreshold asserts that each (or aggregate) balance in
-	// a ledger set is within [min, max] bounds, per asset.
-	TemplateAccountThreshold TemplateKind = "account_threshold"
-	// TemplateSourceParity asserts that two balance sources (ledger query or
-	// payments pool — either side) agree within a per-asset tolerance. The
-	// generalised "two independent records of the same money match" check;
-	// see internal/templates/source.go.
-	TemplateSourceParity TemplateKind = "source_parity"
 	// TemplateBalanceEquation is the V2 N-source equality primitive. It asserts
 	// that an integer-weighted sum of named balances is zero within tolerance.
 	TemplateBalanceEquation TemplateKind = "balance_equation"

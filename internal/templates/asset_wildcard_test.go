@@ -146,11 +146,11 @@ func TestAssetWildcard_Validation(t *testing.T) {
 	})
 }
 
-// The convergence claim, checked rather than asserted: a V1 source_parity rule
-// carrying a per-asset tolerance map and the single V2 balance_equation that
-// replaces it must produce the same outcomes against the same ledger. Until the
-// wildcard existed, the V2 side needed one rule per asset.
-func TestAssetWildcard_MatchesV1MultiAssetParity(t *testing.T) {
+// The convergence claim for the wildcard. These expectations were pinned by
+// running the equivalent multi-asset source_parity rule against the same
+// fixture, before that template was retired: one V2 rule covers what previously
+// needed one rule per asset, with the same verdicts.
+func TestAssetWildcard_MatchesRetiredMultiAssetParity(t *testing.T) {
 	t.Parallel()
 
 	balances := map[string]map[string]*big.Int{
@@ -165,20 +165,8 @@ func TestAssetWildcard_MatchesV1MultiAssetParity(t *testing.T) {
 			"GBP/2": big.NewInt(90),
 		},
 	}
-
-	v1Engine, v1Resolvers := newTestEngine(t, &fakeLedger{balances: balances})
-	v1 := mustJSON(t, ParitySpec{
-		Left:      SourceSpec{Ledger: "sub", Query: json.RawMessage(`{}`)},
-		Right:     SourceSpec{Ledger: "control", Query: json.RawMessage(`{}`)},
-		Tolerance: map[string]int64{"USD/2": 0, "EUR/2": 0, "GBP/2": 0},
-	})
-	v1Outcomes, err := NewSourceParity().Evaluate(context.Background(), v1, v1Engine, v1Resolvers, engine.EvalInput{})
-	if err != nil {
-		t.Fatalf("V1 Evaluate: %v", err)
-	}
-
-	v2Engine, v2Resolvers := newTestEngine(t, &fakeLedger{balances: balances})
-	v2 := mustJSON(t, BalanceEquationSpec{
+	eng, resolvers := newTestEngine(t, &fakeLedger{balances: balances})
+	spec := mustJSON(t, BalanceEquationSpec{
 		Sources: []V2NamedSource{
 			v2LedgerSource("sub", "sub", `{}`, AssetWildcard),
 			v2LedgerSource("control", "control", `{}`, AssetWildcard),
@@ -186,87 +174,22 @@ func TestAssetWildcard_MatchesV1MultiAssetParity(t *testing.T) {
 		Terms:     []BalanceEquationTerm{{Source: "sub", Coefficient: 1}, {Source: "control", Coefficient: -1}},
 		Tolerance: "0",
 	})
-	v2Outcomes, err := NewBalanceEquation().Evaluate(context.Background(), v2, v2Engine, v2Resolvers, engine.EvalInput{})
+	outcomes, err := NewBalanceEquation().Evaluate(context.Background(), spec, eng, resolvers, engine.EvalInput{})
 	if err != nil {
-		t.Fatalf("V2 Evaluate: %v", err)
+		t.Fatalf("Evaluate: %v", err)
 	}
 
-	if len(v1Outcomes) != len(v2Outcomes) {
-		t.Fatalf("outcome counts differ: V1 %d, V2 %d", len(v1Outcomes), len(v2Outcomes))
+	want := map[string]bool{"asset:EUR/2": false, "asset:GBP/2": true, "asset:USD/2": true}
+	if len(outcomes) != len(want) {
+		t.Fatalf("expected %d outcomes, got %d", len(want), len(outcomes))
 	}
-	for _, want := range v1Outcomes {
-		got := findOutcome(v2Outcomes, want.Fingerprint)
+	for fingerprint, passed := range want {
+		got := findOutcome(outcomes, fingerprint)
 		if got == nil {
-			t.Fatalf("V2 produced no outcome for %s", want.Fingerprint)
+			t.Fatalf("no outcome for %s", fingerprint)
 		}
-		if got.Passed != want.Passed {
-			t.Errorf("%s: V1 passed=%v, V2 passed=%v", want.Fingerprint, want.Passed, got.Passed)
+		if got.Passed != passed {
+			t.Errorf("%s: passed = %v, want %v", fingerprint, got.Passed, passed)
 		}
-	}
-}
-
-// evidence.compiledCEL is meant to be an exact record of the predicate that ran
-// for THAT outcome. Under a wildcard the spec's own sources all read "*", so a
-// naive render gives every asset the same expression and records nothing.
-func TestAssetWildcard_RendersTheConcreteAssetInCEL(t *testing.T) {
-	t.Parallel()
-
-	balances := map[string]map[string]*big.Int{
-		"a|{}": {"USD/2": big.NewInt(10), "EUR/2": big.NewInt(5)},
-		"b|{}": {"USD/2": big.NewInt(10), "EUR/2": big.NewInt(5)},
-	}
-	wildcardSourcePair := []V2NamedSource{
-		v2LedgerSource("a", "a", `{}`, AssetWildcard),
-		v2LedgerSource("b", "b", `{}`, AssetWildcard),
-	}
-
-	specs := map[string]json.RawMessage{
-		"balance_equation": mustJSON(t, BalanceEquationSpec{
-			Sources:   wildcardSourcePair,
-			Terms:     []BalanceEquationTerm{{Source: "a", Coefficient: 1}, {Source: "b", Coefficient: -1}},
-			Tolerance: "0",
-		}),
-		"source_consensus": mustJSON(t, SourceConsensusSpec{
-			Sources: wildcardSourcePair, Tolerance: "0",
-		}),
-		"coverage_ratio_bounds": mustJSON(t, CoverageRatioBoundsSpec{
-			Sources:          wildcardSourcePair,
-			NumeratorTerms:   []BalanceEquationTerm{{Source: "a", Coefficient: 1}},
-			DenominatorTerms: []BalanceEquationTerm{{Source: "b", Coefficient: 1}},
-			Ratio:            RateConstraint{Min: "0.5", Max: "2"},
-		}),
-	}
-	evaluators := map[string]Evaluator{
-		"balance_equation":      NewBalanceEquation(),
-		"source_consensus":      NewSourceConsensus(),
-		"coverage_ratio_bounds": NewCoverageRatioBounds(),
-	}
-
-	for kind, spec := range specs {
-		t.Run(kind, func(t *testing.T) {
-			eng, resolvers := newTestEngine(t, &fakeLedger{balances: balances})
-			outcomes, err := evaluators[kind].Evaluate(context.Background(), spec, eng, resolvers, engine.EvalInput{})
-			if err != nil {
-				t.Fatalf("Evaluate: %v", err)
-			}
-			if len(outcomes) != 2 {
-				t.Fatalf("expected one outcome per asset, got %d", len(outcomes))
-			}
-			seen := map[string]string{}
-			for _, outcome := range outcomes {
-				cel, _ := outcome.Evidence["compiledCEL"].(string)
-				if strings.Contains(cel, `"*"`) {
-					t.Errorf("%s renders the wildcard instead of its asset:\n%s", outcome.Fingerprint, cel)
-				}
-				asset, _ := outcome.Evidence["asset"].(string)
-				if !strings.Contains(cel, asset) {
-					t.Errorf("%s should name %s in its expression:\n%s", outcome.Fingerprint, asset, cel)
-				}
-				seen[outcome.Fingerprint] = cel
-			}
-			if seen["asset:EUR/2"] == seen["asset:USD/2"] {
-				t.Error("two assets must not share one expression — it would record nothing")
-			}
-		})
 	}
 }

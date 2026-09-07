@@ -61,15 +61,23 @@ func TestIntegration_EvaluateLive(t *testing.T) {
 	const asset = "USD/2"
 	prefix := "acc:" + suffix + ":"
 	q := json.RawMessage(fmt.Sprintf(`{"$match":{"address":%q}}`, prefix+"*"))
-	specJSON, err := json.Marshal(templates.ParitySpec{
-		Left:      templates.SourceSpec{Ledger: ledgerA, Query: q},
-		Right:     templates.SourceSpec{Ledger: ledgerB, Query: q},
-		Tolerance: map[string]int64{asset: 0},
+	// Two sources at +1/-1 within tolerance — the balance_equation that replaced
+	// the retired source_parity, and the same statement.
+	specJSON, err := json.Marshal(templates.BalanceEquationSpec{
+		Sources: []templates.V2NamedSource{
+			{ID: "a", Ledger: ledgerA, Query: q, Asset: asset},
+			{ID: "b", Ledger: ledgerB, Query: q, Asset: asset},
+		},
+		Terms: []templates.BalanceEquationTerm{
+			{Source: "a", Coefficient: 1},
+			{Source: "b", Coefficient: -1},
+		},
+		Tolerance: "0",
 	})
 	require.NoError(t, err)
 	rule, err := svc.CreateRule(ctx, &CreateRuleRequest{
 		Name:         "it-parity",
-		TemplateKind: models.TemplateSourceParity,
+		TemplateKind: models.TemplateBalanceEquation,
 		TemplateSpec: specJSON,
 		Severity:     models.SeverityHigh,
 	})

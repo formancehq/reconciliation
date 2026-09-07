@@ -3,43 +3,48 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
+
+	"github.com/formancehq/reconciliation/internal/contractversion"
 
 	"github.com/formancehq/reconciliation/internal/engine"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/templates"
 )
 
-// capLedger returns a fixed account set, so a per_account rule fans out into as
-// many outcomes as there are accounts.
-type capLedger struct{ accounts []engine.Account }
+// capLedger holds one balance per asset, so a wildcard rule fans out into as
+// many outcomes as there are bounded assets.
+type capLedger struct{ balances map[string]*big.Int }
 
 func (l *capLedger) AggregateBalance(context.Context, string, json.RawMessage) (map[string]*big.Int, error) {
-	return map[string]*big.Int{}, nil
+	if l.balances == nil {
+		return map[string]*big.Int{}, nil
+	}
+	return l.balances, nil
 }
 
 func (l *capLedger) ListAccounts(context.Context, string, json.RawMessage, int) ([]engine.Account, error) {
-	return l.accounts, nil
+	return nil, nil
 }
 
-// capAccounts builds n accounts, the first `failing` of which sit below the
-// rule's minimum (and so fail); the rest hold enough to pass.
-func capAccounts(prefix string, n, failing int) []engine.Account {
-	accounts := make([]engine.Account, 0, n)
+// capAssets builds n assets, the first `failing` of which sit below the rule's
+// floor; the rest hold enough to pass.
+func capAssets(n, failing int) (map[string]*big.Int, map[string]templates.BalanceBound) {
+	balances := make(map[string]*big.Int, n)
+	bounds := make(map[string]templates.BalanceBound, n)
 	for i := range n {
+		asset := fmt.Sprintf("A%d/2", i)
 		amount := big.NewInt(500)
 		if i < failing {
 			amount = big.NewInt(0)
 		}
-		accounts = append(accounts, engine.Account{
-			Address:  prefix + string(rune('a'+i)),
-			Ledger:   "l",
-			Balances: map[string]*big.Int{"USD/2": amount},
-		})
+		balances[asset] = amount
+		bounds[asset] = templates.BalanceBound{Min: "100"}
 	}
-	return accounts
+	return balances, bounds
 }
 
 func newCapService(t *testing.T, ledger *capLedger, maxNew int) (*Service, *fakeV1Store) {
@@ -53,26 +58,28 @@ func newCapService(t *testing.T, ledger *capLedger, maxNew int) (*Service, *fake
 	return NewService(store, eng, templates.DefaultRegistry(), res, WithMaxNewAlertsPerEvaluation(maxNew)), store
 }
 
-// capRule creates a per_account threshold rule: every matched account below the
-// minimum becomes its own failing outcome.
-func capRule(t *testing.T, svc *Service) *models.Rule {
+// capRule creates a wildcard bounds rule: every bounded asset below the floor
+// becomes its own failing outcome, which is the fan-out the cap guards.
+func capRule(t *testing.T, svc *Service, bounds map[string]templates.BalanceBound) *models.Rule {
 	t.Helper()
-	minimum := int64(100)
-	spec, err := json.Marshal(templates.ThresholdSpec{
-		Ledger: "l",
-		Query:  json.RawMessage(`{"$match":{"address":"acct:*"}}`),
-		Mode:   templates.ThresholdPerAccount,
-		Bounds: map[string]templates.ThresholdBounds{"USD/2": {Min: &minimum}},
+	spec, err := json.Marshal(templates.BalanceBoundsSpec{
+		Source: templates.V2NamedSource{
+			ID: "book", Ledger: "l",
+			Query: json.RawMessage(`{"$match":{"address":"acct:*"}}`),
+			Asset: templates.AssetWildcard,
+		},
+		Bounds: bounds,
 	})
 	if err != nil {
 		t.Fatalf("marshal spec: %v", err)
 	}
-	rule, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
-		Name:         "fan-out rule",
-		TemplateKind: models.TemplateAccountThreshold,
-		TemplateSpec: spec,
-		Severity:     models.SeverityMedium,
-	})
+	rule, err := svc.CreateRule(contractversion.WithContext(context.Background(), models.ContractVersionV2),
+		&CreateRuleRequest{
+			Name:         "fan-out rule",
+			TemplateKind: models.TemplateBalanceBounds,
+			TemplateSpec: spec,
+			Severity:     models.SeverityMedium,
+		})
 	if err != nil {
 		t.Fatalf("CreateRule: %v", err)
 	}
@@ -92,8 +99,9 @@ func alertsByFingerprint(store *fakeV1Store) map[string]*models.Alert {
 func TestEvaluate_NewAlertCap_WithholdsEverything(t *testing.T) {
 	t.Parallel()
 
-	svc, store := newCapService(t, &capLedger{accounts: capAccounts("acct:", 5, 5)}, 2)
-	rule := capRule(t, svc)
+	balances, bounds := capAssets(5, 5)
+	svc, store := newCapService(t, &capLedger{balances: balances}, 2)
+	rule := capRule(t, svc, bounds)
 
 	evaluation, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{})
 	if err != nil {
@@ -139,8 +147,9 @@ func TestEvaluate_NewAlertCap_WithholdsEverything(t *testing.T) {
 func TestEvaluate_NewAlertCap_UnderTheCapIsUnaffected(t *testing.T) {
 	t.Parallel()
 
-	svc, store := newCapService(t, &capLedger{accounts: capAccounts("acct:", 5, 5)}, 10)
-	rule := capRule(t, svc)
+	balances, bounds := capAssets(5, 5)
+	svc, store := newCapService(t, &capLedger{balances: balances}, 10)
+	rule := capRule(t, svc, bounds)
 
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
@@ -161,9 +170,10 @@ func TestEvaluate_NewAlertCap_UnderTheCapIsUnaffected(t *testing.T) {
 func TestEvaluate_NewAlertCap_UpdatesDoNotCount(t *testing.T) {
 	t.Parallel()
 
-	ledger := &capLedger{accounts: capAccounts("acct:", 5, 5)}
+	balances, bounds := capAssets(5, 5)
+	ledger := &capLedger{balances: balances}
 	svc, store := newCapService(t, ledger, 10)
-	rule := capRule(t, svc)
+	rule := capRule(t, svc, bounds)
 
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{}); err != nil {
 		t.Fatalf("first EvaluateRule: %v", err)
@@ -192,9 +202,10 @@ func TestEvaluate_NewAlertCap_UpdatesDoNotCount(t *testing.T) {
 func TestEvaluate_NewAlertCap_WithholdingResolvesNothing(t *testing.T) {
 	t.Parallel()
 
-	ledger := &capLedger{accounts: capAccounts("acct:", 3, 3)}
+	balances, bounds := capAssets(3, 3)
+	ledger := &capLedger{balances: balances}
 	svc, store := newCapService(t, ledger, 10)
-	rule := capRule(t, svc)
+	rule := capRule(t, svc, bounds)
 
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{}); err != nil {
 		t.Fatalf("first EvaluateRule: %v", err)
@@ -206,7 +217,13 @@ func TestEvaluate_NewAlertCap_WithholdingResolvesNothing(t *testing.T) {
 
 	// The original three now pass (they would auto-resolve), but a large new set
 	// fails — enough to trip the cap.
-	ledger.accounts = append(capAccounts("acct:", 3, 0), capAccounts("other:", 6, 6)...)
+	healthy, _ := capAssets(3, 0)
+	extra, extraBounds := capAssets(9, 9)
+	for asset, amount := range healthy {
+		extra[asset] = amount // the original three now sit above their floor
+	}
+	ledger.balances = extra
+	rule = capRule(t, svc, extraBounds)
 	svc.maxNewAlerts = 2
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{}); err != nil {
 		t.Fatalf("second EvaluateRule: %v", err)
@@ -233,8 +250,9 @@ func TestEvaluate_NewAlertCap_WithholdingResolvesNothing(t *testing.T) {
 func TestEvaluate_NewAlertCap_ZeroDisables(t *testing.T) {
 	t.Parallel()
 
-	svc, store := newCapService(t, &capLedger{accounts: capAccounts("acct:", 6, 6)}, 0)
-	rule := capRule(t, svc)
+	balances, bounds := capAssets(6, 6)
+	svc, store := newCapService(t, &capLedger{balances: balances}, 0)
+	rule := capRule(t, svc, bounds)
 
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
@@ -261,8 +279,9 @@ func TestNewService_AppliesTheDefaultCap(t *testing.T) {
 func TestEvaluate_UnknownTemplateKind_IsAnEngineError(t *testing.T) {
 	t.Parallel()
 
+	_, bounds := capAssets(1, 1)
 	svc, store := newCapService(t, &capLedger{}, 0)
-	rule := capRule(t, svc)
+	rule := capRule(t, svc, bounds)
 
 	// Simulate the kind having been retired (or the binary rolled back) while a
 	// rule still references it.

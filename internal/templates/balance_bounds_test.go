@@ -255,46 +255,30 @@ func TestBalanceBounds_Validate(t *testing.T) {
 	}
 }
 
-// The convergence claim for this template: a multi-asset account_threshold rule
-// and the single balance_bounds rule replacing it agree, outcome for outcome.
-func TestBalanceBounds_MatchesV1AccountThreshold(t *testing.T) {
+// The convergence claim for this template. These expectations were pinned by
+// running the equivalent multi-asset account_threshold rule against the same
+// fixture and asserting outcome-for-outcome agreement, before that template was
+// retired. The differential test could not outlive its subject; its verdicts
+// could, so they are kept here as golden values.
+func TestBalanceBounds_MatchesRetiredAccountThreshold(t *testing.T) {
 	t.Parallel()
 
-	balances := map[string]map[string]*big.Int{
-		"book|{}": {"USD/2": big.NewInt(300), "EUR/2": big.NewInt(5000)},
-	}
-	usdMin, usdMax, eurMax := int64(100), int64(500), int64(1000)
-
-	v1Engine, v1Resolvers := newTestEngine(t, &fakeLedger{balances: balances})
-	v1 := mustJSON(t, ThresholdSpec{
-		Ledger: "book",
-		Query:  json.RawMessage(`{}`),
-		Bounds: map[string]ThresholdBounds{
-			"USD/2": {Min: &usdMin, Max: &usdMax},
-			"EUR/2": {Max: &eurMax},
-		},
-	})
-	v1Outcomes, err := NewAccountThreshold().Evaluate(context.Background(), v1, v1Engine, v1Resolvers, engine.EvalInput{})
-	if err != nil {
-		t.Fatalf("V1 Evaluate: %v", err)
-	}
-
-	v2 := boundsSpec(t, AssetWildcard, map[string]BalanceBound{
+	outcomes := evaluateBounds(t, boundsSpec(t, AssetWildcard, map[string]BalanceBound{
 		"USD/2": {Min: "100", Max: "500"},
 		"EUR/2": {Max: "1000"},
-	})
-	v2Outcomes := evaluateBounds(t, v2, balances["book|{}"])
+	}), map[string]*big.Int{"USD/2": big.NewInt(300), "EUR/2": big.NewInt(5000)})
 
-	if len(v1Outcomes) != len(v2Outcomes) {
-		t.Fatalf("outcome counts differ: V1 %d, V2 %d", len(v1Outcomes), len(v2Outcomes))
+	want := map[string]bool{"asset:EUR/2": false, "asset:USD/2": true}
+	if len(outcomes) != len(want) {
+		t.Fatalf("expected %d outcomes, got %d", len(want), len(outcomes))
 	}
-	for _, want := range v1Outcomes {
-		got := findOutcome(v2Outcomes, want.Fingerprint)
+	for fingerprint, passed := range want {
+		got := findOutcome(outcomes, fingerprint)
 		if got == nil {
-			t.Fatalf("V2 produced no outcome for %s", want.Fingerprint)
+			t.Fatalf("no outcome for %s", fingerprint)
 		}
-		if got.Passed != want.Passed {
-			t.Errorf("%s: V1 passed=%v, V2 passed=%v", want.Fingerprint, want.Passed, got.Passed)
+		if got.Passed != passed {
+			t.Errorf("%s: passed = %v, want %v", fingerprint, got.Passed, passed)
 		}
 	}
 }

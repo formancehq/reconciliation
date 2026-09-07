@@ -46,7 +46,7 @@ func newValidatingService(t *testing.T, l validatingLedger) (*Service, *fakeV1St
 func createParityRule(svc *Service, spec json.RawMessage) (*models.Rule, error) {
 	return svc.CreateRule(context.Background(), &CreateRuleRequest{
 		Name:         "r",
-		TemplateKind: models.TemplateSourceParity,
+		TemplateKind: models.TemplateBalanceEquation,
 		TemplateSpec: spec,
 	})
 }

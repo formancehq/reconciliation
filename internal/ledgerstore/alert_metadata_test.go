@@ -100,7 +100,10 @@ func TestAlertMetadataContractVersionCompatibility(t *testing.T) {
 	delete(md, schema.MetaContractVersion)
 	got, err := alertFromAccount(&commonpb.Account{Metadata: md})
 	require.NoError(t, err)
-	require.Equal(t, models.ContractVersionV1, got.ContractVersion)
+	// A record written before the stamp existed used to decode as V1. V1 is
+	// retired, so it now resolves to the live contract and stays visible instead
+	// of being filtered out of every list forever.
+	require.Equal(t, models.ContractVersionV2, got.ContractVersion)
 
 	base.ContractVersion = models.ContractVersionV2
 	md, err = alertToMetadata(base)

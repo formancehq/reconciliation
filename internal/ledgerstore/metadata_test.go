@@ -22,7 +22,7 @@ func TestRuleMetadataRoundTrip(t *testing.T) {
 	orig := &models.Rule{
 		ID:            id,
 		Name:          "trust-invariant",
-		TemplateKind:  models.TemplateLedgerInvariant,
+		TemplateKind:  models.TemplateBalanceEquation,
 		TemplateSpec:  json.RawMessage(`{"tolerance":"0"}`),
 		CompiledCEL:   "sum(x) == 0",
 		Enabled:       true,
@@ -69,7 +69,7 @@ func TestRuleMetadataMinimal(t *testing.T) {
 	orig := &models.Rule{
 		ID:           id,
 		Name:         "minimal",
-		TemplateKind: models.TemplateAccountThreshold,
+		TemplateKind: models.TemplateBalanceBounds,
 		TemplateSpec: json.RawMessage(`{}`),
 		Enabled:      false,
 		Severity:     models.SeverityLow,
@@ -102,7 +102,10 @@ func TestRuleMetadataContractVersionCompatibility(t *testing.T) {
 	}
 	got, err := ruleFromAccount(legacy)
 	require.NoError(t, err)
-	require.Equal(t, models.ContractVersionV1, got.ContractVersion)
+	// A record written before the stamp existed used to decode as V1. V1 is
+	// retired, so it now resolves to the live contract and stays visible instead
+	// of being filtered out of every list forever.
+	require.Equal(t, models.ContractVersionV2, got.ContractVersion)
 
 	rule := &models.Rule{ID: id, ContractVersion: models.ContractVersionV2}
 	md, err := ruleToMetadata(rule)

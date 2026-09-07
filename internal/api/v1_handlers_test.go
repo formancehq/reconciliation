@@ -32,7 +32,7 @@ func TestCreateRule_Nominal(t *testing.T) {
 
 	req := &service.CreateRuleRequest{
 		Name:         "buildr-trust",
-		TemplateKind: models.TemplateLedgerInvariant,
+		TemplateKind: models.TemplateBalanceEquation,
 		TemplateSpec: json.RawMessage(`{"terms":[],"tolerance":{}}`),
 		Severity:     models.SeverityHigh,
 	}
@@ -68,7 +68,7 @@ func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
 	b, mockSvc := newTestingBackend(t)
 	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
 
-	req := &service.CreateRuleRequest{Name: "x", TemplateKind: models.TemplateLedgerInvariant, TemplateSpec: json.RawMessage(`{}`)}
+	req := &service.CreateRuleRequest{Name: "x", TemplateKind: models.TemplateBalanceEquation, TemplateSpec: json.RawMessage(`{}`)}
 	mockSvc.EXPECT().CreateRule(gomock.Any(), req).Return(nil, templates.ErrInvalidSpec)
 
 	body, _ := json.Marshal(req)
@@ -334,8 +334,8 @@ func TestListRules_Nominal(t *testing.T) {
 	cursor := &bunpaginate.Cursor[models.Rule]{
 		PageSize: 15,
 		Data: []models.Rule{
-			{ID: uuid.New(), Name: "a", TemplateKind: models.TemplateLedgerInvariant},
-			{ID: uuid.New(), Name: "b", TemplateKind: models.TemplateAccountThreshold},
+			{ID: uuid.New(), Name: "a", TemplateKind: models.TemplateBalanceEquation},
+			{ID: uuid.New(), Name: "b", TemplateKind: models.TemplateBalanceBounds},
 		},
 	}
 	mockSvc.EXPECT().ListRules(gomock.Any(), gomock.Any()).Return(cursor, nil)
@@ -466,7 +466,7 @@ func TestPatchRule_Nominal(t *testing.T) {
 	// be mocked, in order.
 	mockSvc.EXPECT().PatchRule(gomock.Any(), id, gomock.Any()).Return(nil)
 	mockSvc.EXPECT().GetRule(gomock.Any(), id).Return(&models.Rule{
-		ID: id, Name: "patched", TemplateKind: models.TemplateLedgerInvariant, Enabled: false,
+		ID: id, Name: "patched", TemplateKind: models.TemplateBalanceEquation, Enabled: false,
 	}, nil)
 
 	body := []byte(`{"name":"patched","enabled":false}`)

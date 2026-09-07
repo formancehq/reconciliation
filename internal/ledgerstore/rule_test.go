@@ -28,7 +28,7 @@ func newRule(id uuid.UUID) *models.Rule {
 	return &models.Rule{
 		ID:           id,
 		Name:         "r",
-		TemplateKind: models.TemplateLedgerInvariant,
+		TemplateKind: models.TemplateBalanceEquation,
 		TemplateSpec: json.RawMessage(`{}`),
 		Enabled:      true,
 		Severity:     models.SeverityHigh,

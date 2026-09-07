@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"testing"
 	"time"
 
@@ -439,15 +440,28 @@ func newOrchestrationService(t *testing.T, l *orchestrationLedger) (*Service, *f
 	return svc, store
 }
 
-// paritySpec builds a source_parity rule comparing two ledger account sets
-// (left vs right). parity checks abs(left - right) <= tol, so the fixtures below
-// carry each side's magnitude directly.
+// paritySpec builds the two-source parity check these orchestration fixtures
+// rely on: abs(left - right) <= tolerance, per asset. It was a source_parity
+// rule; since that template was retired it is the balance_equation that replaced
+// it — two wildcard sources at +1/-1 — which is the same statement and the same
+// one-outcome-per-asset shape.
 func paritySpec(t *testing.T, leftLedger, rightLedger, query string, tol map[string]int64) json.RawMessage {
 	t.Helper()
-	spec := templates.ParitySpec{
-		Left:      templates.SourceSpec{Ledger: leftLedger, Query: json.RawMessage(query)},
-		Right:     templates.SourceSpec{Ledger: rightLedger, Query: json.RawMessage(query)},
-		Tolerance: tol,
+	tolerance := "0"
+	for _, v := range tol {
+		tolerance = strconv.FormatInt(v, 10)
+		break
+	}
+	spec := templates.BalanceEquationSpec{
+		Sources: []templates.V2NamedSource{
+			{ID: "left", Ledger: leftLedger, Query: json.RawMessage(query), Asset: templates.AssetWildcard},
+			{ID: "right", Ledger: rightLedger, Query: json.RawMessage(query), Asset: templates.AssetWildcard},
+		},
+		Terms: []templates.BalanceEquationTerm{
+			{Source: "left", Coefficient: 1},
+			{Source: "right", Coefficient: -1},
+		},
+		Tolerance: tolerance,
 	}
 	b, err := json.Marshal(spec)
 	if err != nil {
@@ -460,7 +474,7 @@ func mustCreateRule(t *testing.T, svc *Service, spec json.RawMessage) *models.Ru
 	t.Helper()
 	rule, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
 		Name:         "test-rule",
-		TemplateKind: models.TemplateSourceParity,
+		TemplateKind: models.TemplateBalanceEquation,
 		TemplateSpec: spec,
 		Severity:     models.SeverityHigh,
 	})
@@ -501,7 +515,7 @@ func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
 	svc, _ := newOrchestrationService(t, &orchestrationLedger{})
 	_, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
 		Name:         "r",
-		TemplateKind: models.TemplateSourceParity,
+		TemplateKind: models.TemplateBalanceEquation,
 		TemplateSpec: json.RawMessage(`{}`), // missing left/right sources
 		Severity:     models.SeverityHigh,
 	})
@@ -513,7 +527,7 @@ func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
 // A cron schedule's expression is validated at create time.
 func TestCreateRuleRequest_Validate_CronSchedule(t *testing.T) {
 	base := func() *CreateRuleRequest {
-		return &CreateRuleRequest{Name: "r", TemplateKind: models.TemplateAccountThreshold, TemplateSpec: json.RawMessage(`{}`)}
+		return &CreateRuleRequest{Name: "r", TemplateKind: models.TemplateBalanceBounds, TemplateSpec: json.RawMessage(`{}`)}
 	}
 	cases := map[string]struct {
 		sched   *models.Schedule
@@ -880,7 +894,7 @@ func TestEvaluate_PeriodicOpensFreshCasePerPeriod(t *testing.T) {
 	svc, store := newOrchestrationService(t, l)
 	rule, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
 		Name:         "monthly-recon",
-		TemplateKind: models.TemplateSourceParity,
+		TemplateKind: models.TemplateBalanceEquation,
 		TemplateSpec: paritySpec(t, "sub", "control", `"q"`, nil),
 		Severity:     models.SeverityHigh,
 		PeriodType:   models.PeriodTypeMonthly,

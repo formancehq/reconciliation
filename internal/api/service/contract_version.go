@@ -10,11 +10,15 @@ import (
 	"github.com/google/uuid"
 )
 
+// createContractVersion stamps a new record. An unscoped context used to mean
+// V1 — the unprefixed routes; with V1 retired there is one live contract, so an
+// unscoped caller (a test, or an internal service call) gets it rather than a
+// version with no template catalogue.
 func createContractVersion(ctx context.Context) models.ContractVersion {
 	if version, ok := contractversion.FromContext(ctx); ok {
 		return version
 	}
-	return models.ContractVersionV1
+	return models.ContractVersionV2
 }
 
 func requireContractVersion(ctx context.Context, actual models.ContractVersion) error {
@@ -25,13 +29,12 @@ func requireContractVersion(ctx context.Context, actual models.ContractVersion) 
 	return nil
 }
 
+// validateTemplateContract checks the kind against the catalogue its contract
+// answers to. Only one contract is live; a record stamped with the retired V1
+// matches no catalogue, which is what routes it to the engine-error path rather
+// than letting it evaluate against a template it never declared.
 func validateTemplateContract(version models.ContractVersion, kind models.TemplateKind) error {
 	switch version.Effective() {
-	case models.ContractVersionV1:
-		switch kind {
-		case models.TemplateLedgerInvariant, models.TemplateSourceParity, models.TemplateAccountThreshold:
-			return nil
-		}
 	case models.ContractVersionV2:
 		switch kind {
 		case models.TemplateBalanceEquation, models.TemplateExchangeRateBounds,

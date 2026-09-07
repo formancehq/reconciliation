@@ -3,8 +3,10 @@
 // rule.compiled_cel explainability field), and an end-to-end evaluation flow
 // that produces one Outcome per fingerprint axis (typically per-asset).
 //
-// V1 and V2 templates share this registry and are isolated at the HTTP and
-// persistence contract seams. Raw CEL remains internal-only; see ADR-001.
+// Every template uses the named-source model (ADR-004): stable source IDs, one
+// declared asset each — or the "*" wildcard to fan out per asset. The positional
+// V1 shapes were retired once balance_bounds gave account_threshold a target;
+// see the ADR-004 amendment. Raw CEL remains internal-only; see ADR-001.
 package templates
 
 import (
@@ -93,12 +95,9 @@ func NewRegistry(evaluators ...Evaluator) *Registry {
 	return r
 }
 
-// DefaultRegistry returns a Registry with all shipped V1 and V2 templates.
+// DefaultRegistry returns a Registry with every shipped template.
 func DefaultRegistry() *Registry {
 	return NewRegistry(
-		NewLedgerInvariant(),
-		NewAccountThreshold(),
-		NewSourceParity(),
 		NewBalanceEquation(),
 		NewExchangeRateBounds(),
 		NewSourceConsensus(),

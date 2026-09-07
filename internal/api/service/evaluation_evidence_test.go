@@ -11,15 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The evidence a two-source parity check retains. The V1 shape carried
+// left/right scalars and an int64 tolerance; the balance_equation that replaced
+// it carries a signed residual and string amounts throughout (V2 encodes amounts
+// as strings so JSON cannot lose precision).
 type retainedOutcomeEvidence struct {
-	Asset        string `json:"asset"`
-	LeftSource   string `json:"leftSource"`
-	LeftBalance  string `json:"leftBalance"`
-	RightSource  string `json:"rightSource"`
-	RightBalance string `json:"rightBalance"`
-	Difference   string `json:"difference"`
-	SignedDiff   string `json:"signedDiff"`
-	Tolerance    int64  `json:"tolerance"`
+	Asset            string `json:"asset"`
+	Residual         string `json:"residual"`
+	AbsoluteResidual string `json:"absoluteResidual"`
+	Tolerance        string `json:"tolerance"`
 }
 
 type retainedOutcome struct {
@@ -66,14 +66,10 @@ func TestEvaluateRule_RetainsFreshSuccessfulResolutionEvidence(t *testing.T) {
 		Fingerprint: "asset:USD/2",
 		Passed:      false,
 		Evidence: retainedOutcomeEvidence{
-			Asset:        "USD/2",
-			LeftSource:   "ledger:sub",
-			LeftBalance:  "350",
-			RightSource:  "ledger:control",
-			RightBalance: "300",
-			Difference:   "50",
-			SignedDiff:   "50",
-			Tolerance:    20,
+			Asset:            "USD/2",
+			AbsoluteResidual: "50",
+			Residual:         "50",
+			Tolerance:        "20",
 		},
 	}, failing[0])
 	require.JSONEq(t, string(failingEvaluation.Evidence), string(fakeStore.captures[0].Evidence))
@@ -96,18 +92,14 @@ func TestEvaluateRule_RetainsFreshSuccessfulResolutionEvidence(t *testing.T) {
 		Fingerprint: "asset:USD/2",
 		Passed:      true,
 		Evidence: retainedOutcomeEvidence{
-			Asset:        "USD/2",
-			LeftSource:   "ledger:sub",
-			LeftBalance:  "350",
-			RightSource:  "ledger:control",
-			RightBalance: "340",
-			Difference:   "10",
-			SignedDiff:   "10",
-			Tolerance:    20,
+			Asset:            "USD/2",
+			AbsoluteResidual: "10",
+			Residual:         "10",
+			Tolerance:        "20",
 		},
 	}, successful[0])
-	require.NotEqual(t, failing[0].Evidence.RightBalance, successful[0].Evidence.RightBalance)
-	require.NotEqual(t, failing[0].Evidence.Difference, successful[0].Evidence.Difference)
+	require.NotEqual(t, failing[0].Evidence.Residual, successful[0].Evidence.Residual)
+	require.NotEqual(t, failing[0].Evidence.AbsoluteResidual, successful[0].Evidence.AbsoluteResidual)
 	require.JSONEq(t, string(passingEvaluation.Evidence), string(fakeStore.captures[1].Evidence))
 	require.Nil(t, fakeStore.activeFor(rule.ID, "asset:USD/2"))
 	require.Equal(t, models.AlertResolved, fakeStore.alertFor(rule.ID, "asset:USD/2").Status)
@@ -162,11 +154,9 @@ func TestEvaluateRule_MixedFailureAndSuccessfulResolutionEvidence(t *testing.T) 
 	mixed := retainedOutcomesByFingerprint(t, fakeStore.captures[1].Evidence)
 	require.Len(t, mixed, 3)
 	require.True(t, mixed["asset:USD/2"].Passed)
-	require.Equal(t, "350", mixed["asset:USD/2"].Evidence.RightBalance)
-	require.Equal(t, "0", mixed["asset:USD/2"].Evidence.Difference)
+	require.Equal(t, "0", mixed["asset:USD/2"].Evidence.AbsoluteResidual)
 	require.False(t, mixed["asset:EUR/2"].Passed)
-	require.Equal(t, "60", mixed["asset:EUR/2"].Evidence.RightBalance)
-	require.Equal(t, "30", mixed["asset:EUR/2"].Evidence.Difference)
+	require.Equal(t, "30", mixed["asset:EUR/2"].Evidence.AbsoluteResidual)
 	require.True(t, mixed["asset:GBP/2"].Passed)
 	require.Nil(t, fakeStore.activeFor(rule.ID, "asset:USD/2"))
 	require.NotNil(t, fakeStore.activeFor(rule.ID, "asset:EUR/2"))

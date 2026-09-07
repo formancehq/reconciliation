@@ -47,7 +47,10 @@ func getTime(md map[string]*commonpb.MetadataValue, key string) time.Time {
 func getContractVersion(md map[string]*commonpb.MetadataValue) models.ContractVersion {
 	v, err := strconv.Atoi(getStr(md, schema.MetaContractVersion))
 	if err != nil || v == 0 {
-		return models.ContractVersionV1
+		// Absent means "written before the stamp existed". That used to decode as
+		// V1; with V1 retired it resolves to the live contract, so such a record
+		// stays visible rather than being filtered out of every list forever.
+		return models.ContractVersionV2
 	}
 	return models.ContractVersion(v)
 }

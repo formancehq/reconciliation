@@ -51,7 +51,7 @@ func TestCaptureFromTransaction_RoundTrip(t *testing.T) {
 	require.Equal(t, "scheduled", c.Trigger)
 	require.True(t, at.Equal(c.CapturedAt), "captured_at round-trips")
 	require.JSONEq(t, `{"delta":"5"}`, string(c.Evidence))
-	require.Equal(t, models.ContractVersionV1, c.ContractVersion, "legacy captures default to V1")
+	require.Equal(t, models.ContractVersionV2, c.ContractVersion, "a capture predating the stamp resolves to the live contract, not retired V1")
 
 	v2tx := captureTx(8, ruleID, "2026-03", evalID.String(), "fail", "scheduled", at, `{}`)
 	v2tx.Metadata[schema.CaptureMetaContractVersion] = strVal("2")

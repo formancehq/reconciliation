@@ -66,8 +66,10 @@ func TestListRuleActivitiesEmptyStreamRequiresMatchingRule(t *testing.T) {
 		wantMissing bool
 	}{
 		{name: "missing rule", query: models.ContractVersionV2, wantMissing: true},
-		{name: "matching rule", storedRule: newRule(uuid.New()), query: models.ContractVersionV1},
-		{name: "other contract", storedRule: newRule(uuid.New()), query: models.ContractVersionV2, wantMissing: true},
+		// An unstamped rule resolves to the live contract, so it matches a V2 query
+		// and not one naming the retired V1.
+		{name: "matching rule", storedRule: newRule(uuid.New()), query: models.ContractVersionV2},
+		{name: "other contract", storedRule: newRule(uuid.New()), query: models.ContractVersionV1, wantMissing: true},
 	}
 
 	for _, tt := range tests {

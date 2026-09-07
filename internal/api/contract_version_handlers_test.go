@@ -22,33 +22,36 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func TestV1RenderersDoNotExposeV2AuditFields(t *testing.T) {
+func TestRenderersAlwaysExposeAuditFields(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC()
 	ruleJSON, err := json.Marshal(renderRule(&models.Rule{
-		ID: uuid.New(), ContractVersion: models.ContractVersionV1, Revision: "sha256:revision",
-		Name: "v1", TemplateKind: models.TemplateSourceParity, TemplateSpec: json.RawMessage(`{}`),
+		ID: uuid.New(), ContractVersion: models.ContractVersionV2, Revision: "sha256:revision",
+		Name: "v1", TemplateKind: models.TemplateBalanceEquation, TemplateSpec: json.RawMessage(`{}`),
 		Enabled: true, Severity: models.SeverityMedium, PeriodType: models.PeriodTypeContinuous,
 		CreatedAt: now, UpdatedAt: now,
 	}))
 	require.NoError(t, err)
 	var rule map[string]any
 	require.NoError(t, json.Unmarshal(ruleJSON, &rule))
-	require.NotContains(t, rule, "contractVersion")
-	require.NotContains(t, rule, "revision")
+	// These were V2-only while two contracts coexisted. With V1 retired they are
+	// unconditional, and this is the pin that keeps them from silently going
+	// missing again.
+	require.Contains(t, rule, "contractVersion")
+	require.Contains(t, rule, "revision")
 
 	captureJSON, err := json.Marshal(renderCapture(&models.Capture{
-		TransactionID: 1, ContractVersion: models.ContractVersionV1, RuleID: uuid.New(),
-		EvaluationID: uuid.New(), PeriodID: "continuous", TemplateKind: string(models.TemplateSourceParity),
+		TransactionID: 1, ContractVersion: models.ContractVersionV2, RuleID: uuid.New(),
+		EvaluationID: uuid.New(), PeriodID: "continuous", TemplateKind: string(models.TemplateBalanceEquation),
 		Verdict: "pass", Trigger: "manual", CapturedAt: now, RuleRevision: "sha256:revision",
 		PIT: now, StartedAt: now, Result: models.EvaluationPass,
 	}))
 	require.NoError(t, err)
 	var capture map[string]any
 	require.NoError(t, json.Unmarshal(captureJSON, &capture))
-	for _, field := range []string{"contractVersion", "ruleRevision", "pit", "startedAt", "result", "error"} {
-		require.NotContains(t, capture, field)
+	for _, field := range []string{"contractVersion", "ruleRevision", "pit", "startedAt", "result"} {
+		require.Contains(t, capture, field)
 	}
 }
 

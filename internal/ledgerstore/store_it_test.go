@@ -70,7 +70,7 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 	rule := &models.Rule{
 		ID:           id,
 		Name:         "it-rule",
-		TemplateKind: models.TemplateLedgerInvariant,
+		TemplateKind: models.TemplateBalanceEquation,
 		TemplateSpec: json.RawMessage(`{"tolerance":"0"}`),
 		Enabled:      true,
 		Severity:     models.SeverityHigh,
@@ -379,7 +379,7 @@ func TestIntegration_Lists(t *testing.T) {
 	name := "it-list-" + uuid.NewString()
 	now := time.Now().Truncate(time.Microsecond).UTC()
 	require.NoError(t, store.CreateRule(ctx, &models.Rule{
-		ID: uuid.New(), Name: name, TemplateKind: models.TemplateLedgerInvariant,
+		ID: uuid.New(), Name: name, TemplateKind: models.TemplateBalanceEquation,
 		Enabled: true, Severity: models.SeverityHigh, PeriodType: models.PeriodTypeContinuous,
 		CreatedAt: now, UpdatedAt: now,
 	}))
@@ -473,7 +473,7 @@ func TestIntegration_RecordCapture(t *testing.T) {
 
 	in := recstore.CaptureInput{
 		RuleID:       ruleID,
-		TemplateKind: string(models.TemplateSourceParity),
+		TemplateKind: string(models.TemplateSourceConsensus),
 		PeriodID:     period,
 		EvaluationID: uuid.New(),
 		CapturedAt:   time.Now().Truncate(time.Microsecond).UTC(),
@@ -521,9 +521,9 @@ func TestIntegration_ListCaptures(t *testing.T) {
 	t0 := time.Now().Truncate(time.Microsecond).UTC()
 
 	// Three captures: two in 2026-03 (oldest, newest), one in 2026-04 (middle).
-	oldest := recstore.CaptureInput{RuleID: ruleID, TemplateKind: string(models.TemplateSourceParity), PeriodID: "2026-03", EvaluationID: uuid.New(), CapturedAt: t0, Verdict: "pass", Trigger: "scheduled", Evidence: json.RawMessage(`[]`)}
-	middle := recstore.CaptureInput{RuleID: ruleID, TemplateKind: string(models.TemplateSourceParity), PeriodID: "2026-04", EvaluationID: uuid.New(), CapturedAt: t0.Add(time.Second), Verdict: "pass", Trigger: "scheduled", Evidence: json.RawMessage(`[]`)}
-	newest := recstore.CaptureInput{RuleID: ruleID, TemplateKind: string(models.TemplateSourceParity), PeriodID: "2026-03", EvaluationID: uuid.New(), CapturedAt: t0.Add(2 * time.Second), Verdict: "fail", Trigger: "manual", Evidence: json.RawMessage(`{"delta":"5"}`)}
+	oldest := recstore.CaptureInput{RuleID: ruleID, TemplateKind: string(models.TemplateSourceConsensus), PeriodID: "2026-03", EvaluationID: uuid.New(), CapturedAt: t0, Verdict: "pass", Trigger: "scheduled", Evidence: json.RawMessage(`[]`)}
+	middle := recstore.CaptureInput{RuleID: ruleID, TemplateKind: string(models.TemplateSourceConsensus), PeriodID: "2026-04", EvaluationID: uuid.New(), CapturedAt: t0.Add(time.Second), Verdict: "pass", Trigger: "scheduled", Evidence: json.RawMessage(`[]`)}
+	newest := recstore.CaptureInput{RuleID: ruleID, TemplateKind: string(models.TemplateSourceConsensus), PeriodID: "2026-03", EvaluationID: uuid.New(), CapturedAt: t0.Add(2 * time.Second), Verdict: "fail", Trigger: "manual", Evidence: json.RawMessage(`{"delta":"5"}`)}
 
 	for _, in := range []recstore.CaptureInput{oldest, middle, newest} {
 		require.NoError(t, store.RecordCapture(ctx, in))

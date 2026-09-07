@@ -9,29 +9,6 @@ import (
 	"github.com/formancehq/reconciliation/internal/engine"
 )
 
-// Scope selects how a template reads the accounts a source matches:
-//   - aggregate  (default): sum the matched set into one balance per asset.
-//     A query matching a single account is the degenerate case.
-//   - per_account: fan out — evaluate each matched account individually,
-//     producing one Outcome per (account, asset). The account address is the
-//     alignment key and fingerprint axis.
-type Scope string
-
-const (
-	ScopeAggregate  Scope = "aggregate"
-	ScopePerAccount Scope = "per_account"
-)
-
-// Valid reports whether s is a recognised scope (empty defaults to aggregate).
-func (s Scope) Valid() bool {
-	switch s {
-	case "", ScopeAggregate, ScopePerAccount:
-		return true
-	default:
-		return false
-	}
-}
-
 // SourceKind discriminates how a source produces its per-asset amount. It is an
 // optional discriminator on SourceSpec, defaulting to "ledger" so existing specs
 // (which omit it) stay valid — the non-breaking seam ADR-001 §7 reserved.
@@ -158,23 +135,6 @@ func (s SourceSpec) resolveAccounts(ctx context.Context, resolvers engine.Resolv
 func accountAddressQuery(address string) json.RawMessage {
 	b, _ := json.Marshal(map[string]any{"$match": map[string]any{"address": address}})
 	return b
-}
-
-// celTermForAccount renders the kernel term reading one account's balance:
-// balance(ledgerSet(ledger, {address: addr}), asset). Used for the per-account
-// evidence.compiledCEL (explainability). Ledger sources only.
-func (s SourceSpec) celTermForAccount(address, assetExpr string) string {
-	return fmt.Sprintf("balance(ledgerSet(%s, %s), %s)", celString(s.Ledger), celJSON(accountAddressQuery(address)), assetExpr)
-}
-
-// accountsByAddress indexes resolved accounts by address → per-asset balances,
-// so two per-account sources can be aligned by address for comparison.
-func accountsByAddress(accts []engine.Account) map[string]map[string]*big.Int {
-	out := make(map[string]map[string]*big.Int, len(accts))
-	for _, a := range accts {
-		out[a.Address] = a.Balances
-	}
-	return out
 }
 
 // label is a short, human-readable identifier for this source, used in evidence

@@ -12,16 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestContractVersionTemplateCatalogsAreDisjoint(t *testing.T) {
+// The catalogue is now single: every kind belongs to the one live contract, and
+// the retired V1 kinds belong to none.
+func TestContractVersionAcceptsOnlyTheLiveCatalog(t *testing.T) {
 	t.Parallel()
 
-	require.NoError(t, validateTemplateContract(models.ContractVersionV1, models.TemplateSourceParity))
+	for _, kind := range []models.TemplateKind{
+		models.TemplateBalanceEquation,
+		models.TemplateExchangeRateBounds,
+		models.TemplateSourceConsensus,
+		models.TemplateCoverageRatioBounds,
+		models.TemplateStaleHolds,
+		models.TemplateBalanceBounds,
+	} {
+		require.NoError(t, validateTemplateContract(models.ContractVersionV2, kind), kind)
+	}
+	for _, retired := range []string{"ledger_invariant", "account_threshold", "source_parity"} {
+		require.Error(t, validateTemplateContract(models.ContractVersionV2, models.TemplateKind(retired)), retired)
+	}
+	// A record predating the contract stamp decodes as V1; it can no longer name
+	// a template this build knows, which is what routes it to the ERROR path.
 	require.Error(t, validateTemplateContract(models.ContractVersionV1, models.TemplateBalanceEquation))
-	require.NoError(t, validateTemplateContract(models.ContractVersionV2, models.TemplateBalanceEquation))
-	require.NoError(t, validateTemplateContract(models.ContractVersionV2, models.TemplateExchangeRateBounds))
-	require.NoError(t, validateTemplateContract(models.ContractVersionV2, models.TemplateSourceConsensus))
-	require.NoError(t, validateTemplateContract(models.ContractVersionV2, models.TemplateCoverageRatioBounds))
-	require.Error(t, validateTemplateContract(models.ContractVersionV2, models.TemplateSourceParity))
 }
 
 func TestRuleOperationsHideCrossVersionIDs(t *testing.T) {
