@@ -5,7 +5,7 @@ Templates are the public rule surface — raw CEL is internal-only (see
 (for the persisted `compiled_cel`), and an end-to-end evaluator that produces one `Outcome` per
 fingerprint axis.
 
-> Status: all three V1 templates and four additive V2 templates are ✅ implemented. V2 does not
+> Status: all three V1 templates and five additive V2 templates are ✅ implemented. V2 does not
 > rename or reinterpret any V1 field or evidence key.
 
 ---
@@ -564,6 +564,139 @@ This remains separate from `exchange_rate_bounds`: FX compares two differently d
 with asset-precision conversion, while coverage compares two same-asset portfolios. It also remains
 separate from `balance_equation`: a ratio bound is scale-invariant and cannot be represented by one
 fixed residual tolerance.
+
+### 8. `stale_holds`
+
+The catalog's only **time-based** control: it flags held funds whose deadline has passed — or is
+about to. Designed for card programs where an issuer places holds with an expiry (see
+[stale-holds.md](./stale-holds.md) for the design and its assumptions).
+
+A **hold** is one ledger account carrying a non-zero balance and a deadline in its metadata —
+typically **one account per authorization**, which is what lets the rule speak about an individual
+hold rather than a pooled reserve (see [stale-holds.md §5](./stale-holds.md)). The deadline is the
+issuer's expiry when the hold has one, otherwise its creation instant plus `maxAge`.
+
+```json
+{
+  "source": {
+    "id": "enfuce-holds",
+    "ledger": "cards",
+    "query": { "$and": [
+      { "$match": { "address": "holds:enfuce:*" } },
+      { "$match": { "metadata[hold_status]": "active" } }
+    ] },
+    "asset": "USD/2"
+  },
+  "deadline": {
+    "expiryKey": "hold_expires_at",
+    "createdKey": "hold_created_at",
+    "encoding": "datetime",
+    "maxAge": "48h"
+  },
+  "mode": "stale",
+  "scope": "per_hold",
+  "identityKeys": ["enfuce_auth_id", "card_id"],
+  "maxHoldsScanned": 500
+}
+```
+
+**Nothing about the metadata is hardcoded.** `expiryKey`, `createdKey`, `encoding` and `maxAge` are
+per-rule fields, as is the account selector — the template imposes no key naming, only that whatever
+key a rule names is queryable on its ledger.
+
+**How age is read.** Ledger V3 has no point-in-time read ([ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md)
+— every source reads live), so "how long has this sat here" cannot be answered by comparing now
+against then. It is read from state instead, and the comparison is done **by the ledger**: the
+evaluation clock is materialised into an integer cutoff and appended to the rule's query as a
+`$lte` (and, for a warning band, `$gt`) clause on the deadline key. Consequences:
+
+- The scan and the evidence scale with the number of **stale** holds, not the number of holds.
+- The deadline key must be queryable — a `datetime` or integer metadata key with a ready accounts
+  index. `Queries` returns the *augmented* query, so an unindexed key is rejected at **rule create**.
+- The kernel stays time-free. There is no `now()` builtin: the clock enters as a literal, so the
+  persisted `compiledCEL` is an exact, re-runnable record of the predicate that evaluation applied.
+
+**Validation**
+
+- `source` is a ledger source (an `account_metadata` source is rejected — this template reads held
+  balances, not synced scalars).
+- `deadline` sets `expiryKey`, `createdKey`, or both. `maxAge` is required with `createdKey` and
+  rejected without it. Both are Go durations (`"48h"`, `"90m"`).
+- `encoding` is `datetime` (default), `epoch_seconds`, `epoch_millis`, or `epoch_micros`. A
+  `datetime` key is stored by the ledger as epoch micros and reads back as RFC3339 — which is why
+  `metadataInt` cannot read one. Epoch nanoseconds are not offered: query values travel as JSON
+  numbers and are rejected past 2^53.
+- `warnWithin` is required with `mode: approaching` and rejected with `mode: stale`.
+- `identityKeys` (optional, at most 8, non-empty and distinct) names account-metadata keys copied
+  into each flagged hold's evidence, so an alert reads *"authorization AUTH-8801 on card_42"* rather
+  than only a ledger address. They are **labels, not predicates**: read off the account already
+  fetched, so they need **no metadata index**, and a key a hold does not carry is omitted rather than
+  failing it. Alert evidence is durable and widely readable — keep cardholder PII out of it.
+
+**Released holds.** Releasing a hold zeroes its volume but keeps the account row and its metadata, so
+a released hold still matches a deadline filter. Balances are not filterable in a query, so
+zero-balance accounts are dropped after the read and reported as `holdsReleased`. Give the rule's
+own query a liveness predicate (`metadata[hold_status] = active`, above) if released holds accumulate
+— otherwise the matched set grows without bound and eventually trips the accounts budget.
+
+**Warning vs breach.** Severity is declared per rule, so "warn early, page late" is **two rules**: an
+`approaching` rule at a low severity and a `stale` rule at a high one. `approaching` matches a
+*band* (`now < deadline <= now + warnWithin`), so a hold crossing into stale leaves the warning
+rule's outcomes and its warning alert auto-resolves as the stale alert opens. Set `warnWithin` longer
+than the rule's evaluation interval, or a hold can cross the band between two runs without warning.
+
+**Fingerprint** — `asset:<asset>|hold:<address>` (`per_hold`) · `asset:<asset>` (`aggregate`, and the
+summary outcome a clean `per_hold` run emits)
+
+In `per_hold` scope only failing holds produce outcomes; a hold that clears stops appearing and the
+service's disappearance sweep auto-resolves its alert. A run with nothing stale emits one passing
+`asset:<asset>` outcome so a clean evaluation still records what was checked.
+
+Evidence carries `mode`, `basis` (`expiry` / `created_at`), `deadline`, `evaluatedAt`, the amount,
+`overdueSeconds` (or `dueInSeconds` in `approaching` mode), `compiledCEL`, and — when `identityKeys`
+is set — an `identity` object with the labels the hold carries. Summary and aggregate
+outcomes carry the scan instead: `deadlineOnOrBefore` (and `deadlineAfter` for a band),
+`holdsMatched`, `holdsBudget`, `holdsReleased`, `holdsFlagged`, `amountFlagged`, `oldestDeadline`, and — in
+`aggregate` scope — a `holds` sample bounded to 20 entries with `holdsSampled` saying how many.
+
+> ⚠️ `per_hold` opens **one alert per stale hold** — one control-ledger read and write each. That is
+> the point for a programme with a handful of stuck authorisations, and the wrong shape when a
+> systemic failure strands thousands at once. Bound it with `maxHoldsScanned` (below), and use
+> `aggregate` where the stale set is expected to be large.
+
+**`maxHoldsScanned`** caps how many hold accounts one evaluation reads, below the engine-wide
+accounts budget (`MaxAccountsScanned`, 50 000 by default). Three things to understand about it:
+
+- **It bounds the read, not the alert count.** The matched set is whatever the deadline filter
+  returns — stale holds *plus* any released hold still carrying an expired deadline. In `per_hold`
+  scope the alert count follows that set, which is why the cap bounds the blast radius; but while the
+  release question is unresolved it may equally trip on accumulated dead holds, which makes it a
+  useful tripwire for exactly that.
+- **Exceeding it fails the evaluation** — recorded as `ERROR` with an engine-health alert, and
+  **existing alerts are left untouched** (the transition plan never runs). It deliberately does not
+  truncate: emitting a subset would make the disappearance sweep auto-resolve the holds it dropped,
+  closing alerts *because* there were too many problems.
+- **It never raises the engine's budget.** That limit protects the ledger from any single evaluation
+  and is not a rule author's to relax; the effective value is recorded in evidence as `holdsBudget`.
+- **`per_hold` does not inherit the engine's budget by default — it caps itself at 1000.** The engine
+  limit (50 000) is sized to protect the *ledger* from one runaway scan; in `per_hold` scope every
+  matched hold can become an alert, each costing a control-ledger read and write and a line in an
+  operator's inbox, so that limit protects the wrong thing. A rule that legitimately watches more
+  holds says so with `maxHoldsScanned`. `aggregate` emits one outcome however large the set, so it
+  keeps the engine's budget.
+
+Independently of this, the **service** caps how many alerts one evaluation may newly open across any
+template (200 by default) and withholds the whole plan above it — see
+[workflows.md §6b](./workflows.md). `maxHoldsScanned` bounds this rule's read; that cap bounds the
+module's alert output.
+
+There is deliberately **no "open at most N alerts" setting on the template**. Any cap on emitted outcomes has the
+auto-resolve problem above, and switching an over-budget rule to a summary outcome would change its
+fingerprints — resolving the whole open set as a side effect. Choosing `aggregate` up front is the
+supported way to get one alert instead of many.
+
+> ⏳ The web UI has no dedicated create form or evidence renderer for `stale_holds` yet — rules are
+> created through the API and their evidence renders through the generic V2 fallback.
 
 ---
 

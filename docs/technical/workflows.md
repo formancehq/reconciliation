@@ -109,6 +109,8 @@ sequenceDiagram
   capture and every alert write run sequentially and each is individually idempotent per (rule,
   period, evaluation) — there is no cross-store transaction to roll back.
 - Resolver / kernel errors short-circuit and raise an `engine.error` meta-alert (§6).
+- A plan that would open more new alerts than the service permits is withheld in full and raises an
+  `alert.cap` meta-alert (§6b).
 
 ---
 
@@ -223,6 +225,54 @@ distinct `engine.error` fingerprint + `kind: engine.error` label) instead of a d
 evaluation returns `ERROR` and records an immutable error capture before the
 meta-alert is opened. Translation lives in
 [engine/errors.go](../../internal/engine/errors.go).
+
+---
+
+## 6b. The new-alert cap — withholding a runaway plan
+
+```mermaid
+flowchart TB
+    Plan[planAlertTransitions] --> Count{"new alerts ><br/>maxNewAlerts?"}
+    Count -- no --> Drive[driveAlertTransitions<br/>open / update / auto-resolve]
+    Count -- yes --> Hold["withholdAlertTransitions<br/>apply NOTHING"]
+    Hold --> Meta["Open alert.cap meta-alert<br/>fingerprint: alert.cap<br/>label kind: alert.cap"]
+    Hold -.evaluation + capture still recorded.- Rec[(_recon)]
+```
+
+A fan-out rule — `account_threshold` mode `per_account`, `source_parity` scope `per_account`,
+`stale_holds` scope `per_hold` — turns matched accounts into alerts. The engine's accounts budget
+caps how much of the *ledger* one evaluation may read (50 000); it says nothing about how many alerts
+that read becomes, and each alert is a control-ledger read and write, a notification, and a line in
+an inbox someone must triage. A rule that finds hundreds of new breaks at once is reporting one
+systemic failure; opening hundreds of tickets buries it.
+
+So the service counts the alerts a plan would **open** — failing fingerprints with no alert already
+active — and if that exceeds `DefaultMaxNewAlertsPerEvaluation` (200, overridable per service with
+`WithMaxNewAlertsPerEvaluation`; zero disables it) it applies **none** of the plan and raises one
+`alert.cap` meta-alert naming the rule, the count, the cap, and a bounded fingerprint sample.
+
+Three properties are load-bearing:
+
+- **All-or-nothing, never a subset.** Applying part of a plan would leave the skipped outcomes absent
+  from this evaluation, and the disappearance sweep resolves any active fingerprint an evaluation
+  does not re-emit — so a truncated plan would auto-resolve alerts *because* there were too many
+  problems to report. Withholding also leaves this run's genuine resolutions unapplied; they are
+  re-derived from live state on the next evaluation that fits, whereas a wrongly-resolved alert is a
+  silent loss.
+- **Only opens are counted.** Updates to already-open alerts and auto-resolutions never trip the cap.
+  Counting them would strand a rule that is steadily failing on an already-alerted set — it could
+  never update those alerts, nor resolve them when they finally clear.
+- **The evaluation is unaffected.** It is recorded with its real verdict (`FAIL`, not `ERROR` — the
+  check ran fine) and its full outcome evidence, and the capture is written as usual. Nothing is lost
+  from the audit record; only the alert writes are withheld.
+
+Unlike `engine.error`, the `alert.cap` meta-alert is scoped to the **evaluation's own period**: a
+withheld plan is a fact about this rule in this period, so the next run that fits under the cap sweeps
+it away as a disappeared fingerprint rather than leaving an operator to resolve it by hand.
+
+Templates can bound their own fan-out further — `stale_holds` caps `per_hold` reads at 1000 by
+default via `maxHoldsScanned` ([templates.md](./templates.md)). The two are independent layers: the
+template cap bounds one rule's *read*, this cap bounds the *module's* alert output.
 
 ---
 

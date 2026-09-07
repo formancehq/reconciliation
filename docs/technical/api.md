@@ -506,3 +506,7 @@ All endpoints share the existing `ErrorResponse` shape:
 | 409 | `CONFLICT`           | Concurrent transition lost the ledger marker guard (compare-and-swap); low-concurrency control-plane, rare (see F22 in the migration log) |
 | 422 | `BUSINESS_RULE`      | E.g. accept-without-note, resolve-on-already-resolved |
 | 500 | `INTERNAL`           | Engine error, resolver timeout — also raises an `engine.error` meta-alert |
+
+An evaluation that would open more new alerts than the service permits succeeds normally (200) but
+withholds its alert transitions and raises an `alert.cap` meta-alert instead — see
+[workflows.md §6b](./workflows.md).
