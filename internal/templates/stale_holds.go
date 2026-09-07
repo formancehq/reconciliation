@@ -207,6 +207,13 @@ func (t *StaleHolds) Validate(raw json.RawMessage) error {
 	if err := spec.Source.validateAt("source"); err != nil {
 		return err
 	}
+	// Per-asset fan-out is not wired through this template's hold scan yet: a
+	// hold's amount, deadline and identity are per (account, asset), so the
+	// wildcard needs its own outcome shape rather than the shared one.
+	if spec.Source.wildcard() {
+		return fmt.Errorf("%w: stale_holds needs a named asset — asset %q is not supported here yet (field: source.asset)",
+			ErrInvalidSpec, AssetWildcard)
+	}
 
 	switch spec.Deadline.Encoding {
 	case EncodingDatetime, EncodingEpochSeconds, EncodingEpochMillis, EncodingEpochMicros:

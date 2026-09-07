@@ -72,13 +72,26 @@ func (t *SourceConsensus) Evaluate(ctx context.Context, raw json.RawMessage, eng
 		return nil, err
 	}
 
+	expression, _ := t.Explain(raw)
+
+	return evaluatePerAsset(ctx, spec.Sources, resolvers, eng.MaxAccountsScanned(),
+		func(asset string, resolvedSources map[string]resolvedV2Source) (Outcome, error) {
+			return sourceConsensusOutcome(&spec, asset, resolvedSources, tolerance, expression), nil
+		})
+}
+
+// sourceConsensusOutcome is the per-asset arithmetic: every source must be
+// present and the widest spread must stay within tolerance.
+func sourceConsensusOutcome(
+	spec *SourceConsensusSpec,
+	asset string,
+	resolvedSources map[string]resolvedV2Source,
+	tolerance *big.Int,
+	expression string,
+) Outcome {
 	sourceEvidence := make([]map[string]any, 0, len(spec.Sources))
 	missing := make([]string, 0)
 	var minimum, maximum *resolvedV2Source
-	resolvedSources, err := resolveV2Sources(ctx, spec.Sources, resolvers, eng.MaxAccountsScanned())
-	if err != nil {
-		return nil, err
-	}
 	for _, source := range spec.Sources {
 		resolved := resolvedSources[source.ID]
 		sourceEvidence = append(sourceEvidence, resolved.evidence())
@@ -96,9 +109,7 @@ func (t *SourceConsensus) Evaluate(ctx context.Context, raw json.RawMessage, eng
 	}
 
 	spread := new(big.Int).Sub(maximum.Balance, minimum.Balance)
-	expression, _ := t.Explain(raw)
-	asset := spec.Sources[0].Asset
-	return []Outcome{{
+	return Outcome{
 		Fingerprint: fingerprintFor("asset", asset),
 		Passed:      len(missing) == 0 && spread.Cmp(tolerance) <= 0,
 		Evidence: map[string]any{
@@ -115,7 +126,7 @@ func (t *SourceConsensus) Evaluate(ctx context.Context, raw json.RawMessage, eng
 			"missingSources": missing,
 			"compiledCEL":    expression,
 		},
-	}}, nil
+	}
 }
 
 func requireSameSourceAsset(sources []V2NamedSource, operation string) error {

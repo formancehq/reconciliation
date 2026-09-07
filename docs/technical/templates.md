@@ -47,6 +47,15 @@ stable `id` and one declared `asset`; operations refer to IDs rather than positi
 fields. The V2 shape and arithmetic are fixed by
 [ADR-004](../prd/adr-004-multi-source-comparisons.md).
 
+**Checking every asset.** A source may declare `asset: "*"` instead of a named denomination, and the
+operation fans out to one outcome per asset — the shape a V1 rule with a per-asset tolerance map has
+always had, and what makes a multi-asset V1 rule expressible as a *single* V2 rule rather than one
+per asset. Alignment is by exact asset code; a spec must be wholly `*` or wholly named, since a mixed
+one has no defined alignment. Available on `balance_equation`, `source_consensus` and
+`coverage_ratio_bounds`; rejected on `account_metadata` sources (the key represents one declared
+asset), by `exchange_rate_bounds` (a rate names its pair), and for now by `stale_holds` (a hold's
+amount and deadline are per account *and* asset, which needs its own outcome shape).
+
 **Scope.** A ledger source can be read in one of two scopes, a native capability of the Source primitive:
 - **aggregate** (default): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
 - **per_account**: the source fans out — each matched account is evaluated individually, producing one Outcome per (account, asset) with the account address as the fingerprint axis. The account address is the alignment key when two ledger sources are compared per account. Fan-out is bounded by the engine's `MaxAccountsScanned` budget.

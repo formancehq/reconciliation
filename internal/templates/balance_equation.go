@@ -102,39 +102,40 @@ func (t *BalanceEquation) Evaluate(ctx context.Context, raw json.RawMessage, eng
 		return nil, err
 	}
 
-	resolved, err := resolveV2Sources(ctx, spec.Sources, resolvers, eng.MaxAccountsScanned())
-	if err != nil {
-		return nil, err
-	}
-
-	residual := new(big.Int)
-	sourceEvidence := make([]map[string]any, 0, len(spec.Terms))
-	for _, term := range spec.Terms {
-		value := resolved[term.Source]
-		contribution := new(big.Int).Mul(value.Balance, big.NewInt(term.Coefficient))
-		residual.Add(residual, contribution)
-		evidence := value.evidence()
-		evidence["coefficient"] = term.Coefficient
-		evidence["contribution"] = contribution.String()
-		sourceEvidence = append(sourceEvidence, evidence)
-	}
-	absResidual := new(big.Int).Abs(new(big.Int).Set(residual))
 	expression := buildBalanceEquationExpression(&spec)
-	asset := spec.Sources[0].Asset
-	return []Outcome{{
-		Fingerprint: fingerprintFor("asset", asset),
-		Passed:      absResidual.Cmp(tolerance) <= 0,
-		Evidence: map[string]any{
-			"schemaVersion":    2,
-			"operation":        "balance_equation",
-			"asset":            asset,
-			"sources":          sourceEvidence,
-			"residual":         residual.String(),
-			"absoluteResidual": absResidual.String(),
-			"tolerance":        tolerance.String(),
-			"compiledCEL":      expression,
-		},
-	}}, nil
+
+	// One outcome per asset. A fixed-asset spec has an asset universe of one, so
+	// this is unchanged for it; a wildcard spec fans out the way a V1 rule with a
+	// per-asset tolerance map always did.
+	return evaluatePerAsset(ctx, spec.Sources, resolvers, eng.MaxAccountsScanned(),
+		func(asset string, resolved map[string]resolvedV2Source) (Outcome, error) {
+			residual := new(big.Int)
+			sourceEvidence := make([]map[string]any, 0, len(spec.Terms))
+			for _, term := range spec.Terms {
+				value := resolved[term.Source]
+				contribution := new(big.Int).Mul(value.Balance, big.NewInt(term.Coefficient))
+				residual.Add(residual, contribution)
+				evidence := value.evidence()
+				evidence["coefficient"] = term.Coefficient
+				evidence["contribution"] = contribution.String()
+				sourceEvidence = append(sourceEvidence, evidence)
+			}
+			absResidual := new(big.Int).Abs(new(big.Int).Set(residual))
+			return Outcome{
+				Fingerprint: fingerprintFor("asset", asset),
+				Passed:      absResidual.Cmp(tolerance) <= 0,
+				Evidence: map[string]any{
+					"schemaVersion":    2,
+					"operation":        "balance_equation",
+					"asset":            asset,
+					"sources":          sourceEvidence,
+					"residual":         residual.String(),
+					"absoluteResidual": absResidual.String(),
+					"tolerance":        tolerance.String(),
+					"compiledCEL":      expression,
+				},
+			}, nil
+		})
 }
 
 func parseNonNegativeInteger(value, field string) (*big.Int, error) {

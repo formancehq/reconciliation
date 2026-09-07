@@ -12,6 +12,25 @@ import (
 
 const maxV2Sources = 32
 
+// AssetWildcard declares a source as "every asset this account set holds"
+// rather than one named denomination.
+//
+// It is the named-source model's answer to the V1 templates' per-asset fan-out:
+// a V1 rule carries a map of per-asset tolerances and emits one outcome per
+// asset, which a model where every source names one asset could not express —
+// so migrating a multi-asset V1 rule meant splitting it into one rule per asset.
+// With a wildcard the operation fans out instead, aligning sources by asset code
+// and emitting the same one-outcome-per-asset shape.
+//
+// It does not reintroduce the guessing ADR-004 §2 ruled out. Alignment is by
+// exact asset code, and a spec must be wholly wildcard or wholly fixed —
+// mixing the two is what would require an operation to decide how a USD/2 source
+// lines up with an "any asset" one, so it is rejected.
+const AssetWildcard = "*"
+
+// wildcard reports whether this source fans out across every asset it holds.
+func (s V2NamedSource) wildcard() bool { return s.Asset == AssetWildcard }
+
 var v2SourceIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
 
 // V2NamedSource is the common scalar balance input for V2 templates. Unlike
@@ -65,7 +84,14 @@ func (s V2NamedSource) validateAt(path string) error {
 	if s.Asset == "" {
 		return fmt.Errorf("%w: Source %q is missing an asset (field: %s.asset)", ErrInvalidSpec, s.displayLabel(), path)
 	}
-	if !engine.ValidAssetCode(s.Asset) {
+	if s.wildcard() {
+		// A metadata source's value is one scalar under one key; the asset it
+		// represents is declared, not discovered, so there is nothing to fan out.
+		if s.effectiveKind() == SourceAccountMetadata {
+			return fmt.Errorf("%w: Source %q cannot use asset %q for kind %q — a metadata source declares the one asset its key represents (field: %s.asset)",
+				ErrInvalidSpec, s.displayLabel(), AssetWildcard, SourceAccountMetadata, path)
+		}
+	} else if !engine.ValidAssetCode(s.Asset) {
 		return fmt.Errorf("%w: Source %q asset %q is not a valid asset code (field: %s.asset)", ErrInvalidSpec, s.displayLabel(), s.Asset, path)
 	}
 	if s.effectiveKind() == SourceLedger && s.MetadataKey != "" {
@@ -94,7 +120,33 @@ func validateV2Sources(sources []V2NamedSource) (map[string]int, error) {
 		}
 		byID[source.ID] = i
 	}
+	if err := requireUniformAssetMode(sources); err != nil {
+		return nil, err
+	}
 	return byID, nil
+}
+
+// requireUniformAssetMode rejects a spec that mixes wildcard and named-asset
+// sources: aligning "every asset" against one fixed denomination is exactly the
+// guess the named-source model exists to avoid.
+func requireUniformAssetMode(sources []V2NamedSource) error {
+	wildcards := 0
+	for _, source := range sources {
+		if source.wildcard() {
+			wildcards++
+		}
+	}
+	if wildcards != 0 && wildcards != len(sources) {
+		return fmt.Errorf("%w: either every source declares asset %q or none does — a mixed spec has no defined alignment (field: sources[].asset)",
+			ErrInvalidSpec, AssetWildcard)
+	}
+	return nil
+}
+
+// wildcardSources reports whether this spec fans out per asset. Validation has
+// already established the sources agree, so the first one decides.
+func wildcardSources(sources []V2NamedSource) bool {
+	return len(sources) > 0 && sources[0].wildcard()
 }
 
 type resolvedV2Source struct {
@@ -141,6 +193,92 @@ func resolveV2Source(ctx context.Context, source V2NamedSource, resolvers engine
 		Balance: new(big.Int).Set(zeroIfNil(value)),
 		Present: present,
 	}, 0, nil
+}
+
+// evaluatePerAsset runs one operation's arithmetic across the spec's asset
+// universe and returns one Outcome per asset.
+//
+// Fixed-asset specs resolve to exactly one asset — their declared one — so this
+// collapses to today's single-outcome behaviour. A wildcard spec resolves every
+// source's full balance map and fans out over the union of the assets present,
+// which is the shape a V1 rule with a per-asset tolerance map has always had.
+//
+// An asset a source does not hold contributes an explicit zero with
+// present=false, exactly as a missing asset does on a fixed-asset source: the
+// operation decides what absence means, this does not decide for it.
+func evaluatePerAsset(
+	ctx context.Context,
+	sources []V2NamedSource,
+	resolvers engine.Resolvers,
+	maxAccounts int,
+	outcome func(asset string, resolved map[string]resolvedV2Source) (Outcome, error),
+) ([]Outcome, error) {
+	if !wildcardSources(sources) {
+		resolved, err := resolveV2Sources(ctx, sources, resolvers, maxAccounts)
+		if err != nil {
+			return nil, err
+		}
+		single, err := outcome(sources[0].Asset, resolved)
+		if err != nil {
+			return nil, err
+		}
+		return []Outcome{single}, nil
+	}
+
+	balances, err := resolveV2SourceBalances(ctx, sources, resolvers, maxAccounts)
+	if err != nil {
+		return nil, err
+	}
+	assetMaps := make([]map[string]*big.Int, 0, len(sources))
+	for _, source := range sources {
+		assetMaps = append(assetMaps, balances[source.ID])
+	}
+
+	assets := unionAssets(assetMaps...)
+	outcomes := make([]Outcome, 0, len(assets))
+	for _, asset := range assets {
+		resolved := make(map[string]resolvedV2Source, len(sources))
+		for _, source := range sources {
+			value, present := balances[source.ID][asset]
+			// The per-asset view keeps the source's declared asset honest: it is
+			// this asset, not the wildcard, that the arithmetic and the evidence
+			// are about.
+			spec := source
+			spec.Asset = asset
+			resolved[source.ID] = resolvedV2Source{
+				Spec:    spec,
+				Balance: new(big.Int).Set(zeroIfNil(value)),
+				Present: present,
+			}
+		}
+		next, err := outcome(asset, resolved)
+		if err != nil {
+			return nil, err
+		}
+		outcomes = append(outcomes, next)
+	}
+	return outcomes, nil
+}
+
+// resolveV2SourceBalances reads every source's full per-asset balance map,
+// sharing one accounts budget across them.
+func resolveV2SourceBalances(
+	ctx context.Context,
+	sources []V2NamedSource,
+	resolvers engine.Resolvers,
+	maxAccounts int,
+) (map[string]map[string]*big.Int, error) {
+	out := make(map[string]map[string]*big.Int, len(sources))
+	remaining := maxAccounts
+	for _, source := range sources {
+		spec := source.sourceSpec()
+		balances, err := spec.resolve(ctx, resolvers, remaining)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Source %q: %w", source.displayLabel(), err)
+		}
+		out[source.ID] = balances
+	}
+	return out, nil
 }
 
 func (r resolvedV2Source) evidence() map[string]any {

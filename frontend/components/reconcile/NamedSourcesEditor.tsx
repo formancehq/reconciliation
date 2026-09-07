@@ -257,7 +257,11 @@ export function NamedSourcesEditor({
               </Field>
               <Field
                 label="Declared asset"
-                hint="Explicit and independent from metadata key"
+                hint={
+                  source.asset === "*"
+                    ? "Every asset this account set holds"
+                    : "Explicit and independent from metadata key"
+                }
                 error={fieldError("asset")}
               >
                 <Input
@@ -267,6 +271,10 @@ export function NamedSourcesEditor({
                   }
                   placeholder="USD/2"
                   className="font-mono"
+                  // Set as a group by the rule's "check every asset" switch: the
+                  // fan-out is all-or-none, so editing one source here would
+                  // only ever produce a spec with no defined alignment.
+                  disabled={source.asset === "*"}
                 />
               </Field>
               {kind === "account_metadata" && (

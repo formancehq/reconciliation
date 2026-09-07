@@ -72,6 +72,22 @@ V2 is aggregate-only. Per-account equations would require an explicit alignment 
 semantics; per-account exchange rates would additionally require pair alignment. Those decisions are
 outside this ADR.
 
+> **Amendment (2026-09-07) — the asset wildcard.** Requiring every source to name one asset made a
+> multi-asset V1 rule inexpressible: a `source_parity` rule with `tolerance: {USD/2: 0, EUR/2: 0}` is
+> one rule emitting one outcome per asset, and its V2 equivalent was one rule *per asset*. That gap
+> was the reason the V1 catalogue could not be migrated, only re-implemented.
+>
+> A source may now declare `asset: "*"` — every asset the account set holds — and the operation fans
+> out to one outcome per asset. This does not reintroduce the guessing §2 rules out: alignment is by
+> exact asset code, and a spec must be wholly wildcard or wholly named, because a mixed spec is
+> precisely the case where an operation would have to decide how a `USD/2` source lines up with an
+> "any asset" one. It is rejected on `account_metadata` sources (the key represents one declared
+> asset) and by `exchange_rate_bounds` (a rate is a statement about one named pair).
+>
+> `TestAssetWildcard_MatchesV1MultiAssetParity` pins the claim: a V1 multi-asset `source_parity` rule
+> and the single V2 `balance_equation` that replaces it produce the same outcomes against the same
+> ledger.
+
 ### 3. Define `balance_equation` as a signed sum
 
 The operation is:

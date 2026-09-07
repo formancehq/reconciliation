@@ -1527,7 +1527,16 @@ components:
     AssetV2:
       type: string
       minLength: 1
-      description: Ledger asset code including precision, for example `USD/2`.
+      description: |
+        Ledger asset code including precision, for example `USD/2`.
+
+        `*` declares the source as **every asset the account set holds**, and the
+        operation fans out to one outcome per asset — the shape a V1 rule with a
+        per-asset tolerance map has always had. Alignment is by exact asset code,
+        and a spec must be wholly `*` or wholly named: mixing them has no defined
+        alignment and is rejected. Not accepted on an `account_metadata` source
+        (its key represents one declared asset) or by `exchange_rate_bounds`
+        (a rate is a statement about one named pair).
       example: USD/2
     SourceIDV2:
       type: string

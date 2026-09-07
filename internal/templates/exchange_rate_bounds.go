@@ -51,6 +51,13 @@ func (t *ExchangeRateBounds) Validate(raw json.RawMessage) error {
 	if len(spec.Sources) != 2 {
 		return fmt.Errorf("%w: exchange_rate_bounds requires exactly two sources", ErrInvalidSpec)
 	}
+	// A rate is a statement about one specific pair of denominations, so there is
+	// no per-asset fan-out to do: which asset would the base be, against which
+	// quote? Both sides name their asset.
+	if wildcardSources(spec.Sources) {
+		return fmt.Errorf("%w: exchange_rate_bounds compares two named denominations, so its sources cannot use asset %q (field: sources[].asset)",
+			ErrInvalidSpec, AssetWildcard)
+	}
 	if _, ok := byID[spec.BaseSource]; !ok {
 		return fmt.Errorf("%w: unknown base Source %q (field: baseSource)", ErrInvalidSpec, spec.BaseSource)
 	}

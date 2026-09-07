@@ -26,6 +26,7 @@ import { toast } from "@/components/ui/toast"
 import { useLedgerClient } from "@/lib/connection/provider"
 import createLogger from "@/lib/logger"
 import {
+  allAssetsV2,
   backendValidationText,
   changeRuleTemplateV2,
   createRuleFormDraftV2,
@@ -36,6 +37,8 @@ import {
   SEVERITY_META,
   SEVERITY_ORDER,
   serializeRuleFormV2,
+  setAllAssetsV2,
+  supportsAllAssetsV2,
   TEMPLATE_KINDS_V2,
   TEMPLATE_META_V2,
   validateRuleFormV2,
@@ -268,16 +271,34 @@ function CreateRuleDialogV2Open({
                     : "Labels are operator-facing; stable IDs carry every machine reference."}
                 </div>
               </div>
-              {!seed && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => changeKind(draft.kind)}
-                >
-                  <Wand2 className="mr-1.5 h-3.5 w-3.5" /> Reset example
-                </Button>
-              )}
+              <div className="flex items-center gap-3">
+                {supportsAllAssetsV2(draft.kind) && (
+                  <label className="flex items-center gap-2 text-xs">
+                    <Switch
+                      checked={allAssetsV2(draft)}
+                      onCheckedChange={(on) =>
+                        setDraft((current) => setAllAssetsV2(current, on))
+                      }
+                    />
+                    <span>
+                      Check every asset
+                      <span className="ml-1 text-muted-foreground">
+                        (one alert per asset)
+                      </span>
+                    </span>
+                  </label>
+                )}
+                {!seed && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => changeKind(draft.kind)}
+                  >
+                    <Wand2 className="mr-1.5 h-3.5 w-3.5" /> Reset example
+                  </Button>
+                )}
+              </div>
             </div>
             <div className="p-3">
               <NamedSourcesEditor

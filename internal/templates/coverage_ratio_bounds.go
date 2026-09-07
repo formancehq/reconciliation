@@ -132,14 +132,25 @@ func (t *CoverageRatioBounds) Evaluate(ctx context.Context, raw json.RawMessage,
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := resolveV2Sources(ctx, spec.Sources, resolvers, eng.MaxAccountsScanned())
-	if err != nil {
-		return nil, err
-	}
+	expression, _ := t.Explain(raw)
+
+	return evaluatePerAsset(ctx, spec.Sources, resolvers, eng.MaxAccountsScanned(),
+		func(asset string, resolved map[string]resolvedV2Source) (Outcome, error) {
+			return coverageRatioOutcome(&spec, asset, resolved, minimum, maximum, expression), nil
+		})
+}
+
+// coverageRatioOutcome is the per-asset arithmetic: the exact ratio of two
+// signed portfolios against inclusive bounds.
+func coverageRatioOutcome(
+	spec *CoverageRatioBoundsSpec,
+	asset string,
+	resolved map[string]resolvedV2Source,
+	minimum, maximum *big.Rat,
+	expression string,
+) Outcome {
 	numeratorTotal, numeratorEvidence := coveragePortfolio(spec.NumeratorTerms, resolved)
 	denominatorTotal, denominatorEvidence := coveragePortfolio(spec.DenominatorTerms, resolved)
-	expression, _ := t.Explain(raw)
-	asset := spec.Sources[0].Asset
 	evidence := map[string]any{
 		"schemaVersion": 2,
 		"operation":     "coverage_ratio_bounds",
@@ -161,18 +172,18 @@ func (t *CoverageRatioBounds) Evaluate(ctx context.Context, raw json.RawMessage,
 	fingerprint := fingerprintFor("asset", asset)
 	if denominatorTotal.Sign() == 0 {
 		evidence["undefinedReason"] = "denominator_total_zero"
-		return []Outcome{{Fingerprint: fingerprint, Passed: false, Evidence: evidence}}, nil
+		return Outcome{Fingerprint: fingerprint, Passed: false, Evidence: evidence}
 	}
 	observed := new(big.Rat).SetFrac(numeratorTotal, denominatorTotal)
 	evidence["observedRatio"] = map[string]any{
 		"numerator":   observed.Num().String(),
 		"denominator": observed.Denom().String(),
 	}
-	return []Outcome{{
+	return Outcome{
 		Fingerprint: fingerprint,
 		Passed:      observed.Cmp(minimum) >= 0 && observed.Cmp(maximum) <= 0,
 		Evidence:    evidence,
-	}}, nil
+	}
 }
 
 func coveragePortfolio(terms []BalanceEquationTerm, resolved map[string]resolvedV2Source) (*big.Int, []map[string]any) {

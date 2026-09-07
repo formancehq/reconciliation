@@ -23,6 +23,59 @@ import {
 /** stale_holds reads one hold set, unlike the multi-source V2 templates. */
 export const MAX_IDENTITY_KEYS_V2 = 8
 
+/** A source declared as "every asset this account set holds". */
+export const ASSET_WILDCARD_V2 = "*"
+
+/** Templates whose operation has a defined per-asset fan-out. */
+export function supportsAllAssetsV2(kind: TemplateKindV2): boolean {
+  return (
+    kind === "balance_equation" ||
+    kind === "source_consensus" ||
+    kind === "coverage_ratio_bounds"
+  )
+}
+
+export function allAssetsV2(draft: RuleFormDraftV2): boolean {
+  return (
+    draft.sources.length > 0 &&
+    draft.sources.every((source) => source.asset === ASSET_WILDCARD_V2)
+  )
+}
+
+/**
+ * Flip every source between "every asset" and named assets. It is all-or-none
+ * by design — a mixed spec has no defined alignment — so this is a spec-level
+ * switch rather than a per-source one. Turning it off restores the assets each
+ * source last had, so toggling is not lossy.
+ */
+export function setAllAssetsV2(
+  draft: RuleFormDraftV2,
+  on: boolean
+): RuleFormDraftV2 {
+  if (on) {
+    const namedAssets = Object.fromEntries(
+      draft.sources
+        .filter((source) => source.asset !== ASSET_WILDCARD_V2)
+        .map((source) => [source.id, source.asset])
+    )
+    return {
+      ...draft,
+      namedAssets: { ...draft.namedAssets, ...namedAssets },
+      sources: draft.sources.map((source) => ({
+        ...source,
+        asset: ASSET_WILDCARD_V2,
+      })),
+    }
+  }
+  return {
+    ...draft,
+    sources: draft.sources.map((source) => ({
+      ...source,
+      asset: draft.namedAssets[source.id] ?? "USD/2",
+    })),
+  }
+}
+
 export type PortfolioSideV2 = "numerator" | "denominator"
 export type RateModeV2 = "explicit" | "target"
 
@@ -63,6 +116,8 @@ export interface RuleFormDraftV2 {
   scope: StaleHoldsScopeV2
   identityKeys: string[]
   maxHoldsScanned: string
+  /** Form-local: the asset each source carried before "every asset" was turned on. */
+  namedAssets: Record<string, string>
 }
 
 export interface RuleFormIssueV2 {
@@ -241,6 +296,11 @@ export function createRuleFormDraftV2({
       savedHolds?.maxHoldsScanned === undefined
         ? ""
         : String(savedHolds.maxHoldsScanned),
+    namedAssets: Object.fromEntries(
+      sources
+        .filter((source) => source.asset !== ASSET_WILDCARD_V2)
+        .map((source) => [source.id, source.asset])
+    ),
   }
 }
 
@@ -449,9 +509,34 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
       add(`${prefix}.metadataKey`, "Metadata key is required.")
   }
 
+  const wildcards = draft.sources.filter(
+    (source) => source.asset === ASSET_WILDCARD_V2
+  )
+  if (wildcards.length > 0) {
+    if (wildcards.length !== draft.sources.length)
+      add(
+        "sources",
+        'Either every source checks all assets or none does — a mixed rule has no defined alignment.'
+      )
+    if (!supportsAllAssetsV2(draft.kind))
+      add(
+        "sources",
+        draft.kind === "exchange_rate_bounds"
+          ? "An exchange rate compares two named denominations, so it cannot check all assets."
+          : "This template needs a named asset."
+      )
+    for (const [index, source] of draft.sources.entries())
+      if (source.kind === "account_metadata")
+        add(
+          `sources[${index}].asset`,
+          "A metadata source declares the one asset its key represents, so it cannot check all assets."
+        )
+  }
+
   if (
     draft.kind !== "exchange_rate_bounds" &&
     draft.kind !== "stale_holds" &&
+    wildcards.length === 0 &&
     draft.sources.length > 0
   ) {
     const asset = draft.sources[0]?.asset
