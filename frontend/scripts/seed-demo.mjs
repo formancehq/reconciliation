@@ -47,7 +47,7 @@ async function api(method, path, body) {
 }
 
 const A = (address) => ({ $match: { address } });
-const ledgerSrc = (query) => ({ kind: 'ledger', ledger: LEDGER, query });
+const ledgerSrc = (id, query) => ({ id, kind: 'ledger', ledger: LEDGER, query, asset: ASSET });
 
 // ── Rule catalogue ──────────────────────────────────────────────────────────
 // Each rule is deterministic against the seeded mortgage ledger: the PASS rules
@@ -59,10 +59,19 @@ const RULES = [
     expect: 'PASS',
     body: {
       name: 'Interest accruals cleared to zero',
-      templateKind: 'ledger_invariant',
+      // Was ledger_invariant: a signed sum netting to zero is a balance_equation
+      // with one +1 term.
+      templateKind: 'balance_equation',
       templateSpec: {
-        terms: [{ ledger: LEDGER, query: A('loan:201:interest:*'), sign: 1 }],
-        tolerance: { [ASSET]: 0 },
+        sources: [
+          ledgerSrc('interest', A('loan:201:interest:*')),
+          ledgerSrc('zero', A('loan:201:interest:none')),
+        ],
+        terms: [
+          { source: 'interest', coefficient: 1 },
+          { source: 'zero', coefficient: -1 },
+        ],
+        tolerance: '0',
       },
       severity: 'low',
       periodType: 'continuous',
@@ -74,12 +83,11 @@ const RULES = [
     expect: 'PASS',
     body: {
       name: 'Loan 201 principal balance floor',
-      templateKind: 'account_threshold',
+      // Was account_threshold mode: aggregate.
+      templateKind: 'balance_bounds',
       templateSpec: {
-        ledger: LEDGER,
-        query: A('loan:201:principal'),
-        mode: 'aggregate',
-        bounds: { [ASSET]: { min: 0 } },
+        source: ledgerSrc('principal', A('loan:201:principal')),
+        bounds: { [ASSET]: { min: '0' } },
       },
       severity: 'info',
       periodType: 'continuous',
@@ -92,12 +100,10 @@ const RULES = [
     lifecycle: 'ack',
     body: {
       name: 'Loan 201 principal exposure cap',
-      templateKind: 'account_threshold',
+      templateKind: 'balance_bounds',
       templateSpec: {
-        ledger: LEDGER,
-        query: A('loan:201:principal'),
-        mode: 'aggregate',
-        bounds: { [ASSET]: { max: 20000000 } },
+        source: ledgerSrc('principal', A('loan:201:principal')),
+        bounds: { [ASSET]: { max: '20000000' } },
       },
       severity: 'high',
       periodType: 'continuous',
@@ -110,12 +116,18 @@ const RULES = [
     lifecycle: 'resolve',
     body: {
       name: 'Company vs investor sub-ledger parity — loan 201',
-      templateKind: 'source_parity',
+      // Was source_parity: two sources at +1/-1 within tolerance.
+      templateKind: 'balance_equation',
       templateSpec: {
-        left: ledgerSrc(A('loan:201:company:*')),
-        right: ledgerSrc(A('loan:201:investor:*')),
-        scope: 'aggregate',
-        tolerance: { [ASSET]: 0 },
+        sources: [
+          ledgerSrc('company', A('loan:201:company:*')),
+          ledgerSrc('investor', A('loan:201:investor:*')),
+        ],
+        terms: [
+          { source: 'company', coefficient: 1 },
+          { source: 'investor', coefficient: -1 },
+        ],
+        tolerance: '0',
       },
       severity: 'medium',
       periodType: 'continuous',
@@ -128,12 +140,17 @@ const RULES = [
     lifecycle: 'accept',
     body: {
       name: 'Repaid ledger reconciles to principal — loan 201',
-      templateKind: 'source_parity',
+      templateKind: 'balance_equation',
       templateSpec: {
-        left: ledgerSrc(A('loan:201:repaid:*')),
-        right: ledgerSrc(A('loan:201:principal')),
-        scope: 'aggregate',
-        tolerance: { [ASSET]: 100 },
+        sources: [
+          ledgerSrc('repaid', A('loan:201:repaid:*')),
+          ledgerSrc('principal', A('loan:201:principal')),
+        ],
+        terms: [
+          { source: 'repaid', coefficient: 1 },
+          { source: 'principal', coefficient: -1 },
+        ],
+        tolerance: '100',
       },
       severity: 'medium',
       periodType: 'continuous',
@@ -146,19 +163,17 @@ const RULES = [
     lifecycle: 'open',
     body: {
       name: 'Loan 201 company allocation floor',
-      templateKind: 'account_threshold',
+      templateKind: 'balance_bounds',
       templateSpec: {
-        ledger: LEDGER,
-        query: A('loan:201:company:*'),
-        mode: 'aggregate',
-        bounds: { [ASSET]: { min: 5000000 } },
+        source: ledgerSrc('company', A('loan:201:company:*')),
+        bounds: { [ASSET]: { min: '5000000' } },
       },
       severity: 'high',
       periodType: 'continuous',
       enabled: true,
     },
   },
-];
+]
 
 // ── V2 rule catalogue ───────────────────────────────────────────────────────
 // stale_holds is a V2 template, so these are created on /v2/rules. They read the
@@ -235,7 +250,7 @@ async function listAlerts(prefix = '') {
 
 async function cleanup() {
   let cleared = 0;
-  for (const prefix of ['', '/v2']) {
+  for (const prefix of ['/v2']) {
     const mine = (await listRules(prefix)).filter((r) => r?.labels?.demo === DEMO_LABEL);
     for (const r of mine) {
       await api('DELETE', `${prefix}/rules/${encodeURIComponent(r.id)}`).catch(() => {});
@@ -263,7 +278,7 @@ async function main() {
   const created = [];
   for (const rule of RULES) {
     const body = { ...rule.body, labels: { ...(rule.body.labels || {}), demo: DEMO_LABEL, loan: '201' } };
-    const r = await api('POST', '/rules', body);
+    const r = await api('POST', '/v2/rules', body);
     created.push({ ...rule, id: r.data.id });
     console.log(`+ rule "${rule.body.name}" [${rule.body.templateKind}] → ${r.data.id}`);
   }
@@ -275,7 +290,7 @@ async function main() {
     const body = { ...rule.body, labels: { ...(rule.body.labels || {}), demo: DEMO_LABEL, program: 'cards' } };
     try {
       const r = await api('POST', '/v2/rules', body);
-      created.push({ ...rule, id: r.data.id, prefix: '/v2' });
+      created.push({ ...rule, id: r.data.id });
       console.log(`+ rule "${rule.body.name}" [${rule.body.templateKind}] → ${r.data.id}`);
     } catch (e) {
       console.log(`! skipped "${rule.body.name}": ${e.message}`);
@@ -292,7 +307,7 @@ async function main() {
   for (const round of [1, 2]) {
     for (const rule of created) {
       try {
-        const r = await api('POST', `${rule.prefix ?? ''}/rules/${encodeURIComponent(rule.id)}/evaluate`, {});
+        const r = await api('POST', `/v2/rules/${encodeURIComponent(rule.id)}/evaluate`, {});
         evalOk += 1;
         if (round === 1) {
           const result = r?.data?.result ?? '?';
@@ -317,22 +332,20 @@ async function main() {
   let alerts = [];
   for (let i = 0; i < 6; i++) {
     await sleep(500);
-    alerts = await listAlerts();
+    alerts = await listAlerts('/v2');
     if (alerts.length >= created.filter((r) => r.expect === 'FAIL').length) break;
   }
   const byRule = new Map();
   for (const a of alerts) if (!byRule.has(a.ruleID)) byRule.set(a.ruleID, a);
-  // V2 alerts live behind the versioned route — a V1 listing never returns them.
-  const alertsV2 = await listAlerts('/v2').catch(() => []);
-  console.log(`· ${alerts.length} alert(s) opened (+ ${alertsV2.length} on /v2)`);
+  console.log(`· ${alerts.length} alert(s) opened`);
 
   // 4) Drive the alert lifecycle per rule intent.
   for (const rule of created) {
     if (rule.expect !== 'FAIL') continue;
-    // The stale-hold alerts are left open on purpose: they are the live "funds
-    // are trapped right now" content, and they resolve themselves once the hold
-    // clears rather than being worked through the lifecycle here.
-    if (rule.prefix === '/v2') continue;
+    // A rule with no lifecycle intent is left open on purpose — the stale-hold
+    // alerts are the live "funds are trapped right now" content, and they
+    // resolve themselves once the hold clears.
+    if (!rule.lifecycle) continue;
     const alert = byRule.get(rule.id);
     if (!alert) {
       console.log(`  ! no alert found for "${rule.body.name}" (skipping ${rule.lifecycle})`);
@@ -340,13 +353,13 @@ async function main() {
     }
     try {
       if (rule.lifecycle === 'ack') {
-        await api('POST', `/alerts/${alert.id}/ack`, { by: 'ops@acme.com', note: 'Investigating the exposure breach.' });
+        await api('POST', `/v2/alerts/${alert.id}/ack`, { by: 'ops@acme.com', note: 'Investigating the exposure breach.' });
         console.log(`  ✓ acknowledged "${rule.body.name}"`);
       } else if (rule.lifecycle === 'resolve') {
-        await api('POST', `/alerts/${alert.id}/resolve`, { by: 'ops@acme.com', note: 'Re-booked the mis-allocated postings.', transactionRefs: ['txn-demo-realloc-201'] });
+        await api('POST', `/v2/alerts/${alert.id}/resolve`, { by: 'ops@acme.com', note: 'Re-booked the mis-allocated postings.', transactionRefs: ['txn-demo-realloc-201'] });
         console.log(`  ✓ resolved (fixed by booking) "${rule.body.name}"`);
       } else if (rule.lifecycle === 'accept') {
-        await api('POST', `/alerts/${alert.id}/accept`, { by: 'cfo@acme.com', note: 'Known timing difference between repayment posting and principal roll-forward; accepted.' });
+        await api('POST', `/v2/alerts/${alert.id}/accept`, { by: 'cfo@acme.com', note: 'Known timing difference between repayment posting and principal roll-forward; accepted.' });
         console.log(`  ✓ accepted (business) "${rule.body.name}"`);
       } else {
         console.log(`  · left OPEN "${rule.body.name}"`);

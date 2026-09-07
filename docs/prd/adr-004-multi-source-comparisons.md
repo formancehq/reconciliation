@@ -72,6 +72,22 @@ V2 is aggregate-only. Per-account equations would require an explicit alignment 
 semantics; per-account exchange rates would additionally require pair alignment. Those decisions are
 outside this ADR.
 
+> **Amendment (2026-09-07) — per-account fan-out is not carried forward, and V1 is retired.**
+> With `balance_bounds` shipped, every V1 template is expressible in the named-source model:
+> `source_parity` and `ledger_invariant` as signed `balance_equation`s, `account_threshold` as
+> `balance_bounds`, and multi-asset rules as one rule via the wildcard below. The one capability with
+> no equivalent is **per-account fan-out** — `account_threshold` mode `per_account` and
+> `source_parity` scope `per_account` — and it is **deliberately dropped**, not overlooked. It was
+> already parked out of the V1 GA surface once (commit `1bd99ecd`) for unbounded PASS evidence;
+> reviving it in the named-source model needs an explicit alignment key and missing-row semantics
+> (§2), which no shipped rule asks for. Recorded here so retirement is a decision rather than a side
+> effect of a cleanup.
+>
+> This does **not** touch `stale_holds`' `per_hold` scope, which is a different thing and stays: it
+> emits outcomes only for *failing* holds, so its evidence is proportional to the problem rather than
+> to the account set, and it is bounded twice over — by the rule's own `maxHoldsScanned` and by the
+> service's new-alert cap.
+
 > **Amendment (2026-09-07) — the asset wildcard.** Requiring every source to name one asset made a
 > multi-asset V1 rule inexpressible: a `source_parity` rule with `tolerance: {USD/2: 0, EUR/2: 0}` is
 > one rule emitting one outcome per asset, and its V2 equivalent was one rule *per asset*. That gap
