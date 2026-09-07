@@ -75,11 +75,7 @@ export function formatAmount(
 // ── Deviation model (one rule's captures over time) ──────────────────────────
 
 /** Which template kinds the deviation chart understands today. */
-export const DEVIATION_KINDS = [
-  "source_parity",
-  "account_threshold",
-  "balance_equation",
-] as const
+export const DEVIATION_KINDS = ["balance_bounds", "balance_equation"] as const
 
 export interface DeviationBounds {
   /** parity: symmetric ± band around zero (minor units). */
@@ -122,7 +118,7 @@ export interface DeviationModel {
   /** parity/threshold → true; other kinds carry no plottable deviation today. */
   supported: boolean
   /** parity → "signedDiff", threshold → "balance". */
-  metric: "signedDiff" | "balance" | "residual" | "none"
+  metric: "balance" | "residual" | "none"
   /** One entry per asset (from fail evidence, or spec fallback when never failed). */
   series: DeviationSeries[]
   /** Runs with a `pass` verdict (no magnitude recorded — occurrence only). */
@@ -151,7 +147,7 @@ function isRealTime(ts: string | undefined | null): ts is string {
 function specBounds(
   rule: Pick<AnyRule, "templateKind" | "templateSpec">
 ): Record<string, DeviationBounds> {
-  const spec = (rule.templateSpec ?? {}) as Record<string, unknown>
+  const spec = (rule.templateSpec ?? {}) as unknown as Record<string, unknown>
   const out: Record<string, DeviationBounds> = {}
   if (rule.templateKind === "balance_bounds") {
     // V2 encodes amounts as strings; parseAmount already takes both shapes.
@@ -170,19 +166,6 @@ function specBounds(
       for (const source of sources)
         if (typeof source?.asset === "string" && source.asset !== "*")
           out[source.asset] = { tolerance }
-  } else if (rule.templateKind === "source_parity") {
-    const tol = spec.tolerance as Record<string, unknown> | undefined
-    if (tol)
-      for (const [asset, v] of Object.entries(tol))
-        out[asset] = { tolerance: parseAmount(v) ?? 0 }
-  } else if (rule.templateKind === "account_threshold") {
-    const bounds = spec.bounds as
-      Record<string, { min?: unknown; max?: unknown }> | undefined
-    if (bounds) {
-      for (const [asset, b] of Object.entries(bounds)) {
-        out[asset] = { min: parseAmount(b?.min), max: parseAmount(b?.max) }
-      }
-    }
   }
   return out
 }
@@ -215,13 +198,11 @@ export function buildDeviationModel(
   const kind = rule.templateKind
   const supported = (DEVIATION_KINDS as readonly string[]).includes(kind)
   const metric: DeviationModel["metric"] =
-    kind === "source_parity"
-      ? "signedDiff"
-      : kind === "account_threshold" || kind === "balance_bounds"
-        ? "balance"
-        : kind === "balance_equation"
-          ? "residual"
-          : "none"
+    kind === "balance_bounds"
+      ? "balance"
+      : kind === "balance_equation"
+        ? "residual"
+        : "none"
 
   // Reference bands used to be read from V1 specs only, which left every V2
   // rule's deviation chart without the band its V1 equivalent had. The V2
@@ -252,14 +233,15 @@ export function buildDeviationModel(
         const asset = String(
           e.asset ?? assetCode(fingerprint?.replace(/^asset:/, ""))
         )
+        // balance_bounds nests the observed balance under `source`; a capture
+        // recorded before retirement carried it top-level. Accept both.
+        const source = (e.source ?? {}) as Record<string, unknown>
         const raw =
-          metric === "signedDiff"
-            ? e.signedDiff
-            : metric === "balance"
-              ? e.balance
-              : metric === "residual"
-                ? e.residual
-                : undefined
+          metric === "balance"
+            ? (e.balance ?? source.balance)
+            : metric === "residual"
+              ? e.residual
+              : undefined
         const value = parseAmount(raw)
         if (value === undefined) continue
         const key = fingerprint ?? `asset:${asset}`
@@ -285,15 +267,6 @@ export function buildDeviationModel(
           value,
           exactValue: typeof raw === "string" ? raw : undefined,
           passed: typeof e.__passed === "boolean" ? e.__passed : undefined,
-        }
-        if (metric === "signedDiff") {
-          point.difference = parseAmount(e.difference)
-          point.leftBalance = parseAmount(e.leftBalance)
-          point.rightBalance = parseAmount(e.rightBalance)
-          point.leftSource =
-            typeof e.leftSource === "string" ? e.leftSource : undefined
-          point.rightSource =
-            typeof e.rightSource === "string" ? e.rightSource : undefined
         }
         s.points.push(point)
       }
@@ -365,7 +338,9 @@ export function buildDriftSeries(
   series: DeviationSeries
 ): DriftPoint[] {
   const contributionOf = (value: number): number => {
-    if (model.metric === "signedDiff") return value
+    // A residual is already the signed distance from the target, so it counts in
+    // full; a bounded balance contributes only what falls outside its limits.
+    if (model.metric === "residual") return value
     const { min, max } = series.bounds
     if (min !== undefined && value < min) return value - min
     if (max !== undefined && value > max) return value - max

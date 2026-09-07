@@ -26,18 +26,16 @@ import {
 import {
   useReconResource,
   poll,
-  describeAnyRule,
   templateLabel,
   PERIOD_TYPE_META,
   formatRelative,
   isZeroTime,
   ReconError,
-  getRuleByContract,
-  listRuleTimelineByContract,
-  evaluateRuleByContract,
+  getRule,
+  listRuleTimeline,
+  evaluateRule,
   patchRuleEnabled,
-  deleteRuleByContract,
-  isRuleV2,
+  deleteRule,
   appendRuleActivities,
   evaluationActivityDetails,
   latestEvaluationActivity,
@@ -53,8 +51,6 @@ import {
   SeverityBadge,
   ResultBadge,
 } from "../ui"
-import { CreateRuleDialog } from "./CreateRuleDialog"
-import { SourceParityComparison } from "../SourceParityComparison"
 import { V2RulePresentation } from "../V2RulePresentation"
 import { CreateRuleDialogV2 } from "./CreateRuleDialogV2"
 import { RevisionValue, RuleTimeline } from "../RuleTimeline"
@@ -93,7 +89,7 @@ export function RuleDetail({
 
   const ruleRes = useReconResource<AnyRule | null>(async (signal) => {
     try {
-      return await getRuleByContract(ruleId, contractVersion, signal)
+      return await getRule(ruleId, signal)
     } catch (error) {
       if (error instanceof ReconError && error.status === 404) return null
       throw error
@@ -102,7 +98,7 @@ export function RuleDetail({
 
   const timelineRes = useReconResource<Cursor<RuleActivity>>(
     (signal) =>
-      listRuleTimelineByContract(ruleId, contractVersion, undefined, signal),
+      listRuleTimeline(ruleId, undefined, signal),
     [ruleId, contractVersion, dataVersion]
   )
 
@@ -114,7 +110,7 @@ export function RuleDetail({
   const onEvaluate = useCallback(async () => {
     setEvaluating(true)
     try {
-      const evaluation = await evaluateRuleByContract(ruleId, contractVersion)
+      const evaluation = await evaluateRule(ruleId)
       if (evaluation.result === "PASS") toast.success(`Evaluation → PASS`)
       else if (evaluation.result === "FAIL")
         toast.warning("Evaluation → FAIL", {
@@ -125,7 +121,7 @@ export function RuleDetail({
           description: evaluation.error?.slice(-160),
         })
       await poll(
-        () => listRuleTimelineByContract(ruleId, contractVersion),
+        () => listRuleTimeline(ruleId),
         {
           tries: 3,
           intervalMs: 350,
@@ -181,7 +177,7 @@ export function RuleDetail({
     if (!rule || deleted) return
     setDeleting(true)
     try {
-      await deleteRuleByContract(rule.id, contractVersion)
+      await deleteRule(rule.id)
       toast.success("Rule deleted", { description: rule.name })
       setConfirmDelete(false)
       invalidate()
@@ -196,9 +192,8 @@ export function RuleDetail({
     if (!nextCursor || loadingEarlier) return
     setLoadingEarlier(true)
     try {
-      const page = await listRuleTimelineByContract(
+      const page = await listRuleTimeline(
         ruleId,
-        contractVersion,
         nextCursor
       )
       setPagination((current) => ({
@@ -267,11 +262,6 @@ export function RuleDetail({
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {rule && <span>{templateLabel(rule.templateKind)}</span>}
-            {rule && isRuleV2(rule) && (
-              <span className="rounded-full border px-2 py-0.5 font-mono text-[10px]">
-                V2
-              </span>
-            )}
             {rule && <span>·</span>}
             {rule && <span>{PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType}</span>}
             {rule && !isZeroTime(rule.updatedAt) && (
@@ -314,24 +304,8 @@ export function RuleDetail({
           />
         </div>
       </div>
-      {rule && isRuleV2(rule) ? (
+      {rule ? (
         <CreateRuleDialogV2
-          key={`v2-${dialogMode ?? "closed"}-${rule.id}`}
-          open={dialogMode !== null}
-          editRule={dialogMode === "edit" ? rule : null}
-          duplicateRule={dialogMode === "duplicate" ? rule : null}
-          onOpenChange={(open) => {
-            if (!open) setDialogMode(null)
-          }}
-          onSaved={(savedRule) => {
-            const wasDuplicate = dialogMode === "duplicate"
-            setDialogMode(null)
-            invalidate()
-            if (wasDuplicate) openRule(savedRule.id, 2)
-          }}
-        />
-      ) : rule ? (
-        <CreateRuleDialog
           key={`${dialogMode ?? "closed"}-${rule.id}`}
           open={dialogMode !== null}
           editRule={dialogMode === "edit" ? rule : null}
@@ -343,7 +317,7 @@ export function RuleDetail({
             const wasDuplicate = dialogMode === "duplicate"
             setDialogMode(null)
             invalidate()
-            if (wasDuplicate) openRule(savedRule.id, 1)
+            if (wasDuplicate) openRule(savedRule.id, 2)
           }}
         />
       ) : null}
@@ -457,18 +431,7 @@ export function CurrentRuleConfiguration({
       </dl>
 
       <div className="min-w-0 space-y-4 p-4">
-        {isRuleV2(rule) ? (
-          <V2RulePresentation rule={rule} sourcesFirst />
-        ) : rule.templateKind === "source_parity" ? (
-          <SourceParityComparison spec={rule.templateSpec} />
-        ) : (
-          <div className="rounded-md border bg-muted/20 px-3 py-2">
-            <div className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-              Invariant
-            </div>
-            <p className="mt-1 text-sm">{describeAnyRule(rule)}</p>
-          </div>
-        )}
+        <V2RulePresentation rule={rule} sourcesFirst />
 
         {rule.compiledCEL && (
           <details className="rounded-md border text-xs">

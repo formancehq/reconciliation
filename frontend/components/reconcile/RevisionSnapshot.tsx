@@ -1,13 +1,10 @@
 import { Braces, CalendarClock, Code2, Settings2 } from "lucide-react"
 import {
   PERIOD_TYPE_META,
-  describeAnyRule,
   formatDateTime,
-  isRuleV2,
   ruleFromActivitySnapshot,
   templateLabel,
 } from "@/lib/recon"
-import { SourceParityComparison } from "./SourceParityComparison"
 import { V2RulePresentation } from "./V2RulePresentation"
 
 export function RevisionSnapshot({
@@ -41,11 +38,6 @@ export function RevisionSnapshot({
             <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-medium">
               {templateLabel(rule.templateKind)}
             </span>
-            {isRuleV2(rule) && (
-              <span className="rounded-full border bg-background px-2 py-0.5 font-mono text-[10px]">
-                V2
-              </span>
-            )}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Complete configuration captured with this revision.
@@ -68,15 +60,7 @@ export function RevisionSnapshot({
           <Braces className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
           <h4 className="text-xs font-semibold">Sources and invariant</h4>
         </div>
-        {isRuleV2(rule) ? (
-          <V2RulePresentation rule={rule} compact sourcesFirst />
-        ) : rule.templateKind === "source_parity" ? (
-          <SourceParityComparison spec={rule.templateSpec} density="compact" />
-        ) : (
-          <p className="rounded-md bg-muted/30 px-3 py-2 text-sm break-words">
-            {describeAnyRule(rule)}
-          </p>
-        )}
+        <V2RulePresentation rule={rule} compact sourcesFirst />
       </div>
 
       <div className="grid gap-2 sm:grid-cols-2">

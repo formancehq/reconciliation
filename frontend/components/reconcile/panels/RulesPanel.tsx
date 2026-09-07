@@ -13,7 +13,6 @@ import {
   Loader2,
   Search,
   ChevronRight,
-  Network,
   Trash2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -37,13 +36,11 @@ import {
 import {
   Item,
   ItemContent,
-  ItemDescription,
   ItemGroup,
   ItemHeader,
 } from "@workspace/ui/components/item"
 import { toast } from "@/components/ui/toast"
 import {
-  reconClient,
   reconClientV2,
   useReconResource,
   poll,
@@ -60,13 +57,12 @@ import {
   templateLabel,
   listAllRules,
   listAllAlerts,
-  listCapturesByContract,
+  listCaptures,
   patchRuleEnabled,
-  evaluateRuleByContract,
-  deleteRuleByContract,
+  evaluateRule,
+  deleteRule,
   contractVersionOf,
   resourceKey,
-  isRuleV2,
   type AnyRule,
   type AnyCapture,
   type AnyAlert,
@@ -80,8 +76,6 @@ import {
   VerdictBadge,
 } from "../ui"
 import { RuleDetail } from "./RuleDetail"
-import { CreateRuleDialog } from "./CreateRuleDialog"
-import { SourceParityComparison } from "../SourceParityComparison"
 import { V2RulePresentation } from "../V2RulePresentation"
 import { CreateRuleDialogV2 } from "./CreateRuleDialogV2"
 import createLogger from "@/lib/logger"
@@ -132,7 +126,6 @@ function RulesList({
   )
   const [evaluating, setEvaluating] = useState<Set<string>>(new Set())
   const [busyToggle, setBusyToggle] = useState<Set<string>>(new Set())
-  const [creating, setCreating] = useState(false)
   const [creatingV2, setCreatingV2] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<AnyRule | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -156,9 +149,8 @@ function RulesList({
     const [entries, alerts] = await Promise.all([
       Promise.all(
         currentRules.map(async (rule) => {
-          const caps = await listCapturesByContract(
+          const caps = await listCaptures(
             rule.id,
-            contractVersionOf(rule),
             { signal }
           ).catch(() => [] as AnyCapture[])
           return [resourceKey(rule), caps[0] ?? null] as const
@@ -221,10 +213,8 @@ function RulesList({
       const key = resourceKey(rule)
       setBusy(setEvaluating, key, true)
       try {
-        const evaluation = await evaluateRuleByContract(
-          rule.id,
-          contractVersionOf(rule)
-        )
+        const evaluation = await evaluateRule(
+          rule.id)
         const line = `“${rule.name}” → ${evaluation.result}`
         if (evaluation.result === "PASS") toast.success(line)
         else if (evaluation.result === "FAIL")
@@ -237,13 +227,10 @@ function RulesList({
           })
         // Read-after-write is eventually consistent: let alerts/captures settle,
         // then refresh other panels.
-        await poll<AnyAlert[]>(
-          async () =>
-            contractVersionOf(rule) === 2
-              ? reconClientV2.listAlerts()
-              : reconClient.listAlerts(),
-          { tries: 3, intervalMs: 350 }
-        )
+        await poll<AnyAlert[]>(async () => reconClientV2.listAlerts(), {
+          tries: 3,
+          intervalMs: 350,
+        })
         invalidate()
       } catch (err) {
         log.error("evaluateRule failed", {
@@ -270,10 +257,8 @@ function RulesList({
     const deletedRule = pendingDelete
     setDeleting(true)
     try {
-      await deleteRuleByContract(
-        deletedRule.id,
-        contractVersionOf(deletedRule)
-      )
+      await deleteRule(
+        deletedRule.id)
       toast.success("Rule definition deleted", {
         description: "Opening its retained audit record.",
       })
@@ -333,14 +318,7 @@ function RulesList({
           {(rules.refreshing || verdicts.loading) && (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setCreatingV2(true)}
-          >
-            <Network className="mr-1.5 h-4 w-4" /> New advanced rule
-          </Button>
-          <Button size="sm" onClick={() => setCreating(true)}>
+          <Button size="sm" onClick={() => setCreatingV2(true)}>
             <Plus className="mr-1.5 h-4 w-4" /> New rule
           </Button>
         </div>
@@ -477,15 +455,6 @@ function RulesList({
         </div>
       )}
 
-      <CreateRuleDialog
-        key="new"
-        open={creating}
-        onOpenChange={setCreating}
-        onSaved={(rule) => {
-          invalidate()
-          onOpen(rule.id)
-        }}
-      />
       <CreateRuleDialogV2
         key="new-v2"
         open={creatingV2}
@@ -701,15 +670,7 @@ export function RuleListItem({
       </ItemHeader>
 
       <ItemContent className="min-w-0 gap-3 p-3 sm:p-4">
-        {isRuleV2(rule) ? (
-          <V2RulePresentation rule={rule} compact />
-        ) : rule.templateKind === "source_parity" ? (
-          <SourceParityComparison spec={rule.templateSpec} density="compact" />
-        ) : (
-          <ItemDescription className="line-clamp-none rounded-md bg-muted/30 p-3 text-left font-mono text-xs break-all text-muted-foreground">
-            {describeAnyRule(rule)}
-          </ItemDescription>
-        )}
+        <V2RulePresentation rule={rule} compact />
       </ItemContent>
     </Item>
   )

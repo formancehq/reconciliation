@@ -42,7 +42,6 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "@/components/ui/toast"
 import {
-  reconClient,
   reconClientV2,
   useReconResource,
   poll,
@@ -57,18 +56,18 @@ import {
   SEVERITY_ORDER,
   listAllAlerts,
   listAllRules,
-  getAlertByContract,
-  getRuleByContract,
-  listCapturesByContract,
-  listAlertEventsByContract,
+  getAlert,
+  getRule,
+  listCaptures,
+  listAlertEvents,
   contractVersionOf,
   resourceKey,
   ruleResourceKey,
-  acknowledgeAlertByContract,
-  resolveAlertByContract,
-  acceptAlertByContract,
-  snoozeAlertByContract,
-  unsnoozeAlertByContract,
+  acknowledgeAlert,
+  resolveAlert,
+  acceptAlert,
+  snoozeAlert,
+  unsnoozeAlert,
   rememberReconActor,
   resolveReconActor,
   type AlertStatus,
@@ -906,10 +905,10 @@ function AlertDetail({
     ruleName?: string
     captureLoad: CaptureLoadState
   }>(async (signal) => {
-    const alert = await getAlertByContract(alertId, contractVersion, signal)
+    const alert = await getAlert(alertId, signal)
     const [ruleR, capsR] = await Promise.allSettled([
-      getRuleByContract(alert.ruleID, contractVersion, signal),
-      listCapturesByContract(alert.ruleID, contractVersion, {
+      getRule(alert.ruleID, signal),
+      listCaptures(alert.ruleID, {
         period: alert.periodID,
         signal,
       }),
@@ -931,7 +930,7 @@ function AlertDetail({
   // The alert timeline is its own paginated event log (a ledger projection):
   // first page via useReconResource, then accumulate older pages via the cursor.
   const eventsRes = useReconResource<Cursor<AlertEvent>>(
-    (signal) => listAlertEventsByContract(alertId, contractVersion, undefined, signal),
+    (signal) => listAlertEvents(alertId, undefined, signal),
     [alertId, contractVersion, dataVersion]
   )
   const eventsKey = `${contractVersion}:${alertId}:${dataVersion}`
@@ -950,7 +949,7 @@ function AlertDetail({
     if (!eventsNext || loadingMoreEvents) return
     setLoadingMoreEvents(true)
     try {
-      const page = await listAlertEventsByContract(alertId, contractVersion, eventsNext)
+      const page = await listAlertEvents(alertId, eventsNext)
       setEventPages((cur) => ({
         ...cur,
         older: [...cur.older, ...(page.data ?? [])],
@@ -1167,10 +1166,7 @@ function AlertDetail({
           onDone={async () => {
             setAction(null)
             await poll<AnyAlert>(
-              async () =>
-                contractVersion === 2
-                  ? reconClientV2.getAlert(alertId)
-                  : reconClient.getAlert(alertId),
+              async () => reconClientV2.getAlert(alertId),
               { tries: 3, intervalMs: 300 }
             )
             invalidate()
@@ -1516,15 +1512,9 @@ export function AlertActionDialog({
             ? "snoozed"
             : "unsnoozed"
 
-  const applyOne = ({
-    id,
-    contractVersion,
-  }: {
-    id: string
-    contractVersion: 1 | 2
-  }) => {
+  const applyOne = ({ id }: { id: string; contractVersion: 1 | 2 }) => {
     if (kind === "ack")
-      return acknowledgeAlertByContract(id, contractVersion, {
+      return acknowledgeAlert(id, {
         by: by.trim(),
         note: note.trim() || undefined,
       })
@@ -1533,22 +1523,22 @@ export function AlertActionDialog({
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-      return resolveAlertByContract(id, contractVersion, {
+      return resolveAlert(id, {
         by: by.trim(),
         note: note.trim() || undefined,
         transactionRefs: transactionRefs.length ? transactionRefs : undefined,
       })
     }
     if (kind === "accept")
-      return acceptAlertByContract(id, contractVersion, {
+      return acceptAlert(id, {
         by: by.trim(),
         note: note.trim(),
       })
     if (kind === "unsnooze")
-      return unsnoozeAlertByContract(id, contractVersion, {
+      return unsnoozeAlert(id, {
         by: by.trim(),
       })
-    return snoozeAlertByContract(id, contractVersion, {
+    return snoozeAlert(id, {
       by: by.trim(),
       until: new Date(until).toISOString(),
       note: note.trim() || undefined,

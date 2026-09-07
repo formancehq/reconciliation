@@ -51,7 +51,7 @@ import {
   useReconResource,
   listAllRules,
   listAllAlerts,
-  listCapturesByContract,
+  listCaptures,
   contractVersionOf,
   buildDeviationModel,
   breaksByTemplateKind,
@@ -102,10 +102,11 @@ export function InsightsPanel() {
   // still exists, otherwise we fall back to the default.
   const defaultRuleKey = useMemo(() => {
     if (rules.length === 0) return undefined
+    // Prefer a rule whose deviation chart has a reference band to draw.
     const preferred = rules.find(
       (r) =>
-        r.templateKind === "source_parity" ||
-        r.templateKind === "account_threshold"
+        r.templateKind === "balance_equation" ||
+        r.templateKind === "balance_bounds"
     )
     const rule = preferred ?? rules[0]!
     return `${contractVersionOf(rule)}:${rule.id}`
@@ -123,7 +124,7 @@ export function InsightsPanel() {
   const capturesRes = useReconResource<AnyCapture[]>(
     (signal) =>
       rule
-        ? listCapturesByContract(rule.id, contractVersionOf(rule), { signal })
+        ? listCaptures(rule.id, { signal })
         : Promise.resolve([]),
     [selectedKey, dataVersion]
   )
@@ -347,7 +348,8 @@ function DeviationChart({
   model: DeviationModel
   series: DeviationSeries
 }) {
-  const isParity = model.metric === "signedDiff" || model.metric === "residual"
+  // A residual is a symmetric band around zero; a balance has explicit limits.
+  const isParity = model.metric === "residual"
   const { tolerance, min, max } = series.bounds
 
   // Reference band edges.
@@ -642,7 +644,6 @@ function ChartCaption({
 }
 
 function metricLabel(metric: DeviationModel["metric"]): string {
-  if (metric === "signedDiff") return "Signed difference"
   if (metric === "balance") return "Balance"
   if (metric === "residual") return "Residual"
   return "Value"
