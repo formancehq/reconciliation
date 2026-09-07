@@ -160,23 +160,89 @@ const RULES = [
   },
 ];
 
-async function listRules() {
-  const r = await api('GET', '/rules');
+// ── V2 rule catalogue ───────────────────────────────────────────────────────
+// stale_holds is a V2 template, so these are created on /v2/rules. They read the
+// holds:enfuce:* book seeded by seed-data.sh, whose deadline metadata is dated
+// relative to seed time — so the verdicts below hold whenever you run this.
+//
+// The pair is the "warn early, page late" pattern: severity is declared per
+// rule, so the advance warning and the breach are two rules over the same holds.
+const HOLDS_SOURCE = {
+  id: 'enfuce-holds',
+  ledger: LEDGER,
+  query: A('holds:enfuce:*'),
+  asset: ASSET,
+};
+const HOLD_DEADLINE = {
+  expiryKey: 'hold_expires_at',
+  createdKey: 'hold_created_at',
+  encoding: 'datetime',
+  maxAge: '48h',
+};
+// Labels copied onto each alert so it names the authorisation, not just an
+// address. Read off the account, never filtered on — no index required.
+const HOLD_IDENTITY = ['enfuce_auth_id', 'card_id'];
+
+const V2_RULES = [
+  {
+    key: 'holds-stale',
+    expect: 'FAIL',
+    body: {
+      name: 'Card holds past their expiry',
+      templateKind: 'stale_holds',
+      templateSpec: {
+        source: HOLDS_SOURCE,
+        deadline: HOLD_DEADLINE,
+        mode: 'stale',
+        scope: 'per_hold',
+        identityKeys: HOLD_IDENTITY,
+      },
+      severity: 'high',
+      periodType: 'continuous',
+      enabled: true,
+    },
+  },
+  {
+    key: 'holds-approaching',
+    expect: 'FAIL',
+    body: {
+      name: 'Card holds expiring within 24 hours',
+      templateKind: 'stale_holds',
+      templateSpec: {
+        source: HOLDS_SOURCE,
+        deadline: { expiryKey: HOLD_DEADLINE.expiryKey, encoding: 'datetime' },
+        mode: 'approaching',
+        warnWithin: '24h',
+        scope: 'per_hold',
+        identityKeys: HOLD_IDENTITY,
+      },
+      severity: 'low',
+      periodType: 'continuous',
+      enabled: true,
+    },
+  },
+];
+
+async function listRules(prefix = '') {
+  const r = await api('GET', `${prefix}/rules`);
   return r?.cursor?.data ?? [];
 }
 
-async function listAlerts() {
-  const r = await api('GET', '/alerts');
+async function listAlerts(prefix = '') {
+  const r = await api('GET', `${prefix}/alerts`);
   return r?.cursor?.data ?? [];
 }
 
 async function cleanup() {
-  const existing = await listRules();
-  const mine = existing.filter((r) => r?.labels?.demo === DEMO_LABEL);
-  for (const r of mine) {
-    await api('DELETE', `/rules/${encodeURIComponent(r.id)}`).catch(() => {});
+  let cleared = 0;
+  for (const prefix of ['', '/v2']) {
+    const mine = (await listRules(prefix)).filter((r) => r?.labels?.demo === DEMO_LABEL);
+    for (const r of mine) {
+      await api('DELETE', `${prefix}/rules/${encodeURIComponent(r.id)}`).catch(() => {});
+    }
+    cleared += mine.length;
   }
-  if (mine.length) console.log(`· cleared ${mine.length} previously-seeded rule(s)`);
+  if (cleared) console.log(`· cleared ${cleared} previously-seeded rule(s)`);
 }
 
 async function main() {
@@ -202,6 +268,22 @@ async function main() {
     console.log(`+ rule "${rule.body.name}" [${rule.body.templateKind}] → ${r.data.id}`);
   }
 
+  // 1b) Create the V2 rules on the versioned route. A stale_holds rule is
+  // rejected at create if its deadline keys aren't declared + indexed on the
+  // ledger, so report that clearly rather than failing the whole seed.
+  for (const rule of V2_RULES) {
+    const body = { ...rule.body, labels: { ...(rule.body.labels || {}), demo: DEMO_LABEL, program: 'cards' } };
+    try {
+      const r = await api('POST', '/v2/rules', body);
+      created.push({ ...rule, id: r.data.id, prefix: '/v2' });
+      console.log(`+ rule "${rule.body.name}" [${rule.body.templateKind}] → ${r.data.id}`);
+    } catch (e) {
+      console.log(`! skipped "${rule.body.name}": ${e.message}`);
+      console.log('  stale_holds needs holds:enfuce:* accounts whose hold_expires_at /');
+      console.log('  hold_created_at keys are declared datetime and indexed — re-run ./scripts/seed-data.sh.');
+    }
+  }
+
   // 2) Evaluate each rule twice to build a short activity history. Evaluation is
   // best-effort: if the backend can't record captures against this ledger, the
   // rules are still seeded (and the reason is reported) rather than aborting.
@@ -210,7 +292,7 @@ async function main() {
   for (const round of [1, 2]) {
     for (const rule of created) {
       try {
-        const r = await api('POST', `/rules/${encodeURIComponent(rule.id)}/evaluate`, {});
+        const r = await api('POST', `${rule.prefix ?? ''}/rules/${encodeURIComponent(rule.id)}/evaluate`, {});
         evalOk += 1;
         if (round === 1) {
           const result = r?.data?.result ?? '?';
@@ -240,11 +322,17 @@ async function main() {
   }
   const byRule = new Map();
   for (const a of alerts) if (!byRule.has(a.ruleID)) byRule.set(a.ruleID, a);
-  console.log(`· ${alerts.length} alert(s) opened`);
+  // V2 alerts live behind the versioned route — a V1 listing never returns them.
+  const alertsV2 = await listAlerts('/v2').catch(() => []);
+  console.log(`· ${alerts.length} alert(s) opened (+ ${alertsV2.length} on /v2)`);
 
   // 4) Drive the alert lifecycle per rule intent.
   for (const rule of created) {
     if (rule.expect !== 'FAIL') continue;
+    // The stale-hold alerts are left open on purpose: they are the live "funds
+    // are trapped right now" content, and they resolve themselves once the hold
+    // clears rather than being worked through the lifecycle here.
+    if (rule.prefix === '/v2') continue;
     const alert = byRule.get(rule.id);
     if (!alert) {
       console.log(`  ! no alert found for "${rule.body.name}" (skipping ${rule.lifecycle})`);
