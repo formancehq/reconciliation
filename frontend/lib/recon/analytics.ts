@@ -20,7 +20,7 @@
  *   • An asset code may carry a precision suffix (`EUR/2`); the digits after `/`
  *     are the number of minor-unit decimals. A bare code (`EUR`) implies scale 0.
  */
-import type { AlertStatus, Rule, Verdict } from "./types"
+import type { AlertStatus, Verdict } from "./types"
 import type { AnyAlert, AnyCapture, AnyRule } from "./resources"
 import { contractVersionOf } from "./resources"
 import { templateLabel } from "./v2"
@@ -149,11 +149,28 @@ function isRealTime(ts: string | undefined | null): ts is string {
 
 /** Reference bounds declared on the rule, keyed by asset CODE (scale-stripped). */
 function specBounds(
-  rule: Pick<Rule, "templateKind" | "templateSpec">
+  rule: Pick<AnyRule, "templateKind" | "templateSpec">
 ): Record<string, DeviationBounds> {
   const spec = (rule.templateSpec ?? {}) as Record<string, unknown>
   const out: Record<string, DeviationBounds> = {}
-  if (rule.templateKind === "source_parity") {
+  if (rule.templateKind === "balance_bounds") {
+    // V2 encodes amounts as strings; parseAmount already takes both shapes.
+    const bounds = spec.bounds as
+      | Record<string, { min?: unknown; max?: unknown }>
+      | undefined
+    if (bounds)
+      for (const [asset, b] of Object.entries(bounds))
+        out[asset] = { min: parseAmount(b?.min), max: parseAmount(b?.max) }
+  } else if (rule.templateKind === "balance_equation") {
+    // A symmetric residual band, like V1 parity's tolerance. One declared asset
+    // per source, so the band applies to the assets the sources name.
+    const tolerance = parseAmount(spec.tolerance)
+    const sources = (spec.sources ?? []) as Array<{ asset?: unknown }>
+    if (tolerance !== undefined)
+      for (const source of sources)
+        if (typeof source?.asset === "string" && source.asset !== "*")
+          out[source.asset] = { tolerance }
+  } else if (rule.templateKind === "source_parity") {
     const tol = spec.tolerance as Record<string, unknown> | undefined
     if (tol)
       for (const [asset, v] of Object.entries(tol))
@@ -200,13 +217,16 @@ export function buildDeviationModel(
   const metric: DeviationModel["metric"] =
     kind === "source_parity"
       ? "signedDiff"
-      : kind === "account_threshold"
+      : kind === "account_threshold" || kind === "balance_bounds"
         ? "balance"
         : kind === "balance_equation"
           ? "residual"
           : "none"
 
-  const bounds = contractVersionOf(rule) === 1 ? specBounds(rule as Rule) : {}
+  // Reference bands used to be read from V1 specs only, which left every V2
+  // rule's deviation chart without the band its V1 equivalent had. The V2
+  // templates that declare a band now feed the same model.
+  const bounds = specBounds(rule)
   const timed = captures.filter((c) => isRealTime(c.capturedAt))
   const verdicts = timed.filter(
     (capture) => capture.verdict === "pass" || capture.verdict === "fail"

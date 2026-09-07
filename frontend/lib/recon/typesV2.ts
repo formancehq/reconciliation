@@ -26,6 +26,7 @@ export type TemplateKindV2 =
   | "source_consensus"
   | "coverage_ratio_bounds"
   | "stale_holds"
+  | "balance_bounds"
 
 export interface LedgerNamedSourceV2 {
   id: string
@@ -90,6 +91,22 @@ export interface CoverageRatioBoundsSpecV2 {
   ratio: RateBoundsV2
 }
 
+/** One asset's inclusive limits in minor units. An empty side is unbounded, not zero. */
+export interface BalanceBoundV2 {
+  min?: string
+  max?: string
+}
+
+export interface BalanceBoundsSpecV2 {
+  source: NamedSourceV2
+  /**
+   * Inclusive limits keyed by asset — and the DECLARED asset universe. Unlike
+   * every other V2 template these keys, not the assets the source holds, decide
+   * what is checked: a floor must keep failing when a set drains to nothing.
+   */
+  bounds: Record<string, BalanceBoundV2>
+}
+
 export type StaleHoldsModeV2 = "stale" | "approaching"
 export type StaleHoldsScopeV2 = "per_hold" | "aggregate"
 
@@ -130,6 +147,7 @@ export type TemplateSpecV2 =
   | SourceConsensusSpecV2
   | CoverageRatioBoundsSpecV2
   | StaleHoldsSpecV2
+  | BalanceBoundsSpecV2
 
 interface RuleCommonV2 {
   id: string
@@ -168,6 +186,10 @@ export type RuleV2 =
       templateKind: "stale_holds"
       templateSpec: StaleHoldsSpecV2
     })
+  | (RuleCommonV2 & {
+      templateKind: "balance_bounds"
+      templateSpec: BalanceBoundsSpecV2
+    })
 
 interface RuleRequestCommonV2 {
   name: string
@@ -199,6 +221,10 @@ export type RuleRequestV2 =
   | (RuleRequestCommonV2 & {
       templateKind: "stale_holds"
       templateSpec: StaleHoldsSpecV2
+    })
+  | (RuleRequestCommonV2 & {
+      templateKind: "balance_bounds"
+      templateSpec: BalanceBoundsSpecV2
     })
 
 export interface RulePatchRequestV2 {
@@ -338,12 +364,27 @@ export type StaleHoldsEvidenceV2 =
   | StaleHoldEvidenceV2
   | StaleHoldsSummaryEvidenceV2
 
+export interface BalanceBoundsEvidenceV2 {
+  schemaVersion: 2
+  operation: "balance_bounds"
+  asset: string
+  source: EvidenceSourceV2
+  /** Only the sides the rule declared; an unbounded side is an absent key. */
+  effectiveBounds: { min?: string; max?: string }
+  /** Signed distance outside the limits: negative below the floor, positive above the ceiling. */
+  excursion: string
+  /** Present only on a failing outcome. */
+  breachedBound?: "min" | "max"
+  compiledCEL: string
+}
+
 export type EvidenceV2 =
   | BalanceEquationEvidenceV2
   | ExchangeRateBoundsEvidenceV2
   | SourceConsensusEvidenceV2
   | CoverageRatioBoundsEvidenceV2
   | StaleHoldsEvidenceV2
+  | BalanceBoundsEvidenceV2
 
 export interface OutcomeV2 {
   fingerprint: string

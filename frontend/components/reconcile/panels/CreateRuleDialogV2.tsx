@@ -50,6 +50,7 @@ import {
 import { useChartStore } from "@/stores/chartStore"
 import { NamedSourcesEditor } from "../NamedSourcesEditor"
 import {
+  BalanceBoundsEditorV2,
   BalanceEquationEditorV2,
   CoverageRatioBoundsEditorV2,
   ExchangeRateBoundsEditorV2,
@@ -59,6 +60,11 @@ import {
 import { RunTimingFields } from "./CreateRuleDialog"
 
 const log = createLogger("Recon")
+
+/** Templates that read exactly one account set rather than comparing several. */
+function singleSource(kind: TemplateKindV2): boolean {
+  return kind === "stale_holds" || kind === "balance_bounds"
+}
 
 interface Props {
   open: boolean
@@ -263,12 +269,18 @@ function CreateRuleDialogV2Open({
             <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
               <div>
                 <div className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                  {draft.kind === "stale_holds" ? "Hold set" : "Named sources"}
+                  {draft.kind === "stale_holds"
+                    ? "Hold set"
+                    : draft.kind === "balance_bounds"
+                      ? "Account set"
+                      : "Named sources"}
                 </div>
                 <div className="text-[10px] text-muted-foreground">
                   {draft.kind === "stale_holds"
                     ? "The accounts holding funds — normally one per authorisation, matched by address prefix."
-                    : "Labels are operator-facing; stable IDs carry every machine reference."}
+                    : draft.kind === "balance_bounds"
+                      ? "The accounts whose balance is bounded."
+                      : "Labels are operator-facing; stable IDs carry every machine reference."}
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -314,10 +326,11 @@ function CreateRuleDialogV2Open({
                 ledgerOptions={ledgerOptions}
                 fixedCount={
                   draft.kind === "exchange_rate_bounds" ||
-                  draft.kind === "stale_holds"
+                  draft.kind === "stale_holds" ||
+                  draft.kind === "balance_bounds"
                 }
-                minSources={draft.kind === "stale_holds" ? 1 : 2}
-                maxSources={draft.kind === "stale_holds" ? 1 : 32}
+                minSources={singleSource(draft.kind) ? 1 : 2}
+                maxSources={singleSource(draft.kind) ? 1 : 32}
                 backendError={backendError}
               />
             </div>
@@ -423,6 +436,14 @@ function TemplateEditorV2({
     case "coverage_ratio_bounds":
       return (
         <CoverageRatioBoundsEditorV2
+          draft={draft}
+          onChange={onChange}
+          backendError={backendError}
+        />
+      )
+    case "balance_bounds":
+      return (
+        <BalanceBoundsEditorV2
           draft={draft}
           onChange={onChange}
           backendError={backendError}

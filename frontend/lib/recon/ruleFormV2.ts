@@ -26,6 +26,9 @@ export const MAX_IDENTITY_KEYS_V2 = 8
 /** A source declared as "every asset this account set holds". */
 export const ASSET_WILDCARD_V2 = "*"
 
+/** Signed whole number of minor units — mirrors the server's bounds parser. */
+export const SIGNED_INTEGER_PATTERN_V2 = /^-?(0|[1-9][0-9]*)$/
+
 /** Templates whose operation has a defined per-asset fan-out. */
 export function supportsAllAssetsV2(kind: TemplateKindV2): boolean {
   return (
@@ -118,7 +121,18 @@ export interface RuleFormDraftV2 {
   maxHoldsScanned: string
   /** Form-local: the asset each source carried before "every asset" was turned on. */
   namedAssets: Record<string, string>
+  /** balance_bounds only: inclusive limits keyed by asset — and the declared universe. */
+  bounds: BoundDraftV2[]
 }
+
+/** A row in the bounds editor. An empty side means unbounded, not zero. */
+export interface BoundDraftV2 {
+  asset: string
+  min: string
+  max: string
+}
+
+export const MAX_BOUNDS_ASSETS_V2 = 256
 
 export interface RuleFormIssueV2 {
   path: string
@@ -141,7 +155,7 @@ export function defaultNamedSourcesV2(
   ledger = ""
 ): NamedSourceV2[] {
   const count =
-    kind === "stale_holds"
+    kind === "stale_holds" || kind === "balance_bounds"
       ? 1
       : kind === "exchange_rate_bounds"
         ? 2
@@ -213,6 +227,16 @@ export function createRuleFormDraftV2({
   )
   const savedHolds =
     rule?.templateKind === "stale_holds" ? rule.templateSpec : undefined
+  const savedBounds =
+    rule?.templateKind === "balance_bounds"
+      ? Object.entries(rule.templateSpec.bounds)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([asset, bound]) => ({
+            asset,
+            min: bound.min ?? "",
+            max: bound.max ?? "",
+          }))
+      : undefined
   const coefficients = Object.fromEntries(
     sources.map((source, index) => [
       source.id,
@@ -296,6 +320,7 @@ export function createRuleFormDraftV2({
       savedHolds?.maxHoldsScanned === undefined
         ? ""
         : String(savedHolds.maxHoldsScanned),
+    bounds: savedBounds ?? [{ asset: "USD/2", min: "", max: "" }],
     namedAssets: Object.fromEntries(
       sources
         .filter((source) => source.asset !== ASSET_WILDCARD_V2)
@@ -433,6 +458,28 @@ export function serializeRuleFormV2(draft: RuleFormDraftV2): RuleRequestV2 {
         tolerance: draft.tolerance,
       },
     }
+  if (draft.kind === "balance_bounds") {
+    return {
+      ...common,
+      templateKind: draft.kind,
+      templateSpec: {
+        // One source, like stale_holds — the shared editor keeps it in sources[0].
+        source: cloneSources(draft.sources)[0] as LedgerNamedSourceV2,
+        bounds: Object.fromEntries(
+          draft.bounds
+            .filter((bound) => bound.asset.trim())
+            .map((bound) => [
+              bound.asset.trim(),
+              {
+                // An omitted side is unbounded; never send an empty string.
+                ...(bound.min.trim() ? { min: bound.min.trim() } : {}),
+                ...(bound.max.trim() ? { max: bound.max.trim() } : {}),
+              },
+            ])
+        ),
+      },
+    }
+  }
   if (draft.kind === "stale_holds") {
     const deadline: HoldDeadlineV2 = { encoding: draft.deadline.encoding }
     if (draft.deadline.expiryKey.trim())
@@ -481,8 +528,8 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
   const issues: RuleFormIssueV2[] = []
   const add = (path: string, message: string) => issues.push({ path, message })
   if (!draft.name.trim()) add("name", "Name is required.")
-  if (draft.kind === "stale_holds") {
-    if (draft.sources.length !== 1)
+  if (draft.kind === "stale_holds" || draft.kind === "balance_bounds") {
+    if (draft.kind === "stale_holds" && draft.sources.length !== 1)
       add("sources", "Stale holds reads exactly one hold set.")
     if (draft.sources[0]?.kind === "account_metadata")
       add(
@@ -536,6 +583,7 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
   if (
     draft.kind !== "exchange_rate_bounds" &&
     draft.kind !== "stale_holds" &&
+    draft.kind !== "balance_bounds" &&
     wildcards.length === 0 &&
     draft.sources.length > 0
   ) {
@@ -627,6 +675,58 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
         add(
           `${prefix}.toleranceBps`,
           "Basis-point tolerance must be an integer from 0 through 10,000."
+        )
+    }
+  }
+
+  if (draft.kind === "balance_bounds") {
+    if (draft.sources.length !== 1)
+      add("sources", "Balance bounds reads exactly one account set.")
+    if (draft.bounds.length === 0)
+      add("bounds", "Add at least one asset to bound.")
+    if (draft.bounds.length > MAX_BOUNDS_ASSETS_V2)
+      add("bounds", `Bound at most ${MAX_BOUNDS_ASSETS_V2} assets.`)
+
+    const declared = draft.sources[0]?.asset ?? ""
+    const seenAssets = new Set<string>()
+    draft.bounds.forEach((bound, index) => {
+      const asset = bound.asset.trim()
+      if (!asset) {
+        add(`bounds[${index}].asset`, "Name the asset to bound.")
+        return
+      }
+      if (asset === ASSET_WILDCARD_V2)
+        add(
+          `bounds[${index}].asset`,
+          'A bound is denominated, so "*" is not an asset here — set it on the source instead.'
+        )
+      if (seenAssets.has(asset))
+        add(`bounds[${index}].asset`, `${asset} is bounded twice.`)
+      seenAssets.add(asset)
+
+      const min = bound.min.trim()
+      const max = bound.max.trim()
+      if (!min && !max)
+        add(
+          `bounds[${index}].min`,
+          "Set a minimum, a maximum, or both — a bound with neither never fails."
+        )
+      for (const [side, value] of [["min", min], ["max", max]])
+        if (value && !SIGNED_INTEGER_PATTERN_V2.test(value))
+          add(
+            `bounds[${index}].${side}`,
+            "Use a whole number of minor units; negatives are allowed."
+          )
+      if (min && max && SIGNED_INTEGER_PATTERN_V2.test(min) && SIGNED_INTEGER_PATTERN_V2.test(max) && BigInt(min) > BigInt(max))
+        add(`bounds[${index}].max`, "The maximum must not be below the minimum.")
+    })
+
+    if (declared && declared !== ASSET_WILDCARD_V2) {
+      const only = draft.bounds[0]?.asset.trim()
+      if (draft.bounds.length !== 1 || only !== declared)
+        add(
+          "bounds",
+          `The source declares ${declared}, so bound exactly that asset — switch it to every asset to bound several.`
         )
     }
   }

@@ -14,7 +14,9 @@ import {
 import {
   backendFieldPath,
   coefficientPath,
+  ASSET_WILDCARD_V2,
   MAX_IDENTITY_KEYS_V2,
+  type BoundDraftV2,
   type InstantEncodingV2,
   type NamedSourceV2,
   type PortfolioSideV2,
@@ -377,6 +379,111 @@ export function ExactRateBoundsEditorV2({
         binary floating point.
       </p>
     </div>
+  )
+}
+
+export function BalanceBoundsEditorV2({
+  draft,
+  onChange,
+  backendError,
+}: TemplateEditorProps) {
+  const declared = draft.sources[0]?.asset ?? ""
+  const wildcard = declared === ASSET_WILDCARD_V2
+  const setBounds = (bounds: BoundDraftV2[]) => onChange({ ...draft, bounds })
+  const update = (index: number, patch: Partial<BoundDraftV2>) =>
+    setBounds(draft.bounds.map((b, i) => (i === index ? { ...b, ...patch } : b)))
+
+  return (
+    <Card className="space-y-3 p-3">
+      <div>
+        <div className="text-sm font-medium">Balance within limits, per asset</div>
+        <p className="text-xs text-muted-foreground">
+          The assets you list here are exactly the assets checked — not the ones
+          the account set happens to hold. That is deliberate: a minimum on a set
+          that has drained to nothing still has to fail, so an asset you name but
+          the set does not hold is checked as zero.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        {draft.bounds.map((bound, index) => (
+          <div key={index} className="flex flex-wrap items-end gap-2">
+            <div className="w-28">
+              <FieldV2
+                label={index === 0 ? "Asset" : ""}
+                error={backendFieldPath(backendError, `bounds[${index}].asset`)}
+              >
+                <Input
+                  value={bound.asset}
+                  onChange={(event) => update(index, { asset: event.target.value })}
+                  placeholder="USD/2"
+                  className="font-mono"
+                  disabled={!wildcard && draft.bounds.length === 1}
+                />
+              </FieldV2>
+            </div>
+            <div className="min-w-28 flex-1">
+              <FieldV2
+                label={index === 0 ? "Minimum" : ""}
+                error={backendFieldPath(backendError, `bounds[${index}].min`)}
+              >
+                <Input
+                  value={bound.min}
+                  onChange={(event) => update(index, { min: event.target.value })}
+                  placeholder="no minimum"
+                  inputMode="numeric"
+                  className="font-mono"
+                />
+              </FieldV2>
+            </div>
+            <div className="min-w-28 flex-1">
+              <FieldV2
+                label={index === 0 ? "Maximum" : ""}
+                error={backendFieldPath(backendError, `bounds[${index}].max`)}
+              >
+                <Input
+                  value={bound.max}
+                  onChange={(event) => update(index, { max: event.target.value })}
+                  placeholder="no maximum"
+                  inputMode="numeric"
+                  className="font-mono"
+                />
+              </FieldV2>
+            </div>
+            <button
+              type="button"
+              className="mb-1.5 text-xs text-muted-foreground hover:text-destructive disabled:opacity-40"
+              onClick={() => setBounds(draft.bounds.filter((_, i) => i !== index))}
+              disabled={draft.bounds.length === 1}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {wildcard ? (
+        <button
+          type="button"
+          className="text-xs font-medium text-muted-foreground hover:text-foreground"
+          onClick={() => setBounds([...draft.bounds, { asset: "", min: "", max: "" }])}
+        >
+          + Bound another asset
+        </button>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          The source declares {declared || "one asset"}, so it is bounded in that
+          asset alone. Switch it to <span className="font-medium">every asset</span>{" "}
+          to bound several.
+        </p>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        Amounts are whole numbers of minor units and may be negative — a limit on
+        a liability set usually is. Leave a side empty for unbounded; leaving both
+        empty is a rule that can never fail.
+      </p>
+    </Card>
   )
 }
 

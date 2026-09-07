@@ -38,6 +38,11 @@ export const TEMPLATE_META_V2: Record<
     blurb:
       "Every named source must be present and the widest observed spread must stay within tolerance.",
   },
+  balance_bounds: {
+    label: "Balance bounds",
+    blurb:
+      "One account set's balance must stay inside inclusive per-asset limits, in minor units.",
+  },
   stale_holds: {
     label: "Stale holds",
     blurb:
@@ -159,6 +164,23 @@ export function describeRuleV2(rule: RuleV2): string {
         ? `${spec.ratio.min} ≤ ratio ≤ ${spec.ratio.max}`
         : `target ${spec.ratio.target} ± ${spec.ratio.toleranceBps} bps`
       return `(${numerator}) ÷ (${denominator}) · ${bounds}`
+    }
+    case "balance_bounds": {
+      const spec = rule.templateSpec
+      const assets = Object.keys(spec.bounds).sort()
+      const shown = assets.slice(0, 3)
+      const ranges = shown.map((asset) => {
+        const { min, max } = spec.bounds[asset] ?? {}
+        const body =
+          min !== undefined && max !== undefined
+            ? `${min}…${max}`
+            : min !== undefined
+              ? `≥ ${min}`
+              : `≤ ${max}`
+        return `${asset} ${body}`
+      })
+      const more = assets.length - shown.length
+      return `${sourceName(spec.source)} within ${ranges.join(" · ")}${more > 0 ? ` · +${more} more` : ""}`
     }
     case "stale_holds": {
       const spec = rule.templateSpec

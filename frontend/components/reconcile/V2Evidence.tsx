@@ -66,6 +66,13 @@ export function isEvidenceV2(value: unknown): value is EvidenceV2 {
       strings(value, ["asset", "compiledCEL"])
     )
   }
+  if (value.operation === "balance_bounds") {
+    return (
+      isEvidenceSource(value.source) &&
+      isRecord(value.effectiveBounds) &&
+      strings(value, ["asset", "excursion", "compiledCEL"])
+    )
+  }
   if (value.operation === "stale_holds") {
     if (
       !strings(value, ["mode", "asset", "sourceId", "evaluatedAt", "compiledCEL"])
@@ -121,6 +128,14 @@ export function V2Evidence({
     case "coverage_ratio_bounds":
       return (
         <CoverageRatioEvidence
+          evidence={evidence}
+          passed={outcomePassed}
+          compact={compact}
+        />
+      )
+    case "balance_bounds":
+      return (
+        <BalanceBoundsEvidence
           evidence={evidence}
           passed={outcomePassed}
           compact={compact}
@@ -602,6 +617,59 @@ function Presence({ present }: { present: boolean }) {
   )
 }
 
+export function BalanceBoundsEvidence({
+  evidence,
+  passed,
+  compact,
+}: OperationEvidenceProps<"balance_bounds">) {
+  const { min, max } = evidence.effectiveBounds
+  const range =
+    min !== undefined && max !== undefined
+      ? `${min} ≤ balance ≤ ${max}`
+      : min !== undefined
+        ? `balance ≥ ${min}`
+        : `balance ≤ ${max}`
+  const breached = evidence.breachedBound
+
+  return (
+    <EvidenceShell
+      title="Balance bounds"
+      summary={`${evidence.source.balance} ${evidence.asset} · ${range}`}
+      passed={passed}
+      verdict={
+        passed
+          ? `Pass: the balance sits inside its ${min !== undefined && max !== undefined ? "range" : "limit"}.`
+          : `Fail: ${breached === "min" ? "below the minimum" : "above the maximum"} by ${absolute(evidence.excursion)} ${evidence.asset}.`
+      }
+      compiledCEL={evidence.compiledCEL}
+      compact={compact}
+    >
+      {!evidence.source.present && (
+        <ControlFailure>
+          The account set holds no {evidence.asset} at all, so the balance reads
+          zero. A minimum is still checked against it — that is the point of
+          naming the asset on the rule rather than discovering it.
+        </ControlFailure>
+      )}
+      <MetricGrid
+        metrics={[
+          ["Balance", `${evidence.source.balance} ${evidence.asset}`],
+          ["Minimum", min ?? "unbounded"],
+          ["Maximum", max ?? "unbounded"],
+          ["Outside by", passed ? "—" : `${absolute(evidence.excursion)} ${evidence.asset}`],
+          ["Source", displaySourceId([evidence.source], evidence.source.id)],
+          ["Holds this asset", evidence.source.present ? "yes" : "no"],
+        ]}
+      />
+    </EvidenceShell>
+  )
+}
+
+/** Drop a leading minus: the direction is already named in the verdict. */
+function absolute(value: string): string {
+  return value.startsWith("-") ? value.slice(1) : value
+}
+
 /**
  * stale_holds evidence comes in two shapes from the same template: one flagged
  * hold (what an alert carries in per_hold scope) or the scan behind an outcome
@@ -824,6 +892,9 @@ export function inferEvidencePassed(evidence: EvidenceV2): boolean {
         evidence.undefinedReason === undefined &&
         rationalWithinBounds(evidence.observedRate, evidence.effectiveBounds)
       )
+    }
+    if (evidence.operation === "balance_bounds") {
+      return evidence.breachedBound === undefined
     }
     if (evidence.operation === "stale_holds") {
       // A per-hold outcome exists only for a hold that failed; a scan summary
