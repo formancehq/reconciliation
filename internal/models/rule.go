@@ -54,6 +54,12 @@ const (
 	TemplateSourceConsensus TemplateKind = "source_consensus"
 	// TemplateCoverageRatioBounds compares exact signed multi-source portfolios.
 	TemplateCoverageRatioBounds TemplateKind = "coverage_ratio_bounds"
+	// TemplateBalanceBounds is the V2 bounds primitive: one named source's
+	// balance must stay inside inclusive per-asset limits. It is the V2 form of
+	// account_threshold's aggregate mode, and the only template whose asset
+	// universe is declared (the bounds table) rather than discovered from what
+	// its source holds — a floor must keep failing when a set drains to nothing.
+	TemplateBalanceBounds TemplateKind = "balance_bounds"
 	// TemplateStaleHolds is the V2 time-based control: it flags held funds whose
 	// deadline (an issuer-supplied expiry, or a creation instant plus a maximum
 	// age) has passed — or is about to. The only template whose predicate reads

@@ -1493,7 +1493,7 @@ components:
       readOnly: true
     TemplateKindV2:
       type: string
-      enum: [balance_equation, exchange_rate_bounds, source_consensus, coverage_ratio_bounds, stale_holds]
+      enum: [balance_equation, exchange_rate_bounds, source_consensus, coverage_ratio_bounds, stale_holds, balance_bounds]
     SeverityV2:
       type: string
       enum: [info, low, medium, high, critical]
@@ -1684,6 +1684,53 @@ components:
           items: { $ref: '#/components/schemas/BalanceEquationTermV2' }
         ratio: { $ref: '#/components/schemas/ExchangeRateV2' }
 
+    BalanceBoundV2:
+      type: object
+      description: |
+        One asset's inclusive limits, in that asset's minor units. Either side may
+        be omitted, which means **unbounded on that side** — not zero. At least
+        one must be set. `min == max` is legal and means exact equality. Both are
+        signed: a threshold on a liability or obligation set is negative.
+      properties:
+        min: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+        max: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+    BalanceBoundsSpecV2:
+      type: object
+      description: |
+        Asserts that one named source's balance stays inside inclusive per-asset
+        limits. The V2 form of `account_threshold`'s aggregate mode.
+
+        Its asset universe is **declared, not discovered**: the keys of `bounds`
+        are exactly the assets checked. This is the one V2 template that works
+        that way, and it is deliberate — every other template builds its universe
+        from the assets its sources actually hold, so an asset that drains to
+        nothing leaves the universe and its outcome disappears. For a floor that
+        is precisely backwards: a minimum on a set that has drained to zero is
+        the alert that matters most, so it must keep failing rather than vanish.
+
+        A source naming one asset must bound exactly that asset; declare
+        `asset: "*"` on the source to bound several.
+      required: [source, bounds]
+      properties:
+        source:
+          allOf:
+            - $ref: '#/components/schemas/NamedSourceV2'
+          description: The account set whose balance is bounded. `account_metadata` sources are accepted.
+        bounds:
+          type: object
+          minProperties: 1
+          maxProperties: 256
+          additionalProperties: { $ref: '#/components/schemas/BalanceBoundV2' }
+          description: |
+            Inclusive limits keyed by asset code — and the declared asset
+            universe. An asset named here that the source does not hold is
+            checked as an explicit zero. An asset the source holds that is not
+            named here is not checked. `*` is not accepted as a key: a bound is
+            denominated.
+          example:
+            USD/2: { min: "100000", max: "5000000" }
+            EUR/2: { min: "50000" }
+
     HoldDeadlineV2:
       type: object
       description: |
@@ -1841,6 +1888,14 @@ components:
           properties:
             templateKind: { type: string, enum: [coverage_ratio_bounds] }
             templateSpec: { $ref: '#/components/schemas/CoverageRatioBoundsSpecV2' }
+    BalanceBoundsRuleRequestV2:
+      allOf:
+        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - type: object
+          required: [templateKind, templateSpec]
+          properties:
+            templateKind: { type: string, enum: [balance_bounds] }
+            templateSpec: { $ref: '#/components/schemas/BalanceBoundsSpecV2' }
     StaleHoldsRuleRequestV2:
       allOf:
         - $ref: '#/components/schemas/RuleRequestCommonV2'
@@ -1856,6 +1911,7 @@ components:
         - $ref: '#/components/schemas/SourceConsensusRuleRequestV2'
         - $ref: '#/components/schemas/CoverageRatioBoundsRuleRequestV2'
         - $ref: '#/components/schemas/StaleHoldsRuleRequestV2'
+        - $ref: '#/components/schemas/BalanceBoundsRuleRequestV2'
       discriminator:
         propertyName: templateKind
         mapping:
@@ -1864,6 +1920,7 @@ components:
           source_consensus: '#/components/schemas/SourceConsensusRuleRequestV2'
           coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsRuleRequestV2'
           stale_holds: '#/components/schemas/StaleHoldsRuleRequestV2'
+          balance_bounds: '#/components/schemas/BalanceBoundsRuleRequestV2'
     RulePatchRequestV2:
       type: object
       description: Partial update. A changed definition is validated as a complete V2 definition; contractVersion is immutable and cannot be supplied.
@@ -1877,6 +1934,7 @@ components:
             - $ref: '#/components/schemas/SourceConsensusSpecV2'
             - $ref: '#/components/schemas/CoverageRatioBoundsSpecV2'
             - $ref: '#/components/schemas/StaleHoldsSpecV2'
+            - $ref: '#/components/schemas/BalanceBoundsSpecV2'
         enabled: { type: boolean }
         severity: { $ref: '#/components/schemas/SeverityV2' }
         schedule: { $ref: '#/components/schemas/ScheduleV2' }

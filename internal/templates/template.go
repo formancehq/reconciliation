@@ -104,6 +104,7 @@ func DefaultRegistry() *Registry {
 		NewSourceConsensus(),
 		NewCoverageRatioBounds(),
 		NewStaleHolds(),
+		NewBalanceBounds(),
 	)
 }
 

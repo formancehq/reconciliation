@@ -5,7 +5,7 @@ Templates are the public rule surface — raw CEL is internal-only (see
 (for the persisted `compiled_cel`), and an end-to-end evaluator that produces one `Outcome` per
 fingerprint axis.
 
-> Status: all three V1 templates and five additive V2 templates are ✅ implemented. V2 does not
+> Status: all three V1 templates and six additive V2 templates are ✅ implemented. V2 does not
 > rename or reinterpret any V1 field or evidence key.
 
 ---
@@ -55,6 +55,13 @@ one has no defined alignment. Available on `balance_equation`, `source_consensus
 `coverage_ratio_bounds`; rejected on `account_metadata` sources (the key represents one declared
 asset), by `exchange_rate_bounds` (a rate names its pair), and for now by `stale_holds` (a hold's
 amount and deadline are per account *and* asset, which needs its own outcome shape).
+
+> ⚠️ **A discovered universe can lose an asset.** Under `*` the universe is the assets the sources
+> *hold*. An asset whose volume drains to zero can be evicted by the ledger, leave the union, and take
+> its outcome with it — and an active alert whose fingerprint an evaluation stops emitting is
+> auto-resolved by the disappearance sweep. For an equality check that is usually harmless (nothing on
+> either side means the equation holds). For a **minimum** it is backwards, which is exactly why
+> `balance_bounds` declares its universe instead of discovering it.
 
 **Scope.** A ledger source can be read in one of two scopes, a native capability of the Source primitive:
 - **aggregate** (default): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
@@ -574,7 +581,72 @@ with asset-precision conversion, while coverage compares two same-asset portfoli
 separate from `balance_equation`: a ratio bound is scale-invariant and cannot be represented by one
 fixed residual tolerance.
 
-### 8. `stale_holds`
+### 8. `balance_bounds`
+
+Asserts that one named source's balance stays inside inclusive per-asset limits, in minor units. The
+V2 form of [`account_threshold`](#2-account_threshold--shipped--aggregate--per_account)'s aggregate
+mode, and the template that makes the V1 catalogue *migratable* rather than merely
+re-implementable — an equation between sources cannot express a bound on a single balance.
+
+```json
+{
+  "source": {
+    "id": "operating",
+    "label": "Operating treasury",
+    "ledger": "acme",
+    "query": { "$match": { "address": "treasury:operating:*" } },
+    "asset": "*"
+  },
+  "bounds": {
+    "USD/2": { "min": "100000", "max": "5000000" },
+    "EUR/2": { "min": "50000" },
+    "JPY/0": { "max": "0" }
+  }
+}
+```
+
+**Its asset universe is declared, not discovered — and that is the point.** Every other V2 template
+builds its universe from the assets its sources hold. A bounds rule cannot: a floor of 100 000 USD on
+a set that has drained to nothing must keep failing, and a zero-volume asset is absent from that
+union — so the outcome would disappear and the disappearance sweep would auto-resolve the one alert
+that matters. The keys of `bounds` are therefore exactly the assets checked, wildcard or not:
+
+- An asset **named in `bounds` that the source does not hold** is checked as an explicit zero, with
+  `source.present: false`. This is the drained-floor case, and it is load-bearing.
+- An asset the source **holds but `bounds` does not name** is not this rule's business.
+- `asset: "*"` on the source is what *permits* a multi-entry bounds table; it does not choose the
+  assets. A source naming one denomination must bound exactly that one.
+
+**Validation**
+
+- Either side of a bound may be omitted, meaning **unbounded on that side — not zero**; at least one
+  must be set. `min == max` is legal and means exact equality.
+- Bounds are **signed** base-10 integer strings: a threshold on a liability or obligation set is
+  negative (`{"min": "-500000", "max": "0"}`).
+- Bounds keys must be valid asset codes, and `*` is rejected as a key — a bound is denominated. (V1
+  validated neither, so an `account_threshold` rule keyed `"usd"` reads zero forever and always
+  passes; migrating it surfaces the typo as a `400`.)
+- At most 256 assets. This bounds the *spec*, not the alert stream — the service's new-alert cap
+  ([workflows.md §6b](./workflows.md)) does that.
+
+**Fingerprint** — `asset:<asset>`, byte-identical to `account_threshold`'s aggregate fingerprint, so a
+migrated rule keeps its dedup key and alert granularity. Outcomes are emitted in lexicographic asset
+order.
+
+Evidence carries `asset`, the shared `source` object (`id`, `kind`, `asset`, `balance`, `present`),
+`effectiveBounds` (only the sides the spec declared — an unbounded side is an absent key, never a
+null), `excursion` (signed distance outside the limits: negative below the floor, positive above the
+ceiling, `"0"` inside), `breachedBound` (`min`/`max`, **present only on a failing outcome**), and
+`compiledCEL`.
+
+It remains separate from `balance_equation` because that is the *equality* statement across sources
+and this is the *range* statement on one balance. Unlike the other V2 templates its `compiledCEL`
+renders plain comparison operators rather than a dedicated `…Within` builtin: those exist because
+exact rational arithmetic cannot be written with CEL operators, whereas an inclusive integer bound
+can — so the predicate stays executable against today's kernel, adds nothing to it, and stays
+recognisable to anyone migrating an `account_threshold` rule.
+
+### 9. `stale_holds`
 
 The catalog's only **time-based** control: it flags held funds whose deadline has passed — or is
 about to. Designed for card programs where an issuer places holds with an expiry (see
