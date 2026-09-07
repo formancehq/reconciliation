@@ -118,6 +118,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 						[<strong key="parity">Source parity</strong>, 'prove that two independently sourced balances agree', 'Posting-derived ledger balance against another ledger or an account-metadata balance'],
 						[<strong key="threshold">Account threshold</strong>, 'detect when balances leave an allowed range', 'A minimum reserve, maximum exposure, or both, aggregated or per account'],
 							[<strong key="multi">Multi-source (V2)</strong>, 'reconcile more than two named sources at once', 'A balance equation, exchange-rate bounds, source consensus, or a coverage ratio across named sources'],
+						[<strong key="stale">Stale holds (V2)</strong>, 'catch held funds that outstay their expiry', 'A set of hold accounts plus the metadata key carrying each hold’s expiry, with a fallback maximum age'],
 					]}
 				/>
 
@@ -170,6 +171,33 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					<li><strong>Ledger invariant:</strong>{' '}assign each account set its accounting normal balance. Debit-normal balances are normalized as negative and credit-normal balances as positive, so equal balances on opposite sides cancel to zero. Add as many account sets as the control needs.</li>
 					<li><strong>Account threshold:</strong>{' '}choose aggregate mode to check the sum of the selected set, or per-account mode to open a distinct break for each account. Add a minimum, maximum, or both for every relevant asset.</li>
 				</ul>
+
+				<SubHeading id="v3-rec-stale-holds">Watch for holds that overstay</SubHeading>
+				<P>
+					A hold ties up money that isn’t spent yet — a card authorisation, a reserve against a pending
+					settlement. The <strong>stale holds</strong>{' '}template watches the clock on those, so funds
+					can’t sit trapped past the point the issuer intended. It reads each hold’s deadline from the
+					account’s own metadata: the expiry the issuer supplied, or, for holds without one, the moment
+					the hold was placed plus a maximum age you set (48 hours, say).
+				</P>
+				<ul className="list-disc space-y-1 pl-5 text-sm">
+					<li><strong>One alert per stuck hold.</strong>{' '}Each overdue hold opens its own alert naming the account, the amount, and how long it is overdue. When the hold is released, its alert resolves on the next run. Choose aggregate scope instead for a single alert per asset carrying the count and the total trapped.</li>
+					<li><strong>A rule bounds its own fan-out.</strong>{' '}Because one stuck hold is one alert, a per-hold rule reads at most a thousand holds in a run unless you raise the limit. Past that the run stops and says so rather than filling the inbox — see <AppLink href="/guide?section=alerts">alerts about the check</AppLink>.</li>
+					<li><strong>Warn before the deadline, not after.</strong>{' '}A rule in <em>approaching</em>{' '}mode flags holds due within a window you choose — the next six hours, for example. Pair it with a second rule in <em>stale</em>{' '}mode at a higher severity: the early warning resolves itself as the breach alert opens, so one hold never leaves two live alerts behind.</li>
+					<li><strong>Set the warning window wider than the run interval.</strong>{' '}A rule that runs hourly with a thirty-minute warning window can step straight over the warning and report the breach.</li>
+					<li><strong>Name the hold in your own terms.</strong>{' '}A hold is normally one account per authorisation, so the alert already points at a specific account. Listing a few metadata keys — the authorisation id, the card — copies them onto the alert, so it reads as <em>authorisation AUTH-8801 on card_42</em>{' '}rather than a ledger address. These are labels only: they need no index, and a hold missing one is still checked.</li>
+					<li><strong>Released holds keep their metadata.</strong>{' '}Releasing a hold empties the account but leaves the expiry behind, so give the rule a selector that matches live holds only — an address prefix plus something like <Code>metadata[&quot;hold_status&quot;] = active</Code> — rather than every hold ever placed.</li>
+				</ul>
+				<Callout kind="info" title="The deadline key has to be indexed">
+					The service asks the ledger to do the date comparison, so the expiry key must be an indexed
+					datetime or integer field on the accounts. A key that isn’t indexed is rejected when you save
+					the rule, naming the key — not left to fail at the next evaluation.
+				</Callout>
+				<Callout kind="tip" title="Only indexed date keys are offered">
+					The deadline pickers list the ledger’s indexed datetime and integer keys, because the date
+					comparison is pushed down to the ledger. The label keys below them are the opposite case —
+					they are read off the account and never filtered on, so any key name works.
+				</Callout>
 
 				<SubHeading id="v3-rec-timing">Choose the alert period and run mode</SubHeading>
 				<P>
@@ -307,6 +335,27 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					<li><strong>Group by rule:</strong>{' '}creates a collapsible section for each rule on the current page. Its own checkbox selects only that rule&apos;s visible alerts, which is useful when ownership follows the control.</li>
 					<li><strong>Auto-refresh:</strong>{' '}polls every ten seconds for new and changed breaks. Leave it off when you need a stable selection for careful bulk work.</li>
 				</ul>
+
+				<SubHeading id="v3-rec-meta-alerts">Alerts about the check, not the money</SubHeading>
+				<P>
+					Two entries can appear in the inbox that describe the module&apos;s own behaviour rather than a
+					financial break. Both carry a <Code>kind</Code>{' '}label, so notifications can route them
+					somewhere other than the channel your reconciliation breaks go to.
+				</P>
+				<GuideTable
+					caption="Alerts about the check"
+					columns={['Alert', 'What it means', 'What to do']}
+					rows={[
+						[<strong key="err">engine.error</strong>, 'The check could not run — a resolver timed out, a query failed, a budget ran out. It says nothing about the money.', 'Look at the rule’s configuration and the ledger connection. It clears itself once an evaluation completes.'],
+						[<strong key="cap">alert.cap</strong>, 'The check ran and found more new breaks than the module opens at once, so it opened none of them and raised this instead. The evaluation and its full evidence are still recorded.', 'Read the count and the sample it carries: this is one systemic failure, not hundreds of separate ones. Fix the cause or narrow the rule, and the next run alerts normally.'],
+					]}
+				/>
+				<Callout kind="info" title="Why none were opened rather than the first few">
+					An alert resolves itself once its rule stops reporting it. Opening only part of an oversized
+					batch would make the rest look resolved — closing breaks precisely because there were too many
+					of them to report. Withholding the whole batch leaves every alert already open exactly as it
+					was, and nothing is lost from the record: the run and its evidence are still captured.
+				</Callout>
 
 				<SubHeading id="v3-rec-occurrences">Occurrences and evidence</SubHeading>
 				<P>

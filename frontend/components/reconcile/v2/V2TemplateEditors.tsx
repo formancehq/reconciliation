@@ -14,11 +14,19 @@ import {
 import {
   backendFieldPath,
   coefficientPath,
+  MAX_IDENTITY_KEYS_V2,
+  type InstantEncodingV2,
   type NamedSourceV2,
   type PortfolioSideV2,
   type RateBoundsDraftV2,
   type RuleFormDraftV2,
+  type StaleHoldsModeV2,
+  type StaleHoldsScopeV2,
 } from "@/lib/recon"
+import { useLedgerMetaFields } from "../useLedgerMetaFields"
+
+/** Radix selects cannot hold an empty value; this stands in for "not set". */
+const NO_KEY = "__none__"
 
 export function BalanceEquationEditorV2({
   draft,
@@ -369,6 +377,277 @@ export function ExactRateBoundsEditorV2({
         binary floating point.
       </p>
     </div>
+  )
+}
+
+export function StaleHoldsEditorV2({
+  draft,
+  onChange,
+  backendError,
+}: TemplateEditorProps) {
+  const approaching = draft.mode === "approaching"
+  const setDeadline = (patch: Partial<RuleFormDraftV2["deadline"]>) =>
+    onChange({ ...draft, deadline: { ...draft.deadline, ...patch } })
+
+  return (
+    <Card className="space-y-4 p-3">
+      <div>
+        <div className="text-sm font-medium">
+          {approaching
+            ? "Holds approaching their deadline"
+            : "Holds past their deadline"}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          A hold is one account still holding funds — normally one per
+          authorisation. Its deadline is read from the account&apos;s own
+          metadata; released holds, whose balance is back to zero, are ignored.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <MetadataKeySelectV2
+          label="Issuer expiry key"
+          ledger={draft.sources[0]?.ledger ?? ""}
+          value={draft.deadline.expiryKey}
+          onChange={(expiryKey) => setDeadline({ expiryKey })}
+          error={backendFieldPath(backendError, "deadline.expiryKey")}
+          hint="The date the issuer says the hold expires. Must be an indexed datetime or integer key."
+        />
+        <FieldV2
+          label="Value format"
+          error={backendFieldPath(backendError, "deadline.encoding")}
+        >
+          <Select
+            value={draft.deadline.encoding}
+            onValueChange={(encoding) =>
+              setDeadline({ encoding: encoding as InstantEncodingV2 })
+            }
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="datetime">Datetime</SelectItem>
+              <SelectItem value="epoch_seconds">Epoch seconds</SelectItem>
+              <SelectItem value="epoch_millis">Epoch milliseconds</SelectItem>
+              <SelectItem value="epoch_micros">Epoch microseconds</SelectItem>
+            </SelectContent>
+          </Select>
+        </FieldV2>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <MetadataKeySelectV2
+          label="Placed-at key (fallback)"
+          ledger={draft.sources[0]?.ledger ?? ""}
+          value={draft.deadline.createdKey}
+          onChange={(createdKey) => setDeadline({ createdKey })}
+          error={backendFieldPath(backendError, "deadline.createdKey")}
+          hint="Used for holds with no issuer expiry: this date plus the maximum age below."
+        />
+        <FieldV2
+          label="Maximum age"
+          error={backendFieldPath(backendError, "deadline.maxAge")}
+        >
+          <Input
+            value={draft.deadline.maxAge}
+            onChange={(event) => setDeadline({ maxAge: event.target.value })}
+            placeholder="48h"
+            className="font-mono"
+            disabled={!draft.deadline.createdKey.trim()}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            How long a hold may live once placed. Required with a placed-at key.
+          </p>
+        </FieldV2>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <FieldV2 label="Flag holds that are">
+          <Select
+            value={draft.mode}
+            onValueChange={(mode) =>
+              onChange({
+                ...draft,
+                mode: mode as StaleHoldsModeV2,
+                // warnWithin belongs to the approaching band only; the server
+                // rejects it in stale mode, so clear it rather than hide it.
+                warnWithin: mode === "approaching" ? draft.warnWithin : "",
+              })
+            }
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="stale">Already past the deadline</SelectItem>
+              <SelectItem value="approaching">
+                Approaching the deadline
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </FieldV2>
+        {approaching && (
+          <FieldV2
+            label="Warning window"
+            error={backendFieldPath(backendError, "warnWithin")}
+          >
+            <Input
+              value={draft.warnWithin}
+              onChange={(event) =>
+                onChange({ ...draft, warnWithin: event.target.value })
+              }
+              placeholder="6h"
+              className="font-mono"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Set this wider than the rule&apos;s run interval, or a hold can
+              cross the window between two runs without ever warning.
+            </p>
+          </FieldV2>
+        )}
+      </div>
+
+      {approaching && (
+        <p className="text-xs text-muted-foreground">
+          This is a band, not a threshold: once a hold goes past its deadline it
+          leaves this rule. Pair it with a second rule set to{" "}
+          <span className="font-medium">already past the deadline</span> at a
+          higher severity — the early warning resolves itself as the breach
+          alert opens.
+        </p>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <FieldV2 label="Alert granularity">
+          <Select
+            value={draft.scope}
+            onValueChange={(scope) =>
+              onChange({ ...draft, scope: scope as StaleHoldsScopeV2 })
+            }
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="per_hold">One alert per hold</SelectItem>
+              <SelectItem value="aggregate">
+                One alert per asset, with totals
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Per hold names the stuck authorisation and resolves itself when the
+            hold clears. Choose totals when the stale set can get large.
+          </p>
+        </FieldV2>
+        <FieldV2
+          label="Hold limit per run"
+          error={backendFieldPath(backendError, "maxHoldsScanned")}
+        >
+          <Input
+            value={draft.maxHoldsScanned}
+            onChange={(event) =>
+              onChange({ ...draft, maxHoldsScanned: event.target.value })
+            }
+            placeholder={draft.scope === "per_hold" ? "1000" : "50000"}
+            inputMode="numeric"
+            className="font-mono"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Past this the run stops and says so rather than filling the inbox.
+            Leave empty for the default.
+          </p>
+        </FieldV2>
+      </div>
+
+      <FieldV2
+        label="Label the alert with (optional)"
+        error={backendFieldPath(backendError, "identityKeys")}
+      >
+        <Input
+          value={draft.identityKeys.join(", ")}
+          onChange={(event) =>
+            onChange({
+              ...draft,
+              identityKeys: event.target.value
+                .split(",")
+                .map((key) => key.trim())
+                .filter(Boolean),
+            })
+          }
+          placeholder="enfuce_auth_id, card_id"
+          className="font-mono"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Up to {MAX_IDENTITY_KEYS_V2} metadata keys, copied onto each alert so
+          it names the authorisation rather than a ledger address. These are
+          labels, not filters — they need no index. Alert evidence is durable
+          and widely readable, so leave cardholder details out.
+        </p>
+      </FieldV2>
+    </Card>
+  )
+}
+
+/**
+ * A deadline key must be range-filtered by the ledger, so only indexed datetime
+ * and integer keys are offered. When the ledger's keys cannot be listed, fall
+ * back to free text rather than blocking the rule.
+ */
+function MetadataKeySelectV2({
+  label,
+  ledger,
+  value,
+  onChange,
+  error,
+  hint,
+}: {
+  label: string
+  ledger: string
+  value: string
+  onChange: (value: string) => void
+  error?: string
+  hint: string
+}) {
+  const { fields } = useLedgerMetaFields(ledger)
+  const options = fields.filter(
+    (field) =>
+      field.ready &&
+      (field.kind === "datetime" ||
+        field.kind === "int" ||
+        field.kind === "uint")
+  )
+
+  return (
+    <FieldV2 label={label} error={error}>
+      {options.length === 0 ? (
+        <Input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="hold_expires_at"
+          className="font-mono"
+        />
+      ) : (
+        <Select
+          value={value || NO_KEY}
+          onValueChange={(next) => onChange(next === NO_KEY ? "" : next)}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_KEY}>Not set</SelectItem>
+            {options.map((field) => (
+              <SelectItem key={field.key} value={field.key}>
+                {field.key} · {field.kind}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+    </FieldV2>
   )
 }
 

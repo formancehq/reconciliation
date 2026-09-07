@@ -13,6 +13,11 @@ export const SOURCE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 export const UNSIGNED_INTEGER_PATTERN = /^(0|[1-9][0-9]{0,77})$/
 export const SIGNED_SAFE_INTEGER_PATTERN = /^-?[1-9][0-9]*$/
 export const DECIMAL_PATTERN = /^(0|[1-9][0-9]*)(\.[0-9]{1,18})?$/
+/**
+ * A Go duration as `time.ParseDuration` accepts it — "48h", "90m", "1h30m".
+ * The server is authoritative; this catches the obvious typo before a round-trip.
+ */
+export const DURATION_PATTERN = /^(\d+(?:\.\d+)?(?:ns|us|µs|ms|s|m|h))+$/
 
 export const TEMPLATE_META_V2: Record<
   TemplateKindV2,
@@ -32,6 +37,11 @@ export const TEMPLATE_META_V2: Record<
     label: "Source consensus",
     blurb:
       "Every named source must be present and the widest observed spread must stay within tolerance.",
+  },
+  stale_holds: {
+    label: "Stale holds",
+    blurb:
+      "Held funds whose deadline has passed — or is about to — read from each hold's own metadata.",
   },
   coverage_ratio_bounds: {
     label: "Coverage-ratio bounds",
@@ -149,6 +159,20 @@ export function describeRuleV2(rule: RuleV2): string {
         ? `${spec.ratio.min} ≤ ratio ≤ ${spec.ratio.max}`
         : `target ${spec.ratio.target} ± ${spec.ratio.toleranceBps} bps`
       return `(${numerator}) ÷ (${denominator}) · ${bounds}`
+    }
+    case "stale_holds": {
+      const spec = rule.templateSpec
+      const deadline = spec.deadline.expiryKey
+        ? spec.deadline.createdKey
+          ? `${spec.deadline.expiryKey}, else ${spec.deadline.createdKey} + ${spec.deadline.maxAge}`
+          : spec.deadline.expiryKey
+        : `${spec.deadline.createdKey} + ${spec.deadline.maxAge}`
+      const window =
+        spec.mode === "approaching"
+          ? `deadline within the next ${spec.warnWithin}`
+          : "deadline passed"
+      const grain = spec.scope === "aggregate" ? "total held" : "per hold"
+      return `${sourceName(spec.source)} · ${window} (${deadline}) · ${grain}`
     }
   }
 }

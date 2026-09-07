@@ -25,6 +25,7 @@ export type TemplateKindV2 =
   | "exchange_rate_bounds"
   | "source_consensus"
   | "coverage_ratio_bounds"
+  | "stale_holds"
 
 export interface LedgerNamedSourceV2 {
   id: string
@@ -89,11 +90,46 @@ export interface CoverageRatioBoundsSpecV2 {
   ratio: RateBoundsV2
 }
 
+export type StaleHoldsModeV2 = "stale" | "approaching"
+export type StaleHoldsScopeV2 = "per_hold" | "aggregate"
+
+/**
+ * How a deadline is written on the account. `datetime` is a key the ledger
+ * declares as a datetime; the `epoch_*` encodings are integer keys in the named
+ * unit. Whichever it is, the key must be declared AND indexed on the ledger —
+ * the service pushes the date comparison down to it.
+ */
+export type InstantEncodingV2 =
+  | "datetime"
+  | "epoch_seconds"
+  | "epoch_millis"
+  | "epoch_micros"
+
+export interface HoldDeadlineV2 {
+  expiryKey?: string
+  createdKey?: string
+  encoding?: InstantEncodingV2
+  maxAge?: string
+}
+
+export interface StaleHoldsSpecV2 {
+  source: LedgerNamedSourceV2
+  deadline: HoldDeadlineV2
+  mode?: StaleHoldsModeV2
+  warnWithin?: string
+  scope?: StaleHoldsScopeV2
+  /** Metadata keys copied onto each flagged hold's evidence. Labels, not filters: no index needed. */
+  identityKeys?: string[]
+  /** Per-rule read cap. per_hold defaults to 1000 server-side; never exceeds the engine budget. */
+  maxHoldsScanned?: number
+}
+
 export type TemplateSpecV2 =
   | BalanceEquationSpecV2
   | ExchangeRateBoundsSpecV2
   | SourceConsensusSpecV2
   | CoverageRatioBoundsSpecV2
+  | StaleHoldsSpecV2
 
 interface RuleCommonV2 {
   id: string
@@ -128,6 +164,10 @@ export type RuleV2 =
       templateKind: "coverage_ratio_bounds"
       templateSpec: CoverageRatioBoundsSpecV2
     })
+  | (RuleCommonV2 & {
+      templateKind: "stale_holds"
+      templateSpec: StaleHoldsSpecV2
+    })
 
 interface RuleRequestCommonV2 {
   name: string
@@ -155,6 +195,10 @@ export type RuleRequestV2 =
   | (RuleRequestCommonV2 & {
       templateKind: "coverage_ratio_bounds"
       templateSpec: CoverageRatioBoundsSpecV2
+    })
+  | (RuleRequestCommonV2 & {
+      templateKind: "stale_holds"
+      templateSpec: StaleHoldsSpecV2
     })
 
 export interface RulePatchRequestV2 {
@@ -246,11 +290,60 @@ export interface CoverageRatioBoundsEvidenceV2 {
   compiledCEL: string
 }
 
+interface StaleHoldsEvidenceCommonV2 {
+  schemaVersion: 2
+  operation: "stale_holds"
+  mode: StaleHoldsModeV2
+  asset: string
+  sourceId: string
+  evaluatedAt: string
+  compiledCEL: string
+}
+
+/** One flagged hold: what is stuck, for how much, and how far past its deadline. */
+export interface StaleHoldEvidenceV2 extends StaleHoldsEvidenceCommonV2 {
+  hold: string
+  amount: string
+  basis: "expiry" | "created_at"
+  deadline: string
+  /** mode "stale" only. */
+  overdueSeconds?: number
+  /** mode "approaching" only. */
+  dueInSeconds?: number
+  /** The rule's identityKeys that this hold carries — absent when it carries none. */
+  identity?: Record<string, string>
+}
+
+/**
+ * The scan behind an outcome: emitted for an aggregate rule, and for a per_hold
+ * rule that found nothing (so a clean run still records what was checked).
+ */
+export interface StaleHoldsSummaryEvidenceV2 extends StaleHoldsEvidenceCommonV2 {
+  scope: StaleHoldsScopeV2
+  deadlineOnOrBefore: string
+  /** The band's lower bound — mode "approaching" only. */
+  deadlineAfter?: string
+  holdsMatched: number
+  holdsBudget: number
+  holdsReleased: number
+  holdsFlagged: number
+  amountFlagged: string
+  oldestDeadline?: string
+  /** Bounded per-hold breakdown — aggregate scope only. */
+  holds?: StaleHoldEvidenceV2[]
+  holdsSampled?: number
+}
+
+export type StaleHoldsEvidenceV2 =
+  | StaleHoldEvidenceV2
+  | StaleHoldsSummaryEvidenceV2
+
 export type EvidenceV2 =
   | BalanceEquationEvidenceV2
   | ExchangeRateBoundsEvidenceV2
   | SourceConsensusEvidenceV2
   | CoverageRatioBoundsEvidenceV2
+  | StaleHoldsEvidenceV2
 
 export interface OutcomeV2 {
   fingerprint: string

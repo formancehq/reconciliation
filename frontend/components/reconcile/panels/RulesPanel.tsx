@@ -338,7 +338,7 @@ function RulesList({
             variant="outline"
             onClick={() => setCreatingV2(true)}
           >
-            <Network className="mr-1.5 h-4 w-4" /> New multi-source rule
+            <Network className="mr-1.5 h-4 w-4" /> New advanced rule
           </Button>
           <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="mr-1.5 h-4 w-4" /> New rule

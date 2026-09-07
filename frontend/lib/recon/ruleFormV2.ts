@@ -1,18 +1,27 @@
 import type { PeriodType, Schedule, Severity } from "./types"
 import type {
+  HoldDeadlineV2,
+  InstantEncodingV2,
+  LedgerNamedSourceV2,
   NamedSourceV2,
   RateBoundsV2,
   RuleRequestV2,
   RuleV2,
+  StaleHoldsModeV2,
+  StaleHoldsScopeV2,
   TemplateKindV2,
 } from "./typesV2"
 import {
   compareDecimalStrings,
   DECIMAL_PATTERN,
+  DURATION_PATTERN,
   SIGNED_SAFE_INTEGER_PATTERN,
   SOURCE_ID_PATTERN,
   UNSIGNED_INTEGER_PATTERN,
 } from "./v2"
+
+/** stale_holds reads one hold set, unlike the multi-source V2 templates. */
+export const MAX_IDENTITY_KEYS_V2 = 8
 
 export type PortfolioSideV2 = "numerator" | "denominator"
 export type RateModeV2 = "explicit" | "target"
@@ -23,6 +32,13 @@ export interface RateBoundsDraftV2 {
   max: string
   target: string
   toleranceBps: string
+}
+
+export interface HoldDeadlineDraftV2 {
+  expiryKey: string
+  createdKey: string
+  encoding: InstantEncodingV2
+  maxAge: string
 }
 
 export interface RuleFormDraftV2 {
@@ -39,6 +55,14 @@ export interface RuleFormDraftV2 {
   baseSource: string
   quoteSource: string
   rate: RateBoundsDraftV2
+  // stale_holds only. It reads a single hold set (sources[0]), so the shared
+  // sources array carries exactly one entry for this kind.
+  deadline: HoldDeadlineDraftV2
+  mode: StaleHoldsModeV2
+  warnWithin: string
+  scope: StaleHoldsScopeV2
+  identityKeys: string[]
+  maxHoldsScanned: string
 }
 
 export interface RuleFormIssueV2 {
@@ -62,7 +86,13 @@ export function defaultNamedSourcesV2(
   ledger = ""
 ): NamedSourceV2[] {
   const count =
-    kind === "exchange_rate_bounds" ? 2 : kind === "balance_equation" ? 3 : 2
+    kind === "stale_holds"
+      ? 1
+      : kind === "exchange_rate_bounds"
+        ? 2
+        : kind === "balance_equation"
+          ? 3
+          : 2
   return Array.from({ length: count }, (_, index) => ({
     ...emptyNamedSourceV2(index, ledger),
     asset: "USD/2",
@@ -118,10 +148,16 @@ export function createRuleFormDraftV2({
   kind?: TemplateKindV2
 } = {}): RuleFormDraftV2 {
   const selectedKind = rule?.templateKind ?? kind
+  const savedSources =
+    rule?.templateKind === "stale_holds"
+      ? [rule.templateSpec.source]
+      : (rule?.templateSpec as { sources?: NamedSourceV2[] } | undefined)
+          ?.sources
   const sources = cloneSources(
-    rule?.templateSpec.sources ??
-      defaultNamedSourcesV2(selectedKind, activeLedger)
+    savedSources ?? defaultNamedSourcesV2(selectedKind, activeLedger)
   )
+  const savedHolds =
+    rule?.templateKind === "stale_holds" ? rule.templateSpec : undefined
   const coefficients = Object.fromEntries(
     sources.map((source, index) => [
       source.id,
@@ -191,6 +227,20 @@ export function createRuleFormDraftV2({
           ? String(savedRate.toleranceBps)
           : "100",
     },
+    deadline: {
+      expiryKey: savedHolds?.deadline.expiryKey ?? "",
+      createdKey: savedHolds?.deadline.createdKey ?? "",
+      encoding: savedHolds?.deadline.encoding ?? "datetime",
+      maxAge: savedHolds?.deadline.maxAge ?? "",
+    },
+    mode: savedHolds?.mode ?? "stale",
+    warnWithin: savedHolds?.warnWithin ?? "",
+    scope: savedHolds?.scope ?? "per_hold",
+    identityKeys: savedHolds?.identityKeys ? [...savedHolds.identityKeys] : [],
+    maxHoldsScanned:
+      savedHolds?.maxHoldsScanned === undefined
+        ? ""
+        : String(savedHolds.maxHoldsScanned),
   }
 }
 
@@ -323,6 +373,38 @@ export function serializeRuleFormV2(draft: RuleFormDraftV2): RuleRequestV2 {
         tolerance: draft.tolerance,
       },
     }
+  if (draft.kind === "stale_holds") {
+    const deadline: HoldDeadlineV2 = { encoding: draft.deadline.encoding }
+    if (draft.deadline.expiryKey.trim())
+      deadline.expiryKey = draft.deadline.expiryKey.trim()
+    if (draft.deadline.createdKey.trim()) {
+      deadline.createdKey = draft.deadline.createdKey.trim()
+      deadline.maxAge = draft.deadline.maxAge.trim()
+    }
+    const identityKeys = draft.identityKeys
+      .map((key) => key.trim())
+      .filter(Boolean)
+    const maxHoldsScanned = draft.maxHoldsScanned.trim()
+    return {
+      ...common,
+      templateKind: draft.kind,
+      templateSpec: {
+        // stale_holds reads exactly one hold set; the shared editor keeps it in
+        // sources[0]. cloneSources keeps the query object from being shared.
+        source: cloneSources(draft.sources)[0] as LedgerNamedSourceV2,
+        deadline,
+        mode: draft.mode,
+        scope: draft.scope,
+        // Omitted rather than sent empty: the server rejects warnWithin in
+        // stale mode, and treats an absent cap as "use the scope default".
+        ...(draft.mode === "approaching" && draft.warnWithin.trim()
+          ? { warnWithin: draft.warnWithin.trim() }
+          : {}),
+        ...(identityKeys.length ? { identityKeys } : {}),
+        ...(maxHoldsScanned ? { maxHoldsScanned: Number(maxHoldsScanned) } : {}),
+      },
+    }
+  }
   return {
     ...common,
     templateKind: draft.kind,
@@ -339,7 +421,15 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
   const issues: RuleFormIssueV2[] = []
   const add = (path: string, message: string) => issues.push({ path, message })
   if (!draft.name.trim()) add("name", "Name is required.")
-  if (draft.sources.length < 2 || draft.sources.length > 32)
+  if (draft.kind === "stale_holds") {
+    if (draft.sources.length !== 1)
+      add("sources", "Stale holds reads exactly one hold set.")
+    if (draft.sources[0]?.kind === "account_metadata")
+      add(
+        "sources[0].kind",
+        "Stale holds reads held balances, so its source must be a ledger source."
+      )
+  } else if (draft.sources.length < 2 || draft.sources.length > 32)
     add("sources", "Use between 2 and 32 sources.")
   if (draft.kind === "exchange_rate_bounds" && draft.sources.length !== 2)
     add("sources", "Exchange-rate bounds requires exactly two sources.")
@@ -359,7 +449,11 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
       add(`${prefix}.metadataKey`, "Metadata key is required.")
   }
 
-  if (draft.kind !== "exchange_rate_bounds" && draft.sources.length > 0) {
+  if (
+    draft.kind !== "exchange_rate_bounds" &&
+    draft.kind !== "stale_holds" &&
+    draft.sources.length > 0
+  ) {
     const asset = draft.sources[0]?.asset
     draft.sources.forEach((source, index) => {
       if (source.asset !== asset)
@@ -450,6 +544,51 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
           "Basis-point tolerance must be an integer from 0 through 10,000."
         )
     }
+  }
+
+  if (draft.kind === "stale_holds") {
+    const expiryKey = draft.deadline.expiryKey.trim()
+    const createdKey = draft.deadline.createdKey.trim()
+    const maxAge = draft.deadline.maxAge.trim()
+    if (!expiryKey && !createdKey)
+      add(
+        "deadline.expiryKey",
+        "Give the deadline an expiry key, a creation key, or both."
+      )
+    if (createdKey && !maxAge)
+      add(
+        "deadline.maxAge",
+        "A maximum age is required when holds are dated from their creation."
+      )
+    if (maxAge && !DURATION_PATTERN.test(maxAge))
+      add("deadline.maxAge", 'Use a duration such as "48h" or "90m".')
+
+    const warnWithin = draft.warnWithin.trim()
+    if (draft.mode === "approaching" && !warnWithin)
+      add(
+        "warnWithin",
+        "A warning window is required when the rule watches holds approaching their deadline."
+      )
+    if (warnWithin && !DURATION_PATTERN.test(warnWithin))
+      add("warnWithin", 'Use a duration such as "6h" or "90m".')
+
+    const identitySeen = new Set<string>()
+    draft.identityKeys.forEach((key, index) => {
+      const trimmed = key.trim()
+      if (!trimmed) {
+        add(`identityKeys[${index}]`, "Remove the empty label key.")
+        return
+      }
+      if (identitySeen.has(trimmed))
+        add(`identityKeys[${index}]`, `${trimmed} is listed twice.`)
+      identitySeen.add(trimmed)
+    })
+    if (draft.identityKeys.length > MAX_IDENTITY_KEYS_V2)
+      add("identityKeys", `Use at most ${MAX_IDENTITY_KEYS_V2} label keys.`)
+
+    const cap = draft.maxHoldsScanned.trim()
+    if (cap && (!/^\d+$/.test(cap) || Number(cap) < 1))
+      add("maxHoldsScanned", "The hold limit must be a positive whole number.")
   }
 
   if (draft.schedule.kind === "cron" && !(draft.schedule.expr ?? "").trim())

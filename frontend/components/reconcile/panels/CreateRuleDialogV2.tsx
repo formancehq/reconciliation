@@ -51,6 +51,7 @@ import {
   CoverageRatioBoundsEditorV2,
   ExchangeRateBoundsEditorV2,
   SourceConsensusEditorV2,
+  StaleHoldsEditorV2,
 } from "../v2/V2TemplateEditors"
 import { RunTimingFields } from "./CreateRuleDialog"
 
@@ -173,10 +174,10 @@ function CreateRuleDialogV2Open({
         <DialogHeader className="border-b px-5 py-4">
           <DialogTitle>
             {isEdit
-              ? "Edit named-source rule"
+              ? "Edit advanced rule"
               : isDuplicate
-                ? "Duplicate named-source rule"
-                : "New named-source rule"}
+                ? "Duplicate advanced rule"
+                : "New advanced rule"}
           </DialogTitle>
           <DialogDescription>
             {TEMPLATE_META_V2[draft.kind].blurb}
@@ -259,11 +260,12 @@ function CreateRuleDialogV2Open({
             <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
               <div>
                 <div className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                  Named sources
+                  {draft.kind === "stale_holds" ? "Hold set" : "Named sources"}
                 </div>
                 <div className="text-[10px] text-muted-foreground">
-                  Labels are operator-facing; stable IDs carry every machine
-                  reference.
+                  {draft.kind === "stale_holds"
+                    ? "The accounts holding funds — normally one per authorisation, matched by address prefix."
+                    : "Labels are operator-facing; stable IDs carry every machine reference."}
                 </div>
               </div>
               {!seed && (
@@ -289,7 +291,12 @@ function CreateRuleDialogV2Open({
                   )
                 }
                 ledgerOptions={ledgerOptions}
-                fixedCount={draft.kind === "exchange_rate_bounds"}
+                fixedCount={
+                  draft.kind === "exchange_rate_bounds" ||
+                  draft.kind === "stale_holds"
+                }
+                minSources={draft.kind === "stale_holds" ? 1 : 2}
+                maxSources={draft.kind === "stale_holds" ? 1 : 32}
                 backendError={backendError}
               />
             </div>
@@ -395,6 +402,14 @@ function TemplateEditorV2({
     case "coverage_ratio_bounds":
       return (
         <CoverageRatioBoundsEditorV2
+          draft={draft}
+          onChange={onChange}
+          backendError={backendError}
+        />
+      )
+    case "stale_holds":
+      return (
+        <StaleHoldsEditorV2
           draft={draft}
           onChange={onChange}
           backendError={backendError}

@@ -11,9 +11,12 @@ export function V2RulePresentation({
   compact?: boolean
   sourcesFirst?: boolean
 }) {
-  // Not every V2 template carries named sources (e.g. account_threshold,
-  // stale_holds) — guard rather than assume the array is present.
-  const sources = rule.templateSpec.sources ?? []
+  // Not every V2 template carries a `sources` array: stale_holds reads a single
+  // named hold set, so surface it as the one source card rather than nothing.
+  const sources: NamedSourceV2[] =
+    rule.templateKind === "stale_holds"
+      ? [rule.templateSpec.source]
+      : ((rule.templateSpec as { sources?: NamedSourceV2[] }).sources ?? [])
   const sourceGrid =
     sources.length > 0 ? (
       <div
@@ -28,9 +31,8 @@ export function V2RulePresentation({
         ))}
       </div>
     ) : null
-  // describeRuleV2 covers the multi-source kinds; a kind it doesn't describe
-  // (e.g. stale_holds) yields no invariant text, so skip the box rather than
-  // render an empty one.
+  // A kind describeRuleV2 doesn't describe yields no invariant text, so skip
+  // the box rather than render an empty one.
   const invariant = describeRuleV2(rule)
   const operation = !invariant ? null : (
     <div className="rounded-md border bg-muted/25 px-3 py-2">
@@ -46,6 +48,12 @@ export function V2RulePresentation({
       {rule.templateKind === "source_consensus" && (
         <div className="mt-1 text-xs text-muted-foreground">
           Every source participates symmetrically; there is no baseline source.
+        </div>
+      )}
+      {rule.templateKind === "stale_holds" && (
+        <div className="mt-1 text-xs text-muted-foreground">
+          A hold is one account holding funds past the deadline on its own
+          metadata. Released holds — zero balance — are ignored.
         </div>
       )}
     </div>
