@@ -146,7 +146,7 @@ export function RuleDetail({
     } finally {
       setEvaluating(false)
     }
-  }, [ruleId, contractVersion, invalidate])
+  }, [ruleId, invalidate])
 
   if (ruleRes.loading && timelineRes.loading)
     return <Loading label="Loading control record…" />
