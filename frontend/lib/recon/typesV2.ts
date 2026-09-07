@@ -20,7 +20,7 @@ import type {
 } from "./types"
 
 export type ContractVersion = 1 | 2
-export type TemplateKindV2 =
+export type TemplateKind =
   | "balance_equation"
   | "exchange_rate_bounds"
   | "source_consensus"
@@ -28,7 +28,7 @@ export type TemplateKindV2 =
   | "stale_holds"
   | "balance_bounds"
 
-export interface LedgerNamedSourceV2 {
+export interface LedgerNamedSource {
   id: string
   label?: string
   kind?: "ledger"
@@ -37,7 +37,7 @@ export interface LedgerNamedSourceV2 {
   asset: string
 }
 
-export interface AccountMetadataNamedSourceV2 {
+export interface AccountMetadataNamedSource {
   id: string
   label?: string
   kind: "account_metadata"
@@ -47,68 +47,68 @@ export interface AccountMetadataNamedSourceV2 {
   asset: string
 }
 
-export type NamedSourceV2 = LedgerNamedSourceV2 | AccountMetadataNamedSourceV2
+export type NamedSource = LedgerNamedSource | AccountMetadataNamedSource
 
-export interface BalanceEquationTermV2 {
+export interface BalanceEquationTerm {
   source: string
   coefficient: number
 }
 
-export interface BalanceEquationSpecV2 {
-  sources: NamedSourceV2[]
-  terms: BalanceEquationTermV2[]
+export interface BalanceEquationSpec {
+  sources: NamedSource[]
+  terms: BalanceEquationTerm[]
   tolerance: string
 }
 
-export interface ExplicitRateBoundsV2 {
+export interface ExplicitRateBounds {
   min: string
   max: string
 }
 
-export interface TargetRateBoundsV2 {
+export interface TargetRateBounds {
   target: string
   toleranceBps: number
 }
 
-export type RateBoundsV2 = ExplicitRateBoundsV2 | TargetRateBoundsV2
+export type RateBounds = ExplicitRateBounds | TargetRateBounds
 
-export interface ExchangeRateBoundsSpecV2 {
-  sources: NamedSourceV2[]
+export interface ExchangeRateBoundsSpec {
+  sources: NamedSource[]
   baseSource: string
   quoteSource: string
-  rate: RateBoundsV2
+  rate: RateBounds
 }
 
-export interface SourceConsensusSpecV2 {
-  sources: NamedSourceV2[]
+export interface SourceConsensusSpec {
+  sources: NamedSource[]
   tolerance: string
 }
 
-export interface CoverageRatioBoundsSpecV2 {
-  sources: NamedSourceV2[]
-  numeratorTerms: BalanceEquationTermV2[]
-  denominatorTerms: BalanceEquationTermV2[]
-  ratio: RateBoundsV2
+export interface CoverageRatioBoundsSpec {
+  sources: NamedSource[]
+  numeratorTerms: BalanceEquationTerm[]
+  denominatorTerms: BalanceEquationTerm[]
+  ratio: RateBounds
 }
 
 /** One asset's inclusive limits in minor units. An empty side is unbounded, not zero. */
-export interface BalanceBoundV2 {
+export interface BalanceBound {
   min?: string
   max?: string
 }
 
-export interface BalanceBoundsSpecV2 {
-  source: NamedSourceV2
+export interface BalanceBoundsSpec {
+  source: NamedSource
   /**
    * Inclusive limits keyed by asset — and the DECLARED asset universe. Unlike
    * every other V2 template these keys, not the assets the source holds, decide
    * what is checked: a floor must keep failing when a set drains to nothing.
    */
-  bounds: Record<string, BalanceBoundV2>
+  bounds: Record<string, BalanceBound>
 }
 
-export type StaleHoldsModeV2 = "stale" | "approaching"
-export type StaleHoldsScopeV2 = "per_hold" | "aggregate"
+export type StaleHoldsMode = "stale" | "approaching"
+export type StaleHoldsScope = "per_hold" | "aggregate"
 
 /**
  * How a deadline is written on the account. `datetime` is a key the ledger
@@ -116,40 +116,40 @@ export type StaleHoldsScopeV2 = "per_hold" | "aggregate"
  * unit. Whichever it is, the key must be declared AND indexed on the ledger —
  * the service pushes the date comparison down to it.
  */
-export type InstantEncodingV2 =
+export type InstantEncoding =
   | "datetime"
   | "epoch_seconds"
   | "epoch_millis"
   | "epoch_micros"
 
-export interface HoldDeadlineV2 {
+export interface HoldDeadline {
   expiryKey?: string
   createdKey?: string
-  encoding?: InstantEncodingV2
+  encoding?: InstantEncoding
   maxAge?: string
 }
 
-export interface StaleHoldsSpecV2 {
-  source: LedgerNamedSourceV2
-  deadline: HoldDeadlineV2
-  mode?: StaleHoldsModeV2
+export interface StaleHoldsSpec {
+  source: LedgerNamedSource
+  deadline: HoldDeadline
+  mode?: StaleHoldsMode
   warnWithin?: string
-  scope?: StaleHoldsScopeV2
+  scope?: StaleHoldsScope
   /** Metadata keys copied onto each flagged hold's evidence. Labels, not filters: no index needed. */
   identityKeys?: string[]
   /** Per-rule read cap. per_hold defaults to 1000 server-side; never exceeds the engine budget. */
   maxHoldsScanned?: number
 }
 
-export type TemplateSpecV2 =
-  | BalanceEquationSpecV2
-  | ExchangeRateBoundsSpecV2
-  | SourceConsensusSpecV2
-  | CoverageRatioBoundsSpecV2
-  | StaleHoldsSpecV2
-  | BalanceBoundsSpecV2
+export type TemplateSpec =
+  | BalanceEquationSpec
+  | ExchangeRateBoundsSpec
+  | SourceConsensusSpec
+  | CoverageRatioBoundsSpec
+  | StaleHoldsSpec
+  | BalanceBoundsSpec
 
-interface RuleCommonV2 {
+interface RuleCommon {
   id: string
   revision: string
   contractVersion: 2
@@ -165,33 +165,33 @@ interface RuleCommonV2 {
   updatedAt: string
 }
 
-export type RuleV2 =
-  | (RuleCommonV2 & {
+export type Rule =
+  | (RuleCommon & {
       templateKind: "balance_equation"
-      templateSpec: BalanceEquationSpecV2
+      templateSpec: BalanceEquationSpec
     })
-  | (RuleCommonV2 & {
+  | (RuleCommon & {
       templateKind: "exchange_rate_bounds"
-      templateSpec: ExchangeRateBoundsSpecV2
+      templateSpec: ExchangeRateBoundsSpec
     })
-  | (RuleCommonV2 & {
+  | (RuleCommon & {
       templateKind: "source_consensus"
-      templateSpec: SourceConsensusSpecV2
+      templateSpec: SourceConsensusSpec
     })
-  | (RuleCommonV2 & {
+  | (RuleCommon & {
       templateKind: "coverage_ratio_bounds"
-      templateSpec: CoverageRatioBoundsSpecV2
+      templateSpec: CoverageRatioBoundsSpec
     })
-  | (RuleCommonV2 & {
+  | (RuleCommon & {
       templateKind: "stale_holds"
-      templateSpec: StaleHoldsSpecV2
+      templateSpec: StaleHoldsSpec
     })
-  | (RuleCommonV2 & {
+  | (RuleCommon & {
       templateKind: "balance_bounds"
-      templateSpec: BalanceBoundsSpecV2
+      templateSpec: BalanceBoundsSpec
     })
 
-interface RuleRequestCommonV2 {
+interface RuleRequestCommon {
   name: string
   severity?: Severity
   periodType?: PeriodType
@@ -201,36 +201,36 @@ interface RuleRequestCommonV2 {
   enabled?: boolean
 }
 
-export type RuleRequestV2 =
-  | (RuleRequestCommonV2 & {
+export type RuleRequest =
+  | (RuleRequestCommon & {
       templateKind: "balance_equation"
-      templateSpec: BalanceEquationSpecV2
+      templateSpec: BalanceEquationSpec
     })
-  | (RuleRequestCommonV2 & {
+  | (RuleRequestCommon & {
       templateKind: "exchange_rate_bounds"
-      templateSpec: ExchangeRateBoundsSpecV2
+      templateSpec: ExchangeRateBoundsSpec
     })
-  | (RuleRequestCommonV2 & {
+  | (RuleRequestCommon & {
       templateKind: "source_consensus"
-      templateSpec: SourceConsensusSpecV2
+      templateSpec: SourceConsensusSpec
     })
-  | (RuleRequestCommonV2 & {
+  | (RuleRequestCommon & {
       templateKind: "coverage_ratio_bounds"
-      templateSpec: CoverageRatioBoundsSpecV2
+      templateSpec: CoverageRatioBoundsSpec
     })
-  | (RuleRequestCommonV2 & {
+  | (RuleRequestCommon & {
       templateKind: "stale_holds"
-      templateSpec: StaleHoldsSpecV2
+      templateSpec: StaleHoldsSpec
     })
-  | (RuleRequestCommonV2 & {
+  | (RuleRequestCommon & {
       templateKind: "balance_bounds"
-      templateSpec: BalanceBoundsSpecV2
+      templateSpec: BalanceBoundsSpec
     })
 
-export interface RulePatchRequestV2 {
+export interface RulePatchRequest {
   name?: string
-  templateKind?: TemplateKindV2
-  templateSpec?: TemplateSpecV2
+  templateKind?: TemplateKind
+  templateSpec?: TemplateSpec
   enabled?: boolean
   severity?: Severity
   schedule?: Schedule
@@ -238,7 +238,7 @@ export interface RulePatchRequestV2 {
   labels?: Record<string, string>
 }
 
-export interface EvidenceSourceV2 {
+export interface EvidenceSource {
   id: string
   label?: string
   kind: "ledger" | "account_metadata"
@@ -247,7 +247,7 @@ export interface EvidenceSourceV2 {
   present: boolean
 }
 
-export interface BalanceEquationEvidenceSourceV2 extends EvidenceSourceV2 {
+export interface BalanceEquationEvidenceSource extends EvidenceSource {
   coefficient: number
   contribution: string
 }
@@ -256,30 +256,30 @@ export interface BalanceEquationEvidenceV2 {
   schemaVersion: 2
   operation: "balance_equation"
   asset: string
-  sources: BalanceEquationEvidenceSourceV2[]
+  sources: BalanceEquationEvidenceSource[]
   residual: string
   absoluteResidual: string
   tolerance: string
   compiledCEL: string
 }
 
-export interface RationalV2 {
+export interface Rational {
   numerator: string
   denominator: string
 }
 
-export interface EffectiveRateBoundsV2 {
+export interface EffectiveRateBounds {
   min: string
   max: string
 }
 
-export interface ExchangeRateBoundsEvidenceV2 {
+export interface ExchangeRateBoundsEvidence {
   schemaVersion: 2
   operation: "exchange_rate_bounds"
-  base: EvidenceSourceV2
-  quote: EvidenceSourceV2
-  observedRate?: RationalV2
-  effectiveBounds: EffectiveRateBoundsV2
+  base: EvidenceSource
+  quote: EvidenceSource
+  observedRate?: Rational
+  effectiveBounds: EffectiveRateBounds
   undefinedReason?: "base_balance_zero"
   compiledCEL: string
 }
@@ -288,7 +288,7 @@ export interface SourceConsensusEvidenceV2 {
   schemaVersion: 2
   operation: "source_consensus"
   asset: string
-  sources: EvidenceSourceV2[]
+  sources: EvidenceSource[]
   minimumSource: string
   minimumBalance: string
   maximumSource: string
@@ -299,27 +299,27 @@ export interface SourceConsensusEvidenceV2 {
   compiledCEL: string
 }
 
-export interface CoveragePortfolioV2 {
-  sources: BalanceEquationEvidenceSourceV2[]
+export interface CoveragePortfolio {
+  sources: BalanceEquationEvidenceSource[]
   total: string
 }
 
-export interface CoverageRatioBoundsEvidenceV2 {
+export interface CoverageRatioBoundsEvidence {
   schemaVersion: 2
   operation: "coverage_ratio_bounds"
   asset: string
-  numerator: CoveragePortfolioV2
-  denominator: CoveragePortfolioV2
-  observedRatio?: RationalV2
-  effectiveBounds: EffectiveRateBoundsV2
+  numerator: CoveragePortfolio
+  denominator: CoveragePortfolio
+  observedRatio?: Rational
+  effectiveBounds: EffectiveRateBounds
   undefinedReason?: "denominator_total_zero"
   compiledCEL: string
 }
 
-interface StaleHoldsEvidenceCommonV2 {
+interface StaleHoldsEvidenceCommon {
   schemaVersion: 2
   operation: "stale_holds"
-  mode: StaleHoldsModeV2
+  mode: StaleHoldsMode
   asset: string
   sourceId: string
   evaluatedAt: string
@@ -327,7 +327,7 @@ interface StaleHoldsEvidenceCommonV2 {
 }
 
 /** One flagged hold: what is stuck, for how much, and how far past its deadline. */
-export interface StaleHoldEvidenceV2 extends StaleHoldsEvidenceCommonV2 {
+export interface StaleHoldEvidence extends StaleHoldsEvidenceCommon {
   hold: string
   amount: string
   basis: "expiry" | "created_at"
@@ -344,8 +344,8 @@ export interface StaleHoldEvidenceV2 extends StaleHoldsEvidenceCommonV2 {
  * The scan behind an outcome: emitted for an aggregate rule, and for a per_hold
  * rule that found nothing (so a clean run still records what was checked).
  */
-export interface StaleHoldsSummaryEvidenceV2 extends StaleHoldsEvidenceCommonV2 {
-  scope: StaleHoldsScopeV2
+export interface StaleHoldsSummaryEvidence extends StaleHoldsEvidenceCommon {
+  scope: StaleHoldsScope
   deadlineOnOrBefore: string
   /** The band's lower bound — mode "approaching" only. */
   deadlineAfter?: string
@@ -356,19 +356,19 @@ export interface StaleHoldsSummaryEvidenceV2 extends StaleHoldsEvidenceCommonV2 
   amountFlagged: string
   oldestDeadline?: string
   /** Bounded per-hold breakdown — aggregate scope only. */
-  holds?: StaleHoldEvidenceV2[]
+  holds?: StaleHoldEvidence[]
   holdsSampled?: number
 }
 
 export type StaleHoldsEvidenceV2 =
-  | StaleHoldEvidenceV2
-  | StaleHoldsSummaryEvidenceV2
+  | StaleHoldEvidence
+  | StaleHoldsSummaryEvidence
 
 export interface BalanceBoundsEvidenceV2 {
   schemaVersion: 2
   operation: "balance_bounds"
   asset: string
-  source: EvidenceSourceV2
+  source: EvidenceSource
   /** Only the sides the rule declared; an unbounded side is an absent key. */
   effectiveBounds: { min?: string; max?: string }
   /** Signed distance outside the limits: negative below the floor, positive above the ceiling. */
@@ -378,40 +378,40 @@ export interface BalanceBoundsEvidenceV2 {
   compiledCEL: string
 }
 
-export type EvidenceV2 =
+export type Evidence =
   | BalanceEquationEvidenceV2
-  | ExchangeRateBoundsEvidenceV2
+  | ExchangeRateBoundsEvidence
   | SourceConsensusEvidenceV2
-  | CoverageRatioBoundsEvidenceV2
+  | CoverageRatioBoundsEvidence
   | StaleHoldsEvidenceV2
   | BalanceBoundsEvidenceV2
 
-export interface OutcomeV2 {
+export interface Outcome {
   fingerprint: string
   passed: boolean
-  evidence: EvidenceV2
+  evidence: Evidence
 }
 
-export interface EvaluationV2 {
+export interface Evaluation {
   id: string
   contractVersion: 2
   ruleID: string
   startedAt: string
   endedAt: string
   result: EvaluationResult
-  evidence?: OutcomeV2[] | Record<string, unknown>
+  evidence?: Outcome[] | Record<string, unknown>
   error?: string
   costUnits?: number
   createdAt: string
 }
 
-export interface CaptureV2 {
+export interface Capture {
   transactionID: number
   contractVersion: 2
   ruleID: string
   periodID: string
   evaluationID: string
-  templateKind: TemplateKindV2
+  templateKind: TemplateKind
   verdict: Verdict
   trigger: Trigger
   capturedAt: string
@@ -420,7 +420,7 @@ export interface CaptureV2 {
   startedAt?: string
   result?: EvaluationResult
   error?: string
-  evidence?: OutcomeV2[] | Record<string, unknown>
+  evidence?: Outcome[] | Record<string, unknown>
 }
 
 interface AckV2 {
@@ -435,7 +435,7 @@ interface ResolutionV2 {
   at: string
   note?: string
   transactionRefs?: string[]
-  evidenceSnapshot?: EvidenceV2
+  evidenceSnapshot?: Evidence
   expiresAt?: string
   actor?: Actor
 }
@@ -446,7 +446,7 @@ interface SnoozeV2 {
   note?: string
 }
 
-export interface AlertV2 {
+export interface Alert {
   id: string
   contractVersion: 2
   ruleID: string
@@ -458,7 +458,7 @@ export interface AlertV2 {
   lastSeenAt: string
   occurrenceCount: number
   lastEvaluationID: string
-  evidence?: EvidenceV2
+  evidence?: Evidence
   ack?: AckV2
   resolution?: ResolutionV2
   snooze?: SnoozeV2
@@ -483,14 +483,14 @@ export interface AlertEventV2 {
   transactionId?: string
 }
 
-export type RuleResponseV2 = Data<RuleV2>
-export type RulesResponseV2 = CursorResponse<RuleV2>
-export type EvaluationResponseV2 = Data<EvaluationV2>
-export type CapturesResponseV2 = CursorResponse<CaptureV2>
-export type RuleActivitiesResponseV2 = CursorResponse<RuleActivity>
-export type AlertResponseV2 = Data<AlertV2>
-export type AlertsResponseV2 = CursorResponse<AlertV2>
-export type AlertEventsResponseV2 = CursorResponse<AlertEventV2>
+export type RuleResponse = Data<Rule>
+export type RulesResponse = CursorResponse<Rule>
+export type EvaluationResponse = Data<Evaluation>
+export type CapturesResponse = CursorResponse<Capture>
+export type RuleActivitiesResponse = CursorResponse<RuleActivity>
+export type AlertResponse = Data<Alert>
+export type AlertsResponse = CursorResponse<Alert>
+export type AlertEventsResponse = CursorResponse<AlertEventV2>
 
 export type {
   AckAlertRequest,

@@ -48,7 +48,7 @@ import {
   type RuleActivity,
 } from "@/lib/recon"
 import { ResultBadge } from "./ui"
-import { V2Evidence, isEvidenceV2 } from "./V2Evidence"
+import { V2Evidence, isEvidence } from "./V2Evidence"
 import { RevisionSnapshot } from "./RevisionSnapshot"
 
 export function RuleTimeline({
@@ -392,7 +392,7 @@ function EvidenceGroup({
           {group.fingerprint}
         </div>
       )}
-      {isEvidenceV2(group.evidence) ? (
+      {isEvidence(group.evidence) ? (
         <V2Evidence evidence={group.evidence} passed={group.passed} />
       ) : (
         group.rows.length > 0 && (

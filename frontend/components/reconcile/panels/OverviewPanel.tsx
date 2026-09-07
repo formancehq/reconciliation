@@ -20,15 +20,15 @@ import {
   resourceKey,
   SEVERITY_ORDER,
   formatRelative,
-  type AnyAlert,
-  type AnyRule,
+  type Alert,
+  type Rule,
 } from "@/lib/recon"
 import { useReconNav } from "../ReconContext"
 import { Loading, ErrorState, SeverityBadge, StatusBadge } from "../ui"
 
 interface Data {
-  alerts: AnyAlert[]
-  rules: AnyRule[]
+  alerts: Alert[]
+  rules: Rule[]
 }
 
 export function OverviewPanel() {
@@ -47,7 +47,7 @@ export function OverviewPanel() {
 
   const alerts = res.data?.alerts ?? []
   const rules = res.data?.rules ?? []
-  const ruleName = (alert: AnyAlert) =>
+  const ruleName = (alert: Alert) =>
     rules.find(
       (rule) =>
         rule.id === alert.ruleID &&
@@ -178,7 +178,7 @@ export function OverviewPanel() {
   )
 }
 
-export function recentOpenAlerts(alerts: AnyAlert[]) {
+export function recentOpenAlerts(alerts: Alert[]) {
   return alerts
     .filter((alert) => alert.status === "OPEN")
     .sort(

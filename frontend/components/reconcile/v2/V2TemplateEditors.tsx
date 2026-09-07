@@ -14,23 +14,23 @@ import {
 import {
   backendFieldPath,
   coefficientPath,
-  ASSET_WILDCARD_V2,
-  MAX_IDENTITY_KEYS_V2,
-  type BoundDraftV2,
-  type InstantEncodingV2,
-  type NamedSourceV2,
-  type PortfolioSideV2,
-  type RateBoundsDraftV2,
-  type RuleFormDraftV2,
-  type StaleHoldsModeV2,
-  type StaleHoldsScopeV2,
+  ASSET_WILDCARD,
+  MAX_IDENTITY_KEYS,
+  type BoundDraft,
+  type InstantEncoding,
+  type NamedSource,
+  type PortfolioSide,
+  type RateBoundsDraft,
+  type RuleFormDraft,
+  type StaleHoldsMode,
+  type StaleHoldsScope,
 } from "@/lib/recon"
 import { useLedgerMetaFields } from "../useLedgerMetaFields"
 
 /** Radix selects cannot hold an empty value; this stands in for "not set". */
 const NO_KEY = "__none__"
 
-export function BalanceEquationEditorV2({
+export function BalanceEquationEditor({
   draft,
   onChange,
   backendError,
@@ -43,13 +43,13 @@ export function BalanceEquationEditorV2({
           Every named source participates exactly once in the signed sum.
         </p>
       </div>
-      <SignedSourceTermsEditorV2
+      <SignedSourceTermsEditor
         draft={draft}
         onChange={onChange}
         backendError={backendError}
       />
       <div className="max-w-xs">
-        <NonNegativeIntegerToleranceEditorV2
+        <NonNegativeIntegerToleranceEditor
           value={draft.tolerance}
           onChange={(tolerance) => onChange({ ...draft, tolerance })}
           backendError={backendError}
@@ -59,7 +59,7 @@ export function BalanceEquationEditorV2({
   )
 }
 
-export function ExchangeRateBoundsEditorV2({
+export function ExchangeRateBoundsEditor({
   draft,
   onChange,
   backendError,
@@ -73,7 +73,7 @@ export function ExchangeRateBoundsEditorV2({
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <SourceSelectV2
+        <SourceSelect
           label="Base source"
           path="baseSource"
           value={draft.baseSource}
@@ -81,7 +81,7 @@ export function ExchangeRateBoundsEditorV2({
           sources={draft.sources}
           backendError={backendError}
         />
-        <SourceSelectV2
+        <SourceSelect
           label="Quote source"
           path="quoteSource"
           value={draft.quoteSource}
@@ -90,7 +90,7 @@ export function ExchangeRateBoundsEditorV2({
           backendError={backendError}
         />
       </div>
-      <ExactRateBoundsEditorV2
+      <ExactRateBoundsEditor
         value={draft.rate}
         onChange={(rate) => onChange({ ...draft, rate })}
         pathPrefix="rate"
@@ -101,7 +101,7 @@ export function ExchangeRateBoundsEditorV2({
   )
 }
 
-export function SourceConsensusEditorV2({
+export function SourceConsensusEditor({
   draft,
   onChange,
   backendError,
@@ -119,7 +119,7 @@ export function SourceConsensusEditorV2({
         </p>
       </div>
       <div className="max-w-xs">
-        <NonNegativeIntegerToleranceEditorV2
+        <NonNegativeIntegerToleranceEditor
           value={draft.tolerance}
           onChange={(tolerance) => onChange({ ...draft, tolerance })}
           backendError={backendError}
@@ -129,7 +129,7 @@ export function SourceConsensusEditorV2({
   )
 }
 
-export function CoverageRatioBoundsEditorV2({
+export function CoverageRatioBoundsEditor({
   draft,
   onChange,
   backendError,
@@ -143,7 +143,7 @@ export function CoverageRatioBoundsEditorV2({
           denominator portfolio.
         </p>
       </div>
-      <SignedSourceTermsEditorV2
+      <SignedSourceTermsEditor
         draft={draft}
         onChange={onChange}
         backendError={backendError}
@@ -156,7 +156,7 @@ export function CoverageRatioBoundsEditorV2({
           with an undefined ratio; it is not treated as an engine error.
         </span>
       </div>
-      <ExactRateBoundsEditorV2
+      <ExactRateBoundsEditor
         value={draft.rate}
         onChange={(rate) => onChange({ ...draft, rate })}
         pathPrefix="ratio"
@@ -167,7 +167,7 @@ export function CoverageRatioBoundsEditorV2({
   )
 }
 
-export function SignedSourceTermsEditorV2({
+export function SignedSourceTermsEditor({
   draft,
   onChange,
   backendError,
@@ -210,7 +210,7 @@ export function SignedSourceTermsEditorV2({
               <div className="truncate font-mono text-[10px] text-muted-foreground">
                 {source.id}
               </div>
-              {sourceError && <FieldErrorV2 error={sourceError} />}
+              {sourceError && <FieldError error={sourceError} />}
             </div>
             {withPortfolio && (
               <Select
@@ -220,7 +220,7 @@ export function SignedSourceTermsEditorV2({
                     ...draft,
                     portfolios: {
                       ...draft.portfolios,
-                      [source.id]: value as PortfolioSideV2,
+                      [source.id]: value as PortfolioSide,
                     },
                   })
                 }
@@ -250,7 +250,7 @@ export function SignedSourceTermsEditorV2({
                 inputMode="numeric"
                 className="font-mono"
               />
-              {coefficientError && <FieldErrorV2 error={coefficientError} />}
+              {coefficientError && <FieldError error={coefficientError} />}
             </div>
           </div>
         )
@@ -259,7 +259,7 @@ export function SignedSourceTermsEditorV2({
   )
 }
 
-export function NonNegativeIntegerToleranceEditorV2({
+export function NonNegativeIntegerToleranceEditor({
   value,
   onChange,
   backendError,
@@ -283,20 +283,20 @@ export function NonNegativeIntegerToleranceEditorV2({
   )
 }
 
-export function ExactRateBoundsEditorV2({
+export function ExactRateBoundsEditor({
   value,
   onChange,
   pathPrefix,
   noun,
   backendError,
 }: {
-  value: RateBoundsDraftV2
-  onChange: (value: RateBoundsDraftV2) => void
+  value: RateBoundsDraft
+  onChange: (value: RateBoundsDraft) => void
   pathPrefix: "rate" | "ratio"
   noun: "rate" | "ratio"
   backendError?: string
 }) {
-  const update = (patch: Partial<RateBoundsDraftV2>) =>
+  const update = (patch: Partial<RateBoundsDraft>) =>
     onChange({ ...value, ...patch })
   return (
     <div className="space-y-3 border-t pt-3">
@@ -304,7 +304,7 @@ export function ExactRateBoundsEditorV2({
         <Select
           value={value.mode}
           onValueChange={(mode) =>
-            update({ mode: mode as RateBoundsDraftV2["mode"] })
+            update({ mode: mode as RateBoundsDraft["mode"] })
           }
         >
           <SelectTrigger>
@@ -382,15 +382,15 @@ export function ExactRateBoundsEditorV2({
   )
 }
 
-export function BalanceBoundsEditorV2({
+export function BalanceBoundsEditor({
   draft,
   onChange,
   backendError,
 }: TemplateEditorProps) {
   const declared = draft.sources[0]?.asset ?? ""
-  const wildcard = declared === ASSET_WILDCARD_V2
-  const setBounds = (bounds: BoundDraftV2[]) => onChange({ ...draft, bounds })
-  const update = (index: number, patch: Partial<BoundDraftV2>) =>
+  const wildcard = declared === ASSET_WILDCARD
+  const setBounds = (bounds: BoundDraft[]) => onChange({ ...draft, bounds })
+  const update = (index: number, patch: Partial<BoundDraft>) =>
     setBounds(draft.bounds.map((b, i) => (i === index ? { ...b, ...patch } : b)))
 
   return (
@@ -487,13 +487,13 @@ export function BalanceBoundsEditorV2({
   )
 }
 
-export function StaleHoldsEditorV2({
+export function StaleHoldsEditor({
   draft,
   onChange,
   backendError,
 }: TemplateEditorProps) {
   const approaching = draft.mode === "approaching"
-  const setDeadline = (patch: Partial<RuleFormDraftV2["deadline"]>) =>
+  const setDeadline = (patch: Partial<RuleFormDraft["deadline"]>) =>
     onChange({ ...draft, deadline: { ...draft.deadline, ...patch } })
 
   return (
@@ -512,7 +512,7 @@ export function StaleHoldsEditorV2({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <MetadataKeySelectV2
+        <MetadataKeySelect
           label="Issuer expiry key"
           ledger={draft.sources[0]?.ledger ?? ""}
           value={draft.deadline.expiryKey}
@@ -527,7 +527,7 @@ export function StaleHoldsEditorV2({
           <Select
             value={draft.deadline.encoding}
             onValueChange={(encoding) =>
-              setDeadline({ encoding: encoding as InstantEncodingV2 })
+              setDeadline({ encoding: encoding as InstantEncoding })
             }
           >
             <SelectTrigger>
@@ -544,7 +544,7 @@ export function StaleHoldsEditorV2({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <MetadataKeySelectV2
+        <MetadataKeySelect
           label="Placed-at key (fallback)"
           ledger={draft.sources[0]?.ledger ?? ""}
           value={draft.deadline.createdKey}
@@ -576,7 +576,7 @@ export function StaleHoldsEditorV2({
             onValueChange={(mode) =>
               onChange({
                 ...draft,
-                mode: mode as StaleHoldsModeV2,
+                mode: mode as StaleHoldsMode,
                 // warnWithin belongs to the approaching band only; the server
                 // rejects it in stale mode, so clear it rather than hide it.
                 warnWithin: mode === "approaching" ? draft.warnWithin : "",
@@ -630,7 +630,7 @@ export function StaleHoldsEditorV2({
           <Select
             value={draft.scope}
             onValueChange={(scope) =>
-              onChange({ ...draft, scope: scope as StaleHoldsScopeV2 })
+              onChange({ ...draft, scope: scope as StaleHoldsScope })
             }
           >
             <SelectTrigger>
@@ -687,7 +687,7 @@ export function StaleHoldsEditorV2({
           className="font-mono"
         />
         <p className="mt-1 text-xs text-muted-foreground">
-          Up to {MAX_IDENTITY_KEYS_V2} metadata keys, copied onto each alert so
+          Up to {MAX_IDENTITY_KEYS} metadata keys, copied onto each alert so
           it names the authorisation rather than a ledger address. These are
           labels, not filters — they need no index. Alert evidence is durable
           and widely readable, so leave cardholder details out.
@@ -702,7 +702,7 @@ export function StaleHoldsEditorV2({
  * and integer keys are offered. When the ledger's keys cannot be listed, fall
  * back to free text rather than blocking the rule.
  */
-function MetadataKeySelectV2({
+function MetadataKeySelect({
   label,
   ledger,
   value,
@@ -759,12 +759,12 @@ function MetadataKeySelectV2({
 }
 
 interface TemplateEditorProps {
-  draft: RuleFormDraftV2
-  onChange: (draft: RuleFormDraftV2) => void
+  draft: RuleFormDraft
+  onChange: (draft: RuleFormDraft) => void
   backendError?: string
 }
 
-function SourceSelectV2({
+function SourceSelect({
   label,
   path,
   value,
@@ -776,7 +776,7 @@ function SourceSelectV2({
   path: string
   value: string
   onChange: (value: string) => void
-  sources: NamedSourceV2[]
+  sources: NamedSource[]
   backendError?: string
 }) {
   return (
@@ -810,12 +810,12 @@ function FieldV2({
     <div className="min-w-0 space-y-1.5">
       <Label className="text-xs">{label}</Label>
       {children}
-      {error && <FieldErrorV2 error={error} />}
+      {error && <FieldError error={error} />}
     </div>
   )
 }
 
-function FieldErrorV2({ error }: { error: string }) {
+function FieldError({ error }: { error: string }) {
   return (
     <p className="mt-1 font-mono text-xs break-words text-destructive">
       {error}

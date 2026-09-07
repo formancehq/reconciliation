@@ -1,15 +1,15 @@
 import type { PeriodType, Schedule, Severity } from "./types"
 import type {
-  HoldDeadlineV2,
-  InstantEncodingV2,
-  LedgerNamedSourceV2,
-  NamedSourceV2,
-  RateBoundsV2,
-  RuleRequestV2,
-  RuleV2,
-  StaleHoldsModeV2,
-  StaleHoldsScopeV2,
-  TemplateKindV2,
+  HoldDeadline,
+  InstantEncoding,
+  LedgerNamedSource,
+  NamedSource,
+  RateBounds,
+  RuleRequest,
+  Rule,
+  StaleHoldsMode,
+  StaleHoldsScope,
+  TemplateKind,
 } from "./typesV2"
 import {
   compareDecimalStrings,
@@ -21,16 +21,16 @@ import {
 } from "./v2"
 
 /** stale_holds reads one hold set, unlike the multi-source V2 templates. */
-export const MAX_IDENTITY_KEYS_V2 = 8
+export const MAX_IDENTITY_KEYS = 8
 
 /** A source declared as "every asset this account set holds". */
-export const ASSET_WILDCARD_V2 = "*"
+export const ASSET_WILDCARD = "*"
 
 /** Signed whole number of minor units — mirrors the server's bounds parser. */
-export const SIGNED_INTEGER_PATTERN_V2 = /^-?(0|[1-9][0-9]*)$/
+export const SIGNED_INTEGER_PATTERN = /^-?(0|[1-9][0-9]*)$/
 
 /** Templates whose operation has a defined per-asset fan-out. */
-export function supportsAllAssetsV2(kind: TemplateKindV2): boolean {
+export function supportsAllAssets(kind: TemplateKind): boolean {
   return (
     kind === "balance_equation" ||
     kind === "source_consensus" ||
@@ -38,10 +38,10 @@ export function supportsAllAssetsV2(kind: TemplateKindV2): boolean {
   )
 }
 
-export function allAssetsV2(draft: RuleFormDraftV2): boolean {
+export function allAssets(draft: RuleFormDraft): boolean {
   return (
     draft.sources.length > 0 &&
-    draft.sources.every((source) => source.asset === ASSET_WILDCARD_V2)
+    draft.sources.every((source) => source.asset === ASSET_WILDCARD)
   )
 }
 
@@ -51,14 +51,14 @@ export function allAssetsV2(draft: RuleFormDraftV2): boolean {
  * switch rather than a per-source one. Turning it off restores the assets each
  * source last had, so toggling is not lossy.
  */
-export function setAllAssetsV2(
-  draft: RuleFormDraftV2,
+export function setAllAssets(
+  draft: RuleFormDraft,
   on: boolean
-): RuleFormDraftV2 {
+): RuleFormDraft {
   if (on) {
     const namedAssets = Object.fromEntries(
       draft.sources
-        .filter((source) => source.asset !== ASSET_WILDCARD_V2)
+        .filter((source) => source.asset !== ASSET_WILDCARD)
         .map((source) => [source.id, source.asset])
     )
     return {
@@ -66,7 +66,7 @@ export function setAllAssetsV2(
       namedAssets: { ...draft.namedAssets, ...namedAssets },
       sources: draft.sources.map((source) => ({
         ...source,
-        asset: ASSET_WILDCARD_V2,
+        asset: ASSET_WILDCARD,
       })),
     }
   }
@@ -79,67 +79,67 @@ export function setAllAssetsV2(
   }
 }
 
-export type PortfolioSideV2 = "numerator" | "denominator"
-export type RateModeV2 = "explicit" | "target"
+export type PortfolioSide = "numerator" | "denominator"
+export type RateMode = "explicit" | "target"
 
-export interface RateBoundsDraftV2 {
-  mode: RateModeV2
+export interface RateBoundsDraft {
+  mode: RateMode
   min: string
   max: string
   target: string
   toleranceBps: string
 }
 
-export interface HoldDeadlineDraftV2 {
+export interface HoldDeadlineDraft {
   expiryKey: string
   createdKey: string
-  encoding: InstantEncodingV2
+  encoding: InstantEncoding
   maxAge: string
 }
 
-export interface RuleFormDraftV2 {
+export interface RuleFormDraft {
   name: string
-  kind: TemplateKindV2
+  kind: TemplateKind
   severity: Severity
   periodType: PeriodType
   schedule: Schedule
   enabled: boolean
-  sources: NamedSourceV2[]
+  sources: NamedSource[]
   coefficients: Record<string, string>
-  portfolios: Record<string, PortfolioSideV2>
+  portfolios: Record<string, PortfolioSide>
   tolerance: string
   baseSource: string
   quoteSource: string
-  rate: RateBoundsDraftV2
+  rate: RateBoundsDraft
   // stale_holds only. It reads a single hold set (sources[0]), so the shared
   // sources array carries exactly one entry for this kind.
-  deadline: HoldDeadlineDraftV2
-  mode: StaleHoldsModeV2
+  deadline: HoldDeadlineDraft
+  mode: StaleHoldsMode
   warnWithin: string
-  scope: StaleHoldsScopeV2
+  scope: StaleHoldsScope
   identityKeys: string[]
   maxHoldsScanned: string
   /** Form-local: the asset each source carried before "every asset" was turned on. */
   namedAssets: Record<string, string>
   /** balance_bounds only: inclusive limits keyed by asset — and the declared universe. */
-  bounds: BoundDraftV2[]
+  bounds: BoundDraft[]
 }
 
 /** A row in the bounds editor. An empty side means unbounded, not zero. */
-export interface BoundDraftV2 {
+export interface BoundDraft {
   asset: string
   min: string
   max: string
 }
 
-export const MAX_BOUNDS_ASSETS_V2 = 256
+export const MAX_BOUNDS_ASSETS = 256
 
-export interface RuleFormIssueV2 {
+export interface RuleFormIssue {
   path: string
   message: string
 }
 
-export function emptyNamedSourceV2(index: number, ledger = ""): NamedSourceV2 {
+export function emptyNamedSourceV2(index: number, ledger = ""): NamedSource {
   return {
     id: `source${index + 1}`,
     label: "",
@@ -150,10 +150,10 @@ export function emptyNamedSourceV2(index: number, ledger = ""): NamedSourceV2 {
   }
 }
 
-export function defaultNamedSourcesV2(
-  kind: TemplateKindV2,
+export function defaultNamedSources(
+  kind: TemplateKind,
   ledger = ""
-): NamedSourceV2[] {
+): NamedSource[] {
   const count =
     kind === "stale_holds" || kind === "balance_bounds"
       ? 1
@@ -168,35 +168,35 @@ export function defaultNamedSourcesV2(
   }))
 }
 
-export function nextNamedSourceIndexV2(sources: NamedSourceV2[]): number {
+export function nextNamedSourceIndex(sources: NamedSource[]): number {
   const ids = new Set(sources.map((source) => source.id))
   let index = 0
   while (ids.has(`source${index + 1}`)) index += 1
   return index
 }
 
-export function addNamedSourceV2(
-  sources: NamedSourceV2[],
+export function addNamedSource(
+  sources: NamedSource[],
   ledger = sources[0]?.ledger ?? ""
-): NamedSourceV2[] {
+): NamedSource[] {
   return [
     ...sources,
-    emptyNamedSourceV2(nextNamedSourceIndexV2(sources), ledger),
+    emptyNamedSourceV2(nextNamedSourceIndex(sources), ledger),
   ]
 }
 
-export function removeNamedSourceV2(
-  sources: NamedSourceV2[],
+export function removeNamedSource(
+  sources: NamedSource[],
   index: number
-): NamedSourceV2[] {
+): NamedSource[] {
   return sources.filter((_, sourceIndex) => sourceIndex !== index)
 }
 
-export function moveNamedSourceV2(
-  sources: NamedSourceV2[],
+export function moveNamedSource(
+  sources: NamedSource[],
   from: number,
   to: number
-): NamedSourceV2[] {
+): NamedSource[] {
   if (from === to || from < 0 || from >= sources.length) return sources
   const next = [...sources]
   const [source] = next.splice(from, 1)
@@ -205,25 +205,25 @@ export function moveNamedSourceV2(
   return next
 }
 
-export function createRuleFormDraftV2({
+export function createRuleFormDraft({
   rule,
   duplicate = false,
   activeLedger = "",
   kind = "balance_equation",
 }: {
-  rule?: RuleV2 | null
+  rule?: Rule | null
   duplicate?: boolean
   activeLedger?: string
-  kind?: TemplateKindV2
-} = {}): RuleFormDraftV2 {
+  kind?: TemplateKind
+} = {}): RuleFormDraft {
   const selectedKind = rule?.templateKind ?? kind
   const savedSources =
     rule?.templateKind === "stale_holds"
       ? [rule.templateSpec.source]
-      : (rule?.templateSpec as { sources?: NamedSourceV2[] } | undefined)
+      : (rule?.templateSpec as { sources?: NamedSource[] } | undefined)
           ?.sources
   const sources = cloneSources(
-    savedSources ?? defaultNamedSourcesV2(selectedKind, activeLedger)
+    savedSources ?? defaultNamedSources(selectedKind, activeLedger)
   )
   const savedHolds =
     rule?.templateKind === "stale_holds" ? rule.templateSpec : undefined
@@ -250,7 +250,7 @@ export function createRuleFormDraftV2({
       source.id,
       index === sources.length - 1 ? "denominator" : "numerator",
     ])
-  ) as Record<string, PortfolioSideV2>
+  ) as Record<string, PortfolioSide>
 
   if (rule?.templateKind === "balance_equation")
     for (const term of rule.templateSpec.terms)
@@ -323,18 +323,18 @@ export function createRuleFormDraftV2({
     bounds: savedBounds ?? [{ asset: "USD/2", min: "", max: "" }],
     namedAssets: Object.fromEntries(
       sources
-        .filter((source) => source.asset !== ASSET_WILDCARD_V2)
+        .filter((source) => source.asset !== ASSET_WILDCARD)
         .map((source) => [source.id, source.asset])
     ),
   }
 }
 
-export function changeRuleTemplateV2(
-  draft: RuleFormDraftV2,
-  kind: TemplateKindV2,
+export function changeRuleTemplate(
+  draft: RuleFormDraft,
+  kind: TemplateKind,
   activeLedger = ""
-): RuleFormDraftV2 {
-  const next = createRuleFormDraftV2({
+): RuleFormDraft {
+  const next = createRuleFormDraft({
     activeLedger: activeLedger || draft.sources[0]?.ledger,
     kind,
   })
@@ -348,10 +348,10 @@ export function changeRuleTemplateV2(
   }
 }
 
-export function replaceRuleSourcesV2(
-  draft: RuleFormDraftV2,
-  sources: NamedSourceV2[]
-): RuleFormDraftV2 {
+export function replaceRuleSources(
+  draft: RuleFormDraft,
+  sources: NamedSource[]
+): RuleFormDraft {
   const ids = new Set(sources.map((source) => source.id))
   const coefficients = Object.fromEntries(
     sources.map((source) => [source.id, draft.coefficients[source.id] ?? "1"])
@@ -361,7 +361,7 @@ export function replaceRuleSourcesV2(
       source.id,
       draft.portfolios[source.id] ?? "numerator",
     ])
-  ) as Record<string, PortfolioSideV2>
+  ) as Record<string, PortfolioSide>
   const available = sources.map((source) => source.id)
   const baseSource = ids.has(draft.baseSource)
     ? draft.baseSource
@@ -382,11 +382,11 @@ export function replaceRuleSourcesV2(
   }
 }
 
-export function renameRuleSourceV2(
-  draft: RuleFormDraftV2,
+export function renameRuleSource(
+  draft: RuleFormDraft,
   index: number,
   nextId: string
-): RuleFormDraftV2 {
+): RuleFormDraft {
   const source = draft.sources[index]
   if (!source || source.id === nextId) return draft
   if (
@@ -417,7 +417,7 @@ export function renameRuleSourceV2(
   }
 }
 
-export function serializeRuleFormV2(draft: RuleFormDraftV2): RuleRequestV2 {
+export function serializeRuleForm(draft: RuleFormDraft): RuleRequest {
   const common = {
     name: draft.name.trim(),
     severity: draft.severity,
@@ -464,7 +464,7 @@ export function serializeRuleFormV2(draft: RuleFormDraftV2): RuleRequestV2 {
       templateKind: draft.kind,
       templateSpec: {
         // One source, like stale_holds — the shared editor keeps it in sources[0].
-        source: cloneSources(draft.sources)[0] as LedgerNamedSourceV2,
+        source: cloneSources(draft.sources)[0] as LedgerNamedSource,
         bounds: Object.fromEntries(
           draft.bounds
             .filter((bound) => bound.asset.trim())
@@ -481,7 +481,7 @@ export function serializeRuleFormV2(draft: RuleFormDraftV2): RuleRequestV2 {
     }
   }
   if (draft.kind === "stale_holds") {
-    const deadline: HoldDeadlineV2 = { encoding: draft.deadline.encoding }
+    const deadline: HoldDeadline = { encoding: draft.deadline.encoding }
     if (draft.deadline.expiryKey.trim())
       deadline.expiryKey = draft.deadline.expiryKey.trim()
     if (draft.deadline.createdKey.trim()) {
@@ -498,7 +498,7 @@ export function serializeRuleFormV2(draft: RuleFormDraftV2): RuleRequestV2 {
       templateSpec: {
         // stale_holds reads exactly one hold set; the shared editor keeps it in
         // sources[0]. cloneSources keeps the query object from being shared.
-        source: cloneSources(draft.sources)[0] as LedgerNamedSourceV2,
+        source: cloneSources(draft.sources)[0] as LedgerNamedSource,
         deadline,
         mode: draft.mode,
         scope: draft.scope,
@@ -524,8 +524,8 @@ export function serializeRuleFormV2(draft: RuleFormDraftV2): RuleRequestV2 {
   }
 }
 
-export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
-  const issues: RuleFormIssueV2[] = []
+export function validateRuleForm(draft: RuleFormDraft): RuleFormIssue[] {
+  const issues: RuleFormIssue[] = []
   const add = (path: string, message: string) => issues.push({ path, message })
   if (!draft.name.trim()) add("name", "Name is required.")
   if (draft.kind === "stale_holds" || draft.kind === "balance_bounds") {
@@ -557,7 +557,7 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
   }
 
   const wildcards = draft.sources.filter(
-    (source) => source.asset === ASSET_WILDCARD_V2
+    (source) => source.asset === ASSET_WILDCARD
   )
   if (wildcards.length > 0) {
     if (wildcards.length !== draft.sources.length)
@@ -565,7 +565,7 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
         "sources",
         'Either every source checks all assets or none does — a mixed rule has no defined alignment.'
       )
-    if (!supportsAllAssetsV2(draft.kind))
+    if (!supportsAllAssets(draft.kind))
       add(
         "sources",
         draft.kind === "exchange_rate_bounds"
@@ -684,8 +684,8 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
       add("sources", "Balance bounds reads exactly one account set.")
     if (draft.bounds.length === 0)
       add("bounds", "Add at least one asset to bound.")
-    if (draft.bounds.length > MAX_BOUNDS_ASSETS_V2)
-      add("bounds", `Bound at most ${MAX_BOUNDS_ASSETS_V2} assets.`)
+    if (draft.bounds.length > MAX_BOUNDS_ASSETS)
+      add("bounds", `Bound at most ${MAX_BOUNDS_ASSETS} assets.`)
 
     const declared = draft.sources[0]?.asset ?? ""
     const seenAssets = new Set<string>()
@@ -695,7 +695,7 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
         add(`bounds[${index}].asset`, "Name the asset to bound.")
         return
       }
-      if (asset === ASSET_WILDCARD_V2)
+      if (asset === ASSET_WILDCARD)
         add(
           `bounds[${index}].asset`,
           'A bound is denominated, so "*" is not an asset here — set it on the source instead.'
@@ -712,16 +712,16 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
           "Set a minimum, a maximum, or both — a bound with neither never fails."
         )
       for (const [side, value] of [["min", min], ["max", max]])
-        if (value && !SIGNED_INTEGER_PATTERN_V2.test(value))
+        if (value && !SIGNED_INTEGER_PATTERN.test(value))
           add(
             `bounds[${index}].${side}`,
             "Use a whole number of minor units; negatives are allowed."
           )
-      if (min && max && SIGNED_INTEGER_PATTERN_V2.test(min) && SIGNED_INTEGER_PATTERN_V2.test(max) && BigInt(min) > BigInt(max))
+      if (min && max && SIGNED_INTEGER_PATTERN.test(min) && SIGNED_INTEGER_PATTERN.test(max) && BigInt(min) > BigInt(max))
         add(`bounds[${index}].max`, "The maximum must not be below the minimum.")
     })
 
-    if (declared && declared !== ASSET_WILDCARD_V2) {
+    if (declared && declared !== ASSET_WILDCARD) {
       const only = draft.bounds[0]?.asset.trim()
       if (draft.bounds.length !== 1 || only !== declared)
         add(
@@ -768,8 +768,8 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
         add(`identityKeys[${index}]`, `${trimmed} is listed twice.`)
       identitySeen.add(trimmed)
     })
-    if (draft.identityKeys.length > MAX_IDENTITY_KEYS_V2)
-      add("identityKeys", `Use at most ${MAX_IDENTITY_KEYS_V2} label keys.`)
+    if (draft.identityKeys.length > MAX_IDENTITY_KEYS)
+      add("identityKeys", `Use at most ${MAX_IDENTITY_KEYS} label keys.`)
 
     const cap = draft.maxHoldsScanned.trim()
     if (cap && (!/^\d+$/.test(cap) || Number(cap) < 1))
@@ -782,7 +782,7 @@ export function validateRuleFormV2(draft: RuleFormDraftV2): RuleFormIssueV2[] {
 }
 
 export function coefficientPath(
-  draft: RuleFormDraftV2,
+  draft: RuleFormDraft,
   sourceId: string,
   sourceIndex = draft.sources.findIndex((source) => source.id === sourceId)
 ): string {
@@ -796,7 +796,7 @@ export function coefficientPath(
   return `${side}Terms[${termIndex}].coefficient`
 }
 
-function termsForSide(draft: RuleFormDraftV2, side: PortfolioSideV2) {
+function termsForSide(draft: RuleFormDraft, side: PortfolioSide) {
   return draft.sources
     .filter((source) => (draft.portfolios[source.id] ?? "numerator") === side)
     .map((source) => ({
@@ -805,12 +805,12 @@ function termsForSide(draft: RuleFormDraftV2, side: PortfolioSideV2) {
     }))
 }
 
-function serializeRate(rate: RateBoundsDraftV2): RateBoundsV2 {
+function serializeRate(rate: RateBoundsDraft): RateBounds {
   return rate.mode === "explicit"
     ? { min: rate.min, max: rate.max }
     : { target: rate.target, toleranceBps: Number(rate.toleranceBps) }
 }
 
-function cloneSources(sources: NamedSourceV2[]): NamedSourceV2[] {
+function cloneSources(sources: NamedSource[]): NamedSource[] {
   return sources.map((source) => ({ ...source, query: { ...source.query } }))
 }

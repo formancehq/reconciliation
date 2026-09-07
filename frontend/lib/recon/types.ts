@@ -48,10 +48,6 @@ export type Severity = "info" | "low" | "medium" | "high" | "critical";
  * The 3 registered V1 GA templates. See TEMPLATE-SPECS.md for each `templateSpec`
  * shape. (`ledger_vs_pool_drift` was removed — sending it returns 400.)
  */
-export type TemplateKind =
-  | "ledger_invariant"
-  | "source_parity"
-  | "account_threshold";
 
 export type PeriodType = "continuous" | "daily" | "weekly" | "monthly";
 
@@ -134,48 +130,8 @@ export interface Snooze {
 // Rules
 // ---------------------------------------------------------------------------
 
-export interface Rule {
-  id: string;
-  revision?: string;
-  name: string;
-  templateKind: TemplateKind;
-  /** Template-specific config (shape depends on templateKind). */
-  templateSpec: Record<string, unknown>;
-  compiledCEL?: string;
-  enabled: boolean;
-  severity: Severity;
-  periodType: PeriodType;
-  schedule?: Schedule;
-  notifications?: string[];
-  labels?: Record<string, string>;
-  createdAt: string;
-  updatedAt: string;
-}
 
-/** POST /rules body. */
-export interface RuleRequest {
-  name: string;
-  templateKind: TemplateKind;
-  templateSpec: Record<string, unknown>;
-  severity?: Severity;
-  periodType?: PeriodType; // defaults to "continuous"
-  schedule?: Schedule;
-  notifications?: string[];
-  labels?: Record<string, string>;
-  enabled?: boolean;
-}
 
-/** PATCH /rules/{id} body — only supplied fields are applied. */
-export interface RulePatchRequest {
-  name?: string;
-  templateKind?: TemplateKind;
-  templateSpec?: Record<string, unknown>;
-  enabled?: boolean;
-  severity?: Severity;
-  schedule?: Schedule;
-  notifications?: string[];
-  labels?: Record<string, string>;
-}
 
 // ---------------------------------------------------------------------------
 // Evaluation (POST /rules/{id}/evaluate)
@@ -186,47 +142,11 @@ export interface EvaluateRuleRequest {
   at?: string;
 }
 
-/** Immediate run response; durable evidence is recorded in rule activity. */
-export interface Evaluation {
-  id: string;
-  ruleID: string;
-  startedAt: string;
-  endedAt: string;
-  pitPerSource?: Record<string, string>;
-  result: EvaluationResult;
-  /** Failing fingerprints only (empty on an all-PASS run). */
-  evidence?: Array<Record<string, unknown>> | Record<string, unknown>;
-  error?: string;
-  costUnits?: number;
-  createdAt: string;
-}
 
 // ---------------------------------------------------------------------------
 // Captures (GET /rules/{id}/captures) — the LIVE evaluation history
 // ---------------------------------------------------------------------------
 
-export interface Capture {
-  /** Ledger-local id of the underlying capture transaction. */
-  transactionID: number;
-  ruleID: string;
-  periodID: string;
-  evaluationID: string;
-  templateKind?: string;
-  verdict: Verdict;
-  trigger: Trigger;
-  capturedAt: string;
-  ruleRevision?: string;
-  pit?: string;
-  startedAt?: string;
-  result?: EvaluationResult;
-  error?: string;
-  /**
-   * Fingerprint-scoped retained outcomes. Every failing outcome is present;
-   * passing outcomes are present only when they automatically resolve an alert.
-   * Use the outcome's `passed` value rather than the capture-wide verdict.
-   */
-  evidence?: unknown;
-}
 
 // ---------------------------------------------------------------------------
 // Rule activity timeline
@@ -345,25 +265,6 @@ export type RuleActivity =
 // Alerts
 // ---------------------------------------------------------------------------
 
-export interface Alert {
-  id: string;
-  ruleID: string;
-  fingerprint: string; // e.g. "asset:USD/2"
-  periodID: string; // "continuous" for live-monitoring rules
-  status: AlertStatus;
-  severity: Severity;
-  firstSeenAt: string;
-  lastSeenAt: string;
-  occurrenceCount: number;
-  lastEvaluationID: string;
-  evidence?: Record<string, unknown>;
-  ack?: Ack;
-  resolution?: Resolution;
-  snooze?: Snooze;
-  labels?: Record<string, string>;
-  createdAt: string;
-  updatedAt: string;
-}
 
 /** One row of the alert's append-only timeline (see AlertEventType). */
 export interface AlertEvent {
@@ -421,14 +322,6 @@ export interface UnsnoozeAlertRequest {
 // Endpoint result aliases (what each call returns)
 // ---------------------------------------------------------------------------
 
-export type RuleResponse = Data<Rule>;
-export type RulesResponse = CursorResponse<Rule>;
-export type EvaluationResponse = Data<Evaluation>;
-export type CapturesResponse = CursorResponse<Capture>;
-export type RuleActivitiesResponse = CursorResponse<RuleActivity>;
-export type AlertResponse = Data<Alert>;
-export type AlertsResponse = CursorResponse<Alert>;
-export type AlertEventsResponse = CursorResponse<AlertEvent>;
 
 /**
  * A public signing key the control-ledger writes are signed with. `publicKey`

@@ -1,22 +1,22 @@
 import { Card } from "@/components/ui/card"
-import { evidenceLabel, type NamedSourceV2, type RuleV2 } from "@/lib/recon"
-import { describeRuleV2, effectiveSourceKind, sourceName } from "@/lib/recon/v2"
+import { evidenceLabel, type NamedSource, type Rule } from "@/lib/recon"
+import { describeRule, effectiveSourceKind, sourceName } from "@/lib/recon/v2"
 
 export function V2RulePresentation({
   rule,
   compact = false,
   sourcesFirst = false,
 }: {
-  rule: RuleV2
+  rule: Rule
   compact?: boolean
   sourcesFirst?: boolean
 }) {
   // Not every V2 template carries a `sources` array: stale_holds reads a single
   // named hold set, so surface it as the one source card rather than nothing.
-  const sources: NamedSourceV2[] =
+  const sources: NamedSource[] =
     rule.templateKind === "stale_holds"
       ? [rule.templateSpec.source]
-      : ((rule.templateSpec as { sources?: NamedSourceV2[] }).sources ?? [])
+      : ((rule.templateSpec as { sources?: NamedSource[] }).sources ?? [])
   const sourceGrid =
     sources.length > 0 ? (
       <div
@@ -31,9 +31,9 @@ export function V2RulePresentation({
         ))}
       </div>
     ) : null
-  // A kind describeRuleV2 doesn't describe yields no invariant text, so skip
+  // A kind describeRule doesn't describe yields no invariant text, so skip
   // the box rather than render an empty one.
-  const invariant = describeRuleV2(rule)
+  const invariant = describeRule(rule)
   const operation = !invariant ? null : (
     <div className="rounded-md border bg-muted/25 px-3 py-2">
       <div className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
@@ -70,7 +70,7 @@ export function NamedSourceCard({
   source,
   compact = false,
 }: {
-  source: NamedSourceV2
+  source: NamedSource
   compact?: boolean
 }) {
   const query = safeDisplay(source.query)

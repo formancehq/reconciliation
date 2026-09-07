@@ -21,7 +21,7 @@
  *     are the number of minor-unit decimals. A bare code (`EUR`) implies scale 0.
  */
 import type { AlertStatus, Verdict } from "./types"
-import type { AnyAlert, AnyCapture, AnyRule } from "./resources"
+import type { Alert, Capture, Rule } from "./typesV2"
 import { contractVersionOf } from "./resources"
 import { templateLabel } from "./v2"
 
@@ -114,7 +114,7 @@ export interface DeviationSeries {
 }
 
 export interface DeviationModel {
-  kind: AnyRule["templateKind"]
+  kind: Rule["templateKind"]
   /** parity/threshold → true; other kinds carry no plottable deviation today. */
   supported: boolean
   /** parity → "signedDiff", threshold → "balance". */
@@ -145,7 +145,7 @@ function isRealTime(ts: string | undefined | null): ts is string {
 
 /** Reference bounds declared on the rule, keyed by asset CODE (scale-stripped). */
 function specBounds(
-  rule: Pick<AnyRule, "templateKind" | "templateSpec">
+  rule: Pick<Rule, "templateKind" | "templateSpec">
 ): Record<string, DeviationBounds> {
   const spec = (rule.templateSpec ?? {}) as unknown as Record<string, unknown>
   const out: Record<string, DeviationBounds> = {}
@@ -192,8 +192,8 @@ function evidenceRecords(
  * supply the failing magnitudes.
  */
 export function buildDeviationModel(
-  rule: AnyRule,
-  captures: AnyCapture[]
+  rule: Rule,
+  captures: Capture[]
 ): DeviationModel {
   const kind = rule.templateKind
   const supported = (DEVIATION_KINDS as readonly string[]).includes(kind)
@@ -372,7 +372,7 @@ export function buildDriftSeries(
 // ── Break diagnosis: distribution by violated rule type ──────────────────────
 
 export interface BreaksByKind {
-  kind: AnyRule["templateKind"]
+  kind: Rule["templateKind"]
   label: string
   total: number
   OPEN: number
@@ -386,8 +386,8 @@ export interface BreaksByKind {
  * Sorted by total, descending.
  */
 export function breaksByTemplateKind(
-  alerts: AnyAlert[],
-  rules: AnyRule[]
+  alerts: Alert[],
+  rules: Rule[]
 ): BreaksByKind[] {
   const kindOf = new Map(
     rules.map((rule) => [
@@ -395,7 +395,7 @@ export function breaksByTemplateKind(
       rule.templateKind,
     ])
   )
-  const acc = new Map<AnyRule["templateKind"], BreaksByKind>()
+  const acc = new Map<Rule["templateKind"], BreaksByKind>()
   for (const a of alerts) {
     const kind = kindOf.get(`${contractVersionOf(a)}:${a.ruleID}`)
     if (!kind) continue // orphan alert (rule deleted) — skip

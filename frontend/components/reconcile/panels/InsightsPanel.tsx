@@ -61,9 +61,9 @@ import {
   STATUS_META,
   describeAnyRule,
   templateLabel,
-  type AnyRule,
-  type AnyAlert,
-  type AnyCapture,
+  type Rule,
+  type Alert,
+  type Capture,
   type AlertStatus,
   type DeviationModel,
   type DeviationSeries,
@@ -79,8 +79,8 @@ const CHART_CONFIG: TChartConfig = {
 }
 
 interface TopData {
-  rules: AnyRule[]
-  alerts: AnyAlert[]
+  rules: Rule[]
+  alerts: Alert[]
 }
 
 export function InsightsPanel() {
@@ -121,7 +121,7 @@ export function InsightsPanel() {
       `${contractVersionOf(candidate)}:${candidate.id}` === selectedKey
   )
 
-  const capturesRes = useReconResource<AnyCapture[]>(
+  const capturesRes = useReconResource<Capture[]>(
     (signal) =>
       rule
         ? listCaptures(rule.id, { signal })
@@ -207,8 +207,8 @@ function DeviationCard({
   error,
   onRetry,
 }: {
-  rule: AnyRule
-  captures: AnyCapture[]
+  rule: Rule
+  captures: Capture[]
   loading: boolean
   error: unknown
   onRetry: () => void
@@ -714,8 +714,8 @@ function BreaksByTypeCard({
   alerts,
   rules,
 }: {
-  alerts: AnyAlert[]
-  rules: AnyRule[]
+  alerts: Alert[]
+  rules: Rule[]
 }) {
   const rows = useMemo(
     () => breaksByTemplateKind(alerts, rules),

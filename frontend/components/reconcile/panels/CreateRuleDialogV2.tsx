@@ -26,55 +26,55 @@ import { toast } from "@/components/ui/toast"
 import { useLedgerClient } from "@/lib/connection/provider"
 import createLogger from "@/lib/logger"
 import {
-  allAssetsV2,
+  allAssets,
   backendValidationText,
-  changeRuleTemplateV2,
-  createRuleFormDraftV2,
+  changeRuleTemplate,
+  createRuleFormDraft,
   ReconError,
   reconClientV2,
-  renameRuleSourceV2,
-  replaceRuleSourcesV2,
+  renameRuleSource,
+  replaceRuleSources,
   SEVERITY_META,
   SEVERITY_ORDER,
-  serializeRuleFormV2,
-  setAllAssetsV2,
-  supportsAllAssetsV2,
-  TEMPLATE_KINDS_V2,
-  TEMPLATE_META_V2,
-  validateRuleFormV2,
-  type RuleFormDraftV2,
-  type RuleV2,
+  serializeRuleForm,
+  setAllAssets,
+  supportsAllAssets,
+  TEMPLATE_KINDS,
+  TEMPLATE_META,
+  validateRuleForm,
+  type RuleFormDraft,
+  type Rule,
   type Severity,
-  type TemplateKindV2,
+  type TemplateKind,
 } from "@/lib/recon"
 import { useChartStore } from "@/stores/chartStore"
 import { NamedSourcesEditor } from "../NamedSourcesEditor"
 import {
-  BalanceBoundsEditorV2,
-  BalanceEquationEditorV2,
-  CoverageRatioBoundsEditorV2,
-  ExchangeRateBoundsEditorV2,
-  SourceConsensusEditorV2,
-  StaleHoldsEditorV2,
+  BalanceBoundsEditor,
+  BalanceEquationEditor,
+  CoverageRatioBoundsEditor,
+  ExchangeRateBoundsEditor,
+  SourceConsensusEditor,
+  StaleHoldsEditor,
 } from "../v2/V2TemplateEditors"
 import { RunTimingFields } from "../RunTimingFields"
 
 const log = createLogger("Recon")
 
 /** Templates that read exactly one account set rather than comparing several. */
-function singleSource(kind: TemplateKindV2): boolean {
+function singleSource(kind: TemplateKind): boolean {
   return kind === "stale_holds" || kind === "balance_bounds"
 }
 
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  editRule?: RuleV2 | null
-  duplicateRule?: RuleV2 | null
-  onSaved: (rule: RuleV2) => void
+  editRule?: Rule | null
+  duplicateRule?: Rule | null
+  onSaved: (rule: Rule) => void
 }
 
-export function CreateRuleDialogV2({
+export function CreateRuleDialog({
   open,
   editRule,
   duplicateRule,
@@ -108,8 +108,8 @@ function CreateRuleDialogV2Open({
   const isEdit = !!editRule
   const isDuplicate = !editRule && !!duplicateRule
   const activeLedger = useChartStore((state) => state.selectedLedger).trim()
-  const [draft, setDraft] = useState<RuleFormDraftV2>(() =>
-    createRuleFormDraftV2({
+  const [draft, setDraft] = useState<RuleFormDraft>(() =>
+    createRuleFormDraft({
       rule: seed,
       duplicate: isDuplicate,
       activeLedger,
@@ -134,11 +134,11 @@ function CreateRuleDialogV2Open({
     }
   }, [open, ledgerClient])
 
-  const issues = useMemo(() => validateRuleFormV2(draft), [draft])
+  const issues = useMemo(() => validateRuleForm(draft), [draft])
   const backendError = backendValidationText(serverError)
 
-  const changeKind = (kind: TemplateKindV2) => {
-    setDraft((current) => changeRuleTemplateV2(current, kind, activeLedger))
+  const changeKind = (kind: TemplateKind) => {
+    setDraft((current) => changeRuleTemplate(current, kind, activeLedger))
     setServerError(null)
   }
 
@@ -146,7 +146,7 @@ function CreateRuleDialogV2Open({
     setSubmitting(true)
     setServerError(null)
     try {
-      const request = serializeRuleFormV2(draft)
+      const request = serializeRuleForm(draft)
       const rule =
         isEdit && editRule
           ? await reconClientV2.patchRule(editRule.id, {
@@ -189,7 +189,7 @@ function CreateRuleDialogV2Open({
                 : "New advanced rule"}
           </DialogTitle>
           <DialogDescription>
-            {TEMPLATE_META_V2[draft.kind].blurb}
+            {TEMPLATE_META[draft.kind].blurb}
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[calc(94vh-9rem)] space-y-5 overflow-y-auto px-4 py-5 sm:px-5">
@@ -231,7 +231,7 @@ function CreateRuleDialogV2Open({
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {TEMPLATE_KINDS_V2.map((kind) => (
+            {TEMPLATE_KINDS.map((kind) => (
               <button
                 key={kind}
                 type="button"
@@ -244,10 +244,10 @@ function CreateRuleDialogV2Open({
                 } disabled:cursor-default`}
               >
                 <div className="text-sm font-medium">
-                  {TEMPLATE_META_V2[kind].label}
+                  {TEMPLATE_META[kind].label}
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {TEMPLATE_META_V2[kind].blurb}
+                  {TEMPLATE_META[kind].blurb}
                 </div>
               </button>
             ))}
@@ -284,12 +284,12 @@ function CreateRuleDialogV2Open({
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                {supportsAllAssetsV2(draft.kind) && (
+                {supportsAllAssets(draft.kind) && (
                   <label className="flex items-center gap-2 text-xs">
                     <Switch
-                      checked={allAssetsV2(draft)}
+                      checked={allAssets(draft)}
                       onCheckedChange={(on) =>
-                        setDraft((current) => setAllAssetsV2(current, on))
+                        setDraft((current) => setAllAssets(current, on))
                       }
                     />
                     <span>
@@ -316,11 +316,11 @@ function CreateRuleDialogV2Open({
               <NamedSourcesEditor
                 sources={draft.sources}
                 onChange={(sources) =>
-                  setDraft((current) => replaceRuleSourcesV2(current, sources))
+                  setDraft((current) => replaceRuleSources(current, sources))
                 }
                 onIdChange={(index, _previous, next) =>
                   setDraft((current) =>
-                    renameRuleSourceV2(current, index, next)
+                    renameRuleSource(current, index, next)
                   )
                 }
                 ledgerOptions={ledgerOptions}
@@ -336,7 +336,7 @@ function CreateRuleDialogV2Open({
             </div>
           </Card>
 
-          <TemplateEditorV2
+          <TemplateEditor
             draft={draft}
             onChange={setDraft}
             backendError={backendError}
@@ -399,19 +399,19 @@ function CreateRuleDialogV2Open({
   )
 }
 
-function TemplateEditorV2({
+function TemplateEditor({
   draft,
   onChange,
   backendError,
 }: {
-  draft: RuleFormDraftV2
-  onChange: (draft: RuleFormDraftV2) => void
+  draft: RuleFormDraft
+  onChange: (draft: RuleFormDraft) => void
   backendError?: string
 }) {
   switch (draft.kind) {
     case "balance_equation":
       return (
-        <BalanceEquationEditorV2
+        <BalanceEquationEditor
           draft={draft}
           onChange={onChange}
           backendError={backendError}
@@ -419,7 +419,7 @@ function TemplateEditorV2({
       )
     case "exchange_rate_bounds":
       return (
-        <ExchangeRateBoundsEditorV2
+        <ExchangeRateBoundsEditor
           draft={draft}
           onChange={onChange}
           backendError={backendError}
@@ -427,7 +427,7 @@ function TemplateEditorV2({
       )
     case "source_consensus":
       return (
-        <SourceConsensusEditorV2
+        <SourceConsensusEditor
           draft={draft}
           onChange={onChange}
           backendError={backendError}
@@ -435,7 +435,7 @@ function TemplateEditorV2({
       )
     case "coverage_ratio_bounds":
       return (
-        <CoverageRatioBoundsEditorV2
+        <CoverageRatioBoundsEditor
           draft={draft}
           onChange={onChange}
           backendError={backendError}
@@ -443,7 +443,7 @@ function TemplateEditorV2({
       )
     case "balance_bounds":
       return (
-        <BalanceBoundsEditorV2
+        <BalanceBoundsEditor
           draft={draft}
           onChange={onChange}
           backendError={backendError}
@@ -451,7 +451,7 @@ function TemplateEditorV2({
       )
     case "stale_holds":
       return (
-        <StaleHoldsEditorV2
+        <StaleHoldsEditor
           draft={draft}
           onChange={onChange}
           backendError={backendError}

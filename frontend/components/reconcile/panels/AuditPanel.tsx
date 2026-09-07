@@ -36,8 +36,8 @@ import {
   formatRelative,
   formatDateTime,
   resourceKey,
-  type AnyAlert,
-  type AnyRule,
+  type Alert,
+  type Rule,
   type Actor,
   type SigningKey,
   type AuditEntry,
@@ -47,8 +47,8 @@ import { Loading, ErrorState, SeverityBadge, StatusBadge, EmptyState } from "../
 interface Data {
   keys: SigningKey[]
   entries: AuditEntry[]
-  alerts: AnyAlert[]
-  rules: AnyRule[]
+  alerts: Alert[]
+  rules: Rule[]
 }
 
 export function AuditPanel() {
@@ -70,7 +70,7 @@ export function AuditPanel() {
   const alerts = res.data?.alerts ?? []
   const rules = res.data?.rules ?? []
 
-  const ruleName = (a: AnyAlert) =>
+  const ruleName = (a: Alert) =>
     rules.find(
       (r) => r.id === a.ruleID && contractVersionOf(r) === contractVersionOf(a)
     )?.name ?? a.ruleID
@@ -619,10 +619,10 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   )
 }
 
-function alertActor(a: AnyAlert): Actor | undefined {
+function alertActor(a: Alert): Actor | undefined {
   return a.resolution?.actor ?? a.ack?.actor
 }
 
-function actorName(a: AnyAlert): string {
+function actorName(a: Alert): string {
   return a.resolution?.by ?? a.ack?.by ?? "—"
 }

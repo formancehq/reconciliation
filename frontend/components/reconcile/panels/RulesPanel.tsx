@@ -46,14 +46,12 @@ import {
   poll,
   describeAnyRule,
   formatRelative,
-  TEMPLATE_META,
-  TEMPLATE_KINDS,
   PERIOD_TYPE_META,
   SEVERITY_ORDER,
   SEVERITY_META,
   ReconError,
-  TEMPLATE_KINDS_V2,
-  TEMPLATE_META_V2,
+  TEMPLATE_KINDS,
+  TEMPLATE_META,
   templateLabel,
   listAllRules,
   listAllAlerts,
@@ -63,9 +61,9 @@ import {
   deleteRule,
   contractVersionOf,
   resourceKey,
-  type AnyRule,
-  type AnyCapture,
-  type AnyAlert,
+  type Rule,
+  type Capture,
+  type Alert,
 } from "@/lib/recon"
 import { useReconNav } from "../ReconContext"
 import {
@@ -77,13 +75,13 @@ import {
 } from "../ui"
 import { RuleDetail } from "./RuleDetail"
 import { V2RulePresentation } from "../V2RulePresentation"
-import { CreateRuleDialogV2 } from "./CreateRuleDialogV2"
+import { CreateRuleDialog } from "./CreateRuleDialogV2"
 import createLogger from "@/lib/logger"
 import { FILTER_TOOLBAR } from "@/lib/uiClasses"
 import { ReconFilterMenu } from "../ReconFilterMenu"
 
 type SortKey = "name" | "severity" | "template"
-type RuleRunSummary = { capture: AnyCapture | null; alertID?: string }
+type RuleRunSummary = { capture: Capture | null; alertID?: string }
 const PAGE_SIZE = 10
 
 const log = createLogger("Recon")
@@ -120,14 +118,14 @@ function RulesList({
   dataVersion: number
   invalidate: () => void
 }) {
-  const rules = useReconResource<AnyRule[]>(
+  const rules = useReconResource<Rule[]>(
     (signal) => listAllRules(signal),
     [dataVersion]
   )
   const [evaluating, setEvaluating] = useState<Set<string>>(new Set())
   const [busyToggle, setBusyToggle] = useState<Set<string>>(new Set())
-  const [creatingV2, setCreatingV2] = useState(false)
-  const [pendingDelete, setPendingDelete] = useState<AnyRule | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<Rule | null>(null)
   const [deleting, setDeleting] = useState(false)
 
   // Filters + sort (client-side; the list isn't server-paginated).
@@ -152,11 +150,11 @@ function RulesList({
           const caps = await listCaptures(
             rule.id,
             { signal }
-          ).catch(() => [] as AnyCapture[])
+          ).catch(() => [] as Capture[])
           return [resourceKey(rule), caps[0] ?? null] as const
         })
       ),
-      listAllAlerts(signal).catch(() => [] as AnyAlert[]),
+      listAllAlerts(signal).catch(() => [] as Alert[]),
     ])
     return Object.fromEntries(
       entries.map(([id, capture]) => {
@@ -179,7 +177,7 @@ function RulesList({
     })
 
   const onToggle = useCallback(
-    async (rule: AnyRule, enabled: boolean) => {
+    async (rule: Rule, enabled: boolean) => {
       const key = resourceKey(rule)
       setBusy(setBusyToggle, key, true)
       // Optimistic: flip locally, revert on failure.
@@ -209,7 +207,7 @@ function RulesList({
   )
 
   const onEvaluate = useCallback(
-    async (rule: AnyRule) => {
+    async (rule: Rule) => {
       const key = resourceKey(rule)
       setBusy(setEvaluating, key, true)
       try {
@@ -227,7 +225,7 @@ function RulesList({
           })
         // Read-after-write is eventually consistent: let alerts/captures settle,
         // then refresh other panels.
-        await poll<AnyAlert[]>(async () => reconClientV2.listAlerts(), {
+        await poll<Alert[]>(async () => reconClientV2.listAlerts(), {
           tries: 3,
           intervalMs: 350,
         })
@@ -284,7 +282,7 @@ function RulesList({
         (fSeverity === "all" || r.severity === fSeverity) &&
         (fEnabled === "all" || (fEnabled === "on") === r.enabled)
     )
-    const cmp = (a: AnyRule, b: AnyRule) =>
+    const cmp = (a: Rule, b: Rule) =>
       sort === "severity"
         ? SEVERITY_ORDER.indexOf(a.severity) -
           SEVERITY_ORDER.indexOf(b.severity)
@@ -318,7 +316,7 @@ function RulesList({
           {(rules.refreshing || verdicts.loading) && (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           )}
-          <Button size="sm" onClick={() => setCreatingV2(true)}>
+          <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="mr-1.5 h-4 w-4" /> New rule
           </Button>
         </div>
@@ -347,14 +345,9 @@ function RulesList({
             }}
             allLabel="All templates"
             width="w-full sm:w-40"
-            options={[
-              ...TEMPLATE_KINDS.map(
-                (k) => [k, TEMPLATE_META[k].label] as [string, string]
-              ),
-              ...TEMPLATE_KINDS_V2.map(
-                (k) => [k, TEMPLATE_META_V2[k].label] as [string, string]
-              ),
-            ]}
+            options={TEMPLATE_KINDS.map(
+              (k) => [k, TEMPLATE_META[k].label] as [string, string]
+            )}
           />
           <ReconFilterMenu
             value={fSeverity}
@@ -455,10 +448,10 @@ function RulesList({
         </div>
       )}
 
-      <CreateRuleDialogV2
+      <CreateRuleDialog
         key="new-v2"
-        open={creatingV2}
-        onOpenChange={setCreatingV2}
+        open={creating}
+        onOpenChange={setCreating}
         onSaved={(rule) => {
           invalidate()
           onOpen(rule.id, 2)
@@ -552,8 +545,8 @@ export function RuleListItem({
   onDelete,
   onOpenAlert,
 }: {
-  rule: AnyRule
-  capture: AnyCapture | null | undefined
+  rule: Rule
+  capture: Capture | null | undefined
   captureLoading: boolean
   evaluating: boolean
   toggling: boolean
@@ -682,7 +675,7 @@ function LastResult({
   loading,
   onOpenAlert,
 }: {
-  capture: AnyCapture | null | undefined
+  capture: Capture | null | undefined
   loading: boolean
   onOpenAlert?: () => void
 }) {
@@ -736,11 +729,11 @@ function LastResult({
 }
 
 export function findAlertForCapture(
-  alerts: AnyAlert[],
-  capture: AnyCapture | null | undefined
-): AnyAlert | undefined {
+  alerts: Alert[],
+  capture: Capture | null | undefined
+): Alert | undefined {
   if (!capture) return undefined
-  return alerts.reduce<AnyAlert | undefined>((latest, alert) => {
+  return alerts.reduce<Alert | undefined>((latest, alert) => {
     if (contractVersionOf(alert) !== contractVersionOf(capture)) return latest
     if (
       alert.ruleID !== capture.ruleID ||

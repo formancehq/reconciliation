@@ -9,7 +9,7 @@ import type {
   Trigger,
   Verdict,
 } from "./types"
-import type { AnyRule } from "./resources"
+import type { Rule } from "./typesV2"
 
 export interface RuleRunGroup {
   type: "run"
@@ -161,7 +161,7 @@ export function activitySnapshot(
 export function recoverDeletedRule(
   activities: RuleActivity[],
   contractVersion: 1 | 2
-): AnyRule | undefined {
+): Rule | undefined {
   const deleted = activities.find(
     (activity) => activity.kind === "rule.deleted"
   )
@@ -174,11 +174,11 @@ export function recoverDeletedRule(
 export function ruleFromActivitySnapshot(
   snapshot: Record<string, unknown> | undefined,
   contractVersion: 1 | 2
-): AnyRule | undefined {
+): Rule | undefined {
   if (!isRuleShape(snapshot)) return undefined
   return contractVersion === 2
-    ? ({ ...snapshot, contractVersion: 2 } as unknown as AnyRule)
-    : (snapshot as unknown as AnyRule)
+    ? ({ ...snapshot, contractVersion: 2 } as unknown as Rule)
+    : (snapshot as unknown as Rule)
 }
 
 export function latestEvaluationActivity(

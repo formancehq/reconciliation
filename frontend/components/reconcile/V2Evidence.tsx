@@ -1,16 +1,16 @@
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import type {
-  BalanceEquationEvidenceSourceV2,
-  CoveragePortfolioV2,
-  EvidenceSourceV2,
-  EvidenceV2,
-  RationalV2,
-  StaleHoldEvidenceV2,
+  BalanceEquationEvidenceSource,
+  CoveragePortfolio,
+  EvidenceSource,
+  Evidence,
+  Rational,
+  StaleHoldEvidence,
 } from "@/lib/recon"
 import { sourceName } from "@/lib/recon/v2"
 
-export function isEvidenceV2(value: unknown): value is EvidenceV2 {
+export function isEvidence(value: unknown): value is Evidence {
   if (
     !isRecord(value) ||
     value.schemaVersion !== 2 ||
@@ -97,7 +97,7 @@ export function V2Evidence({
   compact?: boolean
   passed?: boolean
 }) {
-  if (!isEvidenceV2(evidence))
+  if (!isEvidence(evidence))
     return <StructuredEvidenceFallback evidence={evidence} />
   const outcomePassed = passed ?? inferEvidencePassed(evidence)
   switch (evidence.operation) {
@@ -152,12 +152,12 @@ export function V2Evidence({
   }
 }
 
-type EvidenceOf<Operation extends EvidenceV2["operation"]> = Extract<
-  EvidenceV2,
+type EvidenceOf<Operation extends Evidence["operation"]> = Extract<
+  Evidence,
   { operation: Operation }
 >
 
-interface OperationEvidenceProps<Operation extends EvidenceV2["operation"]> {
+interface OperationEvidenceProps<Operation extends Evidence["operation"]> {
   evidence: EvidenceOf<Operation>
   passed: boolean
   compact: boolean
@@ -402,7 +402,7 @@ function SourceTable({
   maximumSource,
   compact = false,
 }: {
-  sources: Array<EvidenceSourceV2 | BalanceEquationEvidenceSourceV2>
+  sources: Array<EvidenceSource | BalanceEquationEvidenceSource>
   equation?: boolean
   missing?: Set<string>
   minimumSource?: string
@@ -512,7 +512,7 @@ function SnapshotCard({
   missing = false,
   equation = false,
 }: {
-  source: EvidenceSourceV2 | BalanceEquationEvidenceSourceV2
+  source: EvidenceSource | BalanceEquationEvidenceSource
   role?: string
   missing?: boolean
   equation?: boolean
@@ -587,7 +587,7 @@ function Portfolio({
   compact,
 }: {
   title: string
-  portfolio: CoveragePortfolioV2
+  portfolio: CoveragePortfolio
   compact: boolean
 }) {
   return (
@@ -781,7 +781,7 @@ function StaleHoldSample({
   total,
   approaching,
 }: {
-  holds: StaleHoldEvidenceV2[]
+  holds: StaleHoldEvidence[]
   asset: string
   sampled: number
   total: number
@@ -820,7 +820,7 @@ function StaleHoldSample({
 }
 
 /** Prefer the operator's own identifiers over the ledger address when the rule supplies them. */
-function describeHold(hold: StaleHoldEvidenceV2): string {
+function describeHold(hold: StaleHoldEvidence): string {
   const identity = Object.values(hold.identity ?? {}).filter(Boolean)
   return identity.length > 0 ? identity.join(" · ") : hold.hold
 }
@@ -865,12 +865,12 @@ function ControlFailure({ children }: { children: React.ReactNode }) {
   )
 }
 
-function exactRational(value: RationalV2 | undefined): string {
+function exactRational(value: Rational | undefined): string {
   return value ? `${value.numerator} / ${value.denominator}` : "—"
 }
 
-/** Infer a display verdict only when an enclosing OutcomeV2 did not provide it. */
-export function inferEvidencePassed(evidence: EvidenceV2): boolean {
+/** Infer a display verdict only when an enclosing Outcome did not provide it. */
+export function inferEvidencePassed(evidence: Evidence): boolean {
   try {
     if (evidence.operation === "balance_equation") {
       return (
@@ -913,7 +913,7 @@ export function inferEvidencePassed(evidence: EvidenceV2): boolean {
 }
 
 function rationalWithinBounds(
-  value: RationalV2 | undefined,
+  value: Rational | undefined,
   bounds: { min: string; max: string }
 ): boolean {
   if (!value) return false
@@ -948,7 +948,7 @@ interface RationalV2AsBigInt {
   denominator: bigint
 }
 
-function displaySourceId(sources: EvidenceSourceV2[], id: string): string {
+function displaySourceId(sources: EvidenceSource[], id: string): string {
   const source = sources.find((candidate) => candidate.id === id)
   return source ? sourceName(source) : id
 }
@@ -961,7 +961,7 @@ function strings(value: Record<string, unknown>, keys: string[]): boolean {
   return keys.every((key) => typeof value[key] === "string")
 }
 
-function isEvidenceSource(value: unknown): value is EvidenceSourceV2 {
+function isEvidenceSource(value: unknown): value is EvidenceSource {
   return (
     isRecord(value) &&
     strings(value, ["id", "kind", "asset", "balance"]) &&
@@ -973,7 +973,7 @@ function isEvidenceSource(value: unknown): value is EvidenceSourceV2 {
 
 function isEquationSource(
   value: unknown
-): value is BalanceEquationEvidenceSourceV2 {
+): value is BalanceEquationEvidenceSource {
   return (
     isEvidenceSource(value) &&
     "coefficient" in value &&
@@ -984,7 +984,7 @@ function isEquationSource(
   )
 }
 
-function isRational(value: unknown): value is RationalV2 {
+function isRational(value: unknown): value is Rational {
   return isRecord(value) && strings(value, ["numerator", "denominator"])
 }
 

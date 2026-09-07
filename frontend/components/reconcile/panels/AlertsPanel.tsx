@@ -72,8 +72,8 @@ import {
   resolveReconActor,
   type AlertStatus,
   type AlertCaptureEvidenceSelection,
-  type AnyAlert,
-  type AnyCapture,
+  type Alert,
+  type Capture,
   type AlertEvent,
   type Cursor,
 } from "@/lib/recon"
@@ -101,7 +101,7 @@ import {
 } from "@workspace/ui/components/item"
 import { cn } from "@workspace/ui/lib/utils"
 import { ReconFilterMenu } from "../ReconFilterMenu"
-import { V2Evidence, isEvidenceV2 } from "../V2Evidence"
+import { V2Evidence, isEvidence } from "../V2Evidence"
 import { AlertEventsTimeline } from "../AlertEventsTimeline"
 
 const log = createLogger("Recon")
@@ -124,7 +124,7 @@ export const DEFAULT_ALERT_FILTER: StatusFilter = "OPEN"
 export type AlertSortKey = "latest" | "oldest" | "severity" | "occurrences"
 
 interface InboxData {
-  alerts: AnyAlert[]
+  alerts: Alert[]
   ruleNames: Record<string, string>
 }
 
@@ -132,7 +132,7 @@ const AUTO_REFRESH_MS = 10_000
 const ALERTS_PAGE_SIZE = 20
 
 export function filterAndSortAlerts(
-  alerts: AnyAlert[],
+  alerts: Alert[],
   ruleNames: Record<string, string>,
   options: {
     query: string
@@ -294,7 +294,7 @@ function AlertsInbox() {
       return n
     })
 
-  const row = (a: AnyAlert) => (
+  const row = (a: Alert) => (
     <AlertListItem
       key={resourceKey(a)}
       alert={a}
@@ -308,7 +308,7 @@ function AlertsInbox() {
   )
 
   // Group this page by rule, preserving the newest-first order within each.
-  const groups = new Map<string, AnyAlert[]>()
+  const groups = new Map<string, Alert[]>()
   if (grouped)
     for (const a of pageAlerts) {
       const key = ruleResourceKey(a)
@@ -596,7 +596,7 @@ export function AlertListItem({
   onOpen,
   onOpenRule,
 }: {
-  alert: AnyAlert
+  alert: Alert
   ruleName: string
   selected: boolean
   onSelect: () => void
@@ -728,7 +728,7 @@ export function alertEvidenceFacts(evidence: unknown) {
 }
 
 export function AlertEvidenceSummary({ evidence }: { evidence: unknown }) {
-  if (isEvidenceV2(evidence))
+  if (isEvidence(evidence))
     return <V2Evidence evidence={evidence} compact passed={false} />
   const facts = alertEvidenceFacts(evidence)
   if (facts.length === 0)
@@ -883,7 +883,7 @@ export function AlertsPagination({
 // ── Detail ────────────────────────────────────────────────────────────────────
 type ActionKind = "ack" | "resolve" | "accept" | "snooze" | "unsnooze"
 type CaptureLoadState =
-  | { status: "ready"; captures: AnyCapture[] }
+  | { status: "ready"; captures: Capture[] }
   | { status: "error"; error: unknown }
 
 // The alert timeline is now the alert's own event log (GET /alerts/{id}/events,
@@ -901,7 +901,7 @@ function AlertDetail({
   const [action, setAction] = useState<ActionKind | null>(null)
 
   const res = useReconResource<{
-    alert: AnyAlert
+    alert: Alert
     ruleName?: string
     captureLoad: CaptureLoadState
   }>(async (signal) => {
@@ -990,7 +990,7 @@ function AlertDetail({
   // Inline evidence for the timeline: an alert event carries its evaluation id
   // but not the break evidence; recover it from the captures already loaded above
   // (this alert's fingerprint), so a fail/pass row expands to show what it saw.
-  const capturesByEvaluation = new Map<string, AnyCapture>()
+  const capturesByEvaluation = new Map<string, Capture>()
   for (const capture of captures) {
     if (capture.evaluationID) capturesByEvaluation.set(capture.evaluationID, capture)
   }
@@ -1003,14 +1003,14 @@ function AlertDetail({
     const outcome = eventEvidenceOutcome(evaluationID)
     return (
       !!outcome &&
-      (isEvidenceV2(outcome.evidence) ||
+      (isEvidence(outcome.evidence) ||
         orderedEvidenceEntries(outcome.evidence).length > 0)
     )
   }
   const renderEventEvidence = (evaluationID?: string) => {
     const outcome = eventEvidenceOutcome(evaluationID)
     if (!outcome) return null
-    if (isEvidenceV2(outcome.evidence))
+    if (isEvidence(outcome.evidence))
       return <V2Evidence evidence={outcome.evidence} compact passed={outcome.passed} />
     const entries = orderedEvidenceEntries(outcome.evidence)
     return entries.length > 0 ? <EvidenceDescription entries={entries} /> : null
@@ -1165,7 +1165,7 @@ function AlertDetail({
           onClose={() => setAction(null)}
           onDone={async () => {
             setAction(null)
-            await poll<AnyAlert>(
+            await poll<Alert>(
               async () => reconClientV2.getAlert(alertId),
               { tries: 3, intervalMs: 300 }
             )
@@ -1228,22 +1228,22 @@ export function EvaluationHistory({
   history,
   currentEvidence,
 }: {
-  alert: AnyAlert
+  alert: Alert
   latest: AlertCaptureEvidenceSelection
-  history: AnyCapture[]
+  history: Capture[]
   currentEvidence: unknown
 }) {
   const older = history.filter(
     (capture) => capture.evaluationID !== latest.capture?.evaluationID
   )
-  const currentV2Evidence = isEvidenceV2(currentEvidence)
+  const currentV2Evidence = isEvidence(currentEvidence)
     ? currentEvidence
     : undefined
   const currentEvidenceEntries = currentV2Evidence
     ? []
     : evidenceEntries(currentEvidence)
   const latestV2Evidence =
-    latest.outcome && isEvidenceV2(latest.outcome.evidence)
+    latest.outcome && isEvidence(latest.outcome.evidence)
       ? latest.outcome.evidence
       : !latest.capture
         ? currentV2Evidence
@@ -1357,7 +1357,7 @@ export function EvaluationHistory({
                   </summary>
                   <div className="border-t px-3 py-3">
                     {outcome ? (
-                      isEvidenceV2(outcome.evidence) ? (
+                      isEvidence(outcome.evidence) ? (
                         <V2Evidence
                           evidence={outcome.evidence}
                           passed={outcome.passed}
@@ -1436,7 +1436,7 @@ export function ResolutionEvidenceSnapshot({
       <div className="mb-2 text-xs font-medium text-muted-foreground">
         Immutable resolution evidence snapshot
       </div>
-      {isEvidenceV2(evidence) ? (
+      {isEvidence(evidence) ? (
         <V2Evidence evidence={evidence} />
       ) : (
         <EvidenceDescription entries={orderedEvidenceEntries(evidence)} />

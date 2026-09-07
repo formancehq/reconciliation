@@ -6,9 +6,8 @@
  * one client and one code path; the seam is kept because the panels are written
  * against it and it is where a future contract would slot in.
  *
- * The `Any*` aliases are what remains of the unions — each now names a single
- * type. Renaming them (and dropping the V2 suffix throughout) is cosmetic and
- * deliberately not part of retirement.
+ * The V1/V2 unions that used to live here collapsed to the single types they
+ * now name, and the vestigial V2 suffix went with them.
  */
 import { reconClientV2 } from "./clientV2"
 import type {
@@ -21,11 +20,7 @@ import type {
   SnoozeAlertRequest,
   UnsnoozeAlertRequest,
 } from "./types"
-import type { AlertV2, CaptureV2, RuleV2 } from "./typesV2"
-
-export type AnyRule = RuleV2
-export type AnyAlert = AlertV2
-export type AnyCapture = CaptureV2
+import type { Alert, Capture, Rule } from "./typesV2"
 
 /**
  * The contract a record is stamped with. One value is live; the stamp survives
@@ -44,32 +39,32 @@ export function ruleResourceKey(resource: { ruleID: string } & object): string {
   return `${contractVersionOf(resource)}:${resource.ruleID}`
 }
 
-export async function listAllRules(signal?: AbortSignal): Promise<AnyRule[]> {
+export async function listAllRules(signal?: AbortSignal): Promise<Rule[]> {
   return signal ? reconClientV2.listRules(signal) : reconClientV2.listRules()
 }
 
-export async function listAllAlerts(signal?: AbortSignal): Promise<AnyAlert[]> {
+export async function listAllAlerts(signal?: AbortSignal): Promise<Alert[]> {
   return signal ? reconClientV2.listAlerts(signal) : reconClientV2.listAlerts()
 }
 
 export async function getRule(
   id: string,
   signal?: AbortSignal
-): Promise<AnyRule> {
+): Promise<Rule> {
   return signal ? reconClientV2.getRule(id, signal) : reconClientV2.getRule(id)
 }
 
 export async function getAlert(
   id: string,
   signal?: AbortSignal
-): Promise<AnyAlert> {
+): Promise<Alert> {
   return signal ? reconClientV2.getAlert(id, signal) : reconClientV2.getAlert(id)
 }
 
 export async function listCaptures(
   ruleId: string,
   opts?: { period?: string; signal?: AbortSignal }
-): Promise<AnyCapture[]> {
+): Promise<Capture[]> {
   return reconClientV2.listCaptures(ruleId, opts)
 }
 
@@ -95,7 +90,7 @@ export function listAlertEvents(
 
 export async function listAlerts(
   signal?: AbortSignal
-): Promise<AnyAlert[]> {
+): Promise<Alert[]> {
   return signal ? reconClientV2.listAlerts(signal) : reconClientV2.listAlerts()
 }
 
@@ -105,9 +100,9 @@ export async function evaluateRule(
 }
 
 export async function patchRuleEnabled(
-  rule: AnyRule,
+  rule: Rule,
   enabled: boolean
-): Promise<AnyRule> {
+): Promise<Rule> {
   return reconClientV2.patchRule(rule.id, { enabled })
 }
 
@@ -119,34 +114,34 @@ export async function deleteRule(
 export function acknowledgeAlert(
   alertId: string,
   body: AckAlertRequest
-): Promise<AnyAlert> {
+): Promise<Alert> {
   return reconClientV2.ackAlert(alertId, body)
 }
 
 export function resolveAlert(
   alertId: string,
   body: ResolveAlertRequest
-): Promise<AnyAlert> {
+): Promise<Alert> {
   return reconClientV2.resolveAlert(alertId, body)
 }
 
 export function acceptAlert(
   alertId: string,
   body: AcceptAlertRequest
-): Promise<AnyAlert> {
+): Promise<Alert> {
   return reconClientV2.acceptAlert(alertId, body)
 }
 
 export function snoozeAlert(
   alertId: string,
   body: SnoozeAlertRequest
-): Promise<AnyAlert> {
+): Promise<Alert> {
   return reconClientV2.snoozeAlert(alertId, body)
 }
 
 export function unsnoozeAlert(
   alertId: string,
   body: UnsnoozeAlertRequest
-): Promise<AnyAlert> {
+): Promise<Alert> {
   return reconClientV2.unsnoozeAlert(alertId, body)
 }

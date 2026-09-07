@@ -1,4 +1,4 @@
-import type { AnyAlert, AnyCapture } from "./resources"
+import type { Alert, Capture } from "./typesV2"
 import { contractVersionOf } from "./resources"
 
 export interface CaptureEvidenceOutcome {
@@ -8,7 +8,7 @@ export interface CaptureEvidenceOutcome {
 }
 
 export interface AlertCaptureEvidenceSelection {
-  capture: AnyCapture | undefined
+  capture: Capture | undefined
   outcome: CaptureEvidenceOutcome | undefined
 }
 
@@ -46,7 +46,7 @@ export function captureEvidenceOutcomes(
 }
 
 export function findCaptureEvidenceOutcome(
-  capture: AnyCapture,
+  capture: Capture,
   fingerprint: string
 ): CaptureEvidenceOutcome | undefined {
   return captureEvidenceOutcomes(capture.evidence).find(
@@ -60,9 +60,9 @@ export function findCaptureEvidenceOutcome(
  * empty state rather than falling back to the alert's older failure evidence.
  */
 export function selectAlertCaptureEvidence(
-  captures: AnyCapture[],
+  captures: Capture[],
   alert: Pick<
-    AnyAlert,
+    Alert,
     "ruleID" | "periodID" | "lastEvaluationID" | "fingerprint"
   > &
     object

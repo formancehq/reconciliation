@@ -13,15 +13,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import type { NamedSourceV2 } from "@/lib/recon"
+import type { NamedSource } from "@/lib/recon"
 import {
-  addNamedSourceV2,
+  addNamedSource,
   backendFieldPath,
   backendSourcePath,
   effectiveSourceKind,
   emptyNamedSourceV2,
-  moveNamedSourceV2,
-  removeNamedSourceV2,
+  moveNamedSource,
+  removeNamedSource,
   sourceName,
 } from "@/lib/recon"
 import { AccountSelectorInput } from "./AccountSelectorInput"
@@ -46,8 +46,8 @@ export function NamedSourcesEditor({
   fixedCount = false,
   backendError,
 }: {
-  sources: NamedSourceV2[]
-  onChange: (sources: NamedSourceV2[]) => void
+  sources: NamedSource[]
+  onChange: (sources: NamedSource[]) => void
   onIdChange?: (index: number, previous: string, next: string) => void
   ledgerOptions: string[]
   minSources?: number
@@ -64,12 +64,12 @@ export function NamedSourcesEditor({
   const [metaDrafts, setMetaDrafts] = useState<
     Record<number, { meta: MetaRule[]; metaComb: MetaCombinator }>
   >({})
-  const update = (index: number, source: NamedSourceV2) =>
+  const update = (index: number, source: NamedSource) =>
     onChange(
       sources.map((item, itemIndex) => (itemIndex === index ? source : item))
     )
   const move = (from: number, to: number) =>
-    onChange(moveNamedSourceV2(sources, from, to))
+    onChange(moveNamedSource(sources, from, to))
 
   return (
     <div className="space-y-3">
@@ -154,7 +154,7 @@ export function NamedSourcesEditor({
                     variant="ghost"
                     disabled={sources.length <= minSources}
                     onClick={() =>
-                      onChange(removeNamedSourceV2(sources, index))
+                      onChange(removeNamedSource(sources, index))
                     }
                     aria-label={`Remove ${sourceName(source)}`}
                   >
@@ -294,7 +294,7 @@ export function NamedSourcesEditor({
                         ...source,
                         kind: "account_metadata",
                         metadataKey: event.target.value,
-                      } as NamedSourceV2)
+                      } as NamedSource)
                     }
                     placeholder="reported_balance"
                     className="font-mono"
@@ -338,7 +338,7 @@ export function NamedSourcesEditor({
           size="sm"
           variant="outline"
           onClick={() =>
-            onChange(addNamedSourceV2(sources, sources[0]?.ledger))
+            onChange(addNamedSource(sources, sources[0]?.ledger))
           }
         >
           <Plus className="mr-1.5 h-3.5 w-3.5" /> Add named source

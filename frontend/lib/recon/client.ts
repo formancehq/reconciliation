@@ -12,36 +12,13 @@
  *   - any non-2xx     → `{ errorCode, errorMessage, details }` → throws ReconError
  */
 import { getReconEndpoint } from "./endpoint"
-import { collectReconPages } from "./pagination"
 import type {
-  AckAlertRequest,
-  AcceptAlertRequest,
-  Alert,
-  AlertResponse,
-  AlertsResponse,
-  AlertEvent,
-  AlertEventsResponse,
   SigningKey,
   SigningKeysResponse,
   AuditEntry,
   AuditEntriesResponse,
   AuditEntryResponse,
-  Capture,
-  CapturesResponse,
   Cursor,
-  Evaluation,
-  EvaluateRuleRequest,
-  EvaluationResponse,
-  ResolveAlertRequest,
-  Rule,
-  RuleActivitiesResponse,
-  RuleActivity,
-  RulePatchRequest,
-  RuleRequest,
-  RuleResponse,
-  RulesResponse,
-  SnoozeAlertRequest,
-  UnsnoozeAlertRequest,
 } from "./types"
 
 const BASE = "/api/recon"
@@ -167,158 +144,15 @@ export const reconClient = {
   },
 
   // --- rules --------------------------------------------------------------
-  async listRules(signal?: AbortSignal): Promise<Rule[]> {
-    return collectReconPages(async (cursor) => {
-      const response = await reconRequest<RulesResponse>("GET", "/rules", {
-        query: { pageSize: 1000, cursor },
-        signal,
-      })
-      return response.cursor
-    })
-  },
-  async getRule(id: string, signal?: AbortSignal): Promise<Rule> {
-    const r = await reconRequest<RuleResponse>(
-      "GET",
-      `/rules/${encodeURIComponent(id)}`,
-      { signal }
-    )
-    return r.data
-  },
-  async createRule(body: RuleRequest): Promise<Rule> {
-    const r = await reconRequest<RuleResponse>("POST", "/rules", { body })
-    return r.data
-  },
-  async patchRule(id: string, body: RulePatchRequest): Promise<Rule> {
-    const r = await reconRequest<RuleResponse>(
-      "PATCH",
-      `/rules/${encodeURIComponent(id)}`,
-      { body }
-    )
-    return r.data
-  },
-  async deleteRule(id: string): Promise<void> {
-    await reconRequest<void>("DELETE", `/rules/${encodeURIComponent(id)}`)
-  },
-  async evaluateRule(
-    id: string,
-    body?: EvaluateRuleRequest
-  ): Promise<Evaluation> {
-    const r = await reconRequest<EvaluationResponse>(
-      "POST",
-      `/rules/${encodeURIComponent(id)}/evaluate`,
-      { body: body ?? {} }
-    )
-    return r.data
-  },
-  async listRuleTimeline(
-    ruleId: string,
-    cursor?: string,
-    signal?: AbortSignal
-  ): Promise<Cursor<RuleActivity>> {
-    const response = await reconRequest<RuleActivitiesResponse>(
-      "GET",
-      `/rules/${encodeURIComponent(ruleId)}/timeline`,
-      { query: { pageSize: 15, cursor }, signal }
-    )
-    return {
-      ...response.cursor,
-      data: cursorItems(response.cursor),
-    }
-  },
 
   // --- captures (evaluation receipts; the rule timeline is canonical) -----
-  async listCaptures(
-    ruleId: string,
-    opts?: { period?: string; signal?: AbortSignal }
-  ): Promise<Capture[]> {
-    return collectReconPages(async (cursor) => {
-      const response = await reconRequest<CapturesResponse>(
-        "GET",
-        `/rules/${encodeURIComponent(ruleId)}/captures`,
-        {
-          query: { pageSize: 1000, cursor, period: opts?.period },
-          signal: opts?.signal,
-        }
-      )
-      return response.cursor
-    })
-  },
 
   // --- alerts -------------------------------------------------------------
-  async listAlerts(signal?: AbortSignal): Promise<Alert[]> {
-    return collectReconPages(async (cursor) => {
-      const response = await reconRequest<AlertsResponse>("GET", "/alerts", {
-        query: { pageSize: 1000, cursor },
-        signal,
-      })
-      return response.cursor
-    })
-  },
-  async getAlert(id: string, signal?: AbortSignal): Promise<Alert> {
-    const r = await reconRequest<AlertResponse>(
-      "GET",
-      `/alerts/${encodeURIComponent(id)}`,
-      { signal }
-    )
-    return r.data
-  },
-  async ackAlert(id: string, body: AckAlertRequest): Promise<Alert> {
-    const r = await reconRequest<AlertResponse>(
-      "POST",
-      `/alerts/${encodeURIComponent(id)}/ack`,
-      { body }
-    )
-    return r.data
-  },
-  async resolveAlert(id: string, body: ResolveAlertRequest): Promise<Alert> {
-    const r = await reconRequest<AlertResponse>(
-      "POST",
-      `/alerts/${encodeURIComponent(id)}/resolve`,
-      { body }
-    )
-    return r.data
-  },
-  async acceptAlert(id: string, body: AcceptAlertRequest): Promise<Alert> {
-    const r = await reconRequest<AlertResponse>(
-      "POST",
-      `/alerts/${encodeURIComponent(id)}/accept`,
-      { body }
-    )
-    return r.data
-  },
-  async snoozeAlert(id: string, body: SnoozeAlertRequest): Promise<Alert> {
-    const r = await reconRequest<AlertResponse>(
-      "POST",
-      `/alerts/${encodeURIComponent(id)}/snooze`,
-      { body }
-    )
-    return r.data
-  },
-  async unsnoozeAlert(id: string, body: UnsnoozeAlertRequest): Promise<Alert> {
-    const r = await reconRequest<AlertResponse>(
-      "POST",
-      `/alerts/${encodeURIComponent(id)}/unsnooze`,
-      { body }
-    )
-    return r.data
-  },
   /**
    * One page of an alert's append-only event log, newest-first. Backed by a
    * projection of the control-ledger activity stream; each event carries the
    * `transactionId` of its ledger write. Page with the cursor.
    */
-  async listAlertEvents(
-    id: string,
-    cursor?: string,
-    signal?: AbortSignal
-  ): Promise<Cursor<AlertEvent>> {
-    const response = await reconRequest<AlertEventsResponse>(
-      "GET",
-      `/alerts/${encodeURIComponent(id)}/events`,
-      { query: { pageSize: 50, cursor }, signal }
-    )
-    return { ...response.cursor, data: cursorItems(response.cursor) }
-  },
 
   // --- audit --------------------------------------------------------------
   async getSigningKeys(signal?: AbortSignal): Promise<SigningKey[]> {

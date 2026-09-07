@@ -1,13 +1,11 @@
 import type {
-  BalanceEquationTermV2,
-  EvidenceSourceV2,
-  NamedSourceV2,
-  RateBoundsV2,
-  RuleV2,
-  TemplateKindV2,
+  BalanceEquationTerm,
+  EvidenceSource,
+  NamedSource,
+  RateBounds,
+  Rule,
+  TemplateKind,
 } from "./typesV2"
-import type { Rule } from "./types"
-import { describeSpec, TEMPLATE_META } from "./format"
 
 export const SOURCE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 export const UNSIGNED_INTEGER_PATTERN = /^(0|[1-9][0-9]{0,77})$/
@@ -19,8 +17,8 @@ export const DECIMAL_PATTERN = /^(0|[1-9][0-9]*)(\.[0-9]{1,18})?$/
  */
 export const DURATION_PATTERN = /^(\d+(?:\.\d+)?(?:ns|us|µs|ms|s|m|h))+$/
 
-export const TEMPLATE_META_V2: Record<
-  TemplateKindV2,
+export const TEMPLATE_META: Record<
+  TemplateKind,
   { label: string; blurb: string }
 > = {
   balance_equation: {
@@ -55,38 +53,35 @@ export const TEMPLATE_META_V2: Record<
   },
 }
 
-export const TEMPLATE_KINDS_V2 = Object.keys(
-  TEMPLATE_META_V2
-) as TemplateKindV2[]
+export const TEMPLATE_KINDS = Object.keys(
+  TEMPLATE_META
+) as TemplateKind[]
 
+/** A kind this build does not know — a retired one on an old record — reads as itself. */
 export function templateLabel(kind: string): string {
-  if (kind in TEMPLATE_META_V2)
-    return TEMPLATE_META_V2[kind as TemplateKindV2].label
-  if (kind in TEMPLATE_META)
-    return TEMPLATE_META[kind as keyof typeof TEMPLATE_META].label
-  return kind
+  return kind in TEMPLATE_META
+    ? TEMPLATE_META[kind as TemplateKind].label
+    : kind
 }
 
-export function describeAnyRule(rule: Rule | RuleV2): string {
-  return "contractVersion" in rule && rule.contractVersion === 2
-    ? describeRuleV2(rule)
-    : describeSpec(rule as Rule)
+export function describeAnyRule(rule: Rule): string {
+  return describeRule(rule)
 }
 
 export function sourceName(
-  source: Pick<NamedSourceV2 | EvidenceSourceV2, "id" | "label">
+  source: Pick<NamedSource | EvidenceSource, "id" | "label">
 ): string {
   return source.label?.trim() || source.id
 }
 
 export function effectiveSourceKind(
-  source: NamedSourceV2
+  source: NamedSource
 ): "ledger" | "account_metadata" {
   return source.kind ?? "ledger"
 }
 
 export function isExplicitRate(
-  rate: RateBoundsV2
+  rate: RateBounds
 ): rate is { min: string; max: string } {
   return "min" in rate
 }
@@ -117,8 +112,8 @@ function signedTerm(name: string, coefficient: number, first: boolean): string {
 }
 
 export function readableTerms(
-  sources: NamedSourceV2[],
-  terms: BalanceEquationTermV2[]
+  sources: NamedSource[],
+  terms: BalanceEquationTerm[]
 ): string {
   const byId = new Map(sources.map((source) => [source.id, source]))
   return terms
@@ -132,7 +127,7 @@ export function readableTerms(
     .join(" ")
 }
 
-export function describeRuleV2(rule: RuleV2): string {
+export function describeRule(rule: Rule): string {
   switch (rule.templateKind) {
     case "balance_equation": {
       const spec = rule.templateSpec

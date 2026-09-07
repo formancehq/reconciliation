@@ -8,9 +8,7 @@ import type {
   AlertStatus,
   PeriodType,
   EvaluationResult,
-  Rule,
   Severity,
-  TemplateKind,
   Verdict,
 } from "./types"
 
@@ -73,27 +71,6 @@ export const RESULT_META: Record<EvaluationResult, EnumMeta> = {
   ERROR: { label: "Error", variant: "amber" },
 }
 
-// ── Template kind ───────────────────────────────────────────────────────────
-export const TEMPLATE_META: Record<
-  TemplateKind,
-  { label: string; blurb: string }
-> = {
-  ledger_invariant: {
-    label: "Ledger invariant",
-    blurb:
-      "A signed sum of account sets must net to zero (per asset), within tolerance.",
-  },
-  source_parity: {
-    label: "Source parity",
-    blurb: "Two sources must match (per asset), within tolerance.",
-  },
-  account_threshold: {
-    label: "Account threshold",
-    blurb: "A balance must stay within [min, max] bounds (per asset).",
-  },
-}
-
-export const TEMPLATE_KINDS = Object.keys(TEMPLATE_META) as TemplateKind[]
 
 // ── Period type ───────────────────────────────────────────────────────────────
 export const PERIOD_TYPE_META: Record<PeriodType, { label: string }> = {
@@ -162,66 +139,7 @@ export function summarizeQuery(query: Query): string {
   return "*"
 }
 
-function summarizeSource(src: unknown): string {
-  if (!src || typeof src !== "object") return "?"
-  const s = src as Record<string, unknown>
-  if (s.kind === "payments_pool") return `pool:${String(s.poolID ?? "?")}`
-  const ledger = String(s.ledger ?? "?")
-  const base = `${ledger}[${summarizeQuery(s.query as Query)}]`
-  if (s.kind === "account_metadata") {
-    const metadataKey =
-      typeof s.metadataKey === "string" && s.metadataKey ? s.metadataKey : "?"
-    const asset = typeof s.asset === "string" && s.asset ? s.asset : "?"
-    return `${base} synced:${metadataKey} → ${asset}`
-  }
-  return base
-}
 
-/** A short, human summary of a rule's templateSpec for lists and detail headers. */
-export function describeSpec(
-  rule: Pick<Rule, "templateKind" | "templateSpec">
-): string {
-  const spec = (rule.templateSpec ?? {}) as Record<string, unknown>
-  switch (rule.templateKind) {
-    case "ledger_invariant": {
-      const terms = Array.isArray(spec.terms)
-        ? (spec.terms as Array<Record<string, unknown>>)
-        : []
-      const body = terms
-        .map((t, i) => {
-          const sign = Number(t.sign) < 0 ? "−" : i === 0 ? "" : "+"
-          return `${sign} ${String(t.ledger ?? "?")}[${summarizeQuery(t.query as Query)}]`
-        })
-        .join(" ")
-        .trim()
-      const assets = Object.keys(
-        (spec.tolerance as Record<string, unknown>) ?? {}
-      )
-      return `Σ ${body || "(no terms)"} = 0${assets.length ? ` · ${assets.join(", ")}` : ""}`
-    }
-    case "source_parity": {
-      const left = summarizeSource(spec.left)
-      const right = summarizeSource(spec.right)
-      const scope = spec.scope === "per_account" ? " (per account)" : ""
-      return `${left} ≡ ${right}${scope}`
-    }
-    case "account_threshold": {
-      const ledger = String(spec.ledger ?? "?")
-      const q = summarizeQuery(spec.query as Query)
-      const mode = spec.mode === "per_account" ? " (per account)" : ""
-      const bounds =
-        (spec.bounds as Record<string, { min?: number; max?: number }>) ?? {}
-      const parts = Object.entries(bounds).map(([asset, b]) => {
-        const lo = b?.min !== undefined ? `≥ ${b.min}` : ""
-        const hi = b?.max !== undefined ? `≤ ${b.max}` : ""
-        return `${asset} ${[lo, hi].filter(Boolean).join(" & ")}`.trim()
-      })
-      return `${ledger}[${q}]${mode} within ${parts.join(", ") || "bounds"}`
-    }
-    default:
-      return rule.templateKind
-  }
-}
 
 // ── Evidence ─────────────────────────────────────────────────────────────────
 /** Evidence keys that are noise in a key/value list (shown elsewhere / verbose). */

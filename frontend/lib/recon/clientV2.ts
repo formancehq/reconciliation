@@ -3,20 +3,22 @@ import { collectReconPages } from "./pagination"
 import type {
   AckAlertRequest,
   AcceptAlertRequest,
-  AlertEventsResponseV2,
-  AlertResponseV2,
-  AlertsResponseV2,
-  CapturesResponseV2,
   EvaluateRuleRequest,
-  EvaluationResponseV2,
   ResolveAlertRequest,
-  RuleActivitiesResponseV2,
-  RulePatchRequestV2,
-  RuleRequestV2,
-  RuleResponseV2,
-  RulesResponseV2,
   SnoozeAlertRequest,
   UnsnoozeAlertRequest,
+} from "./types"
+import type {
+  AlertEventsResponse,
+  AlertResponse,
+  AlertsResponse,
+  CapturesResponse,
+  EvaluationResponse,
+  RuleActivitiesResponse,
+  RulePatchRequest,
+  RuleRequest,
+  RuleResponse,
+  RulesResponse,
 } from "./typesV2"
 
 const V2 = "/v2"
@@ -26,7 +28,7 @@ const path = (suffix: string) => `${V2}${suffix}`
 export const reconClientV2 = {
   async listRules(signal?: AbortSignal) {
     return collectReconPages(async (cursor) => {
-      const response = await reconRequest<RulesResponseV2>(
+      const response = await reconRequest<RulesResponse>(
         "GET",
         path("/rules"),
         { query: { pageSize: 1000, cursor }, signal }
@@ -35,23 +37,23 @@ export const reconClientV2 = {
     })
   },
   async getRule(id: string, signal?: AbortSignal) {
-    const response = await reconRequest<RuleResponseV2>(
+    const response = await reconRequest<RuleResponse>(
       "GET",
       path(`/rules/${encodeURIComponent(id)}`),
       { signal }
     )
     return response.data
   },
-  async createRule(body: RuleRequestV2) {
-    const response = await reconRequest<RuleResponseV2>(
+  async createRule(body: RuleRequest) {
+    const response = await reconRequest<RuleResponse>(
       "POST",
       path("/rules"),
       { body }
     )
     return response.data
   },
-  async patchRule(id: string, body: RulePatchRequestV2) {
-    const response = await reconRequest<RuleResponseV2>(
+  async patchRule(id: string, body: RulePatchRequest) {
+    const response = await reconRequest<RuleResponse>(
       "PATCH",
       path(`/rules/${encodeURIComponent(id)}`),
       { body }
@@ -62,7 +64,7 @@ export const reconClientV2 = {
     await reconRequest<void>("DELETE", path(`/rules/${encodeURIComponent(id)}`))
   },
   async evaluateRule(id: string, body?: EvaluateRuleRequest) {
-    const response = await reconRequest<EvaluationResponseV2>(
+    const response = await reconRequest<EvaluationResponse>(
       "POST",
       path(`/rules/${encodeURIComponent(id)}/evaluate`),
       { body: body ?? {} }
@@ -74,7 +76,7 @@ export const reconClientV2 = {
     cursor?: string,
     signal?: AbortSignal
   ) {
-    const response = await reconRequest<RuleActivitiesResponseV2>(
+    const response = await reconRequest<RuleActivitiesResponse>(
       "GET",
       path(`/rules/${encodeURIComponent(ruleId)}/timeline`),
       { query: { pageSize: 15, cursor }, signal }
@@ -85,7 +87,7 @@ export const reconClientV2 = {
     }
   },
   async listAlertEvents(alertId: string, cursor?: string, signal?: AbortSignal) {
-    const response = await reconRequest<AlertEventsResponseV2>(
+    const response = await reconRequest<AlertEventsResponse>(
       "GET",
       path(`/alerts/${encodeURIComponent(alertId)}/events`),
       { query: { pageSize: 50, cursor }, signal }
@@ -97,7 +99,7 @@ export const reconClientV2 = {
     opts?: { period?: string; signal?: AbortSignal }
   ) {
     return collectReconPages(async (cursor) => {
-      const response = await reconRequest<CapturesResponseV2>(
+      const response = await reconRequest<CapturesResponse>(
         "GET",
         path(`/rules/${encodeURIComponent(ruleId)}/captures`),
         {
@@ -110,7 +112,7 @@ export const reconClientV2 = {
   },
   async listAlerts(signal?: AbortSignal) {
     return collectReconPages(async (cursor) => {
-      const response = await reconRequest<AlertsResponseV2>(
+      const response = await reconRequest<AlertsResponse>(
         "GET",
         path("/alerts"),
         { query: { pageSize: 1000, cursor }, signal }
@@ -119,7 +121,7 @@ export const reconClientV2 = {
     })
   },
   async getAlert(id: string, signal?: AbortSignal) {
-    const response = await reconRequest<AlertResponseV2>(
+    const response = await reconRequest<AlertResponse>(
       "GET",
       path(`/alerts/${encodeURIComponent(id)}`),
       { signal }
@@ -127,7 +129,7 @@ export const reconClientV2 = {
     return response.data
   },
   async ackAlert(id: string, body: AckAlertRequest) {
-    const response = await reconRequest<AlertResponseV2>(
+    const response = await reconRequest<AlertResponse>(
       "POST",
       path(`/alerts/${encodeURIComponent(id)}/ack`),
       { body }
@@ -135,7 +137,7 @@ export const reconClientV2 = {
     return response.data
   },
   async resolveAlert(id: string, body: ResolveAlertRequest) {
-    const response = await reconRequest<AlertResponseV2>(
+    const response = await reconRequest<AlertResponse>(
       "POST",
       path(`/alerts/${encodeURIComponent(id)}/resolve`),
       { body }
@@ -143,7 +145,7 @@ export const reconClientV2 = {
     return response.data
   },
   async acceptAlert(id: string, body: AcceptAlertRequest) {
-    const response = await reconRequest<AlertResponseV2>(
+    const response = await reconRequest<AlertResponse>(
       "POST",
       path(`/alerts/${encodeURIComponent(id)}/accept`),
       { body }
@@ -151,7 +153,7 @@ export const reconClientV2 = {
     return response.data
   },
   async snoozeAlert(id: string, body: SnoozeAlertRequest) {
-    const response = await reconRequest<AlertResponseV2>(
+    const response = await reconRequest<AlertResponse>(
       "POST",
       path(`/alerts/${encodeURIComponent(id)}/snooze`),
       { body }
@@ -159,7 +161,7 @@ export const reconClientV2 = {
     return response.data
   },
   async unsnoozeAlert(id: string, body: UnsnoozeAlertRequest) {
-    const response = await reconRequest<AlertResponseV2>(
+    const response = await reconRequest<AlertResponse>(
       "POST",
       path(`/alerts/${encodeURIComponent(id)}/unsnooze`),
       { body }

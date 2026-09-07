@@ -40,7 +40,7 @@ import {
   evaluationActivityDetails,
   latestEvaluationActivity,
   recoverDeletedRule,
-  type AnyRule,
+  type Rule,
   type RuleActivity,
   type Cursor,
 } from "@/lib/recon"
@@ -52,7 +52,7 @@ import {
   ResultBadge,
 } from "../ui"
 import { V2RulePresentation } from "../V2RulePresentation"
-import { CreateRuleDialogV2 } from "./CreateRuleDialogV2"
+import { CreateRuleDialog } from "./CreateRuleDialogV2"
 import { RevisionValue, RuleTimeline } from "../RuleTimeline"
 import createLogger from "@/lib/logger"
 
@@ -87,7 +87,7 @@ export function RuleDetail({
     null
   )
 
-  const ruleRes = useReconResource<AnyRule | null>(async (signal) => {
+  const ruleRes = useReconResource<Rule | null>(async (signal) => {
     try {
       return await getRule(ruleId, signal)
     } catch (error) {
@@ -305,7 +305,7 @@ export function RuleDetail({
         </div>
       </div>
       {rule ? (
-        <CreateRuleDialogV2
+        <CreateRuleDialog
           key={`${dialogMode ?? "closed"}-${rule.id}`}
           open={dialogMode !== null}
           editRule={dialogMode === "edit" ? rule : null}
@@ -358,7 +358,7 @@ export function CurrentRuleConfiguration({
   deleted,
   latestEvaluation,
 }: {
-  rule: AnyRule
+  rule: Rule
   deleted?: boolean
   latestEvaluation?: Extract<RuleActivity, { kind: "evaluation.completed" }>
 }) {
