@@ -95,12 +95,10 @@ func newRouter(
 		r.Use(subjectMiddleware)
 		r.Use(service.OTLPMiddleware("reconciliation", serviceInfo.Debug))
 
-		// V1 (default, unprefixed) and V2 (/v2) rule/alert surfaces, each scoped
-		// by its contract version so the shared handlers serialize the right shape.
-		r.Group(func(r chi.Router) {
-			r.Use(contractVersionMiddleware(models.ContractVersionV1))
-			mountRuleAndAlertRoutes(r, b)
-		})
+		// The rule/alert surface. The unprefixed group that served the V1 contract
+		// is gone with it; /v2 is the one live surface, and the prefix is kept
+		// because it is the path every client already uses — collapsing it to
+		// unversioned is a cosmetic change, not part of retirement.
 		r.Route("/v2", func(r chi.Router) {
 			r.Use(contractVersionMiddleware(models.ContractVersionV2))
 			mountRuleAndAlertRoutes(r, b)

@@ -8,7 +8,7 @@ paths:
       summary: Get server info
       operationId: getServerInfo
       tags:
-        - reconciliation.v1
+        - reconciliation
       responses:
         '200':
           $ref: '#/components/responses/ServerInfo'
@@ -18,279 +18,9 @@ paths:
       # /_healthcheck) so the console shell can probe it to discover this module
       # before it holds a module-scoped token.
       security: []
-  /rules:
-    post:
-      summary: Create a rule
-      operationId: createRule
-      tags: [reconciliation.v1]
-      requestBody: { $ref: '#/components/requestBodies/Rule' }
-      responses:
-        '201': { $ref: '#/components/responses/Rule' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:write]
-    get:
-      summary: List rules
-      operationId: listRules
-      tags: [reconciliation.v1]
-      parameters:
-        - $ref: '#/components/parameters/PageSize'
-        - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilder' }
-      responses:
-        '200': { $ref: '#/components/responses/Rules' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-
-  /rules/{ruleID}:
-    parameters: [{ $ref: '#/components/parameters/RuleID' }]
-    get:
-      summary: Get a rule
-      operationId: getRule
-      tags: [reconciliation.v1]
-      responses:
-        '200': { $ref: '#/components/responses/Rule' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-    patch:
-      summary: Patch a rule (partial update)
-      operationId: patchRule
-      tags: [reconciliation.v1]
-      requestBody: { $ref: '#/components/requestBodies/RulePatch' }
-      responses:
-        '200': { $ref: '#/components/responses/Rule' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:write]
-    delete:
-      summary: Delete a rule definition while preserving its audit history
-      operationId: deleteRule
-      tags: [reconciliation.v1]
-      responses:
-        '204': { $ref: '#/components/responses/NoContent' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:write]
-
-  /rules/{ruleID}/evaluate:
-    post:
-      summary: Evaluate a rule now
-      operationId: evaluateRule
-      tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/RuleID' }]
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/EvaluateRuleRequest' }
-      responses:
-        '200': { $ref: '#/components/responses/Evaluation' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:write]
-
-  /rules/{ruleID}/captures:
-    parameters: [{ $ref: '#/components/parameters/RuleID' }]
-    get:
-      summary: List a rule's evaluation history (captures)
-      operationId: listRuleCaptures
-      description: |
-        Returns a page of the immutable capture records for this rule — one per
-        evaluation, recorded independently of the alert lifecycle: positive
-        assurance on a pass, break evidence on a fail. Each capture carries the
-        observed snapshot (verdict, trigger, evidence) and is an append-only
-        ledger transaction, so the history is queryable live. Ordered
-        most-recent-first and cursor-paginated. Optional `period` scopes to one
-        reconciliation period.
-      tags: [reconciliation.v1]
-      parameters:
-        - $ref: '#/components/parameters/PageSize'
-        - $ref: '#/components/parameters/Cursor'
-        - name: period
-          in: query
-          required: false
-          description: Scope the history to a single reconciliation period (e.g. "2026-03", "continuous").
-          schema: { type: string }
-      responses:
-        '200': { $ref: '#/components/responses/Captures' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-
-  /rules/{ruleID}/timeline:
-    parameters: [{ $ref: '#/components/parameters/RuleID' }]
-    get:
-      summary: List the combined lifecycle and observation history for a rule
-      description: |
-        Returns immutable rule lifecycle, evaluation, and alert lifecycle events
-        in newest-first order. Events are committed to the rule activity stream
-        atomically with the state mutation they describe. History created before
-        the activity-journal rollout may be incomplete.
-      operationId: listRuleTimeline
-      tags: [reconciliation.v1]
-      parameters:
-        - $ref: '#/components/parameters/PageSize'
-        - $ref: '#/components/parameters/Cursor'
-      responses:
-        '200': { $ref: '#/components/responses/RuleActivities' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-
-  /alerts:
-    get:
-      summary: List alerts
-      operationId: listAlerts
-      tags: [reconciliation.v1]
-      parameters:
-        - $ref: '#/components/parameters/PageSize'
-        - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilder' }
-      responses:
-        '200': { $ref: '#/components/responses/Alerts' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-
-  /alerts/{alertID}:
-    parameters: [{ $ref: '#/components/parameters/AlertID' }]
-    get:
-      summary: Get an alert
-      operationId: getAlert
-      tags: [reconciliation.v1]
-      responses:
-        '200': { $ref: '#/components/responses/Alert' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-
-  /alerts/{alertID}/events:
-    parameters: [{ $ref: '#/components/parameters/AlertID' }]
-    get:
-      summary: List alert events (append-only timeline)
-      operationId: listAlertEvents
-      description: |
-        Returns a page of the events recorded for this alert — every evaluation
-        that touched it plus every manual transition. The list is append-only;
-        events are never modified or deleted. Ordered most-recent-first and
-        cursor-paginated: a long-lived alert's timeline is unbounded (one row per
-        failing evaluation), so callers must page through it.
-      tags: [reconciliation.v1]
-      parameters:
-        - $ref: '#/components/parameters/PageSize'
-        - $ref: '#/components/parameters/Cursor'
-      responses:
-        '200': { $ref: '#/components/responses/AlertEvents' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:read]
-
-  /alerts/{alertID}/ack:
-    post:
-      summary: Acknowledge an alert
-      operationId: ackAlert
-      tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/AckAlertRequest' }
-      responses:
-        '200': { $ref: '#/components/responses/Alert' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:write]
-
-  /alerts/{alertID}/resolve:
-    post:
-      summary: Resolve an alert (fixed_by_booking)
-      operationId: resolveAlert
-      tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ResolveAlertRequest' }
-      responses:
-        '200': { $ref: '#/components/responses/Alert' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:write]
-
-  /alerts/{alertID}/accept:
-    post:
-      summary: Accept an alert (accepted_by_business)
-      operationId: acceptAlert
-      tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/AcceptAlertRequest' }
-      responses:
-        '200': { $ref: '#/components/responses/Alert' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:write]
-
-  /alerts/{alertID}/snooze:
-    post:
-      summary: Snooze an alert's notifications until a future instant
-      description: |
-        Mutes the alert's webhook notifications until `until`. The alert keeps
-        failing, keeps its status, and keeps counting against period-green —
-        only its notifications are suppressed, even if the discrepancy changes.
-        The first failing evaluation at or after `until` clears the snooze and
-        notifies once. Re-snoozing overwrites the window. Rejects RESOLVED
-        alerts and a non-future `until`.
-      operationId: snoozeAlert
-      tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/SnoozeAlertRequest' }
-      responses:
-        '200': { $ref: '#/components/responses/Alert' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:write]
-
-  /alerts/{alertID}/unsnooze:
-    post:
-      summary: Lift a snooze early
-      description: |
-        Clears an active snooze before its window elapses. Idempotent —
-        unsnoozing an alert that is not snoozed returns it unchanged.
-      operationId: unsnoozeAlert
-      tags: [reconciliation.v1]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/UnsnoozeAlertRequest' }
-      responses:
-        '200': { $ref: '#/components/responses/Alert' }
-        default: { $ref: '#/components/responses/ErrorResponse' }
-      security:
-        - Authorization: [reconciliation:write]
-
   /v2/rules:
     post:
-      summary: Create a V2 multi-source rule
+      summary: Create a rule
       operationId: createRuleV2
       tags: [reconciliation.v2]
       requestBody: { $ref: '#/components/requestBodies/RuleV2' }
@@ -394,7 +124,7 @@ paths:
         read through this module's ledger gRPC connection. Backs the rule
         builder's ledger picker. Best-effort: an unreachable ledger yields [].
       operationId: listLedgers
-      tags: [reconciliation.v1]
+      tags: [reconciliation]
       responses:
         '200': { $ref: '#/components/responses/Ledgers' }
         default: { $ref: '#/components/responses/ErrorResponse' }
@@ -408,7 +138,7 @@ paths:
         data ledger, so the rule builder can offer a typed key picker. An
         unknown ledger yields an empty set.
       operationId: listLedgerMetaFields
-      tags: [reconciliation.v1]
+      tags: [reconciliation]
       parameters: [{ $ref: '#/components/parameters/Ledger' }]
       responses:
         '200': { $ref: '#/components/responses/LedgerMetaFields' }
@@ -423,7 +153,7 @@ paths:
         limit and optionally filtered by an address prefix. Backs the UI's
         account-selector autosuggest. An unknown ledger yields an empty list.
       operationId: listLedgerAccounts
-      tags: [reconciliation.v1]
+      tags: [reconciliation]
       parameters:
         - $ref: '#/components/parameters/Ledger'
         - name: prefix
@@ -450,7 +180,7 @@ paths:
         — with nobody from Formance in the loop. Backs the audit tab's
         "verify it yourself" panel. Best-effort: an unreachable ledger yields [].
       operationId: listAuditSigningKeys
-      tags: [reconciliation.v1]
+      tags: [reconciliation]
       responses:
         '200': { $ref: '#/components/responses/SigningKeys' }
         default: { $ref: '#/components/responses/ErrorResponse' }
@@ -473,7 +203,7 @@ paths:
         absolute, but a gapless subset requires an isolated bucket (see the audit
         docs). Best-effort: an unreachable ledger yields [].
       operationId: listAuditEntries
-      tags: [reconciliation.v1]
+      tags: [reconciliation]
       parameters:
         - name: limit
           in: query
@@ -495,7 +225,7 @@ paths:
         bucket-wide number; this bridges a business action to its cryptographic
         proof. 404 when no entry matches.
       operationId: getAuditEntryByTransaction
-      tags: [reconciliation.v1]
+      tags: [reconciliation]
       parameters:
         - name: transactionId
           in: path
@@ -521,7 +251,7 @@ paths:
         failure reason and message on a rejected write. Backs the audit tab's
         expand-a-row interaction.
       operationId: getAuditEntry
-      tags: [reconciliation.v1]
+      tags: [reconciliation]
       parameters:
         - name: sequence
           in: path
@@ -746,41 +476,11 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-    Rule:
-      description: OK
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/RuleResponse' }
-    Rules:
-      description: OK
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/RulesCursorResponse' }
-    Evaluation:
-      description: OK
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/EvaluationResponse' }
-    Alert:
-      description: OK
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/AlertResponse' }
-    Alerts:
-      description: OK
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/AlertsCursorResponse' }
     AlertEvents:
       description: OK
       content:
         application/json:
           schema: { $ref: '#/components/schemas/AlertEventsCursorResponse' }
-    Captures:
-      description: OK
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/CapturesCursorResponse' }
     RuleActivities:
       description: OK
       content:
@@ -842,16 +542,6 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/LedgerAccountsResponse' }
   requestBodies:
-    Rule:
-      required: true
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/RuleRequest' }
-    RulePatch:
-      required: true
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/RulePatchRequest' }
     RuleV2:
       required: true
       content:
@@ -863,9 +553,6 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/RulePatchRequestV2' }
   schemas:
-    QueryBuilder:
-      type: object
-      additionalProperties: true
     ServerInfo:
       type: object
       required:
@@ -1051,266 +738,6 @@ components:
 
     # --- V1 Ledger Clarity schemas -----------------------------------------
 
-    Severity:
-      type: string
-      enum: [info, low, medium, high, critical]
-    TemplateKind:
-      type: string
-      description: |
-        The V1 GA template catalog. (`ledger_vs_pool_drift` was removed in 6a-2,
-        subsumed by `source_parity`.)
-      enum: [ledger_invariant, source_parity, account_threshold]
-    PeriodType:
-      type: string
-      description: |
-        How long a reconciliation period is. Scopes each failing fingerprint into
-        a period so a March break and an April break are distinct,
-        independently-closable cases. `continuous` (default) is a single unbounded
-        period (live monitoring). This is not how often the rule runs — that is
-        `schedule`, and the two are independent.
-      enum: [continuous, daily, weekly, monthly]
-      default: continuous
-    Schedule:
-      type: object
-      required: [kind]
-      properties:
-        kind: { type: string, enum: [on_demand, cron] }
-        expr: { type: string, example: "*/15 * * * *" }
-        tz: { type: string, example: "UTC" }
-    Actor:
-      type: object
-      description: |
-        Who performed a lifecycle transition, and how far that identity can be
-        trusted. It travels inside the cryptographically-signed control-ledger
-        entry, so an auditor can tell a verified actor from a self-declared claim.
-      required: [source]
-      properties:
-        source:
-          type: string
-          enum: [token, declared]
-          description: |
-            `token`: `subject` is the verified subject of the caller's
-            authenticated access token — the authoritative actor.
-            `declared`: no verified subject was available; only the self-declared
-            `declared` name is known, and it is not a trust anchor.
-        subject:
-          type: string
-          description: The authenticated principal (present only when source=token).
-        declared:
-          type: string
-          description: The self-declared name from the request body, kept as a note.
-    Ack:
-      type: object
-      required: [by, at]
-      properties:
-        by:
-          type: string
-          example: "ops@buildr.com"
-          description: >
-            The authoritative actor: the verified token subject when the caller is
-            authenticated, otherwise the self-declared name. See `actor` for provenance.
-        at: { type: string, format: date-time }
-        note: { type: string }
-        actor: { $ref: '#/components/schemas/Actor' }
-    Resolution:
-      type: object
-      required: [kind, by, at]
-      properties:
-        kind: { type: string, enum: [auto, fixed_by_booking, accepted_by_business] }
-        by:
-          type: string
-          description: >
-            The authoritative actor: the verified token subject when the caller is
-            authenticated, otherwise the self-declared name. See `actor` for provenance.
-        at: { type: string, format: date-time }
-        note: { type: string }
-        transactionRefs:
-          type: array
-          items: { type: string }
-        evidenceSnapshot:
-          type: object
-          additionalProperties: true
-        expiresAt: { type: string, format: date-time }
-        actor: { $ref: '#/components/schemas/Actor' }
-    Snooze:
-      type: object
-      description: |
-        A time-boxed, operator-initiated mute of an alert's notifications. While
-        `until` is in the future the alert keeps failing and keeps counting
-        against period-green — only its notifications are suppressed.
-      required: [until, by, at]
-      properties:
-        until: { type: string, format: date-time }
-        by: { type: string, example: "ops@buildr.com" }
-        at: { type: string, format: date-time }
-        note: { type: string }
-
-    Rule:
-      type: object
-      required: [id, name, templateKind, templateSpec, enabled, severity, periodType, createdAt, updatedAt]
-      properties:
-        id: { type: string, format: uuid }
-        name: { type: string }
-        templateKind: { $ref: '#/components/schemas/TemplateKind' }
-        templateSpec:
-          type: object
-          additionalProperties: true
-        compiledCEL: { type: string }
-        enabled: { type: boolean }
-        severity: { $ref: '#/components/schemas/Severity' }
-        periodType: { $ref: '#/components/schemas/PeriodType' }
-        schedule: { $ref: '#/components/schemas/Schedule' }
-        notifications:
-          type: array
-          items: { type: string }
-        labels:
-          type: object
-          additionalProperties: { type: string }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-    RuleRequest:
-      type: object
-      required: [name, templateKind, templateSpec]
-      properties:
-        name: { type: string }
-        templateKind: { $ref: '#/components/schemas/TemplateKind' }
-        templateSpec:
-          type: object
-          additionalProperties: true
-        severity: { $ref: '#/components/schemas/Severity' }
-        periodType: { $ref: '#/components/schemas/PeriodType' }
-        schedule: { $ref: '#/components/schemas/Schedule' }
-        notifications:
-          type: array
-          items: { type: string }
-        labels:
-          type: object
-          additionalProperties: { type: string }
-        enabled: { type: boolean }
-    RulePatchRequest:
-      type: object
-      description: Partial update — only fields supplied are applied.
-      properties:
-        name: { type: string }
-        templateKind: { $ref: '#/components/schemas/TemplateKind' }
-        templateSpec:
-          type: object
-          additionalProperties: true
-        enabled: { type: boolean }
-        severity: { $ref: '#/components/schemas/Severity' }
-        schedule: { $ref: '#/components/schemas/Schedule' }
-        notifications:
-          type: array
-          items: { type: string }
-        labels:
-          type: object
-          additionalProperties: { type: string }
-    RuleResponse:
-      type: object
-      required: [data]
-      properties:
-        data: { $ref: '#/components/schemas/Rule' }
-    RulesCursorResponse:
-      type: object
-      required: [cursor]
-      properties:
-        cursor:
-          type: object
-          required: [pageSize, hasMore, data]
-          properties:
-            pageSize: { type: integer, format: int64, minimum: 1, maximum: 1000 }
-            hasMore: { type: boolean }
-            previous: { type: string }
-            next: { type: string }
-            data:
-              type: array
-              items: { $ref: '#/components/schemas/Rule' }
-
-    EvaluateRuleRequest:
-      type: object
-      properties:
-        at: { type: string, format: date-time, description: "PIT for the evaluation. Defaults to now." }
-    Evaluation:
-      type: object
-      required: [id, ruleID, startedAt, endedAt, result, createdAt]
-      properties:
-        id: { type: string, format: uuid }
-        ruleID: { type: string, format: uuid }
-        startedAt: { type: string, format: date-time }
-        endedAt: { type: string, format: date-time }
-        result: { type: string, enum: [PASS, FAIL, ERROR] }
-        evidence:
-          oneOf:
-            - type: array
-              items:
-                type: object
-                additionalProperties: true
-            - type: object
-              additionalProperties: true
-        error: { type: string }
-        costUnits: { type: integer, format: int64 }
-        createdAt: { type: string, format: date-time }
-    EvaluationResponse:
-      type: object
-      required: [data]
-      properties:
-        data: { $ref: '#/components/schemas/Evaluation' }
-
-    Alert:
-      type: object
-      description: |
-        An Alert is the stable, dedup'd record of a failing fingerprint within a
-        reconciliation period. There is exactly one Alert per
-        (ruleID, fingerprint, periodID) — within a period, re-opens after resolve
-        flip the status back to OPEN in place; the same fingerprint failing in a
-        new period is a separate Alert. For a rule with `periodType: continuous` there is
-        one unbounded period, so it behaves as one Alert per (ruleID, fingerprint).
-        The full history of transitions lives in alert_event
-        (see /alerts/{alertID}/events).
-      required: [id, ruleID, fingerprint, periodID, status, severity, firstSeenAt, lastSeenAt, occurrenceCount, lastEvaluationID, createdAt, updatedAt]
-      properties:
-        id: { type: string, format: uuid }
-        ruleID: { type: string, format: uuid }
-        fingerprint: { type: string, example: "asset:USD/2" }
-        periodID: { type: string, example: "2026-03", description: "Reconciliation period this alert is scoped to ('continuous' for live-monitoring rules)." }
-        status: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
-        severity: { $ref: '#/components/schemas/Severity' }
-        firstSeenAt: { type: string, format: date-time }
-        lastSeenAt: { type: string, format: date-time }
-        occurrenceCount: { type: integer, format: int64, description: "Count of FAIL events on this alert across reopen cycles within its period (lifetime, for a rule with periodType continuous)." }
-        lastEvaluationID: { type: string, format: uuid }
-        evidence:
-          type: object
-          additionalProperties: true
-        ack: { $ref: '#/components/schemas/Ack' }
-        resolution: { $ref: '#/components/schemas/Resolution' }
-        snooze: { $ref: '#/components/schemas/Snooze' }
-        labels:
-          type: object
-          additionalProperties: { type: string }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-    AlertResponse:
-      type: object
-      required: [data]
-      properties:
-        data: { $ref: '#/components/schemas/Alert' }
-    AlertsCursorResponse:
-      type: object
-      required: [cursor]
-      properties:
-        cursor:
-          type: object
-          required: [pageSize, hasMore, data]
-          properties:
-            pageSize: { type: integer, format: int64 }
-            hasMore: { type: boolean }
-            previous: { type: string }
-            next: { type: string }
-            data:
-              type: array
-              items: { $ref: '#/components/schemas/Alert' }
-
     AlertEvent:
       type: object
       description: |
@@ -1362,44 +789,6 @@ components:
               type: array
               items: { $ref: '#/components/schemas/AlertEvent' }
 
-    Capture:
-      type: object
-      description: |
-        One immutable evaluation record (ADR-003). Every rule evaluation mints a
-        capture transaction carrying this self-describing snapshot — positive
-        assurance on a pass, break evidence on a fail — recorded independently of
-        the alert lifecycle. `transactionID` is the ledger-local id of the
-        underlying capture transaction.
-      required: [transactionID, ruleID, periodID, evaluationID, verdict, trigger, capturedAt]
-      properties:
-        transactionID: { type: integer, format: int64 }
-        ruleID: { type: string, format: uuid }
-        periodID: { type: string, example: "2026-03" }
-        evaluationID: { type: string, format: uuid }
-        templateKind: { type: string }
-        verdict: { type: string, enum: [pass, fail] }
-        trigger: { type: string, enum: [scheduled, manual] }
-        capturedAt: { type: string, format: date-time }
-        evidence:
-          description: The evaluation's outcome evidence.
-          type: object
-          additionalProperties: true
-    CapturesCursorResponse:
-      type: object
-      required: [cursor]
-      properties:
-        cursor:
-          type: object
-          required: [pageSize, hasMore, data]
-          properties:
-            pageSize: { type: integer, format: int64 }
-            hasMore: { type: boolean }
-            previous: { type: string }
-            next: { type: string }
-            data:
-              type: array
-              items: { $ref: '#/components/schemas/Capture' }
-
     RuleActivity:
       type: object
       required: [id, sequence, kind, category, ruleID, contractVersion, occurredAt, recordedAt]
@@ -1435,54 +824,6 @@ components:
               type: array
               items: { $ref: '#/components/schemas/RuleActivity' }
 
-    AckAlertRequest:
-      type: object
-      description: >
-        `by` is required only when the caller is not authenticated. When an access
-        token is present its verified subject is the authoritative actor and `by`,
-        if sent, is kept as a display note.
-      properties:
-        by: { type: string, example: "ops@buildr.com" }
-        note: { type: string }
-    ResolveAlertRequest:
-      type: object
-      description: |
-        Mark an alert resolved. When `transactionRefs` is non-empty the
-        resolution kind is recorded as `fixed_by_booking`. `by` is required only
-        when the caller is not authenticated (see AckAlertRequest).
-      properties:
-        by: { type: string }
-        note: { type: string }
-        transactionRefs:
-          type: array
-          items: { type: string }
-    AcceptAlertRequest:
-      type: object
-      required: [note]
-      description: >
-        Business acceptance. `note` is required and the evidence is snapshotted
-        onto the resolution. `by` is required only when the caller is not
-        authenticated (see AckAlertRequest).
-      properties:
-        by: { type: string }
-        note: { type: string, minLength: 1 }
-        expiresAt: { type: string, format: date-time }
-    SnoozeAlertRequest:
-      type: object
-      required: [by, until]
-      description: Mute an alert's notifications until `until` (which must be in the future).
-      properties:
-        by: { type: string, example: "ops@buildr.com" }
-        until: { type: string, format: date-time }
-        note: { type: string }
-    UnsnoozeAlertRequest:
-      type: object
-      required: [by]
-      properties:
-        by: { type: string, example: "ops@buildr.com" }
-
-    # --- V2 named multi-source schemas ------------------------------------
-
     QueryBuilderV2:
       type: object
       additionalProperties: true
@@ -1493,6 +834,12 @@ components:
       readOnly: true
     TemplateKindV2:
       type: string
+      description: |
+        The template catalogue. Every kind uses the named-source model: stable
+        source IDs and one declared asset each, or `*` to fan out per asset.
+        The positional V1 kinds (`ledger_invariant`, `account_threshold`,
+        `source_parity`) were retired once `balance_bounds` gave the last of them
+        a target; see the ADR-004 amendment.
       enum: [balance_equation, exchange_rate_bounds, source_consensus, coverage_ratio_bounds, stale_holds, balance_bounds]
     SeverityV2:
       type: string
@@ -1698,7 +1045,7 @@ components:
       type: object
       description: |
         Asserts that one named source's balance stays inside inclusive per-asset
-        limits. The V2 form of `account_threshold`'s aggregate mode.
+        limits. It replaced the retired `account_threshold` template.
 
         Its asset universe is **declared, not discovered**: the keys of `bounds`
         are exactly the assets checked. This is the one V2 template that works
