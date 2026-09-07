@@ -332,7 +332,10 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	sn := open("fp-snooze")
 	snItem := schema.AlertItemAccount(ruleID.String(), period, schema.FingerprintHash("fp-snooze"))
 
-	_, err = store.SnoozeAlert(ctx, sn.ID, time.Now().Add(time.Hour), "ops", "muting")
+	_, err = store.SnoozeAlert(ctx, sn.ID, &models.Snooze{
+		Until: time.Now().Add(time.Hour), By: "ops", At: time.Now().UTC(), Note: "muting",
+		Actor: &models.Actor{Subject: "ops", Source: models.ActorSourceToken},
+	})
 	require.NoError(t, err, "snooze")
 
 	snAcct, err := client.GetAccount(ctx, control, snItem)
@@ -340,7 +343,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	require.Contains(t, snAcct.GetMetadata(), schema.MetaSnooze, "snooze metadata set")
 	require.Equal(t, "OPEN", snAcct.GetMetadata()[schema.MetaStatus].GetStringValue(), "snooze is status-neutral")
 
-	_, err = store.UnsnoozeAlert(ctx, sn.ID, "ops")
+	_, err = store.UnsnoozeAlert(ctx, sn.ID, "ops", &models.Actor{Subject: "ops", Source: models.ActorSourceToken})
 	require.NoError(t, err, "unsnooze")
 
 	snAcct, err = client.GetAccount(ctx, control, snItem)
@@ -348,7 +351,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	require.NotContains(t, snAcct.GetMetadata(), schema.MetaSnooze, "snooze metadata cleared")
 
 	// Unsnooze again → idempotent no-op.
-	_, err = store.UnsnoozeAlert(ctx, sn.ID, "ops")
+	_, err = store.UnsnoozeAlert(ctx, sn.ID, "ops", &models.Actor{Subject: "ops", Source: models.ActorSourceToken})
 	require.NoError(t, err, "unsnooze is idempotent")
 }
 
