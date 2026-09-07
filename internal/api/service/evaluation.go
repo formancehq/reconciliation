@@ -140,6 +140,9 @@ func (s *Service) EvaluateRule(ctx context.Context, ruleID uuid.UUID, req Evalua
 		if err := st.RecordCapture(ctx, captureInput(rule, evaluation, periodID, req.Trigger, req.PIT)); err != nil {
 			return err
 		}
+		if s.maxNewAlerts > 0 && len(plan.newFingerprints) > s.maxNewAlerts {
+			return withholdAlertTransitions(ctx, st, rule, evaluation, plan, periodID, ended, s.maxNewAlerts)
+		}
 		return driveAlertTransitions(ctx, st, rule, evaluation, plan, periodID, ended)
 	})
 	if err != nil {
@@ -198,6 +201,13 @@ type alertOutcomeTransition struct {
 type alertTransitionPlan struct {
 	outcomeTransitions   []alertOutcomeTransition
 	disappearedActiveFPs []string
+
+	// newFingerprints are the failing fingerprints with no alert open yet — the
+	// ones this evaluation would *open* rather than update. The service caps
+	// them (DefaultMaxNewAlertsPerEvaluation); updates and resolutions are not
+	// capped, since neither adds to what an operator has to triage and blocking
+	// them would strand alerts that are already open.
+	newFingerprints []string
 }
 
 // planAlertTransitions classifies outcomes against the active alerts observed
@@ -216,6 +226,7 @@ func planAlertTransitions(outcomes []templates.Outcome, activeFingerprints []str
 		outcomeTransitions: make([]alertOutcomeTransition, 0, len(outcomes)),
 	}
 	seen := make(map[string]struct{}, len(outcomes))
+	opening := make(map[string]struct{}, len(outcomes))
 	for _, outcome := range outcomes {
 		seen[outcome.Fingerprint] = struct{}{}
 		if !outcome.Passed {
@@ -223,6 +234,14 @@ func planAlertTransitions(outcomes []templates.Outcome, activeFingerprints []str
 				kind:    alertTransitionOpenOrUpdate,
 				outcome: outcome,
 			})
+			if _, isActive := active[outcome.Fingerprint]; !isActive {
+				// Guard against a template emitting the same fingerprint twice:
+				// it is one alert, so it counts once against the cap.
+				if _, counted := opening[outcome.Fingerprint]; !counted {
+					opening[outcome.Fingerprint] = struct{}{}
+					plan.newFingerprints = append(plan.newFingerprints, outcome.Fingerprint)
+				}
+			}
 			continue
 		}
 		if _, ok := active[outcome.Fingerprint]; ok {
@@ -295,6 +314,84 @@ func driveAlertTransitions(
 		if _, err := st.AutoResolveAlert(ctx, rule.ID, fingerprint, periodID, evaluation.ID, ended); err != nil {
 			return fmt.Errorf("auto-resolve disappeared fingerprint %s: %w", fingerprint, err)
 		}
+	}
+	return nil
+}
+
+// withheldFingerprintSample bounds the fingerprints listed on the meta-alert:
+// enough to recognise what the evaluation found, without copying a runaway
+// outcome set into durable alert evidence.
+const withheldFingerprintSample = 10
+
+// withholdAlertTransitions is the alternative to driveAlertTransitions when an
+// evaluation would open more new alerts than the service permits. It applies
+// **none** of the plan and raises one meta-alert naming the rule and the count.
+//
+// All-or-nothing is the whole point. Applying a subset would leave the outcomes
+// it skipped absent from this evaluation, and the disappearance sweep resolves
+// any active fingerprint an evaluation does not re-emit — so a partial
+// application would auto-resolve alerts precisely because there were too many
+// problems to report. Withholding everything also leaves this run's genuine
+// resolutions unapplied; they are re-derived from live state on the next
+// evaluation that fits under the cap, whereas a wrongly-resolved alert is a
+// silent loss.
+//
+// The evaluation and its capture are already persisted by the caller, so the
+// full outcome set stays on the record even though no alert was opened for it.
+func withholdAlertTransitions(
+	ctx context.Context,
+	st Store,
+	rule *models.Rule,
+	evaluation *models.Evaluation,
+	plan alertTransitionPlan,
+	periodID string,
+	ended time.Time,
+	cap int,
+) error {
+	sample := plan.newFingerprints
+	if len(sample) > withheldFingerprintSample {
+		sample = sample[:withheldFingerprintSample]
+	}
+
+	labels := make(map[string]string, len(rule.Labels)+1)
+	for k, v := range rule.Labels {
+		labels[k] = v
+	}
+	labels["kind"] = alertCapFingerprint
+
+	evidence, err := json.Marshal(map[string]any{
+		"reason":              "new_alert_cap_exceeded",
+		"ruleId":              rule.ID.String(),
+		"ruleName":            rule.Name,
+		"newAlerts":           len(plan.newFingerprints),
+		"maxNewAlerts":        cap,
+		"withheldTransitions": len(plan.outcomeTransitions) + len(plan.disappearedActiveFPs),
+		"fingerprintSample":   sample,
+		"evaluationId":        evaluation.ID.String(),
+		"note": "Alert transitions were withheld in full: this evaluation would have opened " +
+			"more new alerts than the service permits. The evaluation and its evidence are " +
+			"recorded; no alert was opened, updated or resolved by it.",
+	})
+	if err != nil {
+		return fmt.Errorf("marshal alert.cap evidence: %w", err)
+	}
+
+	// Scoped to the evaluation's own period, unlike engine.error: a withheld plan
+	// is a fact about this rule in this period, so the next run that fits under
+	// the cap sweeps it away as a disappeared fingerprint without anyone
+	// resolving it by hand.
+	if _, err := st.OpenOrUpdateAlert(ctx, store.OpenAlertInput{
+		RuleID:          rule.ID,
+		ContractVersion: rule.ContractVersion.Effective(),
+		Fingerprint:     alertCapFingerprint,
+		PeriodID:        periodID,
+		Severity:        models.SeverityHigh,
+		EvaluationID:    evaluation.ID,
+		Evidence:        evidence,
+		Labels:          labels,
+		OccurredAt:      ended,
+	}); err != nil {
+		return fmt.Errorf("open alert.cap meta-alert for rule %s: %w", rule.ID, err)
 	}
 	return nil
 }

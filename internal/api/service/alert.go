@@ -225,3 +225,10 @@ func (s *Service) ListCaptures(ctx context.Context, ruleID uuid.UUID, q store.Ge
 // constant so the value lives in one place — anywhere we route or filter
 // engine-health alerts can match on this literal.
 const engineErrorFingerprint = "engine.error"
+
+// alertCapFingerprint is the synthetic fingerprint for the meta-alert raised
+// when an evaluation would open more new alerts than the service allows and its
+// alert transitions are withheld (see withholdAlertTransitions in
+// evaluation.go). Like engine.error it is a fact about the module's behaviour
+// rather than about the money, and routing rules match on this literal.
+const alertCapFingerprint = "alert.cap"

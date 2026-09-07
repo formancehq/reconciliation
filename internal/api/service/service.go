@@ -81,17 +81,50 @@ type Service struct {
 	engine    *engine.Engine
 	templates *templates.Registry
 	resolvers engine.Resolvers
+
+	maxNewAlerts int
+}
+
+// DefaultMaxNewAlertsPerEvaluation is how many alerts one evaluation may newly
+// open before the service withholds its alert transitions entirely and raises a
+// single meta-alert instead.
+//
+// This guards a resource the engine's accounts budget does not: that budget caps
+// how much of the *ledger* one evaluation may read, while a fan-out rule
+// (account_threshold per_account, source_parity per_account, stale_holds
+// per_hold) turns matched accounts into alerts — each a control-ledger read and
+// write, a notification, and a line in an inbox someone is meant to triage. A
+// rule that finds hundreds of new breaks at once is reporting one systemic
+// failure; opening hundreds of tickets buries it.
+//
+// The number is a starting point, not a law: raise it with
+// WithMaxNewAlertsPerEvaluation for a deployment whose operators genuinely work
+// queues that size. Zero disables the cap.
+const DefaultMaxNewAlertsPerEvaluation = 200
+
+// Option customises the service at construction.
+type Option func(*Service)
+
+// WithMaxNewAlertsPerEvaluation overrides DefaultMaxNewAlertsPerEvaluation. Zero
+// disables the cap, restoring the unbounded behaviour.
+func WithMaxNewAlertsPerEvaluation(n int) Option {
+	return func(s *Service) { s.maxNewAlerts = n }
 }
 
 // NewService constructs the service with all collaborators. V1 work requires
 // non-nil engine + templates + resolvers.
-func NewService(store Store, eng *engine.Engine, reg *templates.Registry, res engine.Resolvers) *Service {
-	return &Service{
-		store:     store,
-		engine:    eng,
-		templates: reg,
-		resolvers: res,
+func NewService(store Store, eng *engine.Engine, reg *templates.Registry, res engine.Resolvers, opts ...Option) *Service {
+	s := &Service{
+		store:        store,
+		engine:       eng,
+		templates:    reg,
+		resolvers:    res,
+		maxNewAlerts: DefaultMaxNewAlertsPerEvaluation,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // inTx runs fn against the store. The ledger-native store is idempotent and
