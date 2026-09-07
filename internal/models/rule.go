@@ -54,6 +54,11 @@ const (
 	TemplateSourceConsensus TemplateKind = "source_consensus"
 	// TemplateCoverageRatioBounds compares exact signed multi-source portfolios.
 	TemplateCoverageRatioBounds TemplateKind = "coverage_ratio_bounds"
+	// TemplateStaleHolds is the V2 time-based control: it flags held funds whose
+	// deadline (an issuer-supplied expiry, or a creation instant plus a maximum
+	// age) has passed — or is about to. The only template whose predicate reads
+	// the evaluation clock; see docs/technical/stale-holds.md.
+	TemplateStaleHolds TemplateKind = "stale_holds"
 )
 
 // Severity is shared between Rule (declared severity at creation) and Alert

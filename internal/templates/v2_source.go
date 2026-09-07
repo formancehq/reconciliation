@@ -52,7 +52,13 @@ func (s V2NamedSource) displayLabel() string {
 }
 
 func (s V2NamedSource) validate(index int) error {
-	path := fmt.Sprintf("sources[%d]", index)
+	return s.validateAt(fmt.Sprintf("sources[%d]", index))
+}
+
+// validateAt is validate with a caller-supplied field path, so a template
+// carrying a single named source (stale_holds) reports `source.asset` rather
+// than `sources[0].asset`.
+func (s V2NamedSource) validateAt(path string) error {
 	if !v2SourceIDPattern.MatchString(s.ID) {
 		return fmt.Errorf("%w: Source %q has an invalid ID (field: %s.id)", ErrInvalidSpec, s.displayLabel(), path)
 	}

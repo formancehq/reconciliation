@@ -103,6 +103,7 @@ func DefaultRegistry() *Registry {
 		NewExchangeRateBounds(),
 		NewSourceConsensus(),
 		NewCoverageRatioBounds(),
+		NewStaleHolds(),
 	)
 }
 
