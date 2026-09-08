@@ -352,26 +352,17 @@ function EvidenceShell({
           {summary}
         </div>
       </div>
-      <div
-        role="status"
-        className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
-          passed
-            ? "border-green-foreground/30 bg-green-background text-green-foreground"
-            : "border-destructive-foreground/30 border-l-2 border-l-destructive-foreground bg-destructive text-destructive-foreground"
-        }`}
+      {/* The verdict as a sentence, not a banner. Whether the control passed is
+          already stated by the row this evidence sits in — an alert's status and
+          severity badges, the timeline's "Evaluation passed/failed" — so a boxed
+          "Control failed" restated it and cost three lines of height. The
+          description is the part that was carrying information; it keeps a colour
+          so the outcome still reads at a glance. */}
+      <p
+        className={`text-xs/5 ${passed ? "text-muted-foreground" : "text-destructive"}`}
       >
-        {passed ? (
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-        ) : (
-          <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-        )}
-        <div className="min-w-0">
-          <div className="font-medium">
-            {passed ? "Control passed" : "Control failed"}
-          </div>
-          <div className="text-xs/5 opacity-90">{verdict}</div>
-        </div>
-      </div>
+        {verdict}
+      </p>
       {children}
       {!compact && (
         <>
