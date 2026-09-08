@@ -324,7 +324,7 @@ export function NamedSourcesEditor({
                 </div>
               </div>
               {sourceError && !hasPlacedError && (
-                <p className="font-mono text-xs break-words text-destructive sm:col-span-2">
+                <p className="font-mono text-xs break-words text-destructive-foreground sm:col-span-2">
                   {sourceError}
                 </p>
               )}
@@ -369,7 +369,7 @@ function Field({
       </div>
       {children}
       {error && (
-        <p className="font-mono text-xs break-words text-destructive">
+        <p className="font-mono text-xs break-words text-destructive-foreground">
           {error}
         </p>
       )}

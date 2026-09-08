@@ -450,7 +450,7 @@ export function BalanceBoundsEditor({
             </div>
             <button
               type="button"
-              className="mb-1.5 text-xs text-muted-foreground hover:text-destructive disabled:opacity-40"
+              className="mb-1.5 text-xs text-muted-foreground hover:text-destructive-foreground disabled:opacity-40"
               onClick={() => setBounds(draft.bounds.filter((_, i) => i !== index))}
               disabled={draft.bounds.length === 1}
             >
@@ -769,7 +769,7 @@ function FieldV2({
 
 function FieldError({ error }: { error: string }) {
   return (
-    <p className="mt-1 font-mono text-xs break-words text-destructive">
+    <p className="mt-1 font-mono text-xs break-words text-destructive-foreground">
       {error}
     </p>
   )

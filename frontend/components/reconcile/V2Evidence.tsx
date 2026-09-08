@@ -526,7 +526,7 @@ function SnapshotCard({
         {source.present && !missing ? (
           <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-foreground" />
         ) : (
-          <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+          <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive-foreground" />
         )}
         <span
           className="truncate text-sm font-medium"

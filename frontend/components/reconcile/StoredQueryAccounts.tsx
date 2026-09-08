@@ -107,7 +107,7 @@ export function StoredQueryAccounts({
       </p>
 
       {error && (
-        <p className="rounded border border-destructive-foreground/30 bg-destructive p-2 text-xs text-destructive-foreground">
+        <p className="rounded border border-destructive-foreground/30 bg-destructive/10 p-2 text-xs text-destructive-foreground">
           {error}
         </p>
       )}

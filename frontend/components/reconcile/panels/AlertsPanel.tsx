@@ -1644,7 +1644,7 @@ export function AlertActionDialog({
                 onChange={(e) => setUntil(e.target.value)}
               />
               {!untilFuture && (
-                <p className="text-xs text-destructive">
+                <p className="text-xs text-destructive-foreground">
                   Must be in the future.
                 </p>
               )}
@@ -1654,7 +1654,7 @@ export function AlertActionDialog({
             <Label htmlFor="recon-alert-note" className="text-sm">
               Note{" "}
               {noteRequired ? (
-                <span className="text-destructive">*</span>
+                <span className="text-destructive-foreground">*</span>
               ) : (
                 <span className="font-normal text-muted-foreground">
                   (optional)

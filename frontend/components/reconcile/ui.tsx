@@ -94,7 +94,7 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   const details = isRecon ? error.details : undefined;
   return (
     <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 px-6 text-center">
-      {unreachable ? <PlugZap className="h-7 w-7 text-destructive" /> : <AlertTriangle className="h-7 w-7 text-amber-foreground" />}
+      {unreachable ? <PlugZap className="h-7 w-7 text-destructive-foreground" /> : <AlertTriangle className="h-7 w-7 text-amber-foreground" />}
       <div className="space-y-1">
         <p className="text-sm font-medium">{title}</p>
         <p className="max-w-md text-sm text-muted-foreground">{message}</p>

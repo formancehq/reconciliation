@@ -358,7 +358,7 @@ function CreateRuleDialogV2Open({
           </div>
 
           {(issues.length > 0 || serverError) && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive-foreground">
               <div className="flex items-center gap-2 font-medium">
                 <AlertTriangle className="h-4 w-4" /> Review the rule definition
               </div>

@@ -238,7 +238,7 @@ function DeviationCard({
           <span className="text-green-foreground">
             {model.counts.pass} pass
           </span>{" "}
-          · <span className="text-destructive">{model.counts.fail} fail</span>
+          · <span className="text-destructive-foreground">{model.counts.fail} fail</span>
           {model.passRate !== undefined && (
             <> · {Math.round(model.passRate * 100)}% pass rate</>
           )}
@@ -544,7 +544,7 @@ function DeviationTooltip({
             label={metricLabel(model.metric)}
             value={row.exactValue ?? formatAmount(row.value, series.asset)}
             tone={
-              row.kind === "pass" ? "text-green-foreground" : "text-destructive"
+              row.kind === "pass" ? "text-green-foreground" : "text-destructive-foreground"
             }
           />
           {row.difference !== undefined && (
