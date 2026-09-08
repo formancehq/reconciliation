@@ -460,7 +460,7 @@ components:
         type: integer
         format: int64
         minimum: 1
-        maximum: 1000
+        maximum: 100
     Cursor:
       name: cursor
       in: query
@@ -1382,7 +1382,7 @@ components:
           type: object
           required: [pageSize, hasMore, data]
           properties:
-            pageSize: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+            pageSize: { type: integer, format: int64, minimum: 1, maximum: 100 }
             hasMore: { type: boolean }
             previous: { type: string }
             next: { type: string }

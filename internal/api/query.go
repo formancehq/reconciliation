@@ -26,13 +26,10 @@ func getPageSize(r *http.Request) (uint64, error) {
 		return DefaultPageSize, nil
 	}
 
-	var pageSize uint64
-	var err error
-	if pageSizeParam != "" {
-		pageSize, err = strconv.ParseUint(pageSizeParam, 10, 32)
-		if err != nil {
-			return 0, ErrInvalidPageSize
-		}
+	pageSize, err := strconv.ParseUint(pageSizeParam, 10, 32)
+	if err != nil || pageSize == 0 {
+		// pageSize=0 would disable the SQL LIMIT entirely
+		return 0, ErrInvalidPageSize
 	}
 
 	if pageSize > MaxPageSize {
@@ -40,4 +37,14 @@ func getPageSize(r *http.Request) (uint64, error) {
 	}
 
 	return pageSize, nil
+}
+
+// validateCursorPageSize guards against forged cursors: a page size of 0
+// disables the SQL LIMIT and values above MaxPageSize bypass the cap
+// enforced by getPageSize.
+func validateCursorPageSize(pageSize uint64) error {
+	if pageSize == 0 || pageSize > MaxPageSize {
+		return ErrInvalidPageSize
+	}
+	return nil
 }

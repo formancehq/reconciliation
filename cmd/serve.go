@@ -28,7 +28,10 @@ func newServeCommand(version string) *cobra.Command {
 	}
 	cmd.Flags().String(listenFlag, ":8080", "Listening address")
 	cmd.Flags().String(uiURLFlag, defaultUIURL(), "Base URL where this module's business UI is served (advertised at /_info for the console shell to embed)")
-	cmd.Flags().Bool(audit.AuditEnabledFlag, true, "Enable HTTP audit")
+	// Opt-in, not opt-out: the audit middleware warns that a client sending the
+	// X-Formance-Audit header can bypass the trail unless a handled-header secret
+	// is configured, so it should not be on by default (main: #96).
+	cmd.Flags().Bool(audit.AuditEnabledFlag, false, "Enable HTTP audit")
 
 	otlpmetrics.AddFlags(cmd.Flags())
 	otlptraces.AddFlags(cmd.Flags())

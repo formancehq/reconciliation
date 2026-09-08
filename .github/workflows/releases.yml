@@ -8,24 +8,27 @@ permissions:
 
 jobs:
   GoReleaser:
-    runs-on: "ubuntu-latest"
+    runs-on: namespace-profile-linux-amd64-4vcpu
     steps:
-      - uses: 'actions/checkout@v7'
+      - uses: namespacelabs/nscloud-checkout-action@v9
         with:
           fetch-depth: 0
-      - name: Setup Env
-        uses: ./.github/actions/env
+          dissociate: true
+
+      - uses: formancehq/ci/actions/setup-release@v1
         with:
           token: ${{ secrets.NUMARY_GITHUB_TOKEN }}
+
       - name: Run GoReleaser
-        run: nix develop --impure -c just release
+        run: nix develop --impure --command just release
         env:
           GITHUB_TOKEN: ${{ secrets.NUMARY_GITHUB_TOKEN }}
           SPEAKEASY_API_KEY: ${{ secrets.SPEAKEASY_API_KEY }}
           FURY_TOKEN: ${{ secrets.FURY_TOKEN }}
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+
       - name: Add the OpenAPI file to the release assets
-        run: >
-          gh release upload ${{github.ref_name}} ./openapi.yaml#openapi.yaml
+        run: gh release upload "$TAG_NAME" ./openapi.yaml#openapi.yaml
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
