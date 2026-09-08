@@ -8,6 +8,7 @@ import type {
   Rational,
 } from "@/lib/recon"
 import { sourceName } from "@/lib/recon/v2"
+import { StoredQueryAccounts } from "./StoredQueryAccounts"
 
 export function isEvidence(value: unknown): value is Evidence {
   if (
@@ -714,22 +715,13 @@ export function StaleHoldsEvidence({
         ]}
       />
       {evidence.holdsFlagged > 0 && (
-        <div className="min-w-0 space-y-1">
-          <div className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-            The holds behind this alert
-          </div>
-          <p className="text-xs text-muted-foreground">
-            The query this run made against{" "}
-            <span className="font-mono">{evidence.ledger}</span>, cutoff
-            included. It is the same dialect a rule&apos;s own selector uses, so
-            it drops back into a rule to list the set. Balances always read live,
-            so it answers &ldquo;still past that cutoff and still funded&rdquo;
-            rather than replaying this evaluation.
-          </p>
-          <pre className="overflow-x-auto rounded bg-muted/50 p-2 text-[11px] leading-relaxed">
-            {evidence.effectiveQuery}
-          </pre>
-        </div>
+        <StoredQueryAccounts
+          ledger={evidence.ledger}
+          filter={evidence.effectiveQuery}
+          asset={evidence.asset}
+          matched={evidence.holdsMatched}
+          flagged={evidence.holdsFlagged}
+        />
       )}
     </EvidenceShell>
   )
