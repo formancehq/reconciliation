@@ -51,8 +51,8 @@ import {
   SeverityBadge,
   ResultBadge,
 } from "../ui"
-import { V2RulePresentation } from "../V2RulePresentation"
-import { CreateRuleDialog } from "./CreateRuleDialogV2"
+import { RulePresentation } from "../RulePresentation"
+import { CreateRuleDialog } from "./CreateRuleDialog"
 import { RevisionValue, RuleTimeline } from "../RuleTimeline"
 import createLogger from "@/lib/logger"
 
@@ -431,7 +431,7 @@ export function CurrentRuleConfiguration({
       </dl>
 
       <div className="min-w-0 space-y-4 p-4">
-        <V2RulePresentation rule={rule} sourcesFirst />
+        <RulePresentation rule={rule} sourcesFirst />
 
         {rule.compiledCEL && (
           <details className="rounded-md border text-xs">

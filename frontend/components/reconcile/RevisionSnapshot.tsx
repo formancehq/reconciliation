@@ -5,7 +5,7 @@ import {
   ruleFromActivitySnapshot,
   templateLabel,
 } from "@/lib/recon"
-import { V2RulePresentation } from "./V2RulePresentation"
+import { RulePresentation } from "./RulePresentation"
 
 export function RevisionSnapshot({
   snapshot,
@@ -60,7 +60,7 @@ export function RevisionSnapshot({
           <Braces className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
           <h4 className="text-xs font-semibold">Sources and invariant</h4>
         </div>
-        <V2RulePresentation rule={rule} compact sourcesFirst />
+        <RulePresentation rule={rule} compact sourcesFirst />
       </div>
 
       <div className="grid gap-2 sm:grid-cols-2">

@@ -5,7 +5,7 @@ import type {
   RateBounds,
   Rule,
   TemplateKind,
-} from "./typesV2"
+} from "./types"
 
 export const SOURCE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 export const UNSIGNED_INTEGER_PATTERN = /^(0|[1-9][0-9]{0,77})$/

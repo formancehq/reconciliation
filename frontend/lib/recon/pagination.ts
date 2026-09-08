@@ -1,4 +1,4 @@
-import type { Cursor } from './types';
+import type { Cursor } from './common';
 
 export class ReconPaginationError extends Error {
   constructor(message: string) {

@@ -1,4 +1,4 @@
-import type { Alert, Capture } from "./typesV2"
+import type { Alert, Capture } from "./types"
 import { contractVersionOf } from "./resources"
 
 export interface CaptureEvidenceOutcome {

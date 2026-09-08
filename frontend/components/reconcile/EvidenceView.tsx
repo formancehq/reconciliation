@@ -7,7 +7,7 @@ import type {
   Evidence,
   Rational,
 } from "@/lib/recon"
-import { sourceName } from "@/lib/recon/v2"
+import { sourceName } from "@/lib/recon/templates"
 import { StoredQueryAccounts } from "./StoredQueryAccounts"
 
 export function isEvidence(value: unknown): value is Evidence {
@@ -87,7 +87,7 @@ export function isEvidence(value: unknown): value is Evidence {
   return false
 }
 
-export function V2Evidence({
+export function EvidenceView({
   evidence,
   compact = false,
   passed,
@@ -823,7 +823,7 @@ function rationalWithinBounds(
   )
 }
 
-function decimalFraction(value: string): RationalV2AsBigInt {
+function decimalFraction(value: string): RationalAsBigInt {
   if (!/^\d+(?:\.\d+)?$/.test(value)) throw new Error("invalid decimal")
   const [whole, fraction = ""] = value.split(".")
   const denominator = 10n ** BigInt(fraction.length)
@@ -833,7 +833,7 @@ function decimalFraction(value: string): RationalV2AsBigInt {
   }
 }
 
-interface RationalV2AsBigInt {
+interface RationalAsBigInt {
   numerator: bigint
   denominator: bigint
 }

@@ -41,7 +41,7 @@ import {
 } from "@workspace/ui/components/item"
 import { toast } from "@/components/ui/toast"
 import {
-  reconClientV2,
+  reconClient,
   useReconResource,
   poll,
   describeAnyRule,
@@ -74,8 +74,8 @@ import {
   VerdictBadge,
 } from "../ui"
 import { RuleDetail } from "./RuleDetail"
-import { V2RulePresentation } from "../V2RulePresentation"
-import { CreateRuleDialog } from "./CreateRuleDialogV2"
+import { RulePresentation } from "../RulePresentation"
+import { CreateRuleDialog } from "./CreateRuleDialog"
 import createLogger from "@/lib/logger"
 import { FILTER_TOOLBAR } from "@/lib/uiClasses"
 import { ReconFilterMenu } from "../ReconFilterMenu"
@@ -225,7 +225,7 @@ function RulesList({
           })
         // Read-after-write is eventually consistent: let alerts/captures settle,
         // then refresh other panels.
-        await poll<Alert[]>(async () => reconClientV2.listAlerts(), {
+        await poll<Alert[]>(async () => reconClient.listAlerts(), {
           tries: 3,
           intervalMs: 350,
         })
@@ -663,7 +663,7 @@ export function RuleListItem({
       </ItemHeader>
 
       <ItemContent className="min-w-0 gap-3 p-3 sm:p-4">
-        <V2RulePresentation rule={rule} compact />
+        <RulePresentation rule={rule} compact />
       </ItemContent>
     </Item>
   )

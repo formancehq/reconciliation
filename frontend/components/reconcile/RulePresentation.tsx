@@ -1,8 +1,8 @@
 import { Card } from "@/components/ui/card"
 import { evidenceLabel, type NamedSource, type Rule } from "@/lib/recon"
-import { describeRule, effectiveSourceKind, sourceName } from "@/lib/recon/v2"
+import { describeRule, effectiveSourceKind, sourceName } from "@/lib/recon/templates"
 
-export function V2RulePresentation({
+export function RulePresentation({
   rule,
   compact = false,
   sourcesFirst = false,

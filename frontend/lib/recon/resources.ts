@@ -9,7 +9,7 @@
  * The V1/V2 unions that used to live here collapsed to the single types they
  * now name, and the vestigial V2 suffix went with them.
  */
-import { reconClientV2 } from "./clientV2"
+import { reconClient } from "./client"
 import type {
   AcceptAlertRequest,
   AckAlertRequest,
@@ -19,8 +19,8 @@ import type {
   Cursor,
   SnoozeAlertRequest,
   UnsnoozeAlertRequest,
-} from "./types"
-import type { Alert, Capture, Rule } from "./typesV2"
+} from "./common"
+import type { Alert, Capture, Rule } from "./types"
 
 /**
  * The contract a record is stamped with. One value is live; the stamp survives
@@ -40,32 +40,32 @@ export function ruleResourceKey(resource: { ruleID: string } & object): string {
 }
 
 export async function listAllRules(signal?: AbortSignal): Promise<Rule[]> {
-  return signal ? reconClientV2.listRules(signal) : reconClientV2.listRules()
+  return signal ? reconClient.listRules(signal) : reconClient.listRules()
 }
 
 export async function listAllAlerts(signal?: AbortSignal): Promise<Alert[]> {
-  return signal ? reconClientV2.listAlerts(signal) : reconClientV2.listAlerts()
+  return signal ? reconClient.listAlerts(signal) : reconClient.listAlerts()
 }
 
 export async function getRule(
   id: string,
   signal?: AbortSignal
 ): Promise<Rule> {
-  return signal ? reconClientV2.getRule(id, signal) : reconClientV2.getRule(id)
+  return signal ? reconClient.getRule(id, signal) : reconClient.getRule(id)
 }
 
 export async function getAlert(
   id: string,
   signal?: AbortSignal
 ): Promise<Alert> {
-  return signal ? reconClientV2.getAlert(id, signal) : reconClientV2.getAlert(id)
+  return signal ? reconClient.getAlert(id, signal) : reconClient.getAlert(id)
 }
 
 export async function listCaptures(
   ruleId: string,
   opts?: { period?: string; signal?: AbortSignal }
 ): Promise<Capture[]> {
-  return reconClientV2.listCaptures(ruleId, opts)
+  return reconClient.listCaptures(ruleId, opts)
 }
 
 export function listRuleTimeline(
@@ -74,8 +74,8 @@ export function listRuleTimeline(
   signal?: AbortSignal
 ): Promise<Cursor<RuleActivity>> {
   return signal
-    ? reconClientV2.listRuleTimeline(ruleId, cursor, signal)
-    : reconClientV2.listRuleTimeline(ruleId, cursor)
+    ? reconClient.listRuleTimeline(ruleId, cursor, signal)
+    : reconClient.listRuleTimeline(ruleId, cursor)
 }
 
 export function listAlertEvents(
@@ -84,64 +84,64 @@ export function listAlertEvents(
   signal?: AbortSignal
 ): Promise<Cursor<AlertEvent>> {
   return signal
-    ? reconClientV2.listAlertEvents(alertId, cursor, signal)
-    : reconClientV2.listAlertEvents(alertId, cursor)
+    ? reconClient.listAlertEvents(alertId, cursor, signal)
+    : reconClient.listAlertEvents(alertId, cursor)
 }
 
 export async function listAlerts(
   signal?: AbortSignal
 ): Promise<Alert[]> {
-  return signal ? reconClientV2.listAlerts(signal) : reconClientV2.listAlerts()
+  return signal ? reconClient.listAlerts(signal) : reconClient.listAlerts()
 }
 
 export async function evaluateRule(
   ruleId: string) {
-  return reconClientV2.evaluateRule(ruleId)
+  return reconClient.evaluateRule(ruleId)
 }
 
 export async function patchRuleEnabled(
   rule: Rule,
   enabled: boolean
 ): Promise<Rule> {
-  return reconClientV2.patchRule(rule.id, { enabled })
+  return reconClient.patchRule(rule.id, { enabled })
 }
 
 export async function deleteRule(
   ruleId: string): Promise<void> {
-  return reconClientV2.deleteRule(ruleId)
+  return reconClient.deleteRule(ruleId)
 }
 
 export function acknowledgeAlert(
   alertId: string,
   body: AckAlertRequest
 ): Promise<Alert> {
-  return reconClientV2.ackAlert(alertId, body)
+  return reconClient.ackAlert(alertId, body)
 }
 
 export function resolveAlert(
   alertId: string,
   body: ResolveAlertRequest
 ): Promise<Alert> {
-  return reconClientV2.resolveAlert(alertId, body)
+  return reconClient.resolveAlert(alertId, body)
 }
 
 export function acceptAlert(
   alertId: string,
   body: AcceptAlertRequest
 ): Promise<Alert> {
-  return reconClientV2.acceptAlert(alertId, body)
+  return reconClient.acceptAlert(alertId, body)
 }
 
 export function snoozeAlert(
   alertId: string,
   body: SnoozeAlertRequest
 ): Promise<Alert> {
-  return reconClientV2.snoozeAlert(alertId, body)
+  return reconClient.snoozeAlert(alertId, body)
 }
 
 export function unsnoozeAlert(
   alertId: string,
   body: UnsnoozeAlertRequest
 ): Promise<Alert> {
-  return reconClientV2.unsnoozeAlert(alertId, body)
+  return reconClient.unsnoozeAlert(alertId, body)
 }

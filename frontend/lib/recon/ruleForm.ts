@@ -1,4 +1,4 @@
-import type { PeriodType, Schedule, Severity } from "./types"
+import type { PeriodType, Schedule, Severity } from "./common"
 import type {
   HoldDeadline,
   InstantEncoding,
@@ -9,7 +9,7 @@ import type {
   Rule,
   StaleHoldsMode,
   TemplateKind,
-} from "./typesV2"
+} from "./types"
 import {
   compareDecimalStrings,
   DECIMAL_PATTERN,
@@ -17,7 +17,7 @@ import {
   SIGNED_SAFE_INTEGER_PATTERN,
   SOURCE_ID_PATTERN,
   UNSIGNED_INTEGER_PATTERN,
-} from "./v2"
+} from "./templates"
 
 /** stale_holds reads one hold set, unlike the multi-source V2 templates. */
 
@@ -135,7 +135,7 @@ export interface RuleFormIssue {
   message: string
 }
 
-export function emptyNamedSourceV2(index: number, ledger = ""): NamedSource {
+export function emptyNamedSource(index: number, ledger = ""): NamedSource {
   return {
     id: `source${index + 1}`,
     label: "",
@@ -159,7 +159,7 @@ export function defaultNamedSources(
           ? 3
           : 2
   return Array.from({ length: count }, (_, index) => ({
-    ...emptyNamedSourceV2(index, ledger),
+    ...emptyNamedSource(index, ledger),
     asset: "USD/2",
   }))
 }
@@ -177,7 +177,7 @@ export function addNamedSource(
 ): NamedSource[] {
   return [
     ...sources,
-    emptyNamedSourceV2(nextNamedSourceIndex(sources), ledger),
+    emptyNamedSource(nextNamedSourceIndex(sources), ledger),
   ]
 }
 

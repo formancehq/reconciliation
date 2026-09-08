@@ -20,10 +20,10 @@
  *   • An asset code may carry a precision suffix (`EUR/2`); the digits after `/`
  *     are the number of minor-unit decimals. A bare code (`EUR`) implies scale 0.
  */
-import type { AlertStatus, Verdict } from "./types"
-import type { Alert, Capture, Rule } from "./typesV2"
+import type { AlertStatus, Verdict } from "./common"
+import type { Alert, Capture, Rule } from "./types"
 import { contractVersionOf } from "./resources"
-import { templateLabel } from "./v2"
+import { templateLabel } from "./templates"
 
 // ── Amount / asset primitives ───────────────────────────────────────────────
 

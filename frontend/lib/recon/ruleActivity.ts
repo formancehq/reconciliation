@@ -8,8 +8,8 @@ import type {
   RuleLifecycleActivity,
   Trigger,
   Verdict,
-} from "./types"
-import type { Rule } from "./typesV2"
+} from "./common"
+import type { Rule } from "./types"
 
 export interface RuleRunGroup {
   type: "run"

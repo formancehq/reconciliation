@@ -267,7 +267,7 @@ export function NonNegativeIntegerToleranceEditor({
   backendError?: string
 }) {
   return (
-    <FieldV2
+    <Field
       label="Tolerance (minor units)"
       error={backendFieldPath(backendError, "tolerance")}
     >
@@ -277,7 +277,7 @@ export function NonNegativeIntegerToleranceEditor({
         inputMode="numeric"
         className="font-mono"
       />
-    </FieldV2>
+    </Field>
   )
 }
 
@@ -298,7 +298,7 @@ export function ExactRateBoundsEditor({
     onChange({ ...value, ...patch })
   return (
     <div className="space-y-3 border-t pt-3">
-      <FieldV2 label="Bounds mode">
+      <Field label="Bounds mode">
         <Select
           value={value.mode}
           onValueChange={(mode) =>
@@ -317,10 +317,10 @@ export function ExactRateBoundsEditor({
             </SelectItem>
           </SelectContent>
         </Select>
-      </FieldV2>
+      </Field>
       {value.mode === "explicit" ? (
         <div className="grid gap-3 sm:grid-cols-2">
-          <FieldV2
+          <Field
             label="Inclusive minimum"
             error={backendFieldPath(backendError, `${pathPrefix}.min`)}
           >
@@ -330,8 +330,8 @@ export function ExactRateBoundsEditor({
               inputMode="decimal"
               className="font-mono"
             />
-          </FieldV2>
-          <FieldV2
+          </Field>
+          <Field
             label="Inclusive maximum"
             error={backendFieldPath(backendError, `${pathPrefix}.max`)}
           >
@@ -341,11 +341,11 @@ export function ExactRateBoundsEditor({
               inputMode="decimal"
               className="font-mono"
             />
-          </FieldV2>
+          </Field>
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          <FieldV2
+          <Field
             label="Target"
             error={backendFieldPath(backendError, `${pathPrefix}.target`)}
           >
@@ -355,8 +355,8 @@ export function ExactRateBoundsEditor({
               inputMode="decimal"
               className="font-mono"
             />
-          </FieldV2>
-          <FieldV2
+          </Field>
+          <Field
             label="Tolerance (basis points)"
             error={backendFieldPath(
               backendError,
@@ -369,7 +369,7 @@ export function ExactRateBoundsEditor({
               inputMode="numeric"
               className="font-mono"
             />
-          </FieldV2>
+          </Field>
         </div>
       )}
       <p className="text-[10px] text-muted-foreground">
@@ -407,7 +407,7 @@ export function BalanceBoundsEditor({
         {draft.bounds.map((bound, index) => (
           <div key={index} className="flex flex-wrap items-end gap-2">
             <div className="w-28">
-              <FieldV2
+              <Field
                 label={index === 0 ? "Asset" : ""}
                 error={backendFieldPath(backendError, `bounds[${index}].asset`)}
               >
@@ -418,10 +418,10 @@ export function BalanceBoundsEditor({
                   className="font-mono"
                   disabled={!wildcard && draft.bounds.length === 1}
                 />
-              </FieldV2>
+              </Field>
             </div>
             <div className="min-w-28 flex-1">
-              <FieldV2
+              <Field
                 label={index === 0 ? "Minimum" : ""}
                 error={backendFieldPath(backendError, `bounds[${index}].min`)}
               >
@@ -432,10 +432,10 @@ export function BalanceBoundsEditor({
                   inputMode="numeric"
                   className="font-mono"
                 />
-              </FieldV2>
+              </Field>
             </div>
             <div className="min-w-28 flex-1">
-              <FieldV2
+              <Field
                 label={index === 0 ? "Maximum" : ""}
                 error={backendFieldPath(backendError, `bounds[${index}].max`)}
               >
@@ -446,7 +446,7 @@ export function BalanceBoundsEditor({
                   inputMode="numeric"
                   className="font-mono"
                 />
-              </FieldV2>
+              </Field>
             </div>
             <button
               type="button"
@@ -519,7 +519,7 @@ export function StaleHoldsEditor({
           error={backendFieldPath(backendError, "deadline.expiryKey")}
           hint="The expiry recorded on the hold. Must be an indexed datetime or integer key."
         />
-        <FieldV2
+        <Field
           label="Value format"
           error={backendFieldPath(backendError, "deadline.encoding")}
         >
@@ -539,7 +539,7 @@ export function StaleHoldsEditor({
               <SelectItem value="epoch_micros">Epoch microseconds</SelectItem>
             </SelectContent>
           </Select>
-        </FieldV2>
+        </Field>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -551,7 +551,7 @@ export function StaleHoldsEditor({
           error={backendFieldPath(backendError, "deadline.createdKey")}
           hint="Used for holds with no recorded expiry: this date plus the maximum age below."
         />
-        <FieldV2
+        <Field
           label="Maximum age"
           error={backendFieldPath(backendError, "deadline.maxAge")}
         >
@@ -565,11 +565,11 @@ export function StaleHoldsEditor({
           <p className="mt-1 text-xs text-muted-foreground">
             How long a hold may live once placed. Required with a placed-at key.
           </p>
-        </FieldV2>
+        </Field>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <FieldV2 label="Flag holds that are">
+        <Field label="Flag holds that are">
           <Select
             value={draft.mode}
             onValueChange={(mode) =>
@@ -592,9 +592,9 @@ export function StaleHoldsEditor({
               </SelectItem>
             </SelectContent>
           </Select>
-        </FieldV2>
+        </Field>
         {approaching && (
-          <FieldV2
+          <Field
             label="Warning window"
             error={backendFieldPath(backendError, "warnWithin")}
           >
@@ -610,7 +610,7 @@ export function StaleHoldsEditor({
               Set this wider than the rule&apos;s run interval, or a hold can
               cross the window between two runs without ever warning.
             </p>
-          </FieldV2>
+          </Field>
         )}
       </div>
 
@@ -624,7 +624,7 @@ export function StaleHoldsEditor({
         </p>
       )}
 
-      <FieldV2
+      <Field
         label="Hold limit per run"
         error={backendFieldPath(backendError, "maxHoldsScanned")}
       >
@@ -643,7 +643,7 @@ export function StaleHoldsEditor({
           rather than reporting a smaller problem than the one that exists.
           Leave empty for the engine default.
         </p>
-      </FieldV2>
+      </Field>
 
     </Card>
   )
@@ -679,7 +679,7 @@ function MetadataKeySelect({
   )
 
   return (
-    <FieldV2 label={label} error={error}>
+    <Field label={label} error={error}>
       {options.length === 0 ? (
         <Input
           value={value}
@@ -706,7 +706,7 @@ function MetadataKeySelect({
         </Select>
       )}
       <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
-    </FieldV2>
+    </Field>
   )
 }
 
@@ -732,7 +732,7 @@ function SourceSelect({
   backendError?: string
 }) {
   return (
-    <FieldV2 label={label} error={backendFieldPath(backendError, path)}>
+    <Field label={label} error={backendFieldPath(backendError, path)}>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger>
           <SelectValue />
@@ -745,11 +745,11 @@ function SourceSelect({
           ))}
         </SelectContent>
       </Select>
-    </FieldV2>
+    </Field>
   )
 }
 
-function FieldV2({
+function Field({
   label,
   error,
   children,

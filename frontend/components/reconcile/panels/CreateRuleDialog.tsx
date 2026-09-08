@@ -31,7 +31,7 @@ import {
   changeRuleTemplate,
   createRuleFormDraft,
   ReconError,
-  reconClientV2,
+  reconClient,
   renameRuleSource,
   replaceRuleSources,
   SEVERITY_META,
@@ -56,7 +56,7 @@ import {
   ExchangeRateBoundsEditor,
   SourceConsensusEditor,
   StaleHoldsEditor,
-} from "../v2/V2TemplateEditors"
+} from "../templates/TemplateEditors"
 import { RunTimingFields } from "../RunTimingFields"
 
 const log = createLogger("Recon")
@@ -87,7 +87,7 @@ export function CreateRuleDialog({
       ? `duplicate:${duplicateRule.id}`
       : "create"
   return (
-    <CreateRuleDialogV2Open
+    <CreateRuleDialogOpen
       key={modeKey}
       {...props}
       open
@@ -97,7 +97,7 @@ export function CreateRuleDialog({
   )
 }
 
-function CreateRuleDialogV2Open({
+function CreateRuleDialogOpen({
   open,
   onOpenChange,
   editRule,
@@ -149,7 +149,7 @@ function CreateRuleDialogV2Open({
       const request = serializeRuleForm(draft)
       const rule =
         isEdit && editRule
-          ? await reconClientV2.patchRule(editRule.id, {
+          ? await reconClient.patchRule(editRule.id, {
               name: request.name,
               templateKind: request.templateKind,
               templateSpec: request.templateSpec,
@@ -157,7 +157,7 @@ function CreateRuleDialogV2Open({
               schedule: request.schedule,
               enabled: request.enabled,
             })
-          : await reconClientV2.createRule(request)
+          : await reconClient.createRule(request)
       toast.success(
         isEdit
           ? "V2 rule updated"
@@ -194,7 +194,7 @@ function CreateRuleDialogV2Open({
         </DialogHeader>
         <div className="max-h-[calc(94vh-9rem)] space-y-5 overflow-y-auto px-4 py-5 sm:px-5">
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_14rem]">
-            <FieldV2 label="Name">
+            <Field label="Name">
               <Input
                 value={draft.name}
                 onChange={(event) =>
@@ -205,8 +205,8 @@ function CreateRuleDialogV2Open({
                 }
                 placeholder="e.g. Customer funds control"
               />
-            </FieldV2>
-            <FieldV2 label="Severity">
+            </Field>
+            <Field label="Severity">
               <Select
                 value={draft.severity}
                 onValueChange={(severity) =>
@@ -227,7 +227,7 @@ function CreateRuleDialogV2Open({
                   ))}
                 </SelectContent>
               </Select>
-            </FieldV2>
+            </Field>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -460,7 +460,7 @@ function TemplateEditor({
   }
 }
 
-function FieldV2({
+function Field({
   label,
   children,
 }: {

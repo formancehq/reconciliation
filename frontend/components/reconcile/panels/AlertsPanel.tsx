@@ -42,7 +42,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "@/components/ui/toast"
 import {
-  reconClientV2,
+  reconClient,
   useReconResource,
   poll,
   formatDateTime,
@@ -101,7 +101,7 @@ import {
 } from "@workspace/ui/components/item"
 import { cn } from "@workspace/ui/lib/utils"
 import { ReconFilterMenu } from "../ReconFilterMenu"
-import { V2Evidence, isEvidence } from "../V2Evidence"
+import { EvidenceView, isEvidence } from "../EvidenceView"
 import { AlertEventsTimeline } from "../AlertEventsTimeline"
 
 const log = createLogger("Recon")
@@ -729,7 +729,7 @@ export function alertEvidenceFacts(evidence: unknown) {
 
 export function AlertEvidenceSummary({ evidence }: { evidence: unknown }) {
   if (isEvidence(evidence))
-    return <V2Evidence evidence={evidence} compact passed={false} />
+    return <EvidenceView evidence={evidence} compact passed={false} />
   const facts = alertEvidenceFacts(evidence)
   if (facts.length === 0)
     return (
@@ -1011,7 +1011,7 @@ function AlertDetail({
     const outcome = eventEvidenceOutcome(evaluationID)
     if (!outcome) return null
     if (isEvidence(outcome.evidence))
-      return <V2Evidence evidence={outcome.evidence} compact passed={outcome.passed} />
+      return <EvidenceView evidence={outcome.evidence} compact passed={outcome.passed} />
     const entries = orderedEvidenceEntries(outcome.evidence)
     return entries.length > 0 ? <EvidenceDescription entries={entries} /> : null
   }
@@ -1166,7 +1166,7 @@ function AlertDetail({
           onDone={async () => {
             setAction(null)
             await poll<Alert>(
-              async () => reconClientV2.getAlert(alertId),
+              async () => reconClient.getAlert(alertId),
               { tries: 3, intervalMs: 300 }
             )
             invalidate()
@@ -1236,20 +1236,20 @@ export function EvaluationHistory({
   const older = history.filter(
     (capture) => capture.evaluationID !== latest.capture?.evaluationID
   )
-  const currentV2Evidence = isEvidence(currentEvidence)
+  const currentTypedEvidence = isEvidence(currentEvidence)
     ? currentEvidence
     : undefined
-  const currentEvidenceEntries = currentV2Evidence
+  const currentEvidenceEntries = currentTypedEvidence
     ? []
     : evidenceEntries(currentEvidence)
-  const latestV2Evidence =
+  const latestTypedEvidence =
     latest.outcome && isEvidence(latest.outcome.evidence)
       ? latest.outcome.evidence
       : !latest.capture
-        ? currentV2Evidence
+        ? currentTypedEvidence
         : undefined
   const latestEvidence = latest.outcome
-    ? latestV2Evidence
+    ? latestTypedEvidence
       ? []
       : orderedEvidenceEntries(latest.outcome.evidence)
     : latest.capture
@@ -1257,7 +1257,7 @@ export function EvaluationHistory({
       : currentEvidenceEntries
   const count =
     older.length +
-    (latest.capture || currentV2Evidence || currentEvidenceEntries.length > 0
+    (latest.capture || currentTypedEvidence || currentEvidenceEntries.length > 0
       ? 1
       : 0)
 
@@ -1306,7 +1306,7 @@ export function EvaluationHistory({
             )}
           </div>
           <div className="p-3">
-            {!latestV2Evidence && latestEvidence.length === 0 ? (
+            {!latestTypedEvidence && latestEvidence.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {latest.capture
                   ? "No evidence was captured for this fingerprint in this evaluation."
@@ -1320,9 +1320,9 @@ export function EvaluationHistory({
                     evidence
                   </div>
                 )}
-                {latestV2Evidence ? (
-                  <V2Evidence
-                    evidence={latestV2Evidence}
+                {latestTypedEvidence ? (
+                  <EvidenceView
+                    evidence={latestTypedEvidence}
                     passed={latest.outcome?.passed ?? false}
                   />
                 ) : (
@@ -1370,7 +1370,7 @@ export function EvaluationHistory({
                   <div className="border-t px-3 py-3">
                     {outcome ? (
                       isEvidence(outcome.evidence) ? (
-                        <V2Evidence
+                        <EvidenceView
                           evidence={outcome.evidence}
                           passed={outcome.passed}
                         />
@@ -1449,7 +1449,7 @@ export function ResolutionEvidenceSnapshot({
         Immutable resolution evidence snapshot
       </div>
       {isEvidence(evidence) ? (
-        <V2Evidence evidence={evidence} />
+        <EvidenceView evidence={evidence} />
       ) : (
         <EvidenceDescription entries={orderedEvidenceEntries(evidence)} />
       )}

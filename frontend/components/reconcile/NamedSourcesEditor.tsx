@@ -19,7 +19,6 @@ import {
   backendFieldPath,
   backendSourcePath,
   effectiveSourceKind,
-  emptyNamedSourceV2,
   moveNamedSource,
   removeNamedSource,
   sourceName,
@@ -33,8 +32,6 @@ import {
   type MetaRule,
   type MetaCombinator,
 } from "@/lib/recon/querySpec"
-
-export const emptyNamedSource = emptyNamedSourceV2
 
 export function NamedSourcesEditor({
   sources,

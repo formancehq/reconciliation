@@ -10,7 +10,7 @@ import type {
   EvaluationResult,
   Severity,
   Verdict,
-} from "./types"
+} from "./common"
 
 /** Any valid `@workspace/ui` Badge variant we use. */
 export type BadgeVariant =
