@@ -166,9 +166,15 @@ no duplicate live alerts, no change to the alert contract.
 ### 4.5 Outcomes
 
 **One outcome per asset**, fingerprint `asset:<asset>`. Evidence is the scan, not the holds:
-`holdsMatched`, `holdsBudget`, `holdsReleased`, `holdsFlagged`, `amountFlagged`, `oldestDeadline`,
-`evaluatedAt`, `deadlineOnOrBefore` (and `deadlineAfter` for a band), `ledger`, `asset`,
-`compiledCEL`, and `effectiveQuery`.
+`holdsMatched`, `holdsBudget`, `holdsReleased`, `holdsRejected`, `holdsFlagged`, `amountFlagged`,
+`oldestDeadline`, `evaluatedAt`, `deadlineOnOrBefore` (and `deadlineAfter` for a band), `ledger`,
+`asset`, `compiledCEL`, and `effectiveQuery`.
+
+The counts partition the matched set — `matched = released + rejected + flagged` — so they add up
+rather than leaving a reader to wonder where rows went. `holdsRejected` counts holds the ledger
+returned and the authoritative in-Go check then declined. It is normally zero, because the pushdown
+and the direct evaluation are equivalent by construction; it was previously a silent `continue`,
+which meant a disagreement between them cost the identity with nothing to show for it.
 
 > **Revised 2026-09-08 — `per_hold` is gone.** This section previously offered a per-hold scope
 > alongside the aggregate, and made it the default: it answered "*which* hold is stuck, for how

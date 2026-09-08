@@ -43,7 +43,7 @@ export const ResultBadge = ({ result }: { result: EvaluationResult }) => (
 const HEALTH_META: Record<HealthStatus, { label: string; dot: string }> = {
   checking: { label: 'Checking…', dot: 'bg-muted-foreground animate-pulse' },
   up: { label: 'Connected', dot: 'bg-green-foreground' },
-  down: { label: 'Unreachable', dot: 'bg-destructive' },
+  down: { label: 'Unreachable', dot: 'bg-destructive-foreground' },
 };
 
 export function HealthPill({ health, onRetry }: { health: HealthStatus; onRetry?: () => void }) {

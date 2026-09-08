@@ -301,7 +301,17 @@ func (t *StaleHolds) Evaluate(
 		}
 		// The query already narrowed the set; this check is authoritative. Direct
 		// evaluation decides the outcome, the pushdown is what makes it cheap.
+		//
+		// Counted rather than dropped. The two are equivalent by construction —
+		// `created <= until - maxAge` is the same statement as
+		// `created + maxAge <= until` — so this branch should not fire, and
+		// silently skipping it let `matched = released + flagged` stop holding
+		// with nothing to say where the rows went. One benign cause exists: a
+		// deadline key present but blank satisfies the query's `$exists` and is
+		// treated as absent here, so it falls to the createdKey basis and can
+		// land outside the window.
 		if !window.contains(deadline) {
+			scan.rejected++
 			continue
 		}
 		// Accumulated, not collected. The outcome is one aggregate per asset, so
@@ -323,6 +333,7 @@ func (t *StaleHolds) Evaluate(
 type scanSummary struct {
 	matched  int
 	released int
+	rejected int
 	flagged  int
 	total    *big.Int
 	oldest   time.Time
@@ -345,6 +356,14 @@ func (spec *StaleHoldsSpec) aggregateOutcome(scan scanSummary, query json.RawMes
 // investigating a break needs the set, not a prefix of it, and the set is
 // recoverable: effectiveQuery is the exact query this evaluation ran, deadline
 // cutoff included as an integer literal.
+//
+// The counts partition what the ledger returned:
+//
+//	holdsMatched = holdsReleased + holdsRejected + holdsFlagged
+//
+// holdsRejected is normally zero — a non-zero value means the pushed-down
+// predicate and the authoritative in-Go check disagreed about a hold, which is
+// worth seeing rather than losing.
 //
 // It is in this module's own query dialect — the same shape a rule's
 // source.query takes — so it drops straight back into a rule. It is NOT
@@ -370,6 +389,7 @@ func (spec *StaleHoldsSpec) summaryEvidence(scan scanSummary, query json.RawMess
 		"holdsMatched":       scan.matched,
 		"holdsBudget":        scan.budget,
 		"holdsReleased":      scan.released,
+		"holdsRejected":      scan.rejected,
 		"holdsFlagged":       scan.flagged,
 		"amountFlagged":      scan.total.String(),
 		"effectiveQuery":     string(query),

@@ -563,8 +563,23 @@ narrows it to one desk or book — so separate sets are separate rules, with sep
 
 Evidence describes the scan, never the holds: `mode`, `evaluatedAt` (the evaluation PIT),
 `deadlineOnOrBefore` (and `deadlineAfter` for a band), `holdsMatched`, `holdsBudget`,
-`holdsReleased`, `holdsFlagged`, `amountFlagged`, `oldestDeadline`, `ledger`, `asset`, `compiledCEL`,
-and `effectiveQuery`.
+`holdsReleased`, `holdsRejected`, `holdsFlagged`, `amountFlagged`, `oldestDeadline`, `ledger`,
+`asset`, `compiledCEL`, and `effectiveQuery`.
+
+The counts **partition** what the ledger returned:
+
+```
+holdsMatched = holdsReleased + holdsRejected + holdsFlagged
+```
+
+- `holdsReleased` — matched but holding nothing. A released hold keeps its deadline metadata and a
+  balance is not filterable in a query, so these are read and then dropped.
+- `holdsRejected` — matched and funded, but rejected by the authoritative in-Go deadline check.
+  **Normally zero.** The pushdown and the direct evaluation are equivalent by construction, so a
+  non-zero value means they disagreed about a hold; the one benign cause is a deadline key that is
+  present but blank, which satisfies the query's `$exists` and reads as absent to the evaluator.
+- `holdsFlagged` — funded and past the deadline. The verdict: `amountFlagged` and `oldestDeadline`
+  describe exactly these.
 
 `effectiveQuery` is what makes the set recoverable without embedding it. It is the query this
 evaluation ran, deadline cutoff included as an integer literal, in **this module's query dialect** —

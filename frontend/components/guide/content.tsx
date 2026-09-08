@@ -232,6 +232,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					rows={[
 						[<strong key="matched">Holds matched</strong>, 'What the ledger returned for the rule’s selector plus the deadline cutoff. Already narrowed to holds past their deadline — and the cost of the run, which is why a rule warns when this reaches its hold limit'],
 						[<strong key="released">Released, ignored</strong>, 'Matched accounts holding nothing. Releasing a hold empties the account but leaves its deadline metadata, and a balance cannot be filtered on in the ledger, so these are dropped after the read. A number that keeps growing is dead holds accumulating in the set'],
+						[<strong key="rejected">Rejected on recheck</strong>, 'Shown only when it is not zero. The service re-checks each hold’s deadline itself rather than trusting the ledger’s filter, and this counts any the two disagreed about — normally none. A deadline field that exists but is empty is the one ordinary cause'],
 						[<strong key="flagged">Holds flagged</strong>, 'Still holding funds, and past the deadline. The verdict: the amount held and the oldest deadline describe exactly these, and zero flagged is what makes the run pass'],
 					]}
 				/>

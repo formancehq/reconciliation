@@ -705,6 +705,14 @@ export function StaleHoldsEvidence({
           ["Holds matched", String(evidence.holdsMatched)],
           ["Released, ignored", String(evidence.holdsReleased)],
           ["Window", window],
+          // Shown only when non-zero: it is normally 0, and a permanent zero is
+          // noise, while any other value means the ledger's filter and the
+          // authoritative check disagreed about a hold.
+          ...(evidence.holdsRejected
+            ? ([
+                ["Rejected on recheck", String(evidence.holdsRejected)],
+              ] as [string, string][])
+            : []),
         ]}
       />
       {evidence.holdsFlagged > 0 && (

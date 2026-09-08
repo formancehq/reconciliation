@@ -331,6 +331,13 @@ export interface StaleHoldsEvidenceV2 {
   holdsMatched: number
   holdsBudget: number
   holdsReleased: number
+  /**
+   * Matched, funded, but rejected by the authoritative in-Go deadline check.
+   * Normally 0 — the counts partition the matched set, so
+   * `matched = released + rejected + flagged`, and a non-zero value means the
+   * pushed-down predicate and the direct evaluation disagreed.
+   */
+  holdsRejected?: number
   holdsFlagged: number
   amountFlagged: string
   oldestDeadline?: string

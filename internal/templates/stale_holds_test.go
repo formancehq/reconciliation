@@ -339,6 +339,53 @@ func TestStaleHolds_AggregatesTheStaleSet(t *testing.T) {
 	}
 }
 
+// The counts partition what the ledger returned, so an operator can add them up
+// and get holdsMatched back. The fake resolver ignores the query, which is
+// exactly how the divergence case is reachable: it hands back a hold the real
+// pushdown would have filtered out, and the authoritative in-Go check rejects
+// it rather than dropping it silently.
+func TestStaleHolds_CountsPartitionTheMatchedSet(t *testing.T) {
+	t.Parallel()
+
+	outcomes, _ := evaluateHolds(t, holdSpec(t, nil), []engine.Account{
+		hold("holds:stuck", 25_00, expiring(evalNow.Add(-2*time.Hour))),  // flagged
+		hold("holds:released", 0, expiring(evalNow.Add(-9*time.Hour))),   // zero balance
+		hold("holds:not-due", 30_00, expiring(evalNow.Add(6*time.Hour))), // outside the window
+	})
+
+	evidence := outcomes[0].Evidence
+	matched, _ := evidence["holdsMatched"].(int)
+	released, _ := evidence["holdsReleased"].(int)
+	rejected, _ := evidence["holdsRejected"].(int)
+	flagged, _ := evidence["holdsFlagged"].(int)
+
+	if matched != 3 || released != 1 || rejected != 1 || flagged != 1 {
+		t.Errorf("matched/released/rejected/flagged = %d/%d/%d/%d, want 3/1/1/1",
+			matched, released, rejected, flagged)
+	}
+	if released+rejected+flagged != matched {
+		t.Errorf("counts must partition the matched set: %d + %d + %d != %d",
+			released, rejected, flagged, matched)
+	}
+	// Only the flagged hold contributes to the total.
+	if got := evidence["amountFlagged"]; got != "2500" {
+		t.Errorf("amountFlagged = %v, want only the stuck hold's 2500", got)
+	}
+}
+
+// A hold the query and the direct check agree on leaves holdsRejected at zero,
+// so a non-zero value is a real signal rather than routine noise.
+func TestStaleHolds_NothingRejectedWhenTheyAgree(t *testing.T) {
+	t.Parallel()
+
+	outcomes, _ := evaluateHolds(t, holdSpec(t, nil), []engine.Account{
+		hold("holds:stuck", 25_00, expiring(evalNow.Add(-2*time.Hour))),
+	})
+	if got := outcomes[0].Evidence["holdsRejected"]; got != 0 {
+		t.Errorf("holdsRejected = %v, want 0", got)
+	}
+}
+
 // The deadline predicate must reach the ledger as a query clause — that is what
 // keeps the scan proportional to the stale holds rather than to every hold.
 func TestStaleHolds_QueryPushdown(t *testing.T) {
