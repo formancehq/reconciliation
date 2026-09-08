@@ -28,7 +28,7 @@ import (
 func TestCreateRule_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	req := &service.CreateRuleRequest{
 		Name:         "buildr-trust",
@@ -66,7 +66,7 @@ func TestCreateRule_Nominal(t *testing.T) {
 func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	req := &service.CreateRuleRequest{Name: "x", TemplateKind: models.TemplateBalanceEquation, TemplateSpec: json.RawMessage(`{}`)}
 	mockSvc.EXPECT().CreateRule(gomock.Any(), req).Return(nil, templates.ErrInvalidSpec)
@@ -85,7 +85,7 @@ func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
 func TestGetRule_NotFound(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	mockSvc.EXPECT().GetRule(gomock.Any(), id).Return(nil, errNotFoundForTest())
@@ -100,7 +100,7 @@ func TestGetRule_NotFound(t *testing.T) {
 func TestGetRule_InvalidUUID(t *testing.T) {
 	t.Parallel()
 	b, _ := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	r := httptest.NewRequest(http.MethodGet, "/rules/not-a-uuid", nil)
 	rec := httptest.NewRecorder()
@@ -115,7 +115,7 @@ func TestGetRule_InvalidUUID(t *testing.T) {
 func TestDeleteRule_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	mockSvc.EXPECT().DeleteRule(gomock.Any(), id).Return(nil)
@@ -130,7 +130,7 @@ func TestDeleteRule_Nominal(t *testing.T) {
 func TestEvaluateRule_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	resp := &models.Evaluation{
@@ -157,7 +157,7 @@ func TestEvaluateRule_Nominal(t *testing.T) {
 func TestAckAlert_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	req := &service.AckAlertRequest{By: "ops@buildr.com", Note: "investigating"}
@@ -185,7 +185,7 @@ func TestAckAlert_Nominal(t *testing.T) {
 func TestResolveAlert_FixedByBooking(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	req := &service.ResolveAlertRequest{By: "ops", Note: "posted tx_abc", TransactionRefs: []string{"tx_abc"}}
@@ -215,7 +215,7 @@ func TestResolveAlert_FixedByBooking(t *testing.T) {
 func TestAcceptAlert_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	req := &service.AcceptAlertRequest{By: "treasurer", Note: "settlement lag"}
@@ -246,7 +246,7 @@ func TestAcceptAlert_Nominal(t *testing.T) {
 func TestSnoozeAlert_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	until := time.Now().UTC().Add(time.Hour).Round(time.Millisecond)
@@ -273,7 +273,7 @@ func TestSnoozeAlert_Nominal(t *testing.T) {
 func TestUnsnoozeAlert_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	req := &service.UnsnoozeAlertRequest{By: "bob"}
@@ -299,7 +299,7 @@ func TestUnsnoozeAlert_Nominal(t *testing.T) {
 func TestListAlertEvents_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	resolved := models.AlertResolved
@@ -329,7 +329,7 @@ func TestListAlertEvents_Nominal(t *testing.T) {
 func TestListRules_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	cursor := &bunpaginate.Cursor[models.Rule]{
 		PageSize: 15,
@@ -355,7 +355,7 @@ func TestListRules_Nominal(t *testing.T) {
 func TestListRuleCaptures_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	ruleID := uuid.New()
 	cursor := &bunpaginate.Cursor[models.Capture]{
@@ -390,7 +390,7 @@ func TestListRuleCaptures_Nominal(t *testing.T) {
 func TestListRules_InvalidPageSize(t *testing.T) {
 	t.Parallel()
 	b, _ := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	r := httptest.NewRequest(http.MethodGet, "/rules?pageSize=not-a-number", nil)
 	rec := httptest.NewRecorder()
@@ -402,7 +402,7 @@ func TestListRules_InvalidPageSize(t *testing.T) {
 func TestListAlerts_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	cursor := &bunpaginate.Cursor[models.Alert]{
 		PageSize: 15,
@@ -431,7 +431,7 @@ func TestListAlerts_Nominal(t *testing.T) {
 func TestGetAlert_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	alert := &models.Alert{
@@ -459,7 +459,7 @@ func TestGetAlert_Nominal(t *testing.T) {
 func TestPatchRule_Nominal(t *testing.T) {
 	t.Parallel()
 	b, mockSvc := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	id := uuid.New()
 	// PATCH handler does PatchRule + GetRule (re-fetch after patch). Both must
@@ -484,7 +484,7 @@ func TestPatchRule_Nominal(t *testing.T) {
 func TestPatchRule_InvalidBody(t *testing.T) {
 	t.Parallel()
 	b, _ := newTestingBackend(t)
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 
 	r := httptest.NewRequest(http.MethodPatch, "/rules/"+uuid.New().String(), bytes.NewReader([]byte(`not-json`)))
 	rec := httptest.NewRecorder()

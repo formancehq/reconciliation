@@ -59,6 +59,7 @@ func newRouter(
 	ledgerClient *ledger.Client,
 	controlLedger ControlLedger,
 	authenticator auth.Authenticator,
+	authConfig AuthConfig,
 	healthController *health.HealthController,
 	publisher message.Publisher,
 	auditConfig audit.Config,
@@ -91,8 +92,9 @@ func newRouter(
 		r.Use(auth.Middleware(authenticator))
 		// After auth has verified the token, bind its subject onto the context so
 		// lifecycle writes can attribute the action to the authenticated human
-		// (EN-1930, P1.2). Must follow auth.Middleware — see subjectMiddleware.
-		r.Use(subjectMiddleware)
+		// (EN-1930, P1.2). Must follow auth.Middleware, and binds only when auth
+		// is actually enforced — see subjectMiddleware.
+		r.Use(subjectMiddleware(authConfig.Enabled))
 		r.Use(service.OTLPMiddleware("reconciliation", serviceInfo.Debug))
 
 		// The rule/alert surface, unversioned. The /v2 prefix existed to tell the

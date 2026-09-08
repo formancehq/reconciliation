@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/formancehq/go-libs/auth"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,7 +66,7 @@ func TestSubjectMiddleware_BindsSubject(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/alerts/x/ack", nil)
 	r.Header.Set("Authorization", "Bearer "+makeJWT("auth0|eve"))
-	subjectMiddleware(next).ServeHTTP(httptest.NewRecorder(), r)
+	subjectMiddleware(true)(next).ServeHTTP(httptest.NewRecorder(), r)
 	require.True(t, present)
 	assert.Equal(t, "auth0|eve", seen)
 }
@@ -79,6 +80,39 @@ func TestSubjectMiddleware_NoTokenLeavesContextEmpty(t *testing.T) {
 	})
 
 	r := httptest.NewRequest(http.MethodPost, "/alerts/x/ack", nil)
-	subjectMiddleware(next).ServeHTTP(httptest.NewRecorder(), r)
+	subjectMiddleware(true)(next).ServeHTTP(httptest.NewRecorder(), r)
 	assert.False(t, present)
+}
+
+// With auth disabled, auth.Middleware is backed by noAuth: it admits every
+// request without reading the Authorization header, so nothing upstream has
+// verified the token. Binding its `sub` would let any caller name the actor
+// recorded in signed control-ledger metadata, so nothing may be bound — however
+// well-formed the token looks.
+func TestSubjectMiddleware_AuthDisabledBindsNothing(t *testing.T) {
+	t.Parallel()
+
+	var present bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, present = service.SubjectFromContext(r.Context())
+	})
+
+	handler := auth.Middleware(auth.NewNoAuth())(subjectMiddleware(false)(next))
+
+	for name, header := range map[string]string{
+		"well-formed token": "Bearer " + makeJWT("auth0|alice"),
+		"unsigned token":    "Bearer " + threeSeg(map[string]string{"sub": "cfo@bank.example"}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			present = false
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/alerts/x/resolve", nil)
+			r.Header.Set("Authorization", header)
+			handler.ServeHTTP(rec, r)
+
+			// noAuth lets the request through; the subject must not follow it.
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.False(t, present, "no subject may be bound when auth is not enforced")
+		})
+	}
 }

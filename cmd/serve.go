@@ -65,8 +65,13 @@ func runServer(version string) func(cmd *cobra.Command, args []string) error {
 		listen, _ := cmd.Flags().GetString(listenFlag)
 		uiURL, _ := cmd.Flags().GetString(uiURLFlag)
 		auditEnabled, _ := cmd.Flags().GetBool(audit.AuditEnabledFlag)
+		// Whether auth is enforced decides whether the API may trust the access
+		// token's subject as the actor on a lifecycle write; auth.FXModuleFromFlags
+		// consumes the same flag but does not expose the answer to the graph.
+		authEnabled, _ := cmd.Flags().GetBool(auth.AuthEnabledFlag)
 		options = append(options,
 			fx.Supply(audit.Config{Enabled: auditEnabled}),
+			fx.Supply(api.AuthConfig{Enabled: authEnabled}),
 			api.HTTPModule(sharedapi.ServiceInfo{
 				Version: version,
 				Debug:   service.IsDebug(cmd),

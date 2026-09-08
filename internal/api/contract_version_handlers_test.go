@@ -64,7 +64,7 @@ func TestV2ExposesAlertEventsRoute(t *testing.T) {
 	svc.EXPECT().ListAlertEvents(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&bunpaginate.Cursor[models.AlertEvent]{Data: []models.AlertEvent{}}, nil)
 
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 	req := httptest.NewRequest(http.MethodGet, "/alerts/"+uuid.NewString()+"/events", nil)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
@@ -89,7 +89,7 @@ func TestV2CreateRouteScopesRequestAndRendersVersion(t *testing.T) {
 		}, nil
 	})
 
-	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
 	req := httptest.NewRequest(http.MethodPost, "/rules", strings.NewReader(`{"name":"eq","templateKind":"balance_equation","templateSpec":{}}`))
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
