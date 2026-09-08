@@ -114,21 +114,23 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					caption="Rule templates"
 					columns={['Template', 'Use it to…', 'Typical setup']}
 					rows={[
-						[<strong key="invariant">Ledger invariant</strong>, 'prove that accounting account sets net to zero', 'Debit-normal assets against credit-normal liabilities, per asset'],
-						[<strong key="parity">Source parity</strong>, 'prove that two independently sourced balances agree', 'Posting-derived ledger balance against another ledger or an account-metadata balance'],
-						[<strong key="threshold">Account threshold</strong>, 'detect when balances leave an allowed range', 'A minimum reserve, maximum exposure, or both, aggregated or per account'],
-							[<strong key="multi">Multi-source (V2)</strong>, 'reconcile more than two named sources at once', 'A balance equation, exchange-rate bounds, source consensus, or a coverage ratio across named sources'],
-						[<strong key="stale">Stale holds (V2)</strong>, 'catch held funds that outstay their expiry', 'A set of hold accounts plus the metadata key carrying each hold’s expiry, with a fallback maximum age'],
+						[<strong key="equation">Balance equation</strong>, 'prove that a signed set of balances nets to zero', 'Two to thirty-two named sources, each with a sign, and a tolerance per asset'],
+						[<strong key="rate">Exchange-rate bounds</strong>, 'prove a derived rate stays inside a band', 'A base source and a quote source, with inclusive rate bounds'],
+						[<strong key="consensus">Source consensus</strong>, 'prove independently sourced balances agree', 'Every named source must report, and the widest spread must stay within tolerance'],
+						[<strong key="coverage">Coverage-ratio bounds</strong>, 'prove one portfolio covers another', 'A numerator and a denominator portfolio, with inclusive ratio bounds'],
+						[<strong key="bounds">Balance bounds</strong>, 'detect when one account set leaves an allowed range', 'A minimum reserve, a maximum exposure, or both, per asset'],
+						[<strong key="stale">Stale holds</strong>, 'catch held funds that outstay their deadline', 'A set of hold accounts plus the metadata key carrying each deadline, with a fallback maximum age'],
 					]}
 				/>
 
 				<SubHeading id="v3-rec-create">Creating a rule</SubHeading>
 				<P>
 					Click <strong>New rule</strong>. The template cards explain the control before you select it, and
-					the form then adapts: account sets for an invariant, Source A and Source B for parity, or bounds
-					for a threshold. <strong>Load example</strong>{' '}fills in a complete configuration you can inspect
-					and replace. Give the rule an operational name and choose a severity that reflects the response
-					it should trigger.
+					the form then adapts to it: signed named sources for an equation, one account set with limits for
+					bounds, a base and a quote for a rate, a hold set and a deadline key for stale holds.{' '}
+					<strong>Load example</strong>{' '}fills in a complete configuration you can inspect and replace.
+					Give the rule an operational name and choose a severity that reflects the response it should
+					trigger.
 				</P>
 				<ul className="list-disc space-y-1 pl-5 text-sm">
 					<li><strong>Amounts are integers in the asset&apos;s minor units</strong> (for example, cents). A tolerance of <Code>0</Code> means an exact match.</li>
@@ -136,25 +138,43 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					<li><strong>Metadata conditions</strong>{' '}narrow a source further: pick an indexed account-metadata key and an operator suited to its type. Use <em>equals</em> / <em>exists</em> for text and booleans, plus <em>&lt;</em> <em>≤</em> <em>&gt;</em> <em>≥</em> <em>between</em> for numbers and datetimes. Indexed keys are offered live, read through the reconciliation service&apos;s ledger connection.</li>
 				</ul>
 
-				<SubHeading id="v3-rec-source-parity">Configure source parity without reading CEL</SubHeading>
+				<SubHeading id="v3-rec-named-sources">Name your sources instead of ordering them</SubHeading>
 				<P>
-					Configure each side by answering three questions: <strong>which ledger</strong>, <strong>which
-					accounts</strong>, and <strong>which value to read</strong>. A posting-derived source uses the
-					Formance balance calculated from postings. An account-metadata source reads an integer already
-					stored on the account object; it does not calculate a balance from postings.
+					Every template reads <strong>named sources</strong>. A source is a name you choose, a ledger, an
+					account selector, and the one asset it declares. Configure each by answering three questions:{' '}
+					<strong>which ledger</strong>, <strong>which accounts</strong>, and <strong>which value to
+					read</strong>. A posting-derived source uses the balance Formance calculates from postings. An
+					account-metadata source reads an integer already stored on the account object; it does not
+					calculate a balance from postings, and it is aggregate-only.
+				</P>
+				<P>
+					The name is what the rule refers to — an equation&apos;s signs, a rate&apos;s base and quote, a
+					ratio&apos;s numerator and denominator all point at names, so reordering the list changes nothing
+					and adding a third source is not a different template. Generated CEL stays available under{' '}
+					<strong>Technical expression</strong>, but it is a secondary implementation detail.
 				</P>
 				<GuideTable
-					caption="Reading the Source A ↔ Source B comparison"
+					caption="Reading a rule's sources"
 					columns={['UI element', 'What it tells you']}
 					rows={[
-						[<strong key="source-card">Source card</strong>, 'Ledger, account selector, value read, and—for metadata—the asset represented by that stored integer'],
+						[<strong key="source-card">Source card</strong>, 'The source name, its ledger, the account selector, and the one asset it contributes'],
+						[<strong key="sign">Sign</strong>, 'For an equation, which side of zero this source is added on — give debit-normal sets one sign and credit-normal sets the other, and equal balances on opposite sides cancel'],
 						[<strong key="exact">= Exact match</strong>, 'Every configured tolerance is zero; any difference opens a break'],
 						[<strong key="tolerated">≈ Within tolerance</strong>, 'At least one non-zero tolerance is allowed; a difference opens a break only outside that band'],
-						[<strong key="scope">Scope badge</strong>, 'Whether matching accounts are combined or compared separately. Metadata-backed sources are aggregate-only'],
+						[<strong key="asset">Asset badge</strong>, 'The single asset this source declares — or every asset the set holds, which fans the rule out to one result per asset'],
 						[<strong key="tolerance">Tolerance badge</strong>, 'The allowed deviation for each asset, expressed in that asset’s minor units'],
 						[<strong key="mapping-warning">Asset mapping warning</strong>, 'A metadata key represents a different asset from the configured tolerance; review the mapping before relying on the rule'],
 					]}
 				/>
+				<P>
+					For a metadata source, choose <strong>one metadata key</strong>{' '}and independently state the{' '}
+					<strong>one asset</strong>{' '}its integer represents, such as{' '}
+					<Code>account.metadata[&quot;value_known.toto&quot;]</Code> → <Code>USD/2</Code>. The key may
+					contain the asset name, as in <Code>reported.USD</Code>, but it does not have to. Other assets may
+					exist on the selected account; the source reads only the declared one. The account-selection
+					metadata filters above remain separate: they choose accounts, while this key supplies the value
+					being reconciled.
+				</P>
 				<P>
 					Choose <strong>one metadata key</strong>{' '}and independently state the <strong>one asset</strong>{' '}
 					represented by its integer value, such as <Code>account.metadata[&quot;value_known.toto&quot;]</Code> →{' '}
@@ -166,11 +186,19 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					it is a secondary implementation detail.
 				</P>
 
-				<SubHeading id="v3-rec-invariant-threshold">Configure invariants and thresholds</SubHeading>
-				<ul className="list-disc space-y-1 pl-5 text-sm">
-					<li><strong>Ledger invariant:</strong>{' '}assign each account set its accounting normal balance. Debit-normal balances are normalized as negative and credit-normal balances as positive, so equal balances on opposite sides cancel to zero. Add as many account sets as the control needs.</li>
-					<li><strong>Account threshold:</strong>{' '}choose aggregate mode to check the sum of the selected set, or per-account mode to open a distinct break for each account. Add a minimum, maximum, or both for every relevant asset.</li>
-				</ul>
+				<SubHeading id="v3-rec-balance-bounds">Configure balance bounds</SubHeading>
+				<P>
+					Give one account set a minimum, a maximum, or both, per asset, in that asset&apos;s minor units. A
+					rule checks the <em>sum</em>{' '}of the set it selects, so a reserve floor across many accounts is
+					one rule rather than one per account.
+				</P>
+				<Callout kind="info" title="The assets you list are the assets checked">
+					Bounds are the one place the asset list is <strong>declared</strong>{' '}rather than discovered from
+					what the accounts hold, and that is deliberate. A floor has to keep failing when a set drains to
+					nothing — if the asset universe came from what the set currently holds, an account emptied to zero
+					would leave the universe and its alert would resolve itself at exactly the moment the money left.
+					Adding an asset to the bounds table is what starts checking it.
+				</Callout>
 
 				<SubHeading id="v3-rec-stale-holds">Watch for holds that overstay</SubHeading>
 				<P>
@@ -185,7 +213,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					<li><strong>Point a rule at the set you want to watch.</strong>{' '}Because the alert is a total, the rule&apos;s selector is what makes it meaningful: an address prefix plus whatever narrows it to one desk or book. Separate rules over separate sets give you separate alerts — and separate severities.</li>
 					<li><strong>Warn before the deadline, not after.</strong>{' '}A rule in <em>approaching</em>{' '}mode flags holds due within a window you choose — the next six hours, for example. Pair it with a second rule in <em>stale</em>{' '}mode at a higher severity: the early warning resolves itself as the breach alert opens, so one hold never leaves two live alerts behind.</li>
 					<li><strong>Set the warning window wider than the run interval.</strong>{' '}A rule that runs hourly with a thirty-minute warning window can step straight over the warning and report the breach.</li>
-					<li><strong>Finding the holds behind an alert.</strong>{' '}The alert carries the exact query it ran, deadline cutoff included, rather than a list that would grow with the size of the problem. It is written in the same dialect as a rule&apos;s own selector, so you can drop it into a rule to list the holds. It answers &ldquo;still past that cutoff and still holding funds&rdquo; — balances are always read live, so it is the current set rather than a snapshot of the run.</li>
+					<li><strong>Finding the holds behind an alert.</strong>{' '}The alert carries the exact query it ran, deadline cutoff included, rather than a list that would grow with the size of the problem. Use <strong>List them</strong>{' '}on the alert to run that query and see the accounts. It answers &ldquo;still past that cutoff and still holding funds&rdquo; — balances are always read live, so it is the current set rather than a snapshot of the run, and the panel says so when the live counts have drifted from the ones the run recorded.</li>
 					<li><strong>Released holds keep their metadata.</strong>{' '}Releasing a hold empties the account but leaves the expiry behind, so give the rule a selector that matches live holds only — an address prefix plus something like <Code>metadata[&quot;hold_status&quot;] = active</Code> — rather than every hold ever placed.</li>
 				</ul>
 				<Callout kind="info" title="The deadline key has to be indexed">
@@ -195,9 +223,18 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 				</Callout>
 				<Callout kind="tip" title="Only indexed date keys are offered">
 					The deadline pickers list the ledger’s indexed datetime and integer keys, because the date
-					comparison is pushed down to the ledger. The label keys below them are the opposite case —
-					they are read off the account and never filtered on, so any key name works.
+					comparison is pushed down to the ledger — a key the ledger cannot filter on cannot carry a
+					deadline.
 				</Callout>
+				<GuideTable
+					caption="Reading a stale-holds alert"
+					columns={['Number', 'What it counts']}
+					rows={[
+						[<strong key="matched">Holds matched</strong>, 'What the ledger returned for the rule’s selector plus the deadline cutoff. Already narrowed to holds past their deadline — and the cost of the run, which is why a rule warns when this reaches its hold limit'],
+						[<strong key="released">Released, ignored</strong>, 'Matched accounts holding nothing. Releasing a hold empties the account but leaves its deadline metadata, and a balance cannot be filtered on in the ledger, so these are dropped after the read. A number that keeps growing is dead holds accumulating in the set'],
+						[<strong key="flagged">Holds flagged</strong>, 'Still holding funds, and past the deadline. The verdict: the amount held and the oldest deadline describe exactly these, and zero flagged is what makes the run pass'],
+					]}
+				/>
 
 				<SubHeading id="v3-rec-timing">Choose the alert period and run mode</SubHeading>
 				<P>
@@ -263,10 +300,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 				<SubHeading id="v3-rec-rule-detail">Use rule details as the control record</SubHeading>
 				<P>
 					Select a rule&apos;s header to open it. The top of the page restates the configured control in the
-					same human-readable format used in the Rules list. Source-parity rules show Source A and Source B,
-					the scope, and either <strong>= Exact match</strong>{' '}or <strong>≈ Within tolerance</strong>.
-					Edit, Duplicate, and Evaluate now live together in the detail header. Named sources are shown before
-					the invariant, and generated CEL is collapsed under <strong>Implementation details</strong>.
+					same human-readable format used in the Rules list: the named sources, and either{' '}
+					<strong>= Exact match</strong>{' '}or <strong>≈ Within tolerance</strong>. Edit, Duplicate, and
+					Evaluate live together in the detail header. Sources are shown before the invariant they feed, and
+					generated CEL is collapsed under <strong>Implementation details</strong>.
 				</P>
 				<P>
 					One <strong>Combined history</strong>{' '}then follows in the exact order recorded by the backend
@@ -422,7 +459,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 			>
 				<SubHeading id="v3-rec-insights-start">Start with a rule and asset</SubHeading>
 				<ol className="list-decimal space-y-1 pl-7 text-sm">
-					<li>Choose a rule from the selector. Source-parity and account-threshold rules provide deviation charts.</li>
+					<li>Choose a rule from the selector. Balance-equation and balance-bounds rules provide deviation charts.</li>
 					<li>If the rule covers several assets or fingerprints, choose the series you want to investigate.</li>
 					<li>Hover a point for its exact time, verdict, observed value, and configured boundary.</li>
 					<li>Return to the rule&apos;s combined activity timeline when you need the complete evidence for a specific run.</li>
@@ -433,7 +470,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					caption="Insights charts"
 					columns={['Chart', 'How to use it']}
 					rows={[
-						[<strong key="deviation">Deviation over time</strong>, 'For source parity, plots the signed difference against the ± tolerance band. For thresholds, plots the balance against its minimum and maximum'],
+						[<strong key="deviation">Deviation over time</strong>, 'Drawn for the two templates that measure a distance from a reference: a balance equation plots its residual against the ± tolerance band, and balance bounds plots the balance against its minimum and maximum. Other templates have no single deviation to plot, so the chart is omitted rather than faked'],
 						[<strong key="passes">Pass markers</strong>, 'Show that a run stayed safe. A pass capture does not record a magnitude, so the marker is placed inside the safe zone without inventing a value'],
 						[<strong key="drift">Cumulative drift</strong>, 'Adds the signed gap over time. A line that keeps rising or falling indicates persistent one-sided bias; movement that returns toward zero behaves more like offsetting noise'],
 						[<strong key="breaks">Breaks by rule type</strong>, 'Shows the global alert count split by template and status, helping identify which class of control creates the most operational work'],
