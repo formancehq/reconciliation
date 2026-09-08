@@ -174,7 +174,7 @@ func TestIntegration_StaleHolds(t *testing.T) {
 	// ledger cannot do, since balances are not filterable.
 	require.Equal(t, "5000", evidence["amountFlagged"])
 	require.Equal(t, 1, evidence["holdsReleased"], "the released hold matched the query and was post-filtered")
-	require.Equal(t, 4, evidence["holdsMatched"], "the query returns every hold past the cutoff, released ones included")
+	require.Equal(t, 3, evidence["holdsMatched"], "stale + released + aged past the cutoff; `fresh` is still inside its expiry, so the ledger excludes it")
 
 	// The set is recoverable from evidence: this is the query the ledger answered.
 	query, _ := evidence["effectiveQuery"].(string)
