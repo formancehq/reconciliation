@@ -176,7 +176,7 @@ const RULES = [
 ]
 
 // ── V2 rule catalogue ───────────────────────────────────────────────────────
-// stale_holds is a V2 template, so these are created on /v2/rules. They read the
+// These are created on /rules. They read the
 // holds:* book seeded by seed-data.sh, whose deadline metadata is dated relative
 // to seed time — so the verdicts below hold whenever you run this.
 //
@@ -238,26 +238,22 @@ const V2_RULES = [
   },
 ];
 
-async function listRules(prefix = '') {
-  const r = await api('GET', `${prefix}/rules`);
+async function listRules() {
+  const r = await api('GET', '/rules');
   return r?.cursor?.data ?? [];
 }
 
-async function listAlerts(prefix = '') {
-  const r = await api('GET', `${prefix}/alerts`);
+async function listAlerts() {
+  const r = await api('GET', '/alerts');
   return r?.cursor?.data ?? [];
 }
 
 async function cleanup() {
-  let cleared = 0;
-  for (const prefix of ['/v2']) {
-    const mine = (await listRules(prefix)).filter((r) => r?.labels?.demo === DEMO_LABEL);
-    for (const r of mine) {
-      await api('DELETE', `${prefix}/rules/${encodeURIComponent(r.id)}`).catch(() => {});
-    }
-    cleared += mine.length;
+  const mine = (await listRules()).filter((r) => r?.labels?.demo === DEMO_LABEL);
+  for (const r of mine) {
+    await api('DELETE', `/rules/${encodeURIComponent(r.id)}`).catch(() => {});
   }
-  if (cleared) console.log(`· cleared ${cleared} previously-seeded rule(s)`);
+  if (mine.length) console.log(`· cleared ${mine.length} previously-seeded rule(s)`);
 }
 
 async function main() {
@@ -278,7 +274,7 @@ async function main() {
   const created = [];
   for (const rule of RULES) {
     const body = { ...rule.body, labels: { ...(rule.body.labels || {}), demo: DEMO_LABEL, loan: '201' } };
-    const r = await api('POST', '/v2/rules', body);
+    const r = await api('POST', '/rules', body);
     created.push({ ...rule, id: r.data.id });
     console.log(`+ rule "${rule.body.name}" [${rule.body.templateKind}] → ${r.data.id}`);
   }
@@ -289,7 +285,7 @@ async function main() {
   for (const rule of V2_RULES) {
     const body = { ...rule.body, labels: { ...(rule.body.labels || {}), demo: DEMO_LABEL } };
     try {
-      const r = await api('POST', '/v2/rules', body);
+      const r = await api('POST', '/rules', body);
       created.push({ ...rule, id: r.data.id });
       console.log(`+ rule "${rule.body.name}" [${rule.body.templateKind}] → ${r.data.id}`);
     } catch (e) {
@@ -307,7 +303,7 @@ async function main() {
   for (const round of [1, 2]) {
     for (const rule of created) {
       try {
-        const r = await api('POST', `/v2/rules/${encodeURIComponent(rule.id)}/evaluate`, {});
+        const r = await api('POST', `/rules/${encodeURIComponent(rule.id)}/evaluate`, {});
         evalOk += 1;
         if (round === 1) {
           const result = r?.data?.result ?? '?';
@@ -332,7 +328,7 @@ async function main() {
   let alerts = [];
   for (let i = 0; i < 6; i++) {
     await sleep(500);
-    alerts = await listAlerts('/v2');
+    alerts = await listAlerts();
     if (alerts.length >= created.filter((r) => r.expect === 'FAIL').length) break;
   }
   const byRule = new Map();
@@ -353,13 +349,13 @@ async function main() {
     }
     try {
       if (rule.lifecycle === 'ack') {
-        await api('POST', `/v2/alerts/${alert.id}/ack`, { by: 'ops@acme.com', note: 'Investigating the exposure breach.' });
+        await api('POST', `/alerts/${alert.id}/ack`, { by: 'ops@acme.com', note: 'Investigating the exposure breach.' });
         console.log(`  ✓ acknowledged "${rule.body.name}"`);
       } else if (rule.lifecycle === 'resolve') {
-        await api('POST', `/v2/alerts/${alert.id}/resolve`, { by: 'ops@acme.com', note: 'Re-booked the mis-allocated postings.', transactionRefs: ['txn-demo-realloc-201'] });
+        await api('POST', `/alerts/${alert.id}/resolve`, { by: 'ops@acme.com', note: 'Re-booked the mis-allocated postings.', transactionRefs: ['txn-demo-realloc-201'] });
         console.log(`  ✓ resolved (fixed by booking) "${rule.body.name}"`);
       } else if (rule.lifecycle === 'accept') {
-        await api('POST', `/v2/alerts/${alert.id}/accept`, { by: 'cfo@acme.com', note: 'Known timing difference between repayment posting and principal roll-forward; accepted.' });
+        await api('POST', `/alerts/${alert.id}/accept`, { by: 'cfo@acme.com', note: 'Known timing difference between repayment posting and principal roll-forward; accepted.' });
         console.log(`  ✓ accepted (business) "${rule.body.name}"`);
       } else {
         console.log(`  · left OPEN "${rule.body.name}"`);

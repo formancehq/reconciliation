@@ -55,12 +55,16 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 
 ## V2 compatibility boundary
 
-V2 is additive. Existing V1 rules remain on the unprefixed `/rules` and `/alerts` routes and retain
-their persisted `source_parity.left` / `.right` fields and `leftSource` / `leftBalance` /
-`rightSource` / `rightBalance` evidence. V2 resources live under `/v2`, carry
-`contractVersion: 2`, and use named `sources[]` entries instead of positional left/right fields.
-There is no automatic rewrite or backfill of V1 rules, captures, alerts, or accepted evidence
-snapshots. See [the API reference](./technical/api.md#v1v2-coexistence) and
+V2 was additive while both contracts ran: V1 rules stayed on the unprefixed `/rules` and `/alerts`
+routes with their positional `source_parity.left` / `.right` fields and `leftSource` / `leftBalance`
+/ `rightSource` / `rightBalance` evidence, while V2 resources lived under `/v2` with named
+`sources[]` entries. V1 is now retired and the `/v2` prefix with it — `/rules` and `/alerts` serve
+the named-source contract, and every resource carries `contractVersion: 2`.
+
+Nothing was rewritten or backfilled. A persisted V1 rule still names a retired template kind and
+evaluates to an ERROR rather than being translated, and historical captures, alerts and accepted
+evidence snapshots keep the shape they were written with. See
+[the API reference](./technical/api.md#v1v2-coexistence) and
 [ADR-004](./prd/adr-004-multi-source-comparisons.md).
 
 > **Ledger-native migration (branch `feat/reconciliation-ledger-v3`).** The storage layer above was

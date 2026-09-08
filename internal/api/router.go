@@ -43,7 +43,7 @@ func mountRuleAndAlertRoutes(r chi.Router, b backend.Backend) {
 	r.Get("/alerts/{alertID}", getAlertHandler(b))
 	// The alert event log is projected from the control ledger's activity stream
 	// (ledgerstore.ListAlertEvents); each event carries the ledger sequence, so it
-	// cross-references to the signed audit chain. Mounted for V1 and V2.
+	// cross-references to the signed audit chain.
 	r.Get("/alerts/{alertID}/events", listAlertEventsHandler(b))
 	r.Post("/alerts/{alertID}/ack", ackAlertHandler(b))
 	r.Post("/alerts/{alertID}/resolve", resolveAlertHandler(b))
@@ -95,11 +95,12 @@ func newRouter(
 		r.Use(subjectMiddleware)
 		r.Use(service.OTLPMiddleware("reconciliation", serviceInfo.Debug))
 
-		// The rule/alert surface. The unprefixed group that served the V1 contract
-		// is gone with it; /v2 is the one live surface, and the prefix is kept
-		// because it is the path every client already uses — collapsing it to
-		// unversioned is a cosmetic change, not part of retirement.
-		r.Route("/v2", func(r chi.Router) {
+		// The rule/alert surface, unversioned. The /v2 prefix existed to tell the
+		// two contracts apart; with V1 retired it distinguished nothing and no
+		// client depended on it. The contract stamp is independent of the path —
+		// it gates the V2-only wire fields and is recorded in signed
+		// control-ledger metadata — so it still rides every request.
+		r.Group(func(r chi.Router) {
 			r.Use(contractVersionMiddleware(models.ContractVersionV2))
 			mountRuleAndAlertRoutes(r, b)
 		})
@@ -107,7 +108,8 @@ func newRouter(
 		// Ledger introspection — read-only helpers that let the standalone UI's
 		// rule builder offer live ledger-name / metadata-key / account
 		// autosuggest, sourced through this module's ledger gRPC connection (UI
-		// federation). Version-agnostic, so mounted outside the V1/V2 groups.
+		// federation). Not part of the rule/alert contract, so mounted beside it
+		// rather than through its middleware.
 		r.Get("/ledgers", listLedgersHandler(ledgerClient))
 		r.Get("/ledgers/{ledger}/meta-fields", listLedgerMetaFieldsHandler(ledgerClient))
 		r.Get("/ledgers/{ledger}/accounts", listLedgerAccountsHandler(ledgerClient))

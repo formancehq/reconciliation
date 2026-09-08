@@ -1,42 +1,26 @@
 # API Reference
 
-Reconciliation exposes two isolated API surfaces:
+Reconciliation exposes one API surface: `/rules` and `/alerts`, on the auth scopes
+(`reconciliation:read`, `reconciliation:write`) and the `ErrorResponse` shape described below.
 
-- **V1 Ledger Clarity** (`/rules` / `/alerts`) — EE-gated at V1 GA.
-- **V2 multi-source controls** (`/v2/rules` / `/v2/alerts`) — additive; V1 bodies are unchanged.
-
-It uses the auth scopes (`reconciliation:read`, `reconciliation:write`) and the `ErrorResponse` shape described below.
-
-> Status: the V1 endpoints are ✅ shipped; alert-transition events are delivered via the ledger's
-> native events sink (see [Events](#events) below). Evaluations have no standalone evaluation
-> resource, but their immutable captures are available from each rule's `/captures` endpoint.
+> Status: ✅ shipped. Alert-transition events are delivered via the ledger's native events sink
+> (see [Events](#events) below). Evaluations have no standalone evaluation resource, but their
+> immutable captures are available from each rule's `/captures` endpoint.
 > OpenAPI lives in [openapi.yaml](../../openapi.yaml).
 
 ---
 
 <a id="v1v2-coexistence"></a>
-## V1/V2 coexistence
+## The contract stamp
 
-The route selects the contract. Clients do not send `contractVersion` on create or patch:
+There were once two contracts: a positional one served unprefixed, and the named-source one under
+`/v2`. V1 is retired and the prefix went with it — `/rules` and `/alerts` are the only routes, and
+every template uses named sources. Clients never send `contractVersion`.
 
-| Contract | Rule routes | Alert routes |
-|---|---|---|
-| V1 | `/rules`, `/rules/{id}`, `/rules/{id}/evaluate`, `/rules/{id}/captures`, `/rules/{id}/timeline` | `/alerts`, `/alerts/{id}`, `/events`, `/ack`, `/resolve`, `/accept`, `/snooze`, `/unsnooze` |
-| V2 | `/v2/rules`, `/v2/rules/{id}`, `/v2/rules/{id}/evaluate`, `/v2/rules/{id}/captures`, `/v2/rules/{id}/timeline` | `/v2/alerts`, `/v2/alerts/{id}`, `/ack`, `/resolve`, `/accept`, `/snooze`, `/unsnooze` |
-
-`contractVersion` is persisted immutably on rules, alerts, and captures. Missing markers on legacy
-records decode as version 1; new V1 writes store 1 and V2 writes store 2. V1 response bodies remain
-byte-shape compatible and do not gain the field. V2 rule, alert, and capture responses expose the
-required read-only value `"contractVersion": 2`.
-
-Version isolation is enforced before pagination and lookup results are returned. V1 lists never
-contain V2 resources and V2 lists never contain V1 resources. Fetching, patching, deleting,
-evaluating, listing captures for, or acting on an ID through the wrong version returns `404`; it does
-not disclose that the resource exists in another contract. A patch cannot change contract version.
-
-The legacy V1 per-alert `/events` endpoint remains a deferred compatibility surface. V2 does not
-duplicate that empty endpoint; V2 alert lifecycle items are available through the backed,
-rule-scoped `/v2/rules/{id}/timeline` journal.
+The stamp itself remains. It is persisted immutably on rules, alerts and captures, and their
+responses expose the read-only value `"contractVersion": 2`. It stays on the wire rather than being
+inferred because it is not re-derivable: the marker lives in signed control-ledger metadata, and a
+record written before the stamp existed decodes as version 1.
 
 Every template uses named sources. The positional V1 kinds — `ledger_invariant`,
 `account_threshold`, `source_parity` — are retired, and a persisted rule naming one is not rewritten:
@@ -58,7 +42,7 @@ only the versioned route, typed template catalog, and evidence contracts differ.
 
 ### Create a balance equation
 
-`POST /v2/rules`
+`POST /rules`
 
 ```json
 {
@@ -88,7 +72,7 @@ absolute residual, tolerance, and `compiledCEL`.
 
 ### Create exchange-rate bounds
 
-`POST /v2/rules`
+`POST /rules`
 
 ```json
 {
@@ -113,7 +97,7 @@ converted to binary floating point. A zero base produces a normal failed outcome
 
 ### Create source consensus
 
-`POST /v2/rules`
+`POST /rules`
 
 ```json
 {
@@ -135,7 +119,7 @@ tolerance. Evidence names the minimum and maximum sources and lists missing sour
 
 ### Create portfolio coverage bounds
 
-`POST /v2/rules`
+`POST /rules`
 
 ```json
 {
@@ -181,10 +165,9 @@ rule; transient ledger failures remain server errors rather than being misclassi
 See [templates.md](./templates.md#v2-catalog) for the complete specs, arithmetic,
 fingerprints, and evidence.
 
-`GET /v2/rules/{id}/captures` returns the same cursor envelope as V1, with
-`contractVersion: 2` on each capture and the V2 evidence object preserved unchanged. V2 alert
-evidence and `resolution.evidenceSnapshot` preserve that same object; they are never translated to
-V1 left/right keys.
+`GET /rules/{id}/captures` returns a cursor envelope with `contractVersion: 2` on each capture and
+the evidence object preserved unchanged. Alert evidence and `resolution.evidenceSnapshot` preserve
+that same object.
 
 ---
 
@@ -196,7 +179,7 @@ EE-gated. The contracts below match what's wired in [`internal/api/router.go`](.
 
 ### Rules
 
-#### `POST /v2/rules` — create
+#### `POST /rules` — create
 
 ```json
 {
@@ -415,7 +398,7 @@ Clears an active snooze before its window elapses. Idempotent — unsnoozing an 
 
 ### Rule timeline
 
-`GET /rules/{ruleID}/timeline` and `GET /v2/rules/{ruleID}/timeline` return one
+`GET /rules/{ruleID}/timeline` returns one
 newest-first, cursor-paginated history containing rule revisions, evaluation
 observations, and alert lifecycle activity. Every item uses a common envelope:
 
@@ -435,7 +418,7 @@ observations, and alert lifecycle activity. Every item uses a common envelope:
 }
 ```
 
-Read the current rule with `GET /rules/{id}` (or `/v2/rules/{id}`) and page the
+Read the current rule with `GET /rules/{id}` and page the
 timeline independently below it. `revision` on the current rule and
 `ruleRevision` on an evaluation identify the exact effective configuration.
 The journal is forward-only: pre-rollout state is not presented as invented

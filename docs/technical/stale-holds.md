@@ -390,7 +390,7 @@ and the check is now a repeatable integration test
 | An account **without** the deadline key is excluded by the range filter | ✅ — which is what makes "clear the key on release" a working liveness marker |
 
 The full vertical slice was then run on an isolated instance (its own port and control ledger): both
-rules created through `POST /v2/rules`, evaluated `FAIL`, and opened exactly three alerts — the
+rules created through `POST /rules`, evaluated `FAIL`, and opened exactly three alerts — the
 expired hold (`basis: expiry`, ~6h overdue), the hold with no expiry (`basis: created_at`, via the
 48h fallback), and one warning (`dueInSeconds` ≈ 3h) — while the healthy hold and the released one
 were correctly ignored.

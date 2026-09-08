@@ -18,7 +18,7 @@ paths:
       # /_healthcheck) so the console shell can probe it to discover this module
       # before it holds a module-scoped token.
       security: []
-  /v2/rules:
+  /rules:
     post:
       summary: Create a rule
       operationId: createRuleV2
@@ -46,7 +46,7 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
-  /v2/rules/{ruleID}:
+  /rules/{ruleID}:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
       summary: Get a V2 rule
@@ -78,7 +78,7 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
-  /v2/rules/{ruleID}/evaluate:
+  /rules/{ruleID}/evaluate:
     post:
       summary: Evaluate a V2 rule now
       operationId: evaluateRuleV2
@@ -95,7 +95,7 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
-  /v2/rules/{ruleID}/captures:
+  /rules/{ruleID}/captures:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
       summary: List a V2 rule's immutable evaluation captures
@@ -269,7 +269,7 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
-  /v2/rules/{ruleID}/timeline:
+  /rules/{ruleID}/timeline:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
       summary: List the combined lifecycle and observation history for a V2 rule
@@ -284,7 +284,7 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
-  /v2/alerts:
+  /alerts:
     get:
       summary: List V2 alerts
       operationId: listAlertsV2
@@ -302,7 +302,7 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
-  /v2/alerts/{alertID}:
+  /alerts/{alertID}:
     parameters: [{ $ref: '#/components/parameters/AlertID' }]
     get:
       summary: Get a V2 alert
@@ -314,7 +314,7 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
-  /v2/alerts/{alertID}/events:
+  /alerts/{alertID}/events:
     parameters: [{ $ref: '#/components/parameters/AlertID' }]
     get:
       summary: List V2 alert events (append-only timeline)
@@ -334,7 +334,7 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
-  /v2/alerts/{alertID}/ack:
+  /alerts/{alertID}/ack:
     post:
       summary: Acknowledge a V2 alert
       operationId: ackAlertV2
@@ -351,7 +351,7 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
-  /v2/alerts/{alertID}/resolve:
+  /alerts/{alertID}/resolve:
     post:
       summary: Resolve a V2 alert (fixed_by_booking)
       operationId: resolveAlertV2
@@ -368,7 +368,7 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
-  /v2/alerts/{alertID}/accept:
+  /alerts/{alertID}/accept:
     post:
       summary: Accept a V2 alert (accepted_by_business)
       operationId: acceptAlertV2
@@ -385,7 +385,7 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
-  /v2/alerts/{alertID}/snooze:
+  /alerts/{alertID}/snooze:
     post:
       summary: Snooze a V2 alert's notifications until a future instant
       operationId: snoozeAlertV2
@@ -402,7 +402,7 @@ paths:
       security:
         - Authorization: [reconciliation:write]
 
-  /v2/alerts/{alertID}/unsnooze:
+  /alerts/{alertID}/unsnooze:
     post:
       summary: Lift a V2 alert snooze early
       operationId: unsnoozeAlertV2

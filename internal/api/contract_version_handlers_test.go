@@ -65,7 +65,7 @@ func TestV2ExposesAlertEventsRoute(t *testing.T) {
 		Return(&bunpaginate.Cursor[models.AlertEvent]{Data: []models.AlertEvent{}}, nil)
 
 	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
-	req := httptest.NewRequest(http.MethodGet, "/v2/alerts/"+uuid.NewString()+"/events", nil)
+	req := httptest.NewRequest(http.MethodGet, "/alerts/"+uuid.NewString()+"/events", nil)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 	require.Equal(t, http.StatusOK, res.Code)
@@ -90,7 +90,7 @@ func TestV2CreateRouteScopesRequestAndRendersVersion(t *testing.T) {
 	})
 
 	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
-	req := httptest.NewRequest(http.MethodPost, "/v2/rules", strings.NewReader(`{"name":"eq","templateKind":"balance_equation","templateSpec":{}}`))
+	req := httptest.NewRequest(http.MethodPost, "/rules", strings.NewReader(`{"name":"eq","templateKind":"balance_equation","templateSpec":{}}`))
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 

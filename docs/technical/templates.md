@@ -84,8 +84,7 @@ A `metadata[<key>]` filter needs the target ledger to have declared that key's t
 
 ## Catalog
 
-V2 templates are available only through the `/v2` API. They are aggregate-only and use the shared
-named-source shape below.
+Every template is aggregate-only and uses the shared named-source shape below.
 
 ### Named source
 

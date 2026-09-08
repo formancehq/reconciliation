@@ -51,7 +51,7 @@ func TestCreateRule_Nominal(t *testing.T) {
 	mockSvc.EXPECT().CreateRule(gomock.Any(), req).Return(resp, nil)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/v2/rules", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/rules", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -72,7 +72,7 @@ func TestCreateRule_RejectsInvalidSpec(t *testing.T) {
 	mockSvc.EXPECT().CreateRule(gomock.Any(), req).Return(nil, templates.ErrInvalidSpec)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/v2/rules", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/rules", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -90,7 +90,7 @@ func TestGetRule_NotFound(t *testing.T) {
 	id := uuid.New()
 	mockSvc.EXPECT().GetRule(gomock.Any(), id).Return(nil, errNotFoundForTest())
 
-	r := httptest.NewRequest(http.MethodGet, "/v2/rules/"+id.String(), nil)
+	r := httptest.NewRequest(http.MethodGet, "/rules/"+id.String(), nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -102,7 +102,7 @@ func TestGetRule_InvalidUUID(t *testing.T) {
 	b, _ := newTestingBackend(t)
 	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
 
-	r := httptest.NewRequest(http.MethodGet, "/v2/rules/not-a-uuid", nil)
+	r := httptest.NewRequest(http.MethodGet, "/rules/not-a-uuid", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -120,7 +120,7 @@ func TestDeleteRule_Nominal(t *testing.T) {
 	id := uuid.New()
 	mockSvc.EXPECT().DeleteRule(gomock.Any(), id).Return(nil)
 
-	r := httptest.NewRequest(http.MethodDelete, "/v2/rules/"+id.String(), nil)
+	r := httptest.NewRequest(http.MethodDelete, "/rules/"+id.String(), nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -142,7 +142,7 @@ func TestEvaluateRule_Nominal(t *testing.T) {
 	}
 	mockSvc.EXPECT().EvaluateRule(gomock.Any(), id, gomock.Any()).Return(resp, nil)
 
-	r := httptest.NewRequest(http.MethodPost, "/v2/rules/"+id.String()+"/evaluate", bytes.NewReader([]byte(`{}`)))
+	r := httptest.NewRequest(http.MethodPost, "/rules/"+id.String()+"/evaluate", bytes.NewReader([]byte(`{}`)))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -172,7 +172,7 @@ func TestAckAlert_Nominal(t *testing.T) {
 	mockSvc.EXPECT().AckAlert(gomock.Any(), id, req).Return(resp, nil)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/v2/alerts/"+id.String()+"/ack", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/ack", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -205,7 +205,7 @@ func TestResolveAlert_FixedByBooking(t *testing.T) {
 	mockSvc.EXPECT().ResolveAlert(gomock.Any(), id, req).Return(resp, nil)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/v2/alerts/"+id.String()+"/resolve", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/resolve", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -236,7 +236,7 @@ func TestAcceptAlert_Nominal(t *testing.T) {
 	mockSvc.EXPECT().AcceptAlert(gomock.Any(), id, req).Return(resp, nil)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/v2/alerts/"+id.String()+"/accept", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/accept", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -263,7 +263,7 @@ func TestSnoozeAlert_Nominal(t *testing.T) {
 	mockSvc.EXPECT().SnoozeAlert(gomock.Any(), id, req).Return(resp, nil)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/v2/alerts/"+id.String()+"/snooze", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/snooze", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -288,7 +288,7 @@ func TestUnsnoozeAlert_Nominal(t *testing.T) {
 	mockSvc.EXPECT().UnsnoozeAlert(gomock.Any(), id, req).Return(resp, nil)
 
 	body, _ := json.Marshal(req)
-	r := httptest.NewRequest(http.MethodPost, "/v2/alerts/"+id.String()+"/unsnooze", bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/unsnooze", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -311,7 +311,7 @@ func TestListAlertEvents_Nominal(t *testing.T) {
 	}
 	mockSvc.EXPECT().ListAlertEvents(gomock.Any(), id, gomock.Any()).Return(cursor, nil)
 
-	r := httptest.NewRequest(http.MethodGet, "/v2/alerts/"+id.String()+"/events", nil)
+	r := httptest.NewRequest(http.MethodGet, "/alerts/"+id.String()+"/events", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -340,7 +340,7 @@ func TestListRules_Nominal(t *testing.T) {
 	}
 	mockSvc.EXPECT().ListRules(gomock.Any(), gomock.Any()).Return(cursor, nil)
 
-	r := httptest.NewRequest(http.MethodGet, "/v2/rules", nil)
+	r := httptest.NewRequest(http.MethodGet, "/rules", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -371,7 +371,7 @@ func TestListRuleCaptures_Nominal(t *testing.T) {
 			return cursor, nil
 		})
 
-	r := httptest.NewRequest(http.MethodGet, "/v2/rules/"+ruleID.String()+"/captures?period=2026-03", nil)
+	r := httptest.NewRequest(http.MethodGet, "/rules/"+ruleID.String()+"/captures?period=2026-03", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -392,7 +392,7 @@ func TestListRules_InvalidPageSize(t *testing.T) {
 	b, _ := newTestingBackend(t)
 	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
 
-	r := httptest.NewRequest(http.MethodGet, "/v2/rules?pageSize=not-a-number", nil)
+	r := httptest.NewRequest(http.MethodGet, "/rules?pageSize=not-a-number", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -417,7 +417,7 @@ func TestListAlerts_Nominal(t *testing.T) {
 	}
 	mockSvc.EXPECT().ListAlerts(gomock.Any(), gomock.Any()).Return(cursor, nil)
 
-	r := httptest.NewRequest(http.MethodGet, "/v2/alerts", nil)
+	r := httptest.NewRequest(http.MethodGet, "/alerts", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -443,7 +443,7 @@ func TestGetAlert_Nominal(t *testing.T) {
 	}
 	mockSvc.EXPECT().GetAlert(gomock.Any(), id).Return(alert, nil)
 
-	r := httptest.NewRequest(http.MethodGet, "/v2/alerts/"+id.String(), nil)
+	r := httptest.NewRequest(http.MethodGet, "/alerts/"+id.String(), nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -470,7 +470,7 @@ func TestPatchRule_Nominal(t *testing.T) {
 	}, nil)
 
 	body := []byte(`{"name":"patched","enabled":false}`)
-	r := httptest.NewRequest(http.MethodPatch, "/v2/rules/"+id.String(), bytes.NewReader(body))
+	r := httptest.NewRequest(http.MethodPatch, "/rules/"+id.String(), bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 
@@ -486,7 +486,7 @@ func TestPatchRule_InvalidBody(t *testing.T) {
 	b, _ := newTestingBackend(t)
 	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), nil, publish.InMemory(), audit.Config{})
 
-	r := httptest.NewRequest(http.MethodPatch, "/v2/rules/"+uuid.New().String(), bytes.NewReader([]byte(`not-json`)))
+	r := httptest.NewRequest(http.MethodPatch, "/rules/"+uuid.New().String(), bytes.NewReader([]byte(`not-json`)))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, r)
 

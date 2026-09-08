@@ -1,8 +1,8 @@
 # Technical Documentation
 
-Engineering reference for the reconciliation service. There is one API surface, mounted at `/v2`;
-the unprefixed V1 surface and its three positional templates were retired once `balance_bounds`
-gave the last of them a target. Start with the architecture doc if you're new to the project; use the
+Engineering reference for the reconciliation service. There is one API surface, mounted
+unversioned at `/rules` and `/alerts`; the V1 contract and its three positional templates were
+retired once `balance_bounds` gave the last of them a target, and the `/v2` prefix went with it. Start with the architecture doc if you're new to the project; use the
 topical docs as reference once you have the shape.
 
 ## Documents

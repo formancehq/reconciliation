@@ -28,7 +28,7 @@ sequenceDiagram
     participant Eng as engine.Engine
     participant L   as Ledger (_recon)
 
-    U->>Svc: POST /rules or /v2/rules { templateKind, templateSpec, … }
+    U->>Svc: POST /rules { templateKind, templateSpec, … }
     Note over Svc: route selects immutable contractVersion<br/>V1=1, V2=2
     Svc->>Reg: Get(templateKind).Validate(spec)
     alt invalid spec

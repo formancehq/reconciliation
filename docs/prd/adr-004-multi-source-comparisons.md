@@ -104,6 +104,13 @@ outside this ADR.
 > and the single V2 `balance_equation` that replaces it produce the same outcomes against the same
 > ledger.
 
+> **Amendment (2026-09-08) — the `/v2` prefix is removed.** Decision 1 above put the named-source
+> contract on `/v2` routes so it could run beside the unprefixed V1 contract. With V1 retired the
+> prefix distinguished nothing, and no client depended on it, so the surface is now unversioned:
+> `/rules` and `/alerts`. The immutable contract marker is unaffected — it was never derived from
+> the path, and it still gates the V2-only wire fields and scopes resource visibility. The routes
+> are the only thing that moved.
+
 ### 3. Define `balance_equation` as a signed sum
 
 The operation is:

@@ -112,16 +112,16 @@ and the adapter [ledgerresolver/resolver.go](../../internal/ledgerresolver/resol
 
 ## Contract-version isolation
 
-One contract is live. The contract stamp still scopes resource visibility, so rules,
-alerts, and captures persist an immutable integer `contract_version`. A missing marker on a legacy
-record means V1. The unprefixed handlers scope every operation to version 1; `/v2` handlers scope to
-version 2. Lists apply the version predicate before cursor construction, avoiding both data leakage
-and pagination holes. Point lookups and mutations through the wrong route return not found.
+One contract is live, served unversioned at `/rules` and `/alerts`. The stamp is no longer a route
+selector — it was, while V1 ran unprefixed and V2 under `/v2` — but it is still persisted immutably
+as `contract_version` on rules, alerts and captures, because it is not re-derivable: the marker
+lives in signed control-ledger metadata, and a record written before it existed decodes as V1.
 
-The version boundary also selects the template registry: V1 accepts the existing catalog and wire
-shapes; V2 accepts `balance_equation`, `exchange_rate_bounds`, `source_consensus`, and
-`coverage_ratio_bounds`. A patch cannot move a rule between contracts. Both versions then feed the
-same capture and alert orchestration, carrying their native evidence shape unchanged.
+What it still does is gate the V2-only wire fields (`rule.revision`, `alert.periodID`, the capture
+audit fields) and scope resource visibility, with lists applying the version predicate before cursor
+construction so there is neither leakage nor a pagination hole. A patch cannot change it. A
+persisted rule naming one of the retired positional kinds evaluates to an ERROR with an
+`engine.error` meta-alert rather than being rewritten.
 
 ---
 
