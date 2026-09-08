@@ -356,10 +356,12 @@ function EvidenceShell({
           already stated by the row this evidence sits in — an alert's status and
           severity badges, the timeline's "Evaluation passed/failed" — so a boxed
           "Control failed" restated it and cost three lines of height. The
-          description is the part that was carrying information; it keeps a colour
-          so the outcome still reads at a glance. */}
+          description is the part that was carrying information.
+          `destructive-foreground`, not `destructive`: the latter is the red
+          *background* token (L 0.94 in light, 0.26 in dark), so as text it is
+          near-invisible against the page in either theme. */}
       <p
-        className={`text-xs/5 ${passed ? "text-muted-foreground" : "text-destructive"}`}
+        className={`text-sm ${passed ? "text-foreground" : "text-destructive-foreground"}`}
       >
         {verdict}
       </p>
