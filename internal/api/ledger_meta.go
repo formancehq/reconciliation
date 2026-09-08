@@ -170,23 +170,23 @@ func listLedgerAccountsHandler(client ledgerIntrospector) http.HandlerFunc {
 		// rule builder's autosuggest, where an unreachable ledger should degrade
 		// to an empty picker; with it the caller asked a specific question and a
 		// silent empty answer would read as "nothing matched".
-		var (
-			filter   *commonpb.QueryFilter
-			explicit bool
-		)
-		if raw := r.URL.Query().Get("filter"); raw != "" {
-			if !json.Valid([]byte(raw)) {
-				api.BadRequest(w, ErrValidation, fmt.Errorf("'filter' is not valid JSON"))
+		// TranslateDataQuery reports malformed JSON and an unsupported predicate
+		// alike, and its message names the offending input, so there is nothing
+		// for a pre-check to add.
+		raw := r.URL.Query().Get("filter")
+		explicit := raw != ""
 
-				return
-			}
+		var filter *commonpb.QueryFilter
+		if explicit {
 			translated, err := ledger.TranslateDataQuery(json.RawMessage(raw))
 			if err != nil {
-				api.BadRequest(w, ErrValidation, fmt.Errorf("'filter' is not a supported account query: %w", err))
+				api.BadRequest(w, ErrValidation, fmt.Errorf("invalid 'filter': %w", err))
 
 				return
 			}
-			filter, explicit = translated, true
+			// Stays nil for an empty query, which is why `explicit` is tracked
+			// separately: a nil filter cannot tell "no filter" from "match all".
+			filter = translated
 		}
 
 		limit := 50

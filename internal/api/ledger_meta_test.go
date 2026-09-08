@@ -194,7 +194,7 @@ func TestListLedgerAccountsHandler(t *testing.T) {
 		t.Parallel()
 		rec := serve(&fakeIntrospector{}, "/ledgers/demo/accounts?filter=%7B%7B%7B")
 		require.Equal(t, http.StatusBadRequest, rec.Code)
-		require.Contains(t, rec.Body.String(), "not valid JSON")
+		require.Contains(t, rec.Body.String(), "invalid character", "the translator names the offending input")
 	})
 
 	t.Run("rejects an unsupported predicate, naming it", func(t *testing.T) {

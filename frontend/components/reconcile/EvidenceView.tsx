@@ -677,6 +677,20 @@ export function StaleHoldsEvidence({
   const window = approaching
     ? `deadline after ${evidence.deadlineAfter ?? "now"} and on or before ${evidence.deadlineOnOrBefore}`
     : `deadline on or before ${evidence.deadlineOnOrBefore}`
+
+  const metrics: Array<[string, string]> = [
+    ["Holds flagged", String(evidence.holdsFlagged)],
+    ["Amount held", `${evidence.amountFlagged} ${evidence.asset}`],
+    ["Oldest deadline", evidence.oldestDeadline ?? "—"],
+    ["Holds matched", String(evidence.holdsMatched)],
+    ["Released, ignored", String(evidence.holdsReleased)],
+    ["Window", window],
+  ]
+  // Normally 0, so a permanent zero would be noise. Any other value means the
+  // ledger's filter and the authoritative recheck disagreed about a hold.
+  if (evidence.holdsRejected) {
+    metrics.push(["Rejected on recheck", String(evidence.holdsRejected)])
+  }
   return (
     <EvidenceShell
       title={approaching ? "Holds approaching their deadline" : "Stale holds"}
@@ -697,24 +711,7 @@ export function StaleHoldsEvidence({
           whole hold set.
         </ControlFailure>
       )}
-      <MetricGrid
-        metrics={[
-          ["Holds flagged", String(evidence.holdsFlagged)],
-          ["Amount held", `${evidence.amountFlagged} ${evidence.asset}`],
-          ["Oldest deadline", evidence.oldestDeadline ?? "—"],
-          ["Holds matched", String(evidence.holdsMatched)],
-          ["Released, ignored", String(evidence.holdsReleased)],
-          ["Window", window],
-          // Shown only when non-zero: it is normally 0, and a permanent zero is
-          // noise, while any other value means the ledger's filter and the
-          // authoritative check disagreed about a hold.
-          ...(evidence.holdsRejected
-            ? ([
-                ["Rejected on recheck", String(evidence.holdsRejected)],
-              ] as [string, string][])
-            : []),
-        ]}
-      />
+      <MetricGrid metrics={metrics} />
       {evidence.holdsFlagged > 0 && (
         <StoredQueryAccounts
           ledger={evidence.ledger}

@@ -162,17 +162,6 @@ export const reconClient = {
     }
   },
 
-  // --- rules --------------------------------------------------------------
-
-  // --- captures (evaluation receipts; the rule timeline is canonical) -----
-
-  // --- alerts -------------------------------------------------------------
-  /**
-   * One page of an alert's append-only event log, newest-first. Backed by a
-   * projection of the control-ledger activity stream; each event carries the
-   * `transactionId` of its ledger write. Page with the cursor.
-   */
-
   // --- audit --------------------------------------------------------------
   async getSigningKeys(signal?: AbortSignal): Promise<SigningKey[]> {
     const r = await reconRequest<SigningKeysResponse>(
@@ -215,7 +204,7 @@ export const reconClient = {
     return r.data
   },
 
-  // --- rules and alerts ---------------------------------------------------
+  // --- rules, alerts and captures -----------------------------------------
   async listRules(signal?: AbortSignal) {
     return collectReconPages(async (cursor) => {
       const response = await reconRequest<RulesResponse>(
@@ -276,6 +265,11 @@ export const reconClient = {
       data: cursorItems(response.cursor),
     }
   },
+  /**
+   * One page of an alert's append-only event log, newest-first. Backed by a
+   * projection of the control-ledger activity stream; each event carries the
+   * `transactionId` of its ledger write. Page with the cursor.
+   */
   async listAlertEvents(alertId: string, cursor?: string, signal?: AbortSignal) {
     const response = await reconRequest<AlertEventsResponse>(
       "GET",

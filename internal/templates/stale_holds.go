@@ -262,11 +262,9 @@ func (t *StaleHolds) Evaluate(
 	if err != nil {
 		return nil, err
 	}
-	clause, err := spec.deadlineClause(window)
-	if err != nil {
-		return nil, err
-	}
-	query, err := spec.queryWith(clause)
+	// The same path Explain and Queries render, so the query an evaluation runs
+	// and the query the create-time probe validates cannot drift apart.
+	query, err := spec.effectiveQuery(window)
 	if err != nil {
 		return nil, err
 	}

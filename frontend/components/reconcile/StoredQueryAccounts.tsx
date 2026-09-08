@@ -21,6 +21,11 @@ import { useCallback, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ReconError, reconRequest } from "@/lib/recon/client"
 
+/** Read cap. The request and the truncation notice must agree on it. */
+const LIMIT = 200
+
+const WARN = "text-amber-600 dark:text-amber-500"
+
 interface QueriedAccount {
   address: string
   balances?: Record<string, string>
@@ -56,7 +61,7 @@ export function StoredQueryAccounts({
       const res = await reconRequest<AccountsEnvelope>(
         "GET",
         `/ledgers/${encodeURIComponent(ledger)}/accounts`,
-        { query: { filter, limit: 200 } }
+        { query: { filter, limit: LIMIT } }
       )
       setAccounts(res.data?.accounts ?? [])
       setCapped(!!res.data?.capped)
@@ -80,6 +85,13 @@ export function StoredQueryAccounts({
     (a) => (a.balances?.[asset] ?? "0") !== "0"
   )
   const released = (accounts?.length ?? 0) - holding.length
+  // Balances read live, so the live counts drift from the run's as holds are
+  // released. Worth saying when it happens, rather than letting the two sets of
+  // numbers silently disagree on screen.
+  const drifted =
+    !!accounts &&
+    accounts.length > 0 &&
+    (accounts.length !== matched || holding.length !== flagged)
 
   return (
     <div className="min-w-0 space-y-2">
@@ -117,20 +129,16 @@ export function StoredQueryAccounts({
           <div className="text-xs text-muted-foreground">
             {accounts.length === 0
               ? "Nothing matches now — the holds this alert counted have since been released or their deadlines revised."
-              : `${accounts.length === 1 ? "1 account matches" : `${accounts.length} accounts match`} now · ${holding.length} still holding funds${released > 0 ? ` · ${released} released` : ""}`}
-            {accounts.length > 0 &&
-              (accounts.length !== matched || holding.length !== flagged) && (
-                <>
-                  {" "}
-                  <span className="text-amber-600 dark:text-amber-500">
-                    (the run saw {matched} matched, {flagged} flagged)
-                  </span>
-                </>
-              )}
+              : `${accounts.length} account${accounts.length === 1 ? "" : "s"} matched now · ${holding.length} holding funds${released > 0 ? ` · ${released} released` : ""}`}
           </div>
+          {drifted && (
+            <p className={`text-xs ${WARN}`}>
+              The run saw {matched} matched and {flagged} flagged.
+            </p>
+          )}
           {capped && (
-            <p className="text-xs text-amber-600 dark:text-amber-500">
-              Truncated at 200 accounts — narrow the query to see the rest.
+            <p className={`text-xs ${WARN}`}>
+              Truncated at {LIMIT} accounts — narrow the query to see the rest.
             </p>
           )}
           {accounts.length > 0 && (
