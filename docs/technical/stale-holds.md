@@ -458,7 +458,7 @@ settles the structural question and makes `per_hold` scope the default. What is 
    Funds posting out (balance → 0) is assumed. The open part is whether the writer can *also* clear
    `hold_expires_at` — or set a status marker — in the same step. `EPHEMERAL` does **not** cover this
    (§5, Q2b): it retires the volume row, not the account row, so without an explicit write every hold
-   ever placed keeps matching the rule's query.
+   ever placed keeps matching the rule's query. See *The teardown write* below for what to ask for.
 3. **Re-authorisation and partial capture.**
    Does Enfuce ever revise an expiry (extension / re-auth)? Updating the account's deadline in place
    is fine — it is the hold's deadline, not a movement timestamp. Can a hold be *partially* captured,
@@ -466,6 +466,51 @@ settles the structural question and makes `per_hold` scope the default. What is 
 4. **Volume.** Authorisations per day, and the typical and worst-case number of *live* holds. This
    confirms `per_hold` over `aggregate` and tells us how much headroom there is under the accounts
    budget.
+
+### The teardown write — what to ask for, and where it belongs
+
+Q2b settled *that* an explicit write at release is required, and offered two shapes. Three things
+about it were established later, and they change what to ask for.
+
+**It is the posting that brings the balance to zero, not any posting that leaves the account.** A
+partial capture also debits the hold account while leaving a residual — the hold is still live, its
+deadline still governs, and clearing the key there would stop the rule from ever looking at it
+again. That is the worst failure available here: funds still parked, deadline passing, monitoring
+switched off without a trace. Item 3 above therefore gates this one — until we know whether partial
+captures happen, the condition has to be written as *balance reached zero*, never *money moved out*.
+
+**It costs one write, not two.** `DeleteAccountMetadataAction` is a standalone request the ledger
+accepts in the same idempotent batch as the transaction, so the release posting carries the key
+deletion atomically — no extra round-trip, and no window in which the hold is released but still
+matching. (`ApplyMetadata` is the metadata-only shape, for a sweep with no posting; it needs no
+numscript.) One sharp edge: the ledger **rejects deleting an absent key** and fails the whole batch,
+so the writer must clear only keys it knows are present — harmless on a release path, a real hazard
+for a retrying sweeper.
+
+**Reconciliation must not do it itself.** The resolver handed to templates is read-only by
+construction (`AggregateBalance` + `ListAccounts`), and every write in the module targets the control
+ledger. Beyond the architectural point — the module observes, it does not mutate what it observes —
+the race is disqualifying: reads are live, so between a zero balance being read and the delete
+landing, the account can be re-funded, and reconciliation would strip the expiry off a hold that is
+live again. A monitoring tool whose failure mode is quietly disabling its own monitoring is not an
+acceptable trade for a smaller result set.
+
+**So the first question is narrower than "can you clear the key".** It is: *what does the release
+transaction already write?* If it stamps a status, a released-at, or a capture reference, the rule
+filters on that today and nobody's code changes. Only if the answer is "nothing" does this become a
+change request against the hold-writing path — which is Enfuce's, not Gordon's.
+
+**Ledger-side follow-up: [EN-1972](https://formance-team.atlassian.net/browse/EN-1972)** (Ledger
+v3.1 epic, EN-1336) asks for a live-volume predicate on account queries, so a zero-balance account
+can be excluded with no client write at all. It is worth having — it removes the requirement that
+every writer remembers, and makes a book written before the convention repairable without a
+backfill — but it is a robustness feature, not the fix. If the release path clears the key, it stops
+mattering here.
+
+**Meanwhile, watch `holdsReleased`.** Every run already reports how many matched holds were dropped
+on a zero balance, and nobody is looking at it. Alerting when that count passes a fraction of
+`maxHoldsScanned` turns a silent budget exhaustion into a warning weeks before the rule stops
+evaluating, and needs no write to customer data.
 
 ### Not needed after all
 
