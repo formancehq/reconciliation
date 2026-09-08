@@ -568,11 +568,12 @@ and `effectiveQuery`.
 
 `effectiveQuery` is what makes the set recoverable without embedding it. It is the query this
 evaluation ran, deadline cutoff included as an integer literal, in **this module's query dialect** —
-the same shape a rule's own `source.query` takes, so it drops back into a rule to list the holds.
-(It is not byte-compatible with the ledger's HTTP `?filter=`, which spells existence
-`{"$exists":{"metadata":"k"}}` where this emits `{"$exists":{"metadata[k]":true}}`; only a rule
-declaring both deadline keys emits that clause.) Re-running it does **not** reconstruct the
-evaluation: there is no point-in-time read (ADR-003), so the deadline half is frozen while balances
+the same shape a rule's own `source.query` takes. Run it with
+`GET /ledgers/{ledger}/accounts?filter=<effectiveQuery>` to list the accounts behind the number, or
+drop it into a rule. (It is not byte-compatible with the *ledger's* own HTTP `?filter=`, which
+spells existence `{"$exists":{"metadata":"k"}}` where this emits
+`{"$exists":{"metadata[k]":true}}` — hence running it through this module rather than the ledger
+directly.) Re-running it does **not** reconstruct the evaluation: there is no point-in-time read (ADR-003), so the deadline half is frozen while balances
 stay live, and the answer is *the holds still past that cutoff and still funded*. That is the
 question worth asking later anyway — a list captured at evaluation time would be stale by the time
 anyone opened it.

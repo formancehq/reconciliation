@@ -150,16 +150,45 @@ paths:
       summary: List a ledger's accounts
       description: |
         Accounts (address + per-asset balance) for a data ledger, bounded by
-        limit and optionally filtered by an address prefix. Backs the UI's
-        account-selector autosuggest. An unknown ledger yields an empty list.
+        `limit`.
+
+        Two modes, and they differ in how failure behaves. With no `filter` this
+        backs the UI's account-selector autosuggest, so an unknown or
+        unreachable ledger yields an empty list rather than an error. With a
+        `filter` the caller asked a specific question — typically an alert's
+        `effectiveQuery` — and a failure is reported: a silent empty answer
+        would read as "nothing matched".
       operationId: listLedgerAccounts
       tags: [reconciliation]
       parameters:
         - $ref: '#/components/parameters/Ledger'
         - name: prefix
           in: query
-          description: Restrict to accounts whose address starts with this prefix.
+          description: |
+            Restrict to accounts whose address starts with this prefix. Applied
+            after the read; `filter` is the pushed-down predicate.
           schema: { type: string }
+        - name: filter
+          in: query
+          description: |
+            An account query in this module's own DSL — the same shape a rule's
+            `source.query` takes, and the shape a `stale_holds` alert records as
+            `effectiveQuery`. Pushed down to the ledger, so this is how an
+            operator lists the accounts behind an aggregate alert instead of
+            reading a list the alert would have to embed.
+
+            Supports `$match` on `address` (exact, or a trailing `*` for a
+            prefix) and on `metadata[<key>]`, the comparison operators
+            `$gt`/`$gte`/`$lt`/`$lte` on `metadata[<key>]`, `$exists`, and
+            `$and`/`$or`/`$not`. A malformed or unsupported query is `400`. So
+            is a read the ledger rejects — an unindexed metadata key being the
+            common case, with the ledger's own message naming the field.
+
+            Note this does **not** reproduce the evaluation an alert recorded:
+            the deadline cutoff inside a stored query is a literal, so it is
+            fixed, but balances are always read live.
+          schema: { type: string }
+          example: '{"$and":[{"$match":{"address":"holds:*"}},{"$lte":{"metadata[hold_expires_at]":1757322900000000}}]}'
         - name: limit
           in: query
           description: Maximum accounts to return (default 50, max 500).

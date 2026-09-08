@@ -394,6 +394,27 @@ Clears an active snooze before its window elapses. Idempotent — unsnoozing an 
 ---
 
 <a id="events"></a>
+## Listing the accounts behind an alert
+
+`GET /ledgers/{ledger}/accounts` takes an optional `filter` carrying this module's account-query
+DSL — the shape a rule's `source.query` takes, and the shape a `stale_holds` alert records as
+`effectiveQuery`. The predicate is pushed down to the ledger, so an aggregate alert can report a
+count and a total while the set behind it stays one call away instead of being embedded in evidence.
+
+```
+GET /ledgers/mortgage/accounts?filter=%7B%22%24and%22%3A...%7D&limit=100
+```
+
+The parameter also changes the failure contract, deliberately. Without it this endpoint is the rule
+builder's autosuggest, where an unreachable ledger degrades to an empty list; with it the caller
+asked a specific question, so a malformed query, an unsupported predicate, or a read the ledger
+rejects (an unindexed metadata key, most often) all return `400` with the reason — a silent empty
+answer would read as "nothing matched".
+
+It does not reproduce the evaluation that recorded the query: a deadline cutoff inside a stored
+query is a literal and stays fixed, but balances are always read live (ADR-003), so the answer is
+the current set matching that fixed predicate.
+
 ## Events
 
 ### Rule timeline

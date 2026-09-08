@@ -125,6 +125,15 @@ func (r *Reader) ValidateQuery(ctx context.Context, ledgerName string, query jso
 	}
 }
 
+// TranslateDataQuery converts a data-ledger query into the ledger's own filter.
+// The DSL is the one a rule's `source.query` is written in — and the one an
+// alert records as `effectiveQuery` — so exporting this is what lets the API
+// layer re-run a stored query without re-implementing dataLedgerLeaf. A nil
+// result means "no filter" (an empty query matches every account).
+func TranslateDataQuery(query json.RawMessage) (*commonpb.QueryFilter, error) {
+	return schema.TranslateQuery(query, dataLedgerLeaf)
+}
+
 // accountFromProto projects a ledger account onto the engine-free Account view:
 // address, string-flattened metadata, and a per-asset balance derived from each
 // asset's volumes.

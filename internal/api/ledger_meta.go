@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -158,6 +160,35 @@ func listLedgerAccountsHandler(client ledgerIntrospector) http.HandlerFunc {
 		name := chi.URLParam(r, "ledger")
 		prefix := r.URL.Query().Get("prefix")
 
+		// `filter` carries this module's own account-query DSL — the shape a
+		// rule's source.query takes, and the shape an alert records as
+		// effectiveQuery. Passing it here pushes the predicate down to the
+		// ledger, so an operator can list the accounts behind an alert instead
+		// of reading a list the alert would otherwise have to embed.
+		//
+		// Its presence also changes the failure contract. Without it this is the
+		// rule builder's autosuggest, where an unreachable ledger should degrade
+		// to an empty picker; with it the caller asked a specific question and a
+		// silent empty answer would read as "nothing matched".
+		var (
+			filter   *commonpb.QueryFilter
+			explicit bool
+		)
+		if raw := r.URL.Query().Get("filter"); raw != "" {
+			if !json.Valid([]byte(raw)) {
+				api.BadRequest(w, ErrValidation, fmt.Errorf("'filter' is not valid JSON"))
+
+				return
+			}
+			translated, err := ledger.TranslateDataQuery(json.RawMessage(raw))
+			if err != nil {
+				api.BadRequest(w, ErrValidation, fmt.Errorf("'filter' is not a supported account query: %w", err))
+
+				return
+			}
+			filter, explicit = translated, true
+		}
+
 		limit := 50
 		if v := r.URL.Query().Get("limit"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -169,7 +200,7 @@ func listLedgerAccountsHandler(client ledgerIntrospector) http.HandlerFunc {
 		}
 
 		resp := ledgerAccountsResponse{Accounts: []accountView{}}
-		err := client.QueryAccountsFunc(r.Context(), name, nil, func(acct *commonpb.Account) error {
+		err := client.QueryAccountsFunc(r.Context(), name, filter, func(acct *commonpb.Account) error {
 			addr := acct.GetAddress()
 			if prefix != "" && !strings.HasPrefix(addr, prefix) {
 				return nil
@@ -186,9 +217,18 @@ func listLedgerAccountsHandler(client ledgerIntrospector) http.HandlerFunc {
 			return nil
 		})
 		if err != nil && !errors.Is(err, errStopScan) {
+			if explicit {
+				// The caller ran a specific query. Surface why it failed — an
+				// unindexed metadata key is the common case, and the ledger's own
+				// message names the offending field.
+				api.BadRequest(w, ErrValidation, fmt.Errorf("query accounts on %q: %w", name, err))
+
+				return
+			}
 			// Unknown/unconnected ledger or read error: empty (the UI falls back).
 			v5log.FromContext(r.Context()).Debugf("list accounts on %q for account picker failed; returning empty: %v", name, err)
 			api.Ok(w, ledgerAccountsResponse{Accounts: []accountView{}})
+
 			return
 		}
 

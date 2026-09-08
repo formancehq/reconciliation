@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	sharedapi "github.com/formancehq/go-libs/api"
@@ -30,6 +31,10 @@ type fakeIntrospector struct {
 	auditErr    error
 	auditLimit  int
 	resolveByTx map[uint64]ledger.AuditEntryInfo
+	// gotFilter records what the handler pushed down, so a test can tell a
+	// ledger-side predicate from a Go-side one.
+	gotFilter    *commonpb.QueryFilter
+	filterCalled bool
 }
 
 func (f *fakeIntrospector) ListLedgers(context.Context) ([]string, error) {
@@ -74,7 +79,8 @@ func (f *fakeIntrospector) ResolveAuditEntryByTransaction(_ context.Context, _ s
 // QueryAccountsFunc mirrors the real streaming contract: it invokes fn per
 // account and surfaces fn's error verbatim (the handler stops early by returning
 // errStopScan), so the limit/cap path is exercised faithfully.
-func (f *fakeIntrospector) QueryAccountsFunc(_ context.Context, _ string, _ *commonpb.QueryFilter, fn func(*commonpb.Account) error) error {
+func (f *fakeIntrospector) QueryAccountsFunc(_ context.Context, _ string, filter *commonpb.QueryFilter, fn func(*commonpb.Account) error) error {
+	f.gotFilter, f.filterCalled = filter, true
 	if f.accountsErr != nil {
 		return f.accountsErr
 	}
@@ -151,6 +157,70 @@ func TestListLedgerAccountsHandler(t *testing.T) {
 		require.Equal(t, "bank:usd", got.Data.Accounts[1].Address)
 		require.Equal(t, "42", got.Data.Accounts[0].Balances["USD"])
 		require.False(t, got.Data.Capped)
+	})
+
+	// `filter` carries the module's own account-query DSL — the shape a rule's
+	// source.query takes, and the shape an alert records as effectiveQuery. These
+	// cases pin the two things that make it usable for investigating an alert:
+	// the predicate reaches the ledger, and a failure is never a silent empty.
+	t.Run("pushes a filter down to the ledger", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeIntrospector{accounts: []*commonpb.Account{acct("holds:h-8801", "USD/2", "25000")}}
+		rec := serve(fake, `/ledgers/demo/accounts?filter=`+url.QueryEscape(`{"$match":{"address":"holds:*"}}`))
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.True(t, fake.filterCalled)
+		require.NotNil(t, fake.gotFilter, "the predicate must reach the ledger, not be applied in Go")
+		var got sharedapi.BaseResponse[ledgerAccountsResponse]
+		sharedapi.Decode(t, rec.Body, &got)
+		require.Len(t, got.Data.Accounts, 1)
+	})
+
+	t.Run("an alert's effectiveQuery round-trips", func(t *testing.T) {
+		t.Parallel()
+		// The $or/$exists shape stale_holds renders when a rule declares both a
+		// recorded expiry and a created-at fallback.
+		q := `{"$and":[{"$match":{"address":"holds:*"}},{"$or":[` +
+			`{"$and":[{"$exists":{"metadata[hold_expires_at]":true}},{"$lte":{"metadata[hold_expires_at]":1788864194000000}}]},` +
+			`{"$and":[{"$exists":{"metadata[hold_expires_at]":false}},{"$lte":{"metadata[hold_created_at]":1788691394000000}}]}]}]}`
+		fake := &fakeIntrospector{}
+		rec := serve(fake, `/ledgers/demo/accounts?filter=`+url.QueryEscape(q))
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.NotNil(t, fake.gotFilter, "the whole $or/$exists tree must translate")
+	})
+
+	t.Run("rejects a filter that is not JSON", func(t *testing.T) {
+		t.Parallel()
+		rec := serve(&fakeIntrospector{}, "/ledgers/demo/accounts?filter=%7B%7B%7B")
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "not valid JSON")
+	})
+
+	t.Run("rejects an unsupported predicate, naming it", func(t *testing.T) {
+		t.Parallel()
+		rec := serve(&fakeIntrospector{}, `/ledgers/demo/accounts?filter=`+url.QueryEscape(`{"$nope":{"address":"x"}}`))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "$nope")
+	})
+
+	t.Run("a read error with a filter is surfaced, not swallowed", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeIntrospector{accountsErr: errors.New("metadata field \"desk\" is not indexed")}
+		rec := serve(fake, `/ledgers/demo/accounts?filter=`+url.QueryEscape(`{"$match":{"metadata[desk]":"ops1"}}`))
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "not indexed", "the ledger's own reason must reach the caller")
+	})
+
+	t.Run("a read error without a filter still degrades to an empty picker", func(t *testing.T) {
+		t.Parallel()
+		rec := serve(&fakeIntrospector{accountsErr: errors.New("ledger unreachable")}, "/ledgers/demo/accounts")
+
+		require.Equal(t, http.StatusOK, rec.Code, "the rule builder's autosuggest must not break on a dead ledger")
+		var got sharedapi.BaseResponse[ledgerAccountsResponse]
+		sharedapi.Decode(t, rec.Body, &got)
+		require.Empty(t, got.Data.Accounts)
 	})
 
 	t.Run("filters by address prefix", func(t *testing.T) {

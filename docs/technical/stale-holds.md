@@ -185,8 +185,11 @@ no duplicate live alerts, no change to the alert contract.
 > deadline cutoff included as an integer literal, in this module's own dialect — so it drops back
 > into a rule's `source.query`. It is not byte-compatible with the ledger's HTTP `?filter=`, which
 > spells existence `{"$exists":{"metadata":"k"}}` against this module's
-> `{"$exists":{"metadata[k]":true}}`; a **recon-side endpoint that runs a stored query** would close
-> that gap and is the obvious follow-up. Re-running it does not reconstruct the evaluation
+> `{"$exists":{"metadata[k]":true}}`. That gap is closed on this side instead:
+> `GET /ledgers/{ledger}/accounts?filter=<effectiveQuery>` runs a stored query through this module,
+> which already speaks the dialect. Verified against a live ledger — an alert reporting
+> `holdsMatched: 3` returns exactly those three accounts, the released one among them with a zero
+> balance, which is what `holdsReleased: 1` counted. Re-running it does not reconstruct the evaluation
 > — no point-in-time read (ADR-003) means the deadline half is frozen while balances stay live, so
 > the answer is *the holds still past that cutoff and still funded*. A list captured at evaluation
 > time would be stale by the time anyone opened it anyway.
