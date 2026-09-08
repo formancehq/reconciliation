@@ -1284,7 +1284,17 @@ export function EvaluationHistory({
                 </span>
               </>
             ) : (
-              <span>Evidence recorded on the alert</span>
+              // selectAlertCaptureEvidence found no capture for
+              // alert.lastEvaluationID — retention pruned it, or it falls
+              // outside the loaded page. The card then shows the evidence held
+              // on the alert itself, and `older` cannot exclude a capture it
+              // never matched, so the newest row below may be this same
+              // evaluation. Say which it is rather than leaving the reader to
+              // guess: the eval id on the right is the one to match against.
+              <span>
+                No capture retained for this evaluation — showing the evidence
+                held on the alert
+              </span>
             )}
             {alert.lastEvaluationID && (
               <span
@@ -1323,11 +1333,13 @@ export function EvaluationHistory({
           </div>
         </Card>
 
+        {/* No "Earlier evaluations" heading: the section is already titled
+            "Evaluation history", the first card is badged "Latest", and the list
+            is chronological — so everything below it is earlier by
+            construction. The heading restated that and broke one list into two
+            apparent sections. */}
         {older.length > 0 && (
           <div className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground">
-              Earlier evaluations
-            </div>
             {older.map((capture) => {
               const outcome = findCaptureEvidenceOutcome(
                 capture,
