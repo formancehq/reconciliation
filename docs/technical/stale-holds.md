@@ -2,9 +2,14 @@
 
 > ✅ **Implemented** — [stale_holds.go](../../internal/templates/stale_holds.go), V2 only. Two
 > questions still need the client (§5, Q1/Q2); the template is built on a stated assumption whose
-> alternatives the spec already absorbs. Client ask: Gordon (card program, holds placed by issuer
-> **Enfuce**).
-> **Last updated:** 2026-09-02
+> alternatives the spec already absorbs. Client ask: a card programme whose holds are placed by its
+> **issuer-processor**.
+> **Last updated:** 2026-09-08
+>
+> This repository is public, so the parties here are deliberately unnamed: **the client** runs the
+> card programme and writes the holds into the ledger; **the processor** is its issuer-processor,
+> which supplies each hold's expiry and owns the hold-writing path. Keep it that way — the design
+> and its open questions do not depend on who they are.
 
 ## 1. The ask
 
@@ -12,7 +17,7 @@
 |---|---|
 | Primary goal | Alert on "stale" holds — funds reserved in an account longer than expected. |
 | Trigger | The **age** of a held balance, not its size. |
-| Threshold | The **expiry Enfuce communicated** for that hold, with a **48h fallback**. |
+| Threshold | The **expiry the processor communicated** for that hold, with a **48h fallback**. |
 | Business impact | Funds stop being trapped indefinitely; liquidity stays aligned with the issuer's constraints. |
 | Emphasis | Being warned **before** a hold goes stale is the real value — this is a liquidity-management tool, not a post-hoc flag. |
 
@@ -42,7 +47,7 @@ Three such signals exist. Only these three.
 
 | Signal | Where it lives | Readable? | **Filterable in a query?** | Per-hold? |
 |---|---|---|---|---|
-| **A. Enfuce expiry** (or created-at) in account metadata | `metadata[<key>]` on the hold account | Yes | **Yes** — `$lt`/`$lte`/`$gt`/`$gte` | Yes |
+| **A. Processor expiry** (or created-at) in account metadata | `metadata[<key>]` on the hold account | Yes | **Yes** — `$lt`/`$lte`/`$gt`/`$gte` | Yes |
 | **B. Ledger-native account timestamps** — `first_usage`, `insertion_date`, `updated_at` | on the account row itself | Yes, but currently **dropped** on projection | **No** | Yes |
 | **C. Trailing-window minimum balance** | historical reads | **No** (§2) | — | No |
 
@@ -258,12 +263,12 @@ template gets a runtime fallback that changes its own outcome shape.
 
 ## 5. Decisions
 
-Q3–Q6 are settled and implemented. Q1 and Q2 need Gordon: the template is built on a stated
+Q3–Q6 are settled and implemented. Q1 and Q2 need the client: the template is built on a stated
 assumption, and the `deadline` spec absorbs a different answer without a rewrite.
 
-### Q1 — How are Enfuce holds modelled? ✅ *confirmed by the client (2026-09-07)*
-**Gordon already writes one account per authorisation, keyed by Authorization ID** — the model this
-template was built for. Enfuce's per-hold expiry is therefore usable directly, and **the watermark
+### Q1 — How are the processor's holds modelled? ✅ *confirmed by the client (2026-09-07)*
+**The client already writes one account per authorisation, keyed by Authorization ID** — the model this
+template was built for. The processor's per-hold expiry is therefore usable directly, and **the watermark
 fallback below is moot**: it existed only for the aggregated
 model, and maintaining one on top of per-authorisation accounts would be redundant work for a
 strictly worse signal. It is kept here as the answer for a *future* client who cannot split accounts.
@@ -282,12 +287,12 @@ offers no per-lot dimension *inside* an account to hang the other N−1 on:
   account, and neither is filterable (§3.4).
 
 So per-hold ageing requires per-hold addressing: **the address space is the only lot dimension there
-is.** Splitting costs nothing, because aggregation is just a prefix query — `holds:enfuce:card123:*`
+is.** Splitting costs nothing, because aggregation is just a prefix query — `holds:issuer:card123:*`
 still sums to the card's total reserve whenever someone wants that number.
 
 | Model | What the deadline metadata can mean | What the rule can say |
 |---|---|---|
-| **One account per authorisation** ✅ *(what the client does)* | exactly this hold's deadline, written once at creation, never updated | *"authorisation 8801 has been stuck for 6 hours, for $250"* — and Enfuce's own per-hold expiry is usable |
+| **One account per authorisation** ✅ *(what the client does)* | exactly this hold's deadline, written once at creation, never updated | *"authorisation 8801 has been stuck for 6 hours, for $250"* — and the processor's own per-hold expiry is usable |
 | **One account per card, many authorisations** — with a `funds_held_since` **watermark**: set when the balance goes 0 → non-zero, cleared when it returns to zero, **never touched in between** | "funds have sat continuously in this account since T" | *"this card has had money held for over 48h"* — no hold identity, no amount attribution, and it over-reports on an account that simply never empties |
 | **One account per card, timestamp updated per transaction** | nothing usable | ❌ **Actively harmful.** Each new authorisation resets the clock, so the oldest trapped funds are the ones the rule can never see. The alert silently never fires — worse than having no alert. |
 
@@ -314,7 +319,7 @@ every hold ever placed, and eventually trips the accounts budget. For a card pro
 thousands of authorisations a day, that is a matter of weeks.
 
 **`EPHEMERAL` hold accounts are the client side's proposed answer to this**, and they are the right
-call for the reason given — Gordon's current jobs poll balances over HTTP and permanent rows for
+call for the reason given — the client's current jobs poll balances over HTTP and permanent rows for
 every short-lived hold bloat the store. But they do **not** close this particular gap. Two mechanisms
 look like they should solve it for free; **neither does** (both checked on a live cluster, §6):
 
@@ -337,7 +342,7 @@ of the boundary:
 2. **Flip a status marker** (`metadata[hold_status] = released`) and fold `= active` into the rule's
    own query. More explicit, and it keeps the historical expiry readable.
 
-Ask Gordon which is achievable in the hold-writing path.
+Ask the client which is achievable in the hold-writing path.
 
 ### Q3 — Fallback semantics ✅ *decided*
 **Expiry wins; else `created_at` + `maxAge` (48h); else nothing** — a hold matched by the query but
@@ -457,7 +462,7 @@ Q1 came back confirmed (§5): **one account per authorisation, keyed by Authoriz
 settles the structural question — it is why a per-hold *deadline* is usable at all. What is left:
 
 1. **The deadline field — key name, declared type, unit. 🔴 The remaining blocker.**
-   We know Enfuce supplies a per-payment expiration date; we do not know how it lands in the ledger.
+   We know the processor supplies a per-payment expiration date; we do not know how it lands in the ledger.
    Needed: the **key name**, whether it is declared `datetime` or an integer (and in which unit), and
    — non-negotiable — that the key is **declared on the ledger *and* indexed**. `CreateIndex` refuses
    an undeclared field (*"metadata field not declared in schema"*), and an undeclared or unindexed key
@@ -469,7 +474,7 @@ settles the structural question — it is why a per-hold *deadline* is usable at
    (§5, Q2b): it retires the volume row, not the account row, so without an explicit write every hold
    ever placed keeps matching the rule's query. See *The teardown write* below for what to ask for.
 3. **Re-authorisation and partial capture.**
-   Does Enfuce ever revise an expiry (extension / re-auth)? Updating the account's deadline in place
+   Does the processor ever revise an expiry (extension / re-auth)? Updating the account's deadline in place
    is fine — it is the hold's deadline, not a movement timestamp. Can a hold be *partially* captured,
    leaving a residual balance, and does the original expiry still govern that residual?
 4. **Volume.** Authorisations per day, and the typical and worst-case number of *live* holds. The
@@ -507,7 +512,7 @@ acceptable trade for a smaller result set.
 **So the first question is narrower than "can you clear the key".** It is: *what does the release
 transaction already write?* If it stamps a status, a released-at, or a capture reference, the rule
 filters on that today and nobody's code changes. Only if the answer is "nothing" does this become a
-change request against the hold-writing path — which is Enfuce's, not Gordon's.
+change request against the hold-writing path — which is the processor's, not the client's.
 
 **Ledger-side follow-up: [EN-1972](https://formance-team.atlassian.net/browse/EN-1972)** (Ledger
 v3.1 epic, EN-1336) asks for a live-volume predicate on account queries, so a zero-balance account
