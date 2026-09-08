@@ -21,27 +21,27 @@ paths:
   /rules:
     post:
       summary: Create a rule
-      operationId: createRuleV2
-      tags: [reconciliation.v2]
-      requestBody: { $ref: '#/components/requestBodies/RuleV2' }
+      operationId: createRule
+      tags: [reconciliation]
+      requestBody: { $ref: '#/components/requestBodies/Rule' }
       responses:
-        '201': { $ref: '#/components/responses/RuleV2' }
+        '201': { $ref: '#/components/responses/Rule' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
     get:
-      summary: List V2 rules
-      operationId: listRulesV2
-      tags: [reconciliation.v2]
+      summary: List rules
+      operationId: listRules
+      tags: [reconciliation]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
       requestBody:
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilderV2' }
+            schema: { $ref: '#/components/schemas/QueryBuilder' }
       responses:
-        '200': { $ref: '#/components/responses/RulesV2' }
+        '200': { $ref: '#/components/responses/Rules' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
@@ -49,29 +49,29 @@ paths:
   /rules/{ruleID}:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
-      summary: Get a V2 rule
-      operationId: getRuleV2
-      tags: [reconciliation.v2]
+      summary: Get a rule
+      operationId: getRule
+      tags: [reconciliation]
       responses:
-        '200': { $ref: '#/components/responses/RuleV2' }
+        '200': { $ref: '#/components/responses/Rule' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
     patch:
-      summary: Patch a V2 rule
-      description: Changing a V2 operation requires both `templateKind` and its matching typed `templateSpec`.
-      operationId: patchRuleV2
-      tags: [reconciliation.v2]
-      requestBody: { $ref: '#/components/requestBodies/RulePatchV2' }
+      summary: Patch a rule
+      description: Changing the operation requires both `templateKind` and its matching typed `templateSpec`.
+      operationId: patchRule
+      tags: [reconciliation]
+      requestBody: { $ref: '#/components/requestBodies/RulePatch' }
       responses:
-        '200': { $ref: '#/components/responses/RuleV2' }
+        '200': { $ref: '#/components/responses/Rule' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
     delete:
-      summary: Delete a V2 rule definition while preserving its audit history
-      operationId: deleteRuleV2
-      tags: [reconciliation.v2]
+      summary: Delete a rule definition while preserving its audit history
+      operationId: deleteRule
+      tags: [reconciliation]
       responses:
         '204': { $ref: '#/components/responses/NoContent' }
         default: { $ref: '#/components/responses/ErrorResponse' }
@@ -80,17 +80,17 @@ paths:
 
   /rules/{ruleID}/evaluate:
     post:
-      summary: Evaluate a V2 rule now
-      operationId: evaluateRuleV2
-      tags: [reconciliation.v2]
+      summary: Evaluate a rule now
+      operationId: evaluateRule
+      tags: [reconciliation]
       parameters: [{ $ref: '#/components/parameters/RuleID' }]
       requestBody:
         required: false
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/EvaluateRuleRequestV2' }
+            schema: { $ref: '#/components/schemas/EvaluateRuleRequest' }
       responses:
-        '200': { $ref: '#/components/responses/EvaluationV2' }
+        '200': { $ref: '#/components/responses/Evaluation' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
@@ -98,9 +98,9 @@ paths:
   /rules/{ruleID}/captures:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
-      summary: List a V2 rule's immutable evaluation captures
-      operationId: listRuleCapturesV2
-      tags: [reconciliation.v2]
+      summary: List a rule's immutable evaluation captures
+      operationId: listRuleCaptures
+      tags: [reconciliation]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
@@ -110,7 +110,7 @@ paths:
           description: Scope the history to a single reconciliation period (for example, "2026-03" or "continuous").
           schema: { type: string }
       responses:
-        '200': { $ref: '#/components/responses/CapturesV2' }
+        '200': { $ref: '#/components/responses/Captures' }
   # --- Ledger introspection (UI federation) ----------------------------------
   # Read-only helpers the standalone UI's rule builder uses for live ledger-name
   # / metadata-key / account autosuggest, sourced through this module's ledger
@@ -272,9 +272,9 @@ paths:
   /rules/{ruleID}/timeline:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
-      summary: List the combined lifecycle and observation history for a V2 rule
-      operationId: listRuleTimelineV2
-      tags: [reconciliation.v2]
+      summary: List the combined lifecycle and observation history for a rule
+      operationId: listRuleTimeline
+      tags: [reconciliation]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
@@ -286,18 +286,18 @@ paths:
 
   /alerts:
     get:
-      summary: List V2 alerts
-      operationId: listAlertsV2
-      tags: [reconciliation.v2]
+      summary: List alerts
+      operationId: listAlerts
+      tags: [reconciliation]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
       requestBody:
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilderV2' }
+            schema: { $ref: '#/components/schemas/QueryBuilder' }
       responses:
-        '200': { $ref: '#/components/responses/AlertsV2' }
+        '200': { $ref: '#/components/responses/Alerts' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
@@ -305,11 +305,11 @@ paths:
   /alerts/{alertID}:
     parameters: [{ $ref: '#/components/parameters/AlertID' }]
     get:
-      summary: Get a V2 alert
-      operationId: getAlertV2
-      tags: [reconciliation.v2]
+      summary: Get an alert
+      operationId: getAlert
+      tags: [reconciliation]
       responses:
-        '200': { $ref: '#/components/responses/AlertV2' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
@@ -317,14 +317,14 @@ paths:
   /alerts/{alertID}/events:
     parameters: [{ $ref: '#/components/parameters/AlertID' }]
     get:
-      summary: List V2 alert events (append-only timeline)
-      operationId: listAlertEventsV2
+      summary: List alert events (append-only timeline)
+      operationId: listAlertEvents
       description: |
-        Same as the V1 alert-events endpoint, for a V2 alert: a page of the
-        events recorded for this alert (evaluations + manual transitions),
+        A page of the events recorded for this alert (evaluations + manual
+        transitions),
         most-recent-first and cursor-paginated. Each event carries the
         `transactionId` of its control-ledger write for audit-chain resolution.
-      tags: [reconciliation.v2]
+      tags: [reconciliation]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
@@ -336,85 +336,85 @@ paths:
 
   /alerts/{alertID}/ack:
     post:
-      summary: Acknowledge a V2 alert
-      operationId: ackAlertV2
-      tags: [reconciliation.v2]
+      summary: Acknowledge an alert
+      operationId: ackAlert
+      tags: [reconciliation]
       parameters: [{ $ref: '#/components/parameters/AlertID' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/AckAlertRequestV2' }
+            schema: { $ref: '#/components/schemas/AckAlertRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AlertV2' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
 
   /alerts/{alertID}/resolve:
     post:
-      summary: Resolve a V2 alert (fixed_by_booking)
-      operationId: resolveAlertV2
-      tags: [reconciliation.v2]
+      summary: Resolve an alert (fixed_by_booking)
+      operationId: resolveAlert
+      tags: [reconciliation]
       parameters: [{ $ref: '#/components/parameters/AlertID' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ResolveAlertRequestV2' }
+            schema: { $ref: '#/components/schemas/ResolveAlertRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AlertV2' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
 
   /alerts/{alertID}/accept:
     post:
-      summary: Accept a V2 alert (accepted_by_business)
-      operationId: acceptAlertV2
-      tags: [reconciliation.v2]
+      summary: Accept an alert (accepted_by_business)
+      operationId: acceptAlert
+      tags: [reconciliation]
       parameters: [{ $ref: '#/components/parameters/AlertID' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/AcceptAlertRequestV2' }
+            schema: { $ref: '#/components/schemas/AcceptAlertRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AlertV2' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
 
   /alerts/{alertID}/snooze:
     post:
-      summary: Snooze a V2 alert's notifications until a future instant
-      operationId: snoozeAlertV2
-      tags: [reconciliation.v2]
+      summary: Snooze an alert's notifications until a future instant
+      operationId: snoozeAlert
+      tags: [reconciliation]
       parameters: [{ $ref: '#/components/parameters/AlertID' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/SnoozeAlertRequestV2' }
+            schema: { $ref: '#/components/schemas/SnoozeAlertRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AlertV2' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
 
   /alerts/{alertID}/unsnooze:
     post:
-      summary: Lift a V2 alert snooze early
-      operationId: unsnoozeAlertV2
-      tags: [reconciliation.v2]
+      summary: Lift an alert snooze early
+      operationId: unsnoozeAlert
+      tags: [reconciliation]
       parameters: [{ $ref: '#/components/parameters/AlertID' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/UnsnoozeAlertRequestV2' }
+            schema: { $ref: '#/components/schemas/UnsnoozeAlertRequest' }
       responses:
-        '200': { $ref: '#/components/responses/AlertV2' }
+        '200': { $ref: '#/components/responses/Alert' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
@@ -486,36 +486,36 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/RuleActivitiesCursorResponse' }
-    RuleV2:
+    Rule:
       description: OK
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/RuleResponseV2' }
-    RulesV2:
+          schema: { $ref: '#/components/schemas/RuleResponse' }
+    Rules:
       description: OK
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/RulesCursorResponseV2' }
-    EvaluationV2:
+          schema: { $ref: '#/components/schemas/RulesCursorResponse' }
+    Evaluation:
       description: OK
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/EvaluationResponseV2' }
-    AlertV2:
+          schema: { $ref: '#/components/schemas/EvaluationResponse' }
+    Alert:
       description: OK
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/AlertResponseV2' }
-    AlertsV2:
+          schema: { $ref: '#/components/schemas/AlertResponse' }
+    Alerts:
       description: OK
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/AlertsCursorResponseV2' }
-    CapturesV2:
+          schema: { $ref: '#/components/schemas/AlertsCursorResponse' }
+    Captures:
       description: OK
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/CapturesCursorResponseV2' }
+          schema: { $ref: '#/components/schemas/CapturesCursorResponse' }
     Ledgers:
       description: OK
       content:
@@ -542,16 +542,16 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/LedgerAccountsResponse' }
   requestBodies:
-    RuleV2:
+    Rule:
       required: true
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/RuleRequestV2' }
-    RulePatchV2:
+          schema: { $ref: '#/components/schemas/RuleRequest' }
+    RulePatch:
       required: true
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/RulePatchRequestV2' }
+          schema: { $ref: '#/components/schemas/RulePatchRequest' }
   schemas:
     ServerInfo:
       type: object
@@ -736,7 +736,7 @@ components:
                     additionalProperties: { type: string }
             capped: { type: boolean }
 
-    # --- V1 Ledger Clarity schemas -----------------------------------------
+    # --- Alert event log + rule timeline -----------------------------------
 
     AlertEvent:
       type: object
@@ -824,15 +824,15 @@ components:
               type: array
               items: { $ref: '#/components/schemas/RuleActivity' }
 
-    QueryBuilderV2:
+    QueryBuilder:
       type: object
       additionalProperties: true
-    ContractVersionV2:
+    ContractVersion:
       type: integer
       format: int32
       enum: [2]
       readOnly: true
-    TemplateKindV2:
+    TemplateKind:
       type: string
       description: |
         The template catalogue. Every kind uses the named-source model: stable
@@ -841,14 +841,14 @@ components:
         `source_parity`) were retired once `balance_bounds` gave the last of them
         a target; see the ADR-004 amendment.
       enum: [balance_equation, exchange_rate_bounds, source_consensus, coverage_ratio_bounds, stale_holds, balance_bounds]
-    SeverityV2:
+    Severity:
       type: string
       enum: [info, low, medium, high, critical]
-    PeriodTypeV2:
+    PeriodType:
       type: string
       enum: [continuous, daily, weekly, monthly]
       default: continuous
-    ScheduleV2:
+    Schedule:
       type: object
       required: [kind]
       properties:
@@ -856,46 +856,46 @@ components:
         expr: { type: string, example: "*/15 * * * *" }
         tz: { type: string, example: "UTC" }
 
-    UnsignedIntegerStringV2:
+    UnsignedIntegerString:
       type: string
       pattern: '^(0|[1-9][0-9]*)$'
       description: A non-negative base-10 integer encoded as a string to avoid JSON precision loss.
       example: "1250"
-    SignedIntegerStringV2:
+    SignedIntegerString:
       type: string
       pattern: '^-?(0|[1-9][0-9]*)$'
       description: A signed base-10 integer encoded as a string to avoid JSON precision loss.
       example: "-1250"
-    PositiveDecimalStringV2:
+    PositiveDecimalString:
       type: string
       pattern: '^(0|[1-9][0-9]*)(\.[0-9]{1,18})?$'
       description: A positive plain-decimal value with at most 18 fractional digits; signs and exponent notation are rejected.
       example: "1.10"
-    AssetV2:
+    Asset:
       type: string
       minLength: 1
       description: |
         Ledger asset code including precision, for example `USD/2`.
 
         `*` declares the source as **every asset the account set holds**, and the
-        operation fans out to one outcome per asset — the shape a V1 rule with a
+        operation fans out to one outcome per asset — the shape a positional rule with a
         per-asset tolerance map has always had. Alignment is by exact asset code,
         and a spec must be wholly `*` or wholly named: mixing them has no defined
         alignment and is rejected. Not accepted on an `account_metadata` source
         (its key represents one declared asset) or by `exchange_rate_bounds`
         (a rate is a statement about one named pair).
       example: USD/2
-    SourceIDV2:
+    SourceID:
       type: string
       pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$'
       description: Stable machine identifier used by terms, fingerprints, and evidence.
       example: customerBook
 
-    LedgerNamedSourceV2:
+    LedgerNamedSource:
       type: object
       required: [id, ledger, query, asset]
       properties:
-        id: { $ref: '#/components/schemas/SourceIDV2' }
+        id: { $ref: '#/components/schemas/SourceID' }
         label: { type: string }
         kind:
           type: string
@@ -905,12 +905,12 @@ components:
         query:
           type: object
           additionalProperties: true
-        asset: { $ref: '#/components/schemas/AssetV2' }
-    AccountMetadataNamedSourceV2:
+        asset: { $ref: '#/components/schemas/Asset' }
+    AccountMetadataNamedSource:
       type: object
       required: [id, kind, ledger, query, metadataKey, asset]
       properties:
-        id: { $ref: '#/components/schemas/SourceIDV2' }
+        id: { $ref: '#/components/schemas/SourceID' }
         label: { type: string }
         kind: { type: string, enum: [account_metadata] }
         ledger: { type: string, minLength: 1 }
@@ -921,28 +921,28 @@ components:
           type: string
           minLength: 1
           description: Opaque metadata key; the asset is declared independently.
-        asset: { $ref: '#/components/schemas/AssetV2' }
-    NamedSourceV2:
+        asset: { $ref: '#/components/schemas/Asset' }
+    NamedSource:
       oneOf:
-        - $ref: '#/components/schemas/LedgerNamedSourceV2'
-        - $ref: '#/components/schemas/AccountMetadataNamedSourceV2'
+        - $ref: '#/components/schemas/LedgerNamedSource'
+        - $ref: '#/components/schemas/AccountMetadataNamedSource'
       discriminator:
         propertyName: kind
         mapping:
-          ledger: '#/components/schemas/LedgerNamedSourceV2'
-          account_metadata: '#/components/schemas/AccountMetadataNamedSourceV2'
+          ledger: '#/components/schemas/LedgerNamedSource'
+          account_metadata: '#/components/schemas/AccountMetadataNamedSource'
 
-    BalanceEquationTermV2:
+    BalanceEquationTerm:
       type: object
       required: [source, coefficient]
       properties:
-        source: { $ref: '#/components/schemas/SourceIDV2' }
+        source: { $ref: '#/components/schemas/SourceID' }
         coefficient:
           description: Non-zero signed integer coefficient for this source.
           oneOf:
             - { type: integer, format: int64, maximum: -1 }
             - { type: integer, format: int64, minimum: 1 }
-    BalanceEquationSpecV2:
+    BalanceEquationSpec:
       type: object
       description: Checks `abs(sum(coefficient * balance)) <= tolerance` for sources declaring the same asset.
       required: [sources, terms, tolerance]
@@ -951,38 +951,38 @@ components:
           type: array
           minItems: 2
           maxItems: 32
-          items: { $ref: '#/components/schemas/NamedSourceV2' }
+          items: { $ref: '#/components/schemas/NamedSource' }
           description: Ordered sources with unique IDs. Every source must declare the same asset.
         terms:
           type: array
           minItems: 2
           maxItems: 32
-          items: { $ref: '#/components/schemas/BalanceEquationTermV2' }
+          items: { $ref: '#/components/schemas/BalanceEquationTerm' }
           description: Each source ID must be referenced exactly once.
-        tolerance: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
-    ExplicitRateBoundsV2:
+        tolerance: { $ref: '#/components/schemas/UnsignedIntegerString' }
+    ExplicitRateBounds:
       type: object
       required: [min, max]
       properties:
-        min: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
-        max: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
+        min: { $ref: '#/components/schemas/PositiveDecimalString' }
+        max: { $ref: '#/components/schemas/PositiveDecimalString' }
       description: Inclusive positive lower and upper exchange-rate bounds; min must not exceed max.
-    TargetRateBoundsV2:
+    TargetRateBounds:
       type: object
       required: [target, toleranceBps]
       properties:
-        target: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
+        target: { $ref: '#/components/schemas/PositiveDecimalString' }
         toleranceBps:
           type: integer
           format: int32
           minimum: 0
           maximum: 10000
       description: Inclusive bounds derived exactly from target plus or minus the basis-point tolerance.
-    ExchangeRateV2:
+    ExchangeRate:
       oneOf:
-        - $ref: '#/components/schemas/ExplicitRateBoundsV2'
-        - $ref: '#/components/schemas/TargetRateBoundsV2'
-    ExchangeRateBoundsSpecV2:
+        - $ref: '#/components/schemas/ExplicitRateBounds'
+        - $ref: '#/components/schemas/TargetRateBounds'
+    ExchangeRateBoundsSpec:
       type: object
       description: Checks the exact signed quote-major-units per base-major-unit rate using integer cross-multiplication.
       required: [sources, baseSource, quoteSource, rate]
@@ -991,12 +991,12 @@ components:
           type: array
           minItems: 2
           maxItems: 2
-          items: { $ref: '#/components/schemas/NamedSourceV2' }
+          items: { $ref: '#/components/schemas/NamedSource' }
           description: Exactly two ordered sources with unique IDs.
-        baseSource: { $ref: '#/components/schemas/SourceIDV2' }
-        quoteSource: { $ref: '#/components/schemas/SourceIDV2' }
-        rate: { $ref: '#/components/schemas/ExchangeRateV2' }
-    SourceConsensusSpecV2:
+        baseSource: { $ref: '#/components/schemas/SourceID' }
+        quoteSource: { $ref: '#/components/schemas/SourceID' }
+        rate: { $ref: '#/components/schemas/ExchangeRate' }
+    SourceConsensusSpec:
       type: object
       description: Checks that every source is present and `max(balance) - min(balance) <= tolerance` for one shared asset.
       required: [sources, tolerance]
@@ -1005,10 +1005,10 @@ components:
           type: array
           minItems: 2
           maxItems: 32
-          items: { $ref: '#/components/schemas/NamedSourceV2' }
+          items: { $ref: '#/components/schemas/NamedSource' }
           description: Ordered independent records with unique IDs. Every source must declare the same asset.
-        tolerance: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
-    CoverageRatioBoundsSpecV2:
+        tolerance: { $ref: '#/components/schemas/UnsignedIntegerString' }
+    CoverageRatioBoundsSpec:
       type: object
       description: Checks the exact ratio of two signed, same-asset portfolios against inclusive bounds.
       required: [sources, numeratorTerms, denominatorTerms, ratio]
@@ -1017,21 +1017,21 @@ components:
           type: array
           minItems: 2
           maxItems: 32
-          items: { $ref: '#/components/schemas/NamedSourceV2' }
+          items: { $ref: '#/components/schemas/NamedSource' }
           description: Every source must declare the same asset and be assigned exactly once across the two portfolios.
         numeratorTerms:
           type: array
           minItems: 1
           maxItems: 31
-          items: { $ref: '#/components/schemas/BalanceEquationTermV2' }
+          items: { $ref: '#/components/schemas/BalanceEquationTerm' }
         denominatorTerms:
           type: array
           minItems: 1
           maxItems: 31
-          items: { $ref: '#/components/schemas/BalanceEquationTermV2' }
-        ratio: { $ref: '#/components/schemas/ExchangeRateV2' }
+          items: { $ref: '#/components/schemas/BalanceEquationTerm' }
+        ratio: { $ref: '#/components/schemas/ExchangeRate' }
 
-    BalanceBoundV2:
+    BalanceBound:
       type: object
       description: |
         One asset's inclusive limits, in that asset's minor units. Either side may
@@ -1039,16 +1039,16 @@ components:
         one must be set. `min == max` is legal and means exact equality. Both are
         signed: a threshold on a liability or obligation set is negative.
       properties:
-        min: { $ref: '#/components/schemas/SignedIntegerStringV2' }
-        max: { $ref: '#/components/schemas/SignedIntegerStringV2' }
-    BalanceBoundsSpecV2:
+        min: { $ref: '#/components/schemas/SignedIntegerString' }
+        max: { $ref: '#/components/schemas/SignedIntegerString' }
+    BalanceBoundsSpec:
       type: object
       description: |
         Asserts that one named source's balance stays inside inclusive per-asset
         limits. It replaced the retired `account_threshold` template.
 
         Its asset universe is **declared, not discovered**: the keys of `bounds`
-        are exactly the assets checked. This is the one V2 template that works
+        are exactly the assets checked. This is the one template that works
         that way, and it is deliberate — every other template builds its universe
         from the assets its sources actually hold, so an asset that drains to
         nothing leaves the universe and its outcome disappears. For a floor that
@@ -1061,13 +1061,13 @@ components:
       properties:
         source:
           allOf:
-            - $ref: '#/components/schemas/NamedSourceV2'
+            - $ref: '#/components/schemas/NamedSource'
           description: The account set whose balance is bounded. `account_metadata` sources are accepted.
         bounds:
           type: object
           minProperties: 1
           maxProperties: 256
-          additionalProperties: { $ref: '#/components/schemas/BalanceBoundV2' }
+          additionalProperties: { $ref: '#/components/schemas/BalanceBound' }
           description: |
             Inclusive limits keyed by asset code — and the declared asset
             universe. An asset named here that the source does not hold is
@@ -1078,7 +1078,7 @@ components:
             USD/2: { min: "100000", max: "5000000" }
             EUR/2: { min: "50000" }
 
-    HoldDeadlineV2:
+    HoldDeadline:
       type: object
       description: |
         Where a hold's deadline comes from. Declare `expiryKey` for an expiry
@@ -1111,7 +1111,7 @@ components:
             declares as a datetime; the `epoch_*` encodings are integer keys in
             the named unit. Epoch nanoseconds are not supported — query values
             travel as JSON numbers and are rejected past 2^53.
-    StaleHoldsSpecV2:
+    StaleHoldsSpec:
       type: object
       description: |
         Flags held funds whose deadline has passed (`mode: stale`) or is about to
@@ -1126,9 +1126,9 @@ components:
       properties:
         source:
           allOf:
-            - $ref: '#/components/schemas/LedgerNamedSourceV2'
+            - $ref: '#/components/schemas/LedgerNamedSource'
           description: The hold universe — one ledger account set, one asset. Metadata sources are not accepted.
-        deadline: { $ref: '#/components/schemas/HoldDeadlineV2' }
+        deadline: { $ref: '#/components/schemas/HoldDeadline' }
         mode:
           type: string
           enum: [stale, approaching]
@@ -1188,14 +1188,14 @@ components:
             durable and widely readable, so keep personal data out of it.
           example: [hold_reference, customer_id]
 
-    RuleRequestCommonV2:
+    RuleRequestCommon:
       type: object
       required: [name]
       properties:
         name: { type: string, minLength: 1 }
-        severity: { $ref: '#/components/schemas/SeverityV2' }
-        periodType: { $ref: '#/components/schemas/PeriodTypeV2' }
-        schedule: { $ref: '#/components/schemas/ScheduleV2' }
+        severity: { $ref: '#/components/schemas/Severity' }
+        periodType: { $ref: '#/components/schemas/PeriodType' }
+        schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
           items: { type: string }
@@ -1203,88 +1203,88 @@ components:
           type: object
           additionalProperties: { type: string }
         enabled: { type: boolean }
-    BalanceEquationRuleRequestV2:
+    BalanceEquationRuleRequest:
       allOf:
-        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - $ref: '#/components/schemas/RuleRequestCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [balance_equation] }
-            templateSpec: { $ref: '#/components/schemas/BalanceEquationSpecV2' }
-    ExchangeRateBoundsRuleRequestV2:
+            templateSpec: { $ref: '#/components/schemas/BalanceEquationSpec' }
+    ExchangeRateBoundsRuleRequest:
       allOf:
-        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - $ref: '#/components/schemas/RuleRequestCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [exchange_rate_bounds] }
-            templateSpec: { $ref: '#/components/schemas/ExchangeRateBoundsSpecV2' }
-    SourceConsensusRuleRequestV2:
+            templateSpec: { $ref: '#/components/schemas/ExchangeRateBoundsSpec' }
+    SourceConsensusRuleRequest:
       allOf:
-        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - $ref: '#/components/schemas/RuleRequestCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [source_consensus] }
-            templateSpec: { $ref: '#/components/schemas/SourceConsensusSpecV2' }
-    CoverageRatioBoundsRuleRequestV2:
+            templateSpec: { $ref: '#/components/schemas/SourceConsensusSpec' }
+    CoverageRatioBoundsRuleRequest:
       allOf:
-        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - $ref: '#/components/schemas/RuleRequestCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [coverage_ratio_bounds] }
-            templateSpec: { $ref: '#/components/schemas/CoverageRatioBoundsSpecV2' }
-    BalanceBoundsRuleRequestV2:
+            templateSpec: { $ref: '#/components/schemas/CoverageRatioBoundsSpec' }
+    BalanceBoundsRuleRequest:
       allOf:
-        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - $ref: '#/components/schemas/RuleRequestCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [balance_bounds] }
-            templateSpec: { $ref: '#/components/schemas/BalanceBoundsSpecV2' }
-    StaleHoldsRuleRequestV2:
+            templateSpec: { $ref: '#/components/schemas/BalanceBoundsSpec' }
+    StaleHoldsRuleRequest:
       allOf:
-        - $ref: '#/components/schemas/RuleRequestCommonV2'
+        - $ref: '#/components/schemas/RuleRequestCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [stale_holds] }
-            templateSpec: { $ref: '#/components/schemas/StaleHoldsSpecV2' }
-    RuleRequestV2:
+            templateSpec: { $ref: '#/components/schemas/StaleHoldsSpec' }
+    RuleRequest:
       oneOf:
-        - $ref: '#/components/schemas/BalanceEquationRuleRequestV2'
-        - $ref: '#/components/schemas/ExchangeRateBoundsRuleRequestV2'
-        - $ref: '#/components/schemas/SourceConsensusRuleRequestV2'
-        - $ref: '#/components/schemas/CoverageRatioBoundsRuleRequestV2'
-        - $ref: '#/components/schemas/StaleHoldsRuleRequestV2'
-        - $ref: '#/components/schemas/BalanceBoundsRuleRequestV2'
+        - $ref: '#/components/schemas/BalanceEquationRuleRequest'
+        - $ref: '#/components/schemas/ExchangeRateBoundsRuleRequest'
+        - $ref: '#/components/schemas/SourceConsensusRuleRequest'
+        - $ref: '#/components/schemas/CoverageRatioBoundsRuleRequest'
+        - $ref: '#/components/schemas/StaleHoldsRuleRequest'
+        - $ref: '#/components/schemas/BalanceBoundsRuleRequest'
       discriminator:
         propertyName: templateKind
         mapping:
-          balance_equation: '#/components/schemas/BalanceEquationRuleRequestV2'
-          exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsRuleRequestV2'
-          source_consensus: '#/components/schemas/SourceConsensusRuleRequestV2'
-          coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsRuleRequestV2'
-          stale_holds: '#/components/schemas/StaleHoldsRuleRequestV2'
-          balance_bounds: '#/components/schemas/BalanceBoundsRuleRequestV2'
-    RulePatchRequestV2:
+          balance_equation: '#/components/schemas/BalanceEquationRuleRequest'
+          exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsRuleRequest'
+          source_consensus: '#/components/schemas/SourceConsensusRuleRequest'
+          coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsRuleRequest'
+          stale_holds: '#/components/schemas/StaleHoldsRuleRequest'
+          balance_bounds: '#/components/schemas/BalanceBoundsRuleRequest'
+    RulePatchRequest:
       type: object
-      description: Partial update. A changed definition is validated as a complete V2 definition; contractVersion is immutable and cannot be supplied.
+      description: Partial update. A changed definition is validated as a complete definition; contractVersion is immutable and cannot be supplied.
       properties:
         name: { type: string, minLength: 1 }
-        templateKind: { $ref: '#/components/schemas/TemplateKindV2' }
+        templateKind: { $ref: '#/components/schemas/TemplateKind' }
         templateSpec:
           oneOf:
-            - $ref: '#/components/schemas/BalanceEquationSpecV2'
-            - $ref: '#/components/schemas/ExchangeRateBoundsSpecV2'
-            - $ref: '#/components/schemas/SourceConsensusSpecV2'
-            - $ref: '#/components/schemas/CoverageRatioBoundsSpecV2'
-            - $ref: '#/components/schemas/StaleHoldsSpecV2'
-            - $ref: '#/components/schemas/BalanceBoundsSpecV2'
+            - $ref: '#/components/schemas/BalanceEquationSpec'
+            - $ref: '#/components/schemas/ExchangeRateBoundsSpec'
+            - $ref: '#/components/schemas/SourceConsensusSpec'
+            - $ref: '#/components/schemas/CoverageRatioBoundsSpec'
+            - $ref: '#/components/schemas/StaleHoldsSpec'
+            - $ref: '#/components/schemas/BalanceBoundsSpec'
         enabled: { type: boolean }
-        severity: { $ref: '#/components/schemas/SeverityV2' }
-        schedule: { $ref: '#/components/schemas/ScheduleV2' }
+        severity: { $ref: '#/components/schemas/Severity' }
+        schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
           items: { type: string }
@@ -1292,19 +1292,19 @@ components:
           type: object
           additionalProperties: { type: string }
 
-    RuleCommonV2:
+    RuleCommon:
       type: object
       required: [id, contractVersion, name, enabled, severity, periodType, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         revision: { type: string, description: Content-derived identifier of the effective rule configuration. }
-        contractVersion: { $ref: '#/components/schemas/ContractVersionV2' }
+        contractVersion: { $ref: '#/components/schemas/ContractVersion' }
         name: { type: string }
         compiledCEL: { type: string, readOnly: true }
         enabled: { type: boolean }
-        severity: { $ref: '#/components/schemas/SeverityV2' }
-        periodType: { $ref: '#/components/schemas/PeriodTypeV2' }
-        schedule: { $ref: '#/components/schemas/ScheduleV2' }
+        severity: { $ref: '#/components/schemas/Severity' }
+        periodType: { $ref: '#/components/schemas/PeriodType' }
+        schedule: { $ref: '#/components/schemas/Schedule' }
         notifications:
           type: array
           items: { type: string }
@@ -1313,57 +1313,57 @@ components:
           additionalProperties: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
-    BalanceEquationRuleV2:
+    BalanceEquationRule:
       allOf:
-        - $ref: '#/components/schemas/RuleCommonV2'
+        - $ref: '#/components/schemas/RuleCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [balance_equation] }
-            templateSpec: { $ref: '#/components/schemas/BalanceEquationSpecV2' }
-    ExchangeRateBoundsRuleV2:
+            templateSpec: { $ref: '#/components/schemas/BalanceEquationSpec' }
+    ExchangeRateBoundsRule:
       allOf:
-        - $ref: '#/components/schemas/RuleCommonV2'
+        - $ref: '#/components/schemas/RuleCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [exchange_rate_bounds] }
-            templateSpec: { $ref: '#/components/schemas/ExchangeRateBoundsSpecV2' }
-    SourceConsensusRuleV2:
+            templateSpec: { $ref: '#/components/schemas/ExchangeRateBoundsSpec' }
+    SourceConsensusRule:
       allOf:
-        - $ref: '#/components/schemas/RuleCommonV2'
+        - $ref: '#/components/schemas/RuleCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [source_consensus] }
-            templateSpec: { $ref: '#/components/schemas/SourceConsensusSpecV2' }
-    CoverageRatioBoundsRuleV2:
+            templateSpec: { $ref: '#/components/schemas/SourceConsensusSpec' }
+    CoverageRatioBoundsRule:
       allOf:
-        - $ref: '#/components/schemas/RuleCommonV2'
+        - $ref: '#/components/schemas/RuleCommon'
         - type: object
           required: [templateKind, templateSpec]
           properties:
             templateKind: { type: string, enum: [coverage_ratio_bounds] }
-            templateSpec: { $ref: '#/components/schemas/CoverageRatioBoundsSpecV2' }
-    RuleV2:
+            templateSpec: { $ref: '#/components/schemas/CoverageRatioBoundsSpec' }
+    Rule:
       oneOf:
-        - $ref: '#/components/schemas/BalanceEquationRuleV2'
-        - $ref: '#/components/schemas/ExchangeRateBoundsRuleV2'
-        - $ref: '#/components/schemas/SourceConsensusRuleV2'
-        - $ref: '#/components/schemas/CoverageRatioBoundsRuleV2'
+        - $ref: '#/components/schemas/BalanceEquationRule'
+        - $ref: '#/components/schemas/ExchangeRateBoundsRule'
+        - $ref: '#/components/schemas/SourceConsensusRule'
+        - $ref: '#/components/schemas/CoverageRatioBoundsRule'
       discriminator:
         propertyName: templateKind
         mapping:
-          balance_equation: '#/components/schemas/BalanceEquationRuleV2'
-          exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsRuleV2'
-          source_consensus: '#/components/schemas/SourceConsensusRuleV2'
-          coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsRuleV2'
-    RuleResponseV2:
+          balance_equation: '#/components/schemas/BalanceEquationRule'
+          exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsRule'
+          source_consensus: '#/components/schemas/SourceConsensusRule'
+          coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsRule'
+    RuleResponse:
       type: object
       required: [data]
       properties:
-        data: { $ref: '#/components/schemas/RuleV2' }
-    RulesCursorResponseV2:
+        data: { $ref: '#/components/schemas/Rule' }
+    RulesCursorResponse:
       type: object
       required: [cursor]
       properties:
@@ -1377,21 +1377,21 @@ components:
             next: { type: string }
             data:
               type: array
-              items: { $ref: '#/components/schemas/RuleV2' }
+              items: { $ref: '#/components/schemas/Rule' }
 
-    EvidenceSourceV2:
+    EvidenceSource:
       type: object
       required: [id, kind, asset, balance, present]
       properties:
-        id: { $ref: '#/components/schemas/SourceIDV2' }
+        id: { $ref: '#/components/schemas/SourceID' }
         label: { type: string }
         kind: { type: string, enum: [ledger, account_metadata] }
-        asset: { $ref: '#/components/schemas/AssetV2' }
-        balance: { $ref: '#/components/schemas/SignedIntegerStringV2' }
+        asset: { $ref: '#/components/schemas/Asset' }
+        balance: { $ref: '#/components/schemas/SignedIntegerString' }
         present: { type: boolean }
-    BalanceEquationEvidenceSourceV2:
+    BalanceEquationEvidenceSource:
       allOf:
-        - $ref: '#/components/schemas/EvidenceSourceV2'
+        - $ref: '#/components/schemas/EvidenceSource'
         - type: object
           required: [coefficient, contribution]
           properties:
@@ -1399,71 +1399,71 @@ components:
               oneOf:
                 - { type: integer, format: int64, maximum: -1 }
                 - { type: integer, format: int64, minimum: 1 }
-            contribution: { $ref: '#/components/schemas/SignedIntegerStringV2' }
-    BalanceEquationEvidenceV2:
+            contribution: { $ref: '#/components/schemas/SignedIntegerString' }
+    BalanceEquationEvidence:
       type: object
       required: [schemaVersion, operation, asset, sources, residual, absoluteResidual, tolerance, compiledCEL]
       properties:
         schemaVersion: { type: integer, format: int32, enum: [2] }
         operation: { type: string, enum: [balance_equation] }
-        asset: { $ref: '#/components/schemas/AssetV2' }
+        asset: { $ref: '#/components/schemas/Asset' }
         sources:
           type: array
           minItems: 2
           maxItems: 32
-          items: { $ref: '#/components/schemas/BalanceEquationEvidenceSourceV2' }
-        residual: { $ref: '#/components/schemas/SignedIntegerStringV2' }
-        absoluteResidual: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
-        tolerance: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
+          items: { $ref: '#/components/schemas/BalanceEquationEvidenceSource' }
+        residual: { $ref: '#/components/schemas/SignedIntegerString' }
+        absoluteResidual: { $ref: '#/components/schemas/UnsignedIntegerString' }
+        tolerance: { $ref: '#/components/schemas/UnsignedIntegerString' }
         compiledCEL: { type: string }
-    RationalRateV2:
+    RationalRate:
       type: object
       required: [numerator, denominator]
       properties:
-        numerator: { $ref: '#/components/schemas/SignedIntegerStringV2' }
-        denominator: { $ref: '#/components/schemas/SignedIntegerStringV2' }
-    EffectiveRateBoundsV2:
+        numerator: { $ref: '#/components/schemas/SignedIntegerString' }
+        denominator: { $ref: '#/components/schemas/SignedIntegerString' }
+    EffectiveRateBounds:
       type: object
       required: [min, max]
       properties:
-        min: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
-        max: { $ref: '#/components/schemas/PositiveDecimalStringV2' }
-    ExchangeRateBoundsEvidenceV2:
+        min: { $ref: '#/components/schemas/PositiveDecimalString' }
+        max: { $ref: '#/components/schemas/PositiveDecimalString' }
+    ExchangeRateBoundsEvidence:
       type: object
       description: "`observedRate` is omitted and `undefinedReason` is set only when the base balance is zero."
       required: [schemaVersion, operation, base, quote, effectiveBounds, compiledCEL]
       properties:
         schemaVersion: { type: integer, format: int32, enum: [2] }
         operation: { type: string, enum: [exchange_rate_bounds] }
-        base: { $ref: '#/components/schemas/EvidenceSourceV2' }
-        quote: { $ref: '#/components/schemas/EvidenceSourceV2' }
-        observedRate: { $ref: '#/components/schemas/RationalRateV2' }
-        effectiveBounds: { $ref: '#/components/schemas/EffectiveRateBoundsV2' }
+        base: { $ref: '#/components/schemas/EvidenceSource' }
+        quote: { $ref: '#/components/schemas/EvidenceSource' }
+        observedRate: { $ref: '#/components/schemas/RationalRate' }
+        effectiveBounds: { $ref: '#/components/schemas/EffectiveRateBounds' }
         undefinedReason: { type: string, enum: [base_balance_zero] }
         compiledCEL: { type: string }
-    SourceConsensusEvidenceV2:
+    SourceConsensusEvidence:
       type: object
       required: [schemaVersion, operation, asset, sources, minimumSource, minimumBalance, maximumSource, maximumBalance, spread, tolerance, missingSources, compiledCEL]
       properties:
         schemaVersion: { type: integer, format: int32, enum: [2] }
         operation: { type: string, enum: [source_consensus] }
-        asset: { $ref: '#/components/schemas/AssetV2' }
+        asset: { $ref: '#/components/schemas/Asset' }
         sources:
           type: array
           minItems: 2
           maxItems: 32
-          items: { $ref: '#/components/schemas/EvidenceSourceV2' }
-        minimumSource: { $ref: '#/components/schemas/SourceIDV2' }
-        minimumBalance: { $ref: '#/components/schemas/SignedIntegerStringV2' }
-        maximumSource: { $ref: '#/components/schemas/SourceIDV2' }
-        maximumBalance: { $ref: '#/components/schemas/SignedIntegerStringV2' }
-        spread: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
-        tolerance: { $ref: '#/components/schemas/UnsignedIntegerStringV2' }
+          items: { $ref: '#/components/schemas/EvidenceSource' }
+        minimumSource: { $ref: '#/components/schemas/SourceID' }
+        minimumBalance: { $ref: '#/components/schemas/SignedIntegerString' }
+        maximumSource: { $ref: '#/components/schemas/SourceID' }
+        maximumBalance: { $ref: '#/components/schemas/SignedIntegerString' }
+        spread: { $ref: '#/components/schemas/UnsignedIntegerString' }
+        tolerance: { $ref: '#/components/schemas/UnsignedIntegerString' }
         missingSources:
           type: array
-          items: { $ref: '#/components/schemas/SourceIDV2' }
+          items: { $ref: '#/components/schemas/SourceID' }
         compiledCEL: { type: string }
-    CoveragePortfolioV2:
+    CoveragePortfolio:
       type: object
       required: [sources, total]
       properties:
@@ -1471,54 +1471,54 @@ components:
           type: array
           minItems: 1
           maxItems: 31
-          items: { $ref: '#/components/schemas/BalanceEquationEvidenceSourceV2' }
-        total: { $ref: '#/components/schemas/SignedIntegerStringV2' }
-    CoverageRatioBoundsEvidenceV2:
+          items: { $ref: '#/components/schemas/BalanceEquationEvidenceSource' }
+        total: { $ref: '#/components/schemas/SignedIntegerString' }
+    CoverageRatioBoundsEvidence:
       type: object
       description: "`observedRatio` is omitted and `undefinedReason` is set only when the denominator portfolio totals zero."
       required: [schemaVersion, operation, asset, numerator, denominator, effectiveBounds, compiledCEL]
       properties:
         schemaVersion: { type: integer, format: int32, enum: [2] }
         operation: { type: string, enum: [coverage_ratio_bounds] }
-        asset: { $ref: '#/components/schemas/AssetV2' }
-        numerator: { $ref: '#/components/schemas/CoveragePortfolioV2' }
-        denominator: { $ref: '#/components/schemas/CoveragePortfolioV2' }
-        observedRatio: { $ref: '#/components/schemas/RationalRateV2' }
-        effectiveBounds: { $ref: '#/components/schemas/EffectiveRateBoundsV2' }
+        asset: { $ref: '#/components/schemas/Asset' }
+        numerator: { $ref: '#/components/schemas/CoveragePortfolio' }
+        denominator: { $ref: '#/components/schemas/CoveragePortfolio' }
+        observedRatio: { $ref: '#/components/schemas/RationalRate' }
+        effectiveBounds: { $ref: '#/components/schemas/EffectiveRateBounds' }
         undefinedReason: { type: string, enum: [denominator_total_zero] }
         compiledCEL: { type: string }
-    EvidenceV2:
+    Evidence:
       oneOf:
-        - $ref: '#/components/schemas/BalanceEquationEvidenceV2'
-        - $ref: '#/components/schemas/ExchangeRateBoundsEvidenceV2'
-        - $ref: '#/components/schemas/SourceConsensusEvidenceV2'
-        - $ref: '#/components/schemas/CoverageRatioBoundsEvidenceV2'
+        - $ref: '#/components/schemas/BalanceEquationEvidence'
+        - $ref: '#/components/schemas/ExchangeRateBoundsEvidence'
+        - $ref: '#/components/schemas/SourceConsensusEvidence'
+        - $ref: '#/components/schemas/CoverageRatioBoundsEvidence'
       discriminator:
         propertyName: operation
         mapping:
-          balance_equation: '#/components/schemas/BalanceEquationEvidenceV2'
-          exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsEvidenceV2'
-          source_consensus: '#/components/schemas/SourceConsensusEvidenceV2'
-          coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsEvidenceV2'
+          balance_equation: '#/components/schemas/BalanceEquationEvidence'
+          exchange_rate_bounds: '#/components/schemas/ExchangeRateBoundsEvidence'
+          source_consensus: '#/components/schemas/SourceConsensusEvidence'
+          coverage_ratio_bounds: '#/components/schemas/CoverageRatioBoundsEvidence'
 
-    OutcomeV2:
+    Outcome:
       type: object
       required: [fingerprint, passed, evidence]
       properties:
         fingerprint: { type: string }
         passed: { type: boolean }
-        evidence: { $ref: '#/components/schemas/EvidenceV2' }
+        evidence: { $ref: '#/components/schemas/Evidence' }
 
-    EvaluateRuleRequestV2:
+    EvaluateRuleRequest:
       type: object
       properties:
         at: { type: string, format: date-time, description: "Point in time for the evaluation. Defaults to now." }
-    EvaluationV2:
+    Evaluation:
       type: object
       required: [id, contractVersion, ruleID, startedAt, endedAt, result, createdAt]
       properties:
         id: { type: string, format: uuid }
-        contractVersion: { $ref: '#/components/schemas/ContractVersionV2' }
+        contractVersion: { $ref: '#/components/schemas/ContractVersion' }
         ruleID: { type: string, format: uuid }
         startedAt: { type: string, format: date-time }
         endedAt: { type: string, format: date-time }
@@ -1526,26 +1526,26 @@ components:
         evidence:
           oneOf:
             - type: array
-              items: { $ref: '#/components/schemas/OutcomeV2' }
+              items: { $ref: '#/components/schemas/Outcome' }
             - type: object
               additionalProperties: true
         error: { type: string }
         costUnits: { type: integer, format: int64 }
         createdAt: { type: string, format: date-time }
-    EvaluationResponseV2:
+    EvaluationResponse:
       type: object
       required: [data]
       properties:
-        data: { $ref: '#/components/schemas/EvaluationV2' }
+        data: { $ref: '#/components/schemas/Evaluation' }
 
-    AckV2:
+    Ack:
       type: object
       required: [by, at]
       properties:
         by: { type: string }
         at: { type: string, format: date-time }
         note: { type: string }
-    ResolutionV2:
+    Resolution:
       type: object
       required: [kind, by, at]
       properties:
@@ -1556,9 +1556,9 @@ components:
         transactionRefs:
           type: array
           items: { type: string }
-        evidenceSnapshot: { $ref: '#/components/schemas/EvidenceV2' }
+        evidenceSnapshot: { $ref: '#/components/schemas/Evidence' }
         expiresAt: { type: string, format: date-time }
-    SnoozeV2:
+    Snooze:
       type: object
       required: [until, by, at]
       properties:
@@ -1566,36 +1566,36 @@ components:
         by: { type: string }
         at: { type: string, format: date-time }
         note: { type: string }
-    AlertV2:
+    Alert:
       type: object
       required: [id, contractVersion, ruleID, fingerprint, periodID, status, severity, firstSeenAt, lastSeenAt, occurrenceCount, lastEvaluationID, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
-        contractVersion: { $ref: '#/components/schemas/ContractVersionV2' }
+        contractVersion: { $ref: '#/components/schemas/ContractVersion' }
         ruleID: { type: string, format: uuid }
         fingerprint: { type: string }
         periodID: { type: string }
         status: { type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED] }
-        severity: { $ref: '#/components/schemas/SeverityV2' }
+        severity: { $ref: '#/components/schemas/Severity' }
         firstSeenAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
         occurrenceCount: { type: integer, format: int64 }
         lastEvaluationID: { type: string, format: uuid }
-        evidence: { $ref: '#/components/schemas/EvidenceV2' }
-        ack: { $ref: '#/components/schemas/AckV2' }
-        resolution: { $ref: '#/components/schemas/ResolutionV2' }
-        snooze: { $ref: '#/components/schemas/SnoozeV2' }
+        evidence: { $ref: '#/components/schemas/Evidence' }
+        ack: { $ref: '#/components/schemas/Ack' }
+        resolution: { $ref: '#/components/schemas/Resolution' }
+        snooze: { $ref: '#/components/schemas/Snooze' }
         labels:
           type: object
           additionalProperties: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
-    AlertResponseV2:
+    AlertResponse:
       type: object
       required: [data]
       properties:
-        data: { $ref: '#/components/schemas/AlertV2' }
-    AlertsCursorResponseV2:
+        data: { $ref: '#/components/schemas/Alert' }
+    AlertsCursorResponse:
       type: object
       required: [cursor]
       properties:
@@ -1609,17 +1609,17 @@ components:
             next: { type: string }
             data:
               type: array
-              items: { $ref: '#/components/schemas/AlertV2' }
-    CaptureV2:
+              items: { $ref: '#/components/schemas/Alert' }
+    Capture:
       type: object
       required: [transactionID, contractVersion, ruleID, periodID, evaluationID, templateKind, verdict, trigger, capturedAt]
       properties:
         transactionID: { type: integer, format: int64 }
-        contractVersion: { $ref: '#/components/schemas/ContractVersionV2' }
+        contractVersion: { $ref: '#/components/schemas/ContractVersion' }
         ruleID: { type: string, format: uuid }
         periodID: { type: string }
         evaluationID: { type: string, format: uuid }
-        templateKind: { $ref: '#/components/schemas/TemplateKindV2' }
+        templateKind: { $ref: '#/components/schemas/TemplateKind' }
         verdict: { type: string, enum: [pass, fail, error] }
         trigger: { type: string, enum: [scheduled, manual] }
         capturedAt: { type: string, format: date-time }
@@ -1631,10 +1631,10 @@ components:
         evidence:
           oneOf:
             - type: array
-              items: { $ref: '#/components/schemas/OutcomeV2' }
+              items: { $ref: '#/components/schemas/Outcome' }
             - type: object
               additionalProperties: true
-    CapturesCursorResponseV2:
+    CapturesCursorResponse:
       type: object
       required: [cursor]
       properties:
@@ -1648,15 +1648,15 @@ components:
             next: { type: string }
             data:
               type: array
-              items: { $ref: '#/components/schemas/CaptureV2' }
+              items: { $ref: '#/components/schemas/Capture' }
 
-    AckAlertRequestV2:
+    AckAlertRequest:
       type: object
       required: [by]
       properties:
         by: { type: string, example: "ops@buildr.com" }
         note: { type: string }
-    ResolveAlertRequestV2:
+    ResolveAlertRequest:
       type: object
       required: [by]
       properties:
@@ -1665,21 +1665,21 @@ components:
         transactionRefs:
           type: array
           items: { type: string }
-    AcceptAlertRequestV2:
+    AcceptAlertRequest:
       type: object
       required: [by, note]
       properties:
         by: { type: string }
         note: { type: string, minLength: 1 }
         expiresAt: { type: string, format: date-time }
-    SnoozeAlertRequestV2:
+    SnoozeAlertRequest:
       type: object
       required: [by, until]
       properties:
         by: { type: string, example: "ops@buildr.com" }
         until: { type: string, format: date-time }
         note: { type: string }
-    UnsnoozeAlertRequestV2:
+    UnsnoozeAlertRequest:
       type: object
       required: [by]
       properties:

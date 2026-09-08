@@ -405,7 +405,7 @@ were correctly ignored.
 | Evaluator | [internal/templates/stale_holds.go](../../internal/templates/stale_holds.go) — validate, augmented query, deadline resolution, per-hold / aggregate outcomes, identity labels |
 | Contract gating | V2 only ([contract_version.go](../../internal/api/service/contract_version.go)) |
 | Tests | [stale_holds_test.go](../../internal/templates/stale_holds_test.go) (36 cases) + the live-ledger IT above |
-| Public API | `StaleHoldsSpecV2` + `stale_holds` in `TemplateKindV2` ([openapi.yaml](../../openapi.yaml)) |
+| Public API | `StaleHoldsSpec` + `stale_holds` in `TemplateKind` ([openapi.yaml](../../openapi.yaml)) |
 | Docs | [templates.md §6](./templates.md), the in-app guide, this design |
 | Web UI | `StaleHoldsEditor` in [CreateRuleDialogV2.tsx](../../frontend/components/reconcile/panels/CreateRuleDialogV2.tsx), `StaleHoldsEvidence` in [V2Evidence.tsx](../../frontend/components/reconcile/V2Evidence.tsx) |
 | Demo | `holds:*` book in `seed-data.sh`, the warn/stale rule pair in `seed-demo.mjs` |
