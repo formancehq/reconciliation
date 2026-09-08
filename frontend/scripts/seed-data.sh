@@ -11,9 +11,11 @@
 # Run this FIRST, then `node scripts/seed-demo.mjs` to create the rules,
 # evaluate them, and drive the alert lifecycle.
 #
-# Idempotent: each transaction carries a stable --reference, so re-running is a
-# no-op (the ledger rejects a duplicate reference). For a full clean slate,
-# reset the whole cluster with `ledger-local/start.sh --fresh` in the ledger repo.
+# Idempotent by convergence: balances are moved TO a target rather than minted
+# as a fixed delta, so re-running settles the same book whatever the ledger held
+# before. That matters because the demo verdicts are absolute amounts — a book
+# minted twice put the company tranche at 6M against its 5M floor, turning an
+# expected FAIL into a legitimate PASS. Metadata writes are naturally idempotent.
 #
 # Env:
 #   LEDGER      data ledger name              (default: mortgage)
@@ -38,6 +40,44 @@ fi
 
 lc() { "$LEDGERCTL" --insecure --server "$SERVER" "$@"; }
 
+# balance <address> — the account's current balance for $ASSET, 0 when the
+# account or the asset is absent. Parsed from ledgerctl's --json with awk so the
+# script keeps its only dependencies as ledgerctl and a POSIX shell. The `|| true`
+# matters under `set -euo pipefail`: an absent account makes ledgerctl exit
+# non-zero, and that must read as "holds nothing", not abort the seed.
+balance() {
+  local out
+  out=$( { lc accounts show "$1" --ledger "$LEDGER" --json 2>/dev/null || true; } | awk -v want="$ASSET" '
+    /"asset"/   { a = $0; sub(/.*"asset": "/, "", a); sub(/".*/, "", a) }
+    /"balance"/ { if (a == want) { b = $0; sub(/.*"balance": "/, "", b); sub(/".*/, "", b); print b; exit } }
+  ' || true)
+  printf '%s' "${out:-0}"
+}
+
+# at <address> <target> — move the account to exactly <target>, minting the
+# shortfall from world or burning the excess back to it. Converging rather than
+# minting a delta is what makes a re-run safe on a ledger that has already been
+# seeded (see the header).
+at() {
+  local address="$1" target="$2" cur delta posting out
+  cur=$(balance "$address")
+  delta=$(( target - cur ))
+  if (( delta == 0 )); then
+    echo "  · $address already at $target"
+    return
+  fi
+  if (( delta > 0 )); then
+    posting="world,$address,$delta,$ASSET"
+  else
+    posting="$address,world,$(( -delta )),$ASSET"
+  fi
+  if out=$(lc transactions create --ledger "$LEDGER" --posting "$posting" 2>&1); then
+    echo "  + $address $cur → $target"
+  else
+    echo "  ✗ $address → $target" >&2; printf '    %s\n' "$out" >&2; return 1
+  fi
+}
+
 # tx <posting> <reference> — create a transaction, tolerating a duplicate
 # reference (an already-seeded run) so the script is idempotent.
 tx() {
@@ -55,12 +95,11 @@ echo "Seeding data ledger \"$LEDGER\" (asset \"$ASSET\") on $SERVER"
 lc ledgers create --name "$LEDGER" >/dev/null 2>&1 || true
 
 # Loan 201 book — balances chosen to make each demo rule land on a known verdict:
-tx "world,loan:201:principal,25000000,$ASSET"        "seed:loan-201:principal"    # >20M cap => exposure FAIL; >=0 => floor PASS
-tx "world,loan:201:company:tranche-a,3000000,$ASSET" "seed:loan-201:company"      # <5M floor => company-floor FAIL
-tx "world,loan:201:investor:fund-x,22000000,$ASSET"  "seed:loan-201:investor"     # != company 3M => parity FAIL
-tx "world,loan:201:repaid:2026-q1,5000000,$ASSET"    "seed:loan-201:repaid"       # != principal 25M (tol 100) => FAIL
-tx "world,loan:201:interest:accrued,150000,$ASSET"   "seed:loan-201:int-accrue"   # interest accrues...
-tx "loan:201:interest:accrued,world,150000,$ASSET"   "seed:loan-201:int-clear"    # ...then clears => interest:* nets to 0 => PASS
+at loan:201:principal         25000000   # >20M cap => exposure FAIL; >=0 => floor PASS
+at loan:201:company:tranche-a  3000000   # <5M floor => company-floor FAIL
+at loan:201:investor:fund-x   22000000   # != company 3M => parity FAIL
+at loan:201:repaid:2026-q1     5000000   # != principal 25M (tol 100) => FAIL
+at loan:201:interest:accrued          0  # accrued then cleared => interest:* nets to 0 => PASS
 
 
 # ── Holds, for the stale_holds demo rules ───────────────────────────────────
