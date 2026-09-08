@@ -234,7 +234,7 @@ export function RuleDetail({
             </h2>
             {rule && <SeverityBadge severity={rule.severity} />}
             {deleted && (
-              <span className="rounded-full border border-destructive-foreground/30 bg-destructive px-2 py-0.5 text-xs text-destructive-foreground">
+              <span className="rounded-full border border-destructive-foreground/30 bg-destructive/10 px-2 py-0.5 text-xs text-destructive-foreground">
                 Deleted rule
               </span>
             )}
