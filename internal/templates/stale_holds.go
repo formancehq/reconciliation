@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,16 +28,22 @@ import (
 //     and the comparison is done by the ledger's own metadata index: the
 //     evaluation clock is materialised into an integer cutoff and appended to
 //     the rule's query as a `$lte` clause (plus a `$gt` lower bound in
-//     `approaching` mode). The ledger returns only the
-//     holds that are already past (or approaching) their deadline, so the
-//     evaluation's cost and its evidence scale with the number of *stale*
-//     holds, not the number of holds.
+//     `approaching` mode). The ledger returns only the holds already past (or
+//     approaching) their deadline, so the read scales with the number of
+//     *stale* holds rather than the number of holds.
 //
 //  2. The kernel stays time-free. The clock enters as a literal, never as a
 //     `now()` builtin, so the `compiledCEL` recorded in evidence is an exact,
 //     re-runnable record of the predicate this evaluation applied — a builtin
 //     reading the wall clock would silently re-clock on replay. The rendered
 //     CEL uses only ledgerSet/balance.
+//
+// The outcome is one aggregate per asset: a count, a total, and the query that
+// found them. It names no individual hold, deliberately. A rule selects the set
+// it watches (an address prefix plus whatever metadata narrows it to one desk or
+// book), so which holds are stale is a question for that query — which evidence
+// carries verbatim — rather than a list that grows with the size of the problem
+// inside every alert.
 //
 // See docs/technical/stale-holds.md for the design and its open questions.
 
@@ -55,18 +60,6 @@ const (
 	// hold crossing into "stale" leaves this rule's outcomes and its warning
 	// alert auto-resolves as the stale rule's alert opens.
 	StaleHoldsApproaching StaleHoldsMode = "approaching"
-)
-
-// StaleHoldsScope selects the outcome granularity.
-type StaleHoldsScope string
-
-const (
-	// StaleHoldsPerHold (default) emits one failing Outcome per flagged hold,
-	// so each stuck hold is its own alert and auto-resolves when it clears.
-	StaleHoldsPerHold StaleHoldsScope = "per_hold"
-	// StaleHoldsAggregate emits a single Outcome per asset carrying the count
-	// and the total amount trapped.
-	StaleHoldsAggregate StaleHoldsScope = "aggregate"
 )
 
 // InstantEncoding declares how a deadline metadata value is written, because
@@ -90,28 +83,6 @@ const (
 	EncodingEpochMicros  InstantEncoding = "epoch_micros"
 )
 
-// staleHoldsSampleLimit bounds the per-hold breakdown embedded in an aggregate
-// outcome's evidence. per_hold scope carries the full detail one alert at a time.
-const staleHoldsSampleLimit = 20
-
-// defaultPerHoldBudget is the accounts budget a per_hold rule reads under when
-// it declares none of its own. It is deliberately far below the engine's
-// cluster-wide limit (50 000): in per_hold scope every matched hold can become
-// an alert, each costing a control-ledger read and write and a line in someone's
-// inbox, so inheriting a limit sized to protect the *ledger* would leave the
-// *operator* unprotected. A rule that legitimately watches more can say so.
-//
-// Above the cap the evaluation fails rather than alerting, which is the right
-// direction: a rule finding a thousand stale holds is reporting one systemic
-// failure, and one loud error is more use than a thousand tickets. aggregate
-// scope keeps the engine's budget — it emits one outcome however large the set.
-const defaultPerHoldBudget = 1000
-
-// maxStaleHoldsIdentityKeys bounds the labels copied onto every flagged hold —
-// enough to identify one, short of duplicating the account's whole metadata bag
-// into durable alert evidence.
-const maxStaleHoldsIdentityKeys = 8
-
 // HoldDeadlineSpec says where a hold's deadline comes from. When both keys are
 // declared, the recorded expiry wins for any hold that carries one and createdKey
 // + maxAge is the fallback for the rest — expressed as a single
@@ -129,27 +100,17 @@ type StaleHoldsSpec struct {
 	Deadline   HoldDeadlineSpec `json:"deadline"`
 	Mode       StaleHoldsMode   `json:"mode,omitempty"`
 	WarnWithin string           `json:"warnWithin,omitempty"`
-	Scope      StaleHoldsScope  `json:"scope,omitempty"`
 
 	// MaxHoldsScanned caps how many hold accounts a single evaluation may read,
-	// below the engine-wide accounts budget. It bounds the *read*, not the number
-	// of alerts: the matched set is what the deadline filter returns, and in
-	// per_hold scope the alert count follows it. Exceeding the cap fails the
-	// evaluation rather than truncating it — a truncated outcome list would make
-	// the service's disappearance sweep auto-resolve the holds that were dropped,
-	// closing alerts because there were too many problems. It can only ever lower
-	// the engine's budget, never raise it: that limit protects the ledger from any
-	// one evaluation and is not a rule author's to relax.
+	// below the engine-wide accounts budget. It bounds the *read* — the matched
+	// set is what the deadline filter returns — and the outcome is one aggregate
+	// per asset regardless of how large that set is. Exceeding the cap fails the
+	// evaluation rather than truncating it: a truncated read would understate the
+	// count and the total, reporting a smaller problem than the one that exists.
+	// It can only ever lower the engine's budget, never raise it: that limit
+	// protects the ledger from any one evaluation and is not a rule author's to
+	// relax.
 	MaxHoldsScanned *int `json:"maxHoldsScanned,omitempty"`
-
-	// IdentityKeys are account-metadata keys copied into each flagged hold's
-	// evidence, so an alert names the hold in the operator's own terms — the
-	// reference, the customer, the counterparty — rather than only a ledger
-	// address. They are labels, not predicates: they are read from the account
-	// already fetched, need no index, and a key a hold does not carry is simply
-	// absent from its evidence. Choose them deliberately; alert evidence is
-	// durable and widely readable, so it is not the place for personal data.
-	IdentityKeys []string `json:"identityKeys,omitempty"`
 }
 
 type StaleHolds struct{}
@@ -163,28 +124,20 @@ func (s *StaleHoldsSpec) normalize() {
 	if s.Mode == "" {
 		s.Mode = StaleHoldsBreached
 	}
-	if s.Scope == "" {
-		s.Scope = StaleHoldsPerHold
-	}
 	if s.Deadline.Encoding == "" {
 		s.Deadline.Encoding = EncodingDatetime
 	}
 }
 
-// holdsBudget is the accounts budget this evaluation reads under. A per_hold rule
-// that names no cap of its own gets defaultPerHoldBudget rather than the engine's
-// limit; an explicit maxHoldsScanned overrides that in either direction, but
-// never past the engine's own limit — a rule may tighten its blast radius, and
+// holdsBudget is the accounts budget this evaluation reads under: the engine's
+// limit unless the rule names a smaller one. An explicit maxHoldsScanned never
+// gets past the engine's own limit — a rule may tighten its blast radius, and
 // may not loosen the bound that protects the ledger from every evaluation.
 func (spec *StaleHoldsSpec) holdsBudget(engineBudget int) int {
-	budget := engineBudget
-	if spec.Scope == StaleHoldsPerHold {
-		budget = defaultPerHoldBudget
-	}
 	if spec.MaxHoldsScanned != nil {
-		budget = *spec.MaxHoldsScanned
+		return min(*spec.MaxHoldsScanned, engineBudget)
 	}
-	return min(budget, engineBudget)
+	return engineBudget
 }
 
 // maxAge returns the parsed fallback age. Zero when createdKey is unused.
@@ -246,29 +199,8 @@ func (t *StaleHolds) Validate(raw json.RawMessage) error {
 		return fmt.Errorf("%w: mode must be %q or %q (got %q)", ErrInvalidSpec, StaleHoldsBreached, StaleHoldsApproaching, spec.Mode)
 	}
 
-	switch spec.Scope {
-	case StaleHoldsPerHold, StaleHoldsAggregate:
-	default:
-		return fmt.Errorf("%w: scope must be %q or %q (got %q)", ErrInvalidSpec, StaleHoldsPerHold, StaleHoldsAggregate, spec.Scope)
-	}
-
 	if spec.MaxHoldsScanned != nil && *spec.MaxHoldsScanned <= 0 {
 		return fmt.Errorf("%w: maxHoldsScanned must be positive (got %d)", ErrInvalidSpec, *spec.MaxHoldsScanned)
-	}
-
-	if len(spec.IdentityKeys) > maxStaleHoldsIdentityKeys {
-		return fmt.Errorf("%w: identityKeys must contain at most %d keys (got %d)",
-			ErrInvalidSpec, maxStaleHoldsIdentityKeys, len(spec.IdentityKeys))
-	}
-	seen := make(map[string]struct{}, len(spec.IdentityKeys))
-	for i, key := range spec.IdentityKeys {
-		if strings.TrimSpace(key) == "" {
-			return fmt.Errorf("%w: identityKeys[%d] is empty", ErrInvalidSpec, i)
-		}
-		if _, duplicate := seen[key]; duplicate {
-			return fmt.Errorf("%w: identityKeys[%d] repeats %q", ErrInvalidSpec, i, key)
-		}
-		seen[key] = struct{}{}
 	}
 	return nil
 }
@@ -347,18 +279,23 @@ func (t *StaleHolds) Evaluate(
 	}
 
 	asset := spec.Source.Asset
-	flagged := make([]flaggedHold, 0, len(accounts))
-	released := 0
+	scan := scanSummary{
+		matched: len(accounts),
+		total:   new(big.Int),
+		now:     now,
+		window:  window,
+		budget:  budget,
+	}
 	for _, account := range accounts {
 		amount := zeroIfNil(account.Balances[asset])
 		// A released hold keeps its account row and its deadline metadata — only
 		// the zeroed volume is evicted — so it still matches a deadline filter.
 		// Balances are not filterable in a query, so this is post-filtered here.
 		if amount.Sign() == 0 {
-			released++
+			scan.released++
 			continue
 		}
-		deadline, basis, err := spec.holdDeadline(account)
+		deadline, err := spec.holdDeadline(account)
 		if err != nil {
 			return nil, err
 		}
@@ -367,177 +304,84 @@ func (t *StaleHolds) Evaluate(
 		if !window.contains(deadline) {
 			continue
 		}
-		flagged = append(flagged, flaggedHold{
-			address:  account.Address,
-			amount:   new(big.Int).Set(amount),
-			deadline: deadline,
-			basis:    basis,
-			identity: spec.identityOf(account),
-		})
-	}
-	sort.Slice(flagged, func(i, j int) bool {
-		if !flagged[i].deadline.Equal(flagged[j].deadline) {
-			return flagged[i].deadline.Before(flagged[j].deadline)
+		// Accumulated, not collected. The outcome is one aggregate per asset, so
+		// retaining every flagged hold would grow the evaluation's memory with the
+		// size of the problem to report a count and a sum.
+		scan.flagged++
+		scan.total.Add(scan.total, amount)
+		if scan.oldest.IsZero() || deadline.Before(scan.oldest) {
+			scan.oldest = deadline
 		}
-		return flagged[i].address < flagged[j].address
-	})
+	}
 
-	scan := scanSummary{
-		matched:  len(accounts),
-		released: released,
-		flagged:  flagged,
-		now:      now,
-		window:   window,
-		budget:   budget,
-	}
-	if spec.Scope == StaleHoldsAggregate {
-		return spec.aggregateOutcome(scan, query), nil
-	}
-	return spec.perHoldOutcomes(scan, query, clause), nil
+	return spec.aggregateOutcome(scan, query), nil
 }
 
-// flaggedHold is one hold that failed the deadline check.
-type flaggedHold struct {
-	address  string
-	amount   *big.Int
-	deadline time.Time
-	basis    string
-	identity map[string]string
-}
-
+// scanSummary is what one evaluation observed. The flagged holds are counted
+// and summed as they are seen rather than retained: nothing downstream reports
+// them individually.
 type scanSummary struct {
 	matched  int
 	released int
-	flagged  []flaggedHold
+	flagged  int
+	total    *big.Int
+	oldest   time.Time
 	now      time.Time
 	window   deadlineWindow
 	budget   int
 }
 
-// totalAmount sums the flagged holds. Holds share a sign in practice, but the
-// sum is reported as-is rather than as an absolute value so an unexpected mix
-// is visible rather than cancelled out.
-func (s scanSummary) totalAmount() *big.Int {
-	total := new(big.Int)
-	for _, hold := range s.flagged {
-		total.Add(total, hold.amount)
-	}
-	return total
-}
-
-// perHoldOutcomes emits one failing outcome per flagged hold. A hold that
-// clears simply stops appearing, and the service's disappearance sweep
-// auto-resolves its alert. When nothing is flagged, a single passing outcome
-// records what was checked — a clean run still leaves evidence of the scan.
-func (spec *StaleHoldsSpec) perHoldOutcomes(scan scanSummary, query, clause json.RawMessage) []Outcome {
-	if len(scan.flagged) == 0 {
-		return []Outcome{{
-			Fingerprint: fingerprintFor("asset", spec.Source.Asset),
-			Passed:      true,
-			Evidence:    spec.summaryEvidence(scan, query, false),
-		}}
-	}
-
-	outcomes := make([]Outcome, 0, len(scan.flagged))
-	for _, hold := range scan.flagged {
-		holdQuery := andQuery(accountAddressQuery(hold.address), clause)
-		evidence := spec.holdEvidence(hold, scan)
-		evidence["compiledCEL"] = staleHoldsCEL(spec.Source.Ledger, holdQuery, spec.Source.Asset)
-		outcomes = append(outcomes, Outcome{
-			Fingerprint: fingerprintFor("asset", spec.Source.Asset, "hold", hold.address),
-			Passed:      false,
-			Evidence:    evidence,
-		})
-	}
-	return outcomes
-}
-
-// aggregateOutcome emits one outcome per asset carrying the count, the total
-// trapped, and a bounded sample of the offending holds.
+// aggregateOutcome emits one outcome per asset: the count, the total trapped,
+// and the query that found them.
 func (spec *StaleHoldsSpec) aggregateOutcome(scan scanSummary, query json.RawMessage) []Outcome {
 	return []Outcome{{
 		Fingerprint: fingerprintFor("asset", spec.Source.Asset),
-		Passed:      len(scan.flagged) == 0,
-		Evidence:    spec.summaryEvidence(scan, query, true),
+		Passed:      scan.flagged == 0,
+		Evidence:    spec.summaryEvidence(scan, query),
 	}}
 }
 
-func (spec *StaleHoldsSpec) summaryEvidence(scan scanSummary, query json.RawMessage, withSample bool) map[string]any {
+// summaryEvidence describes the scan without naming a single hold. An operator
+// investigating a break needs the set, not a prefix of it, and the set is
+// recoverable: effectiveQuery is the exact query this evaluation ran, deadline
+// cutoff included as an integer literal.
+//
+// It is in this module's own query dialect — the same shape a rule's
+// source.query takes — so it drops straight back into a rule. It is NOT
+// byte-compatible with the ledger's HTTP `?filter=` dialect, which spells
+// existence `{"$exists":{"metadata":"k"}}` where this emits
+// `{"$exists":{"metadata[k]":true}}`; a rule declaring both deadline keys
+// therefore needs that one clause translated to run there directly.
+//
+// Re-running it does not reconstruct this evaluation either way. Ledger V3 has
+// no point-in-time read (ADR-003), so the deadline half of the predicate is
+// frozen while balances stay live: the answer later is "the holds still past
+// this cutoff that are still funded", which is the useful question anyway.
+func (spec *StaleHoldsSpec) summaryEvidence(scan scanSummary, query json.RawMessage) map[string]any {
 	evidence := map[string]any{
 		"schemaVersion":      2,
 		"operation":          "stale_holds",
 		"mode":               string(spec.Mode),
-		"scope":              string(spec.Scope),
 		"asset":              spec.Source.Asset,
 		"sourceId":           spec.Source.ID,
+		"ledger":             spec.Source.Ledger,
 		"evaluatedAt":        scan.now.Format(time.RFC3339),
 		"deadlineOnOrBefore": scan.window.until.Format(time.RFC3339),
 		"holdsMatched":       scan.matched,
 		"holdsBudget":        scan.budget,
 		"holdsReleased":      scan.released,
-		"holdsFlagged":       len(scan.flagged),
-		"amountFlagged":      scan.totalAmount().String(),
+		"holdsFlagged":       scan.flagged,
+		"amountFlagged":      scan.total.String(),
+		"effectiveQuery":     string(query),
 		"compiledCEL":        staleHoldsCEL(spec.Source.Ledger, query, spec.Source.Asset),
 	}
 	if scan.window.after != nil {
 		evidence["deadlineAfter"] = scan.window.after.Format(time.RFC3339)
 	}
-	if len(scan.flagged) > 0 {
-		evidence["oldestDeadline"] = scan.flagged[0].deadline.Format(time.RFC3339)
-	}
-	if withSample && len(scan.flagged) > 0 {
-		limit := min(len(scan.flagged), staleHoldsSampleLimit)
-		sample := make([]map[string]any, 0, limit)
-		for _, hold := range scan.flagged[:limit] {
-			sample = append(sample, spec.holdEvidence(hold, scan))
-		}
-		evidence["holds"] = sample
-		evidence["holdsSampled"] = limit
+	if !scan.oldest.IsZero() {
+		evidence["oldestDeadline"] = scan.oldest.Format(time.RFC3339)
 	}
 	return evidence
-}
-
-func (spec *StaleHoldsSpec) holdEvidence(hold flaggedHold, scan scanSummary) map[string]any {
-	evidence := map[string]any{
-		"schemaVersion": 2,
-		"operation":     "stale_holds",
-		"mode":          string(spec.Mode),
-		"asset":         spec.Source.Asset,
-		"sourceId":      spec.Source.ID,
-		"hold":          hold.address,
-		"amount":        hold.amount.String(),
-		"basis":         hold.basis,
-		"deadline":      hold.deadline.Format(time.RFC3339),
-		"evaluatedAt":   scan.now.Format(time.RFC3339),
-	}
-	if spec.Mode == StaleHoldsApproaching {
-		evidence["dueInSeconds"] = int64(hold.deadline.Sub(scan.now).Seconds())
-	} else {
-		evidence["overdueSeconds"] = int64(scan.now.Sub(hold.deadline).Seconds())
-	}
-	if len(hold.identity) > 0 {
-		evidence["identity"] = hold.identity
-	}
-	return evidence
-}
-
-// identityOf copies the declared label keys off one hold. A key the hold does
-// not carry is omitted rather than reported as empty or raised as an error —
-// these describe the hold, they do not decide its verdict.
-func (spec *StaleHoldsSpec) identityOf(account engine.Account) map[string]string {
-	if len(spec.IdentityKeys) == 0 {
-		return nil
-	}
-	identity := make(map[string]string, len(spec.IdentityKeys))
-	for _, key := range spec.IdentityKeys {
-		if value, present := account.Metadata[key]; present && value != "" {
-			identity[key] = value
-		}
-	}
-	if len(identity) == 0 {
-		return nil
-	}
-	return identity
 }
 
 // --- deadlines ---------------------------------------------------------------
@@ -599,32 +443,32 @@ func (spec *StaleHoldsSpec) explainWindow() deadlineWindow {
 // carries one, else creation + maxAge. A hold matched by the query but missing
 // or misencoding its deadline is an error, not a silent skip — the same stance
 // SumAccountMetadataInt takes on a metadata balance that didn't populate.
-func (spec *StaleHoldsSpec) holdDeadline(account engine.Account) (time.Time, string, error) {
+func (spec *StaleHoldsSpec) holdDeadline(account engine.Account) (time.Time, error) {
 	if spec.Deadline.ExpiryKey != "" {
 		if raw, ok := account.Metadata[spec.Deadline.ExpiryKey]; ok && strings.TrimSpace(raw) != "" {
 			deadline, err := spec.Deadline.Encoding.parse(raw)
 			if err != nil {
-				return time.Time{}, "", fmt.Errorf("account %q metadata[%s]: %w", account.Address, spec.Deadline.ExpiryKey, err)
+				return time.Time{}, fmt.Errorf("account %q metadata[%s]: %w", account.Address, spec.Deadline.ExpiryKey, err)
 			}
-			return deadline, "expiry", nil
+			return deadline, nil
 		}
 	}
 	if spec.Deadline.CreatedKey != "" {
 		raw, ok := account.Metadata[spec.Deadline.CreatedKey]
 		if !ok || strings.TrimSpace(raw) == "" {
-			return time.Time{}, "", fmt.Errorf("account %q has no metadata[%s] to date the hold from", account.Address, spec.Deadline.CreatedKey)
+			return time.Time{}, fmt.Errorf("account %q has no metadata[%s] to date the hold from", account.Address, spec.Deadline.CreatedKey)
 		}
 		created, err := spec.Deadline.Encoding.parse(raw)
 		if err != nil {
-			return time.Time{}, "", fmt.Errorf("account %q metadata[%s]: %w", account.Address, spec.Deadline.CreatedKey, err)
+			return time.Time{}, fmt.Errorf("account %q metadata[%s]: %w", account.Address, spec.Deadline.CreatedKey, err)
 		}
 		maxAge, err := spec.maxAge()
 		if err != nil {
-			return time.Time{}, "", err
+			return time.Time{}, err
 		}
-		return created.Add(maxAge), "created_at", nil
+		return created.Add(maxAge), nil
 	}
-	return time.Time{}, "", fmt.Errorf("account %q has no metadata[%s] and the rule declares no fallback", account.Address, spec.Deadline.ExpiryKey)
+	return time.Time{}, fmt.Errorf("account %q has no metadata[%s] and the rule declares no fallback", account.Address, spec.Deadline.ExpiryKey)
 }
 
 // encode renders an instant in the unit the metadata key is compared in. A
@@ -681,8 +525,7 @@ func (spec *StaleHoldsSpec) effectiveQuery(window deadlineWindow) (json.RawMessa
 }
 
 // queryWith joins the rule's own hold query with an already-rendered deadline
-// clause. Evaluate renders the clause once and reuses it for the narrowed
-// per-hold expressions in evidence.
+// clause.
 func (spec *StaleHoldsSpec) queryWith(clause json.RawMessage) (json.RawMessage, error) {
 	base, err := compactJSON(spec.Source.Query)
 	if err != nil {

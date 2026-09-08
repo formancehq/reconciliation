@@ -239,8 +239,8 @@ flowchart TB
     Hold -.evaluation + capture still recorded.- Rec[(_recon)]
 ```
 
-A fan-out rule — `stale_holds` scope `per_hold`, or any rule whose sources declare asset `*` —
-turns matched accounts or assets into alerts. The engine's accounts budget
+A fan-out rule — one whose sources declare asset `*`, so it emits an outcome per asset —
+turns matched assets into alerts. The engine's accounts budget
 caps how much of the *ledger* one evaluation may read (50 000); it says nothing about how many alerts
 that read becomes, and each alert is a control-ledger read and write, a notification, and a line in
 an inbox someone must triage. A rule that finds hundreds of new breaks at once is reporting one
@@ -270,9 +270,9 @@ Unlike `engine.error`, the `alert.cap` meta-alert is scoped to the **evaluation'
 withheld plan is a fact about this rule in this period, so the next run that fits under the cap sweeps
 it away as a disappeared fingerprint rather than leaving an operator to resolve it by hand.
 
-Templates can bound their own fan-out further — `stale_holds` caps `per_hold` reads at 1000 by
-default via `maxHoldsScanned` ([templates.md](./templates.md)). The two are independent layers: the
-template cap bounds one rule's *read*, this cap bounds the *module's* alert output.
+Templates can bound their own reads further — `stale_holds` takes a per-rule `maxHoldsScanned`
+([templates.md](./templates.md)). The two are independent layers: the template cap bounds one rule's
+*read*, this cap bounds the *module's* alert output.
 
 ---
 

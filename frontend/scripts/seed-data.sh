@@ -98,9 +98,10 @@ tx "world,holds:h-8804,25000,$ASSET" "seed:hold:h-8804"   # no expiry, placed 50
 tx "world,holds:h-8805,25000,$ASSET" "seed:hold:h-8805"   # released below, keeps a long-passed expiry => ignored
 tx "holds:h-8805,world,25000,$ASSET" "seed:hold:h-8805-release"
 
-# hold_reference / customer_id are identity labels: the rule copies them onto
-# each alert so it names the hold, not just an address. Labels are read off the
-# account, never filtered on, so they need no declared type and no index.
+# hold_reference / customer_id are ordinary account metadata: the rule does not
+# read them, and they need no declared type or index. They are here because real
+# hold accounts carry business identifiers, and because narrowing a rule to a
+# subset (one desk, one book) is done with a metadata match on keys like these.
 meta holds:h-8801 "hold_created_at=$(iso -30H '-30 hours')" "hold_expires_at=$(iso -6H '-6 hours')"  "hold_reference=H-8801" "customer_id=cust_42"
 meta holds:h-8802 "hold_created_at=$(iso -21H '-21 hours')" "hold_expires_at=$(iso +3H '+3 hours')"  "hold_reference=H-8802" "customer_id=cust_42"
 meta holds:h-8803 "hold_created_at=$(iso -2H '-2 hours')"   "hold_expires_at=$(iso +5d '+5 days')"   "hold_reference=H-8803" "customer_id=cust_17"

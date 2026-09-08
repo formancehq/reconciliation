@@ -8,7 +8,6 @@ import type {
   RuleRequest,
   Rule,
   StaleHoldsMode,
-  StaleHoldsScope,
   TemplateKind,
 } from "./typesV2"
 import {
@@ -21,7 +20,6 @@ import {
 } from "./v2"
 
 /** stale_holds reads one hold set, unlike the multi-source V2 templates. */
-export const MAX_IDENTITY_KEYS = 8
 
 /** A source declared as "every asset this account set holds". */
 export const ASSET_WILDCARD = "*"
@@ -116,8 +114,6 @@ export interface RuleFormDraft {
   deadline: HoldDeadlineDraft
   mode: StaleHoldsMode
   warnWithin: string
-  scope: StaleHoldsScope
-  identityKeys: string[]
   maxHoldsScanned: string
   /** Form-local: the asset each source carried before "every asset" was turned on. */
   namedAssets: Record<string, string>
@@ -314,8 +310,6 @@ export function createRuleFormDraft({
     },
     mode: savedHolds?.mode ?? "stale",
     warnWithin: savedHolds?.warnWithin ?? "",
-    scope: savedHolds?.scope ?? "per_hold",
-    identityKeys: savedHolds?.identityKeys ? [...savedHolds.identityKeys] : [],
     maxHoldsScanned:
       savedHolds?.maxHoldsScanned === undefined
         ? ""
@@ -488,9 +482,6 @@ export function serializeRuleForm(draft: RuleFormDraft): RuleRequest {
       deadline.createdKey = draft.deadline.createdKey.trim()
       deadline.maxAge = draft.deadline.maxAge.trim()
     }
-    const identityKeys = draft.identityKeys
-      .map((key) => key.trim())
-      .filter(Boolean)
     const maxHoldsScanned = draft.maxHoldsScanned.trim()
     return {
       ...common,
@@ -501,13 +492,11 @@ export function serializeRuleForm(draft: RuleFormDraft): RuleRequest {
         source: cloneSources(draft.sources)[0] as LedgerNamedSource,
         deadline,
         mode: draft.mode,
-        scope: draft.scope,
         // Omitted rather than sent empty: the server rejects warnWithin in
-        // stale mode, and treats an absent cap as "use the scope default".
+        // stale mode, and treats an absent cap as "use the engine budget".
         ...(draft.mode === "approaching" && draft.warnWithin.trim()
           ? { warnWithin: draft.warnWithin.trim() }
           : {}),
-        ...(identityKeys.length ? { identityKeys } : {}),
         ...(maxHoldsScanned ? { maxHoldsScanned: Number(maxHoldsScanned) } : {}),
       },
     }
@@ -756,20 +745,6 @@ export function validateRuleForm(draft: RuleFormDraft): RuleFormIssue[] {
       )
     if (warnWithin && !DURATION_PATTERN.test(warnWithin))
       add("warnWithin", 'Use a duration such as "6h" or "90m".')
-
-    const identitySeen = new Set<string>()
-    draft.identityKeys.forEach((key, index) => {
-      const trimmed = key.trim()
-      if (!trimmed) {
-        add(`identityKeys[${index}]`, "Remove the empty label key.")
-        return
-      }
-      if (identitySeen.has(trimmed))
-        add(`identityKeys[${index}]`, `${trimmed} is listed twice.`)
-      identitySeen.add(trimmed)
-    })
-    if (draft.identityKeys.length > MAX_IDENTITY_KEYS)
-      add("identityKeys", `Use at most ${MAX_IDENTITY_KEYS} label keys.`)
 
     const cap = draft.maxHoldsScanned.trim()
     if (cap && (!/^\d+$/.test(cap) || Number(cap) < 1))

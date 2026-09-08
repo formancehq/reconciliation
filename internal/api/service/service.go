@@ -90,9 +90,9 @@ type Service struct {
 // single meta-alert instead.
 //
 // This guards a resource the engine's accounts budget does not: that budget caps
-// how much of the *ledger* one evaluation may read, while a fan-out rule
-// (stale_holds per_hold, or any rule whose sources declare asset "*") turns
-// matched accounts or assets into alerts — each a control-ledger read and
+// how much of the *ledger* one evaluation may read, while a fan-out rule (one
+// whose sources declare asset "*", so it emits an outcome per asset) turns
+// matched assets into alerts — each a control-ledger read and
 // write, a notification, and a line in an inbox someone is meant to triage. A
 // rule that finds hundreds of new breaks at once is reporting one systemic
 // failure; opening hundreds of tickets buries it.

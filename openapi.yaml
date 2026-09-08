@@ -1122,6 +1122,17 @@ components:
         rather than the number of holds. Severity is declared per rule, so
         "warn early, page late" is two rules: an `approaching` rule at a low
         severity and a `stale` rule at a high one.
+
+        The outcome is **one alert per asset**, carrying the count of stale
+        holds, the total amount trapped, the oldest deadline, and
+        `effectiveQuery` — the query this evaluation ran, deadline cutoff
+        included as a literal, in the same dialect as a rule's own
+        `source.query`. It names no individual hold: a rule selects the set it
+        watches, so which holds are stale is a question for that query rather
+        than a list inside every alert. Re-running `effectiveQuery` does not
+        reconstruct the evaluation — there is no point-in-time read, so the
+        deadline half is frozen while balances stay live, and the answer is the
+        holds still past that cutoff and still funded.
       required: [source, deadline]
       properties:
         source:
@@ -1146,47 +1157,18 @@ components:
             rule's evaluation interval, or a hold can cross the band between
             two runs without ever warning.
           example: 6h
-        scope:
-          type: string
-          enum: [per_hold, aggregate]
-          default: per_hold
-          description: |
-            `per_hold` opens one alert per stuck hold, each auto-resolving when
-            that hold clears. `aggregate` opens one alert per asset carrying the
-            count and the total amount trapped.
         maxHoldsScanned:
           type: integer
           minimum: 1
           description: |
             Caps how many hold accounts one evaluation reads, below the
-            engine-wide accounts budget. It bounds the **read**, not the number
-            of alerts — though in `per_hold` scope the alert count follows the
-            matched set, so it bounds the blast radius of a systemic failure.
-            Exceeding it fails the evaluation (recorded as ERROR, with an
-            engine-health alert) instead of truncating: a truncated outcome list
-            would auto-resolve the holds it dropped. It never raises the
-            engine's own budget.
-
-            Defaults: `per_hold` scope caps itself at **1000** — in that scope
-            every matched hold can become an alert, so it does not inherit a
-            limit sized to protect the ledger rather than the operator. Set this
-            explicitly for a rule that legitimately watches more. `aggregate`
-            scope emits one outcome however large the set, so it keeps the
-            engine's budget.
+            engine-wide accounts budget. It bounds the **read** — the outcome is
+            one aggregate per asset however large the matched set is. Exceeding
+            it fails the evaluation (recorded as ERROR, with an engine-health
+            alert) instead of truncating: a truncated read would understate the
+            count and the total, reporting a smaller problem than the one that
+            exists. It never raises the engine's own budget, only lowers it.
           example: 500
-        identityKeys:
-          type: array
-          maxItems: 8
-          items: { type: string, minLength: 1 }
-          description: |
-            Account-metadata keys copied into each flagged hold's evidence, so an
-            alert names the hold in business terms — the reference, the customer,
-            the counterparty — rather than only a ledger address. These are
-            labels, not predicates: they are read from the account already
-            fetched, need no metadata index, and a key a hold does not carry is
-            omitted from its evidence rather than failing it. Alert evidence is
-            durable and widely readable, so keep personal data out of it.
-          example: [hold_reference, customer_id]
 
     RuleRequestCommon:
       type: object

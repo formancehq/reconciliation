@@ -510,8 +510,6 @@ the hold when it has one, otherwise its creation instant plus `maxAge`.
     "maxAge": "48h"
   },
   "mode": "stale",
-  "scope": "per_hold",
-  "identityKeys": ["hold_reference", "customer_id"],
   "maxHoldsScanned": 500
 }
 ```
@@ -543,11 +541,6 @@ evaluation clock is materialised into an integer cutoff and appended to the rule
   `metadataInt` cannot read one. Epoch nanoseconds are not offered: query values travel as JSON
   numbers and are rejected past 2^53.
 - `warnWithin` is required with `mode: approaching` and rejected with `mode: stale`.
-- `identityKeys` (optional, at most 8, non-empty and distinct) names account-metadata keys copied
-  into each flagged hold's evidence, so an alert reads *"hold H-8801 for cust_42"* rather than only
-  a ledger address. They are **labels, not predicates**: read off the account already
-  fetched, so they need **no metadata index**, and a key a hold does not carry is omitted rather than
-  failing it. Alert evidence is durable and widely readable — keep personal data out of it.
 
 **Released holds.** Releasing a hold zeroes its volume but keeps the account row and its metadata, so
 a released hold still matches a deadline filter. Balances are not filterable in a query, so
@@ -561,45 +554,43 @@ own query a liveness predicate (`metadata[hold_status] = active`, above) if rele
 rule's outcomes and its warning alert auto-resolves as the stale alert opens. Set `warnWithin` longer
 than the rule's evaluation interval, or a hold can cross the band between two runs without warning.
 
-**Fingerprint** — `asset:<asset>|hold:<address>` (`per_hold`) · `asset:<asset>` (`aggregate`, and the
-summary outcome a clean `per_hold` run emits)
+**Fingerprint** — `asset:<asset>`
 
-In `per_hold` scope only failing holds produce outcomes; a hold that clears stops appearing and the
-service's disappearance sweep auto-resolves its alert. A run with nothing stale emits one passing
-`asset:<asset>` outcome so a clean evaluation still records what was checked.
+**One outcome per asset**, whatever the stale count: the fingerprint does not carry an address, so a
+rule opens one alert and it auto-resolves on the first run with nothing stale. That is the whole
+contract. A rule scopes itself with its own selector instead — an address prefix plus whatever
+narrows it to one desk or book — so separate sets are separate rules, with separate severities.
 
-Evidence carries `mode`, `basis` (`expiry` / `created_at`), `deadline`, `evaluatedAt`, the amount,
-`overdueSeconds` (or `dueInSeconds` in `approaching` mode), `compiledCEL`, and — when `identityKeys`
-is set — an `identity` object with the labels the hold carries. Summary and aggregate
-outcomes carry the scan instead: `deadlineOnOrBefore` (and `deadlineAfter` for a band),
-`holdsMatched`, `holdsBudget`, `holdsReleased`, `holdsFlagged`, `amountFlagged`, `oldestDeadline`, and — in
-`aggregate` scope — a `holds` sample bounded to 20 entries with `holdsSampled` saying how many.
+Evidence describes the scan, never the holds: `mode`, `evaluatedAt` (the evaluation PIT),
+`deadlineOnOrBefore` (and `deadlineAfter` for a band), `holdsMatched`, `holdsBudget`,
+`holdsReleased`, `holdsFlagged`, `amountFlagged`, `oldestDeadline`, `ledger`, `asset`, `compiledCEL`,
+and `effectiveQuery`.
 
-> ⚠️ `per_hold` opens **one alert per stale hold** — one control-ledger read and write each. That is
-> the point when only a handful of holds are stuck at a time, and the wrong shape when a systemic
-> failure strands thousands at once. Bound it with `maxHoldsScanned` (below), and use
-> `aggregate` where the stale set is expected to be large.
+`effectiveQuery` is what makes the set recoverable without embedding it. It is the query this
+evaluation ran, deadline cutoff included as an integer literal, in **this module's query dialect** —
+the same shape a rule's own `source.query` takes, so it drops back into a rule to list the holds.
+(It is not byte-compatible with the ledger's HTTP `?filter=`, which spells existence
+`{"$exists":{"metadata":"k"}}` where this emits `{"$exists":{"metadata[k]":true}}`; only a rule
+declaring both deadline keys emits that clause.) Re-running it does **not** reconstruct the
+evaluation: there is no point-in-time read (ADR-003), so the deadline half is frozen while balances
+stay live, and the answer is *the holds still past that cutoff and still funded*. That is the
+question worth asking later anyway — a list captured at evaluation time would be stale by the time
+anyone opened it.
 
 **`maxHoldsScanned`** caps how many hold accounts one evaluation reads, below the engine-wide
 accounts budget (`MaxAccountsScanned`, 50 000 by default). Three things to understand about it:
 
-- **It bounds the read, not the alert count.** The matched set is whatever the deadline filter
-  returns — stale holds *plus* any released hold still carrying an expired deadline. In `per_hold`
-  scope the alert count follows that set, which is why the cap bounds the blast radius; but while the
-  release question is unresolved it may equally trip on accumulated dead holds, which makes it a
-  useful tripwire for exactly that.
+- **It bounds the read, not the inbox.** The outcome is one aggregate per asset however large the
+  matched set is. What the cap protects is the scan: the matched set is whatever the deadline filter
+  returns — stale holds *plus* any released hold still carrying an expired deadline — so while the
+  release question is unresolved it doubles as a tripwire on accumulated dead holds.
 - **Exceeding it fails the evaluation** — recorded as `ERROR` with an engine-health alert, and
   **existing alerts are left untouched** (the transition plan never runs). It deliberately does not
-  truncate: emitting a subset would make the disappearance sweep auto-resolve the holds it dropped,
-  closing alerts *because* there were too many problems.
+  truncate: a truncated read would understate `holdsFlagged` and `amountFlagged`, reporting a
+  smaller problem than the one that exists.
 - **It never raises the engine's budget.** That limit protects the ledger from any single evaluation
   and is not a rule author's to relax; the effective value is recorded in evidence as `holdsBudget`.
-- **`per_hold` does not inherit the engine's budget by default — it caps itself at 1000.** The engine
-  limit (50 000) is sized to protect the *ledger* from one runaway scan; in `per_hold` scope every
-  matched hold can become an alert, each costing a control-ledger read and write and a line in an
-  operator's inbox, so that limit protects the wrong thing. A rule that legitimately watches more
-  holds says so with `maxHoldsScanned`. `aggregate` emits one outcome however large the set, so it
-  keeps the engine's budget.
+  Absent a rule-level cap, a rule reads under the engine's budget.
 
 Independently of this, the **service** caps how many alerts one evaluation may newly open across any
 template (200 by default) and withholds the whole plan above it — see

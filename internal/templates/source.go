@@ -130,13 +130,6 @@ func (s SourceSpec) resolveAccounts(ctx context.Context, resolvers engine.Resolv
 	return resolvers.Ledger.ListAccounts(ctx, s.Ledger, s.Query, limit)
 }
 
-// accountAddressQuery renders the metadata-query JSON selecting exactly one
-// account by address. json.Marshal escapes the address safely.
-func accountAddressQuery(address string) json.RawMessage {
-	b, _ := json.Marshal(map[string]any{"$match": map[string]any{"address": address}})
-	return b
-}
-
 // label is a short, human-readable identifier for this source, used in evidence
 // so an operator can tell which side of a comparison a balance came from.
 func (s SourceSpec) label() string {

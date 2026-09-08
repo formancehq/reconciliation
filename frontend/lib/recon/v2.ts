@@ -188,8 +188,7 @@ export function describeRule(rule: Rule): string {
         spec.mode === "approaching"
           ? `deadline within the next ${spec.warnWithin}`
           : "deadline passed"
-      const grain = spec.scope === "aggregate" ? "total held" : "per hold"
-      return `${sourceName(spec.source)} · ${window} (${deadline}) · ${grain}`
+      return `${sourceName(spec.source)} · ${window} (${deadline})`
     }
   }
 }

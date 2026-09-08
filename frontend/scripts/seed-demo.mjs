@@ -194,10 +194,6 @@ const HOLD_DEADLINE = {
   encoding: 'datetime',
   maxAge: '48h',
 };
-// Labels copied onto each alert so it names the hold, not just an address. Read
-// off the account, never filtered on — no index required.
-const HOLD_IDENTITY = ['hold_reference', 'customer_id'];
-
 const V2_RULES = [
   {
     key: 'holds-stale',
@@ -209,8 +205,6 @@ const V2_RULES = [
         source: HOLDS_SOURCE,
         deadline: HOLD_DEADLINE,
         mode: 'stale',
-        scope: 'per_hold',
-        identityKeys: HOLD_IDENTITY,
       },
       severity: 'high',
       periodType: 'continuous',
@@ -228,8 +222,6 @@ const V2_RULES = [
         deadline: { expiryKey: HOLD_DEADLINE.expiryKey, encoding: 'datetime' },
         mode: 'approaching',
         warnWithin: '24h',
-        scope: 'per_hold',
-        identityKeys: HOLD_IDENTITY,
       },
       severity: 'low',
       periodType: 'continuous',

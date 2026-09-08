@@ -83,7 +83,8 @@ func evaluateHolds(t *testing.T, spec json.RawMessage, accounts []engine.Account
 	return outcomes, ledger
 }
 
-// A hold whose recorded expiry has passed is flagged, one alert per hold.
+// A hold whose recorded expiry has passed lands in the aggregate: one outcome
+// per asset, carrying the count and the amount rather than the address.
 func TestStaleHolds_FlagsExpiredHold(t *testing.T) {
 	t.Parallel()
 
@@ -98,20 +99,21 @@ func TestStaleHolds_FlagsExpiredHold(t *testing.T) {
 	if outcome.Passed {
 		t.Error("expected the expired hold to fail")
 	}
-	if want := "asset:USD/2|hold:holds:h1"; outcome.Fingerprint != want {
+	if want := "asset:USD/2"; outcome.Fingerprint != want {
 		t.Errorf("fingerprint = %q, want %q", outcome.Fingerprint, want)
 	}
-	if got := outcome.Evidence["basis"]; got != "expiry" {
-		t.Errorf("basis = %v, want expiry", got)
+	if got := outcome.Evidence["holdsFlagged"]; got != 1 {
+		t.Errorf("holdsFlagged = %v, want 1", got)
 	}
-	if got := outcome.Evidence["amount"]; got != "2500" {
-		t.Errorf("amount = %v, want 2500", got)
+	if got := outcome.Evidence["amountFlagged"]; got != "2500" {
+		t.Errorf("amountFlagged = %v, want 2500", got)
 	}
-	if got := outcome.Evidence["overdueSeconds"]; got != int64(3*3600) {
-		t.Errorf("overdueSeconds = %v, want %d", got, 3*3600)
-	}
-	if cel, _ := outcome.Evidence["compiledCEL"].(string); !strings.Contains(cel, "holds:h1") {
-		t.Errorf("compiledCEL should narrow to the single hold, got %q", cel)
+	// No per-account data: the address is recoverable from the query, and a list
+	// in evidence would grow with the size of the problem.
+	for _, key := range []string{"hold", "holds", "holdsSampled", "identity", "basis"} {
+		if _, present := outcome.Evidence[key]; present {
+			t.Errorf("evidence must not carry %q: %+v", key, outcome.Evidence)
+		}
 	}
 }
 
@@ -153,10 +155,16 @@ func TestStaleHolds_IgnoresReleasedHolds(t *testing.T) {
 	})
 
 	if len(outcomes) != 1 {
-		t.Fatalf("expected only the stuck hold, got %d: %+v", len(outcomes), outcomes)
+		t.Fatalf("expected one aggregate outcome, got %d: %+v", len(outcomes), outcomes)
 	}
-	if outcomes[0].Fingerprint != "asset:USD/2|hold:holds:stuck" {
-		t.Errorf("flagged the wrong hold: %q", outcomes[0].Fingerprint)
+	if got := outcomes[0].Evidence["holdsFlagged"]; got != 1 {
+		t.Errorf("holdsFlagged = %v, want only the stuck hold", got)
+	}
+	if got := outcomes[0].Evidence["holdsReleased"]; got != 1 {
+		t.Errorf("holdsReleased = %v, want 1", got)
+	}
+	if got := outcomes[0].Evidence["amountFlagged"]; got != "1000" {
+		t.Errorf("amountFlagged = %v, want only the stuck hold's 1000", got)
 	}
 }
 
@@ -176,13 +184,18 @@ func TestStaleHolds_ApproachingIsABand(t *testing.T) {
 	})
 
 	if len(outcomes) != 1 {
-		t.Fatalf("expected only the hold inside the band, got %d: %+v", len(outcomes), outcomes)
+		t.Fatalf("expected one aggregate outcome, got %d: %+v", len(outcomes), outcomes)
 	}
-	if outcomes[0].Fingerprint != "asset:USD/2|hold:holds:soon" {
-		t.Errorf("flagged the wrong hold: %q", outcomes[0].Fingerprint)
+	// Only `soon` is inside the band: `already` has gone stale (the stale rule
+	// owns it) and `later` is beyond the window.
+	if got := outcomes[0].Evidence["holdsFlagged"]; got != 1 {
+		t.Errorf("holdsFlagged = %v, want 1", got)
 	}
-	if got := outcomes[0].Evidence["dueInSeconds"]; got != int64(2*3600) {
-		t.Errorf("dueInSeconds = %v, want %d", got, 2*3600)
+	if got := outcomes[0].Evidence["amountFlagged"]; got != "3000" {
+		t.Errorf("amountFlagged = %v, want only holds:soon's 3000", got)
+	}
+	if got := outcomes[0].Evidence["deadlineAfter"]; got != evalNow.Format(time.RFC3339) {
+		t.Errorf("deadlineAfter = %v, want the band's lower bound", got)
 	}
 }
 
@@ -217,13 +230,15 @@ func TestStaleHolds_FallsBackToCreatedPlusMaxAge(t *testing.T) {
 	})
 
 	if len(outcomes) != 1 {
-		t.Fatalf("expected one flagged hold, got %d: %+v", len(outcomes), outcomes)
+		t.Fatalf("expected one aggregate outcome, got %d: %+v", len(outcomes), outcomes)
 	}
-	if outcomes[0].Fingerprint != "asset:USD/2|hold:holds:old" {
-		t.Errorf("flagged the wrong hold: %q", outcomes[0].Fingerprint)
+	// Only `old` is past its fallback deadline; `extended`'s recorded expiry wins
+	// over the fallback even though it is five days old.
+	if got := outcomes[0].Evidence["holdsFlagged"]; got != 1 {
+		t.Errorf("holdsFlagged = %v, want 1", got)
 	}
-	if got := outcomes[0].Evidence["basis"]; got != "created_at" {
-		t.Errorf("basis = %v, want created_at", got)
+	if got := outcomes[0].Evidence["amountFlagged"]; got != "1500" {
+		t.Errorf("amountFlagged = %v, want holds:old's 1500", got)
 	}
 }
 
@@ -247,8 +262,8 @@ func TestStaleHolds_EpochEncodings(t *testing.T) {
 			if len(outcomes) != 1 || outcomes[0].Passed {
 				t.Fatalf("expected the hold to be flagged, got %+v", outcomes)
 			}
-			if got := outcomes[0].Evidence["deadline"]; got != deadline.Format(time.RFC3339) {
-				t.Errorf("deadline = %v, want %v", got, deadline.Format(time.RFC3339))
+			if got := outcomes[0].Evidence["oldestDeadline"]; got != deadline.Format(time.RFC3339) {
+				t.Errorf("oldestDeadline = %v, want %v", got, deadline.Format(time.RFC3339))
 			}
 		})
 	}
@@ -279,11 +294,10 @@ func TestStaleHolds_RequiresEvaluationClock(t *testing.T) {
 	}
 }
 
-func TestStaleHolds_AggregateScope(t *testing.T) {
+func TestStaleHolds_AggregatesTheStaleSet(t *testing.T) {
 	t.Parallel()
 
-	spec := holdSpec(t, func(s *StaleHoldsSpec) { s.Scope = StaleHoldsAggregate })
-	outcomes, _ := evaluateHolds(t, spec, []engine.Account{
+	outcomes, _ := evaluateHolds(t, holdSpec(t, nil), []engine.Account{
 		hold("holds:h1", 25_00, expiring(evalNow.Add(-3*time.Hour))),
 		hold("holds:h2", 15_00, expiring(evalNow.Add(-9*time.Hour))),
 		hold("holds:ok", 99_00, expiring(evalNow.Add(9*time.Hour))),
@@ -291,7 +305,7 @@ func TestStaleHolds_AggregateScope(t *testing.T) {
 	})
 
 	if len(outcomes) != 1 {
-		t.Fatalf("aggregate scope must emit exactly one outcome, got %d", len(outcomes))
+		t.Fatalf("stale_holds must emit exactly one outcome per asset, got %d", len(outcomes))
 	}
 	evidence := outcomes[0].Evidence
 	if outcomes[0].Passed {
@@ -309,13 +323,19 @@ func TestStaleHolds_AggregateScope(t *testing.T) {
 	if got := evidence["amountFlagged"]; got != "4000" {
 		t.Errorf("amountFlagged = %v, want 4000", got)
 	}
-	// Oldest first, so the sample leads with the worst offender.
 	if got := evidence["oldestDeadline"]; got != evalNow.Add(-9*time.Hour).Format(time.RFC3339) {
-		t.Errorf("oldestDeadline = %v", got)
+		t.Errorf("oldestDeadline = %v, want the worst offender's deadline", got)
 	}
-	sample, ok := evidence["holds"].([]map[string]any)
-	if !ok || len(sample) != 2 || sample[0]["hold"] != "holds:h2" {
-		t.Errorf("unexpected sample: %+v", evidence["holds"])
+	if got := evidence["ledger"]; got != "holds" {
+		t.Errorf("ledger = %v, want holds", got)
+	}
+	// The set is recoverable rather than embedded: effectiveQuery is what this
+	// evaluation actually asked the ledger, deadline cutoff included.
+	query, _ := evidence["effectiveQuery"].(string)
+	for _, want := range []string{`"address":"holds:*"`, "metadata[hold_expires_at]", strconvI(evalNow.UnixMicro())} {
+		if !strings.Contains(query, want) {
+			t.Errorf("effectiveQuery %q should contain %q", query, want)
+		}
 	}
 }
 
@@ -447,80 +467,6 @@ func TestStaleHolds_BudgetIsEnforced(t *testing.T) {
 	}
 }
 
-// With each hold in an account of its own, the alert should name the hold in the
-// operator's own terms, not only by ledger address. Declared keys a hold does not
-// carry are omitted rather than failing it.
-func TestStaleHolds_IdentityLabels(t *testing.T) {
-	t.Parallel()
-
-	spec := holdSpec(t, func(s *StaleHoldsSpec) {
-		s.IdentityKeys = []string{"hold_reference", "customer_id", "counterparty"}
-	})
-	outcomes, _ := evaluateHolds(t, spec, []engine.Account{
-		hold("holds:h-8801", 2500, map[string]string{
-			"hold_expires_at": evalNow.Add(-2 * time.Hour).Format(time.RFC3339),
-			"hold_reference":  "H-8801",
-			"customer_id":     "cust_42",
-			// no `counterparty` key on this hold
-		}),
-	})
-
-	if len(outcomes) != 1 {
-		t.Fatalf("expected one outcome, got %d", len(outcomes))
-	}
-	identity, ok := outcomes[0].Evidence["identity"].(map[string]string)
-	if !ok {
-		t.Fatalf("identity missing from evidence: %+v", outcomes[0].Evidence)
-	}
-	if identity["hold_reference"] != "H-8801" || identity["customer_id"] != "cust_42" {
-		t.Errorf("unexpected identity: %+v", identity)
-	}
-	if _, present := identity["counterparty"]; present {
-		t.Errorf("a key the hold does not carry must be omitted: %+v", identity)
-	}
-}
-
-// Identity labels are opt-in: without them the evidence carries no identity key
-// at all, rather than an empty map.
-func TestStaleHolds_IdentityAbsentByDefault(t *testing.T) {
-	t.Parallel()
-
-	outcomes, _ := evaluateHolds(t, holdSpec(t, nil), []engine.Account{
-		hold("holds:h1", 2500, expiring(evalNow.Add(-time.Hour))),
-	})
-	if _, present := outcomes[0].Evidence["identity"]; present {
-		t.Errorf("identity should be absent when no keys are declared: %+v", outcomes[0].Evidence)
-	}
-}
-
-// The aggregate sample carries the same labels, so a single alert still names
-// the offending holds.
-func TestStaleHolds_IdentityInAggregateSample(t *testing.T) {
-	t.Parallel()
-
-	spec := holdSpec(t, func(s *StaleHoldsSpec) {
-		s.Scope = StaleHoldsAggregate
-		s.IdentityKeys = []string{"hold_reference"}
-	})
-	outcomes, _ := evaluateHolds(t, spec, []engine.Account{
-		hold("holds:h-1", 2500, map[string]string{
-			"hold_expires_at": evalNow.Add(-time.Hour).Format(time.RFC3339),
-			"hold_reference":  "H-1",
-		}),
-	})
-	sample, ok := outcomes[0].Evidence["holds"].([]map[string]any)
-	if !ok || len(sample) != 1 {
-		t.Fatalf("unexpected sample: %+v", outcomes[0].Evidence["holds"])
-	}
-	identity, ok := sample[0]["identity"].(map[string]string)
-	if !ok || identity["hold_reference"] != "H-1" {
-		t.Errorf("aggregate sample should carry identity: %+v", sample[0])
-	}
-}
-
-// A rule-level cap bounds one evaluation's blast radius: exceeding it fails the
-// evaluation rather than truncating the outcome list, because a truncated list
-// would make the service auto-resolve the holds it dropped.
 func TestStaleHolds_RuleLevelBudget(t *testing.T) {
 	t.Parallel()
 
@@ -534,8 +480,11 @@ func TestStaleHolds_RuleLevelBudget(t *testing.T) {
 		cap3 := 3
 		spec := holdSpec(t, func(s *StaleHoldsSpec) { s.MaxHoldsScanned = &cap3 })
 		outcomes, _ := evaluateHolds(t, spec, accounts)
-		if len(outcomes) != 3 {
-			t.Fatalf("expected all three holds flagged, got %d", len(outcomes))
+		if len(outcomes) != 1 {
+			t.Fatalf("expected one aggregate outcome, got %d", len(outcomes))
+		}
+		if got := outcomes[0].Evidence["holdsFlagged"]; got != 3 {
+			t.Errorf("holdsFlagged = %v, want all three", got)
 		}
 	})
 
@@ -573,37 +522,24 @@ func TestStaleHolds_RuleLevelBudget(t *testing.T) {
 	})
 }
 
-// per_hold caps itself far below the engine's cluster-wide limit by default,
-// because in that scope every matched hold can become an alert. aggregate emits
-// one outcome regardless, so it keeps the engine's budget.
-func TestStaleHolds_DefaultBudgetByScope(t *testing.T) {
+// A rule reads under the engine's accounts budget unless it names a smaller
+// cap. It can tighten, never loosen.
+func TestStaleHolds_DefaultBudgetIsTheEngineLimit(t *testing.T) {
 	t.Parallel()
 
-	t.Run("per_hold defaults well below the engine limit", func(t *testing.T) {
+	t.Run("default is the engine budget", func(t *testing.T) {
 		outcomes, _ := evaluateHolds(t, holdSpec(t, nil), nil)
-		if got := outcomes[0].Evidence["holdsBudget"]; got != defaultPerHoldBudget {
-			t.Errorf("holdsBudget = %v, want the per-hold default %d", got, defaultPerHoldBudget)
-		}
-		if defaultPerHoldBudget >= engine.DefaultLimits.MaxAccountsScanned {
-			t.Errorf("the per-hold default (%d) must sit below the engine budget (%d)",
-				defaultPerHoldBudget, engine.DefaultLimits.MaxAccountsScanned)
-		}
-	})
-
-	t.Run("aggregate keeps the engine budget", func(t *testing.T) {
-		spec := holdSpec(t, func(s *StaleHoldsSpec) { s.Scope = StaleHoldsAggregate })
-		outcomes, _ := evaluateHolds(t, spec, nil)
 		if got := outcomes[0].Evidence["holdsBudget"]; got != engine.DefaultLimits.MaxAccountsScanned {
 			t.Errorf("holdsBudget = %v, want the engine budget %d", got, engine.DefaultLimits.MaxAccountsScanned)
 		}
 	})
 
-	t.Run("an explicit cap raises above the per-hold default", func(t *testing.T) {
-		bigger := defaultPerHoldBudget * 5
-		spec := holdSpec(t, func(s *StaleHoldsSpec) { s.MaxHoldsScanned = &bigger })
+	t.Run("an explicit cap tightens it", func(t *testing.T) {
+		smaller := engine.DefaultLimits.MaxAccountsScanned / 10
+		spec := holdSpec(t, func(s *StaleHoldsSpec) { s.MaxHoldsScanned = &smaller })
 		outcomes, _ := evaluateHolds(t, spec, nil)
-		if got := outcomes[0].Evidence["holdsBudget"]; got != bigger {
-			t.Errorf("holdsBudget = %v, want %d", got, bigger)
+		if got := outcomes[0].Evidence["holdsBudget"]; got != smaller {
+			t.Errorf("holdsBudget = %v, want %d", got, smaller)
 		}
 	})
 
@@ -671,11 +607,6 @@ func TestStaleHolds_Validate(t *testing.T) {
 			wantErr: "mode must be",
 		},
 		{
-			name:    "unknown scope",
-			mutate:  func(s *StaleHoldsSpec) { s.Scope = "per_account" },
-			wantErr: "scope must be",
-		},
-		{
 			name:    "metadata source",
 			mutate:  func(s *StaleHoldsSpec) { s.Source.Kind = SourceAccountMetadata; s.Source.MetadataKey = "k" },
 			wantErr: "must be a ledger source",
@@ -703,27 +634,6 @@ func TestStaleHolds_Validate(t *testing.T) {
 			name:    "negative budget",
 			mutate:  func(s *StaleHoldsSpec) { n := -1; s.MaxHoldsScanned = &n },
 			wantErr: "maxHoldsScanned must be positive",
-		},
-		{
-			name:   "identity keys",
-			mutate: func(s *StaleHoldsSpec) { s.IdentityKeys = []string{"hold_reference", "customer_id"} },
-		},
-		{
-			name:    "empty identity key",
-			mutate:  func(s *StaleHoldsSpec) { s.IdentityKeys = []string{"hold_reference", " "} },
-			wantErr: "identityKeys[1] is empty",
-		},
-		{
-			name:    "duplicate identity key",
-			mutate:  func(s *StaleHoldsSpec) { s.IdentityKeys = []string{"customer_id", "customer_id"} },
-			wantErr: "repeats",
-		},
-		{
-			name: "too many identity keys",
-			mutate: func(s *StaleHoldsSpec) {
-				s.IdentityKeys = []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}
-			},
-			wantErr: "at most 8 keys",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

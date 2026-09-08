@@ -100,8 +100,6 @@ metadata; signal C is not implementable.
     "maxAge":     "48h"                // fallback: createdKey + maxAge
   },
   "warnWithin": "6h",                  // optional — band mode (§4.4)
-  "scope": "per_hold",                 // per_hold | aggregate
-  "identityKeys": ["hold_reference", "customer_id"],  // labels copied onto each alert
   "maxHoldsScanned": 500               // optional per-rule read cap (§4.6)
 }
 ```
@@ -142,8 +140,8 @@ and the absence is better:
                 {\"$lte\":{\"metadata[hold_expires_at]\":1756809600000000}}]}"), "USD/2") == 0
   ```
 
-  *"No funds sit in a hold whose deadline has passed."* Per-hold outcomes render the same form with
-  the query narrowed to one address. **Net engine work: zero new builtins**, plus the ~10-line
+  *"No funds sit in a hold whose deadline has passed."* This is also what evidence carries as
+  `effectiveQuery`, so the set behind an alert is recoverable from the alert. **Net engine work: zero new builtins**, plus the ~10-line
   account-timestamp plumbing only if the signal-B fallback is in scope.
 
 ### 4.4 Advance warning — a band, not a second threshold
@@ -167,44 +165,54 @@ no duplicate live alerts, no change to the alert contract.
 
 ### 4.5 Outcomes
 
-| Scope | Fingerprint | Evidence |
-|---|---|---|
-| `per_hold` | `hold:<address>\|asset:<asset>` | address, amount, basis (`expiry`/`created_at`/`first_usage`), deadline, `overdueSeconds`, any declared `identity` labels, `compiledCEL` |
-| `aggregate` | `asset:<asset>` | `staleCount`, `totalAmount`, `oldestOverdueSeconds`, cutoff, bounded sample, `compiledCEL` |
+**One outcome per asset**, fingerprint `asset:<asset>`. Evidence is the scan, not the holds:
+`holdsMatched`, `holdsBudget`, `holdsReleased`, `holdsFlagged`, `amountFlagged`, `oldestDeadline`,
+`evaluatedAt`, `deadlineOnOrBefore` (and `deadlineAfter` for a band), `ledger`, `asset`,
+`compiledCEL`, and `effectiveQuery`.
 
-`per_hold` answers Gordon's actual question ("*which* hold is stuck, for how much"), auto-resolves
-per hold when released, and — critically — is **bounded by the number of stale holds, not the number
-of holds**, because the ledger filters. That is a materially better bound than
-`account_threshold`'s `per_account`, which fans out over the whole matched set.
+> **Revised 2026-09-08 — `per_hold` is gone.** This section previously offered a per-hold scope
+> alongside the aggregate, and made it the default: it answered "*which* hold is stuck, for how
+> much", auto-resolved per hold, and was bounded by the stale count rather than the account set. The
+> bound was real. The shape was still wrong — an alert per stuck hold pages an operator once per
+> problem, which is worst precisely when a release feed breaks and every live hold goes stale at
+> once. `scope` and `identityKeys` are removed; see the ADR-004 amendment.
+>
+> What replaces it is the rule's own selector. A rule watches a subset it declares — an address
+> prefix plus a metadata match narrowing to one desk or book — so the aggregate over that subset is
+> the signal, and separate sets are separate rules with separate severities.
+>
+> The set behind a number is still recoverable: `effectiveQuery` is the query the evaluation ran,
+> deadline cutoff included as an integer literal, in this module's own dialect — so it drops back
+> into a rule's `source.query`. It is not byte-compatible with the ledger's HTTP `?filter=`, which
+> spells existence `{"$exists":{"metadata":"k"}}` against this module's
+> `{"$exists":{"metadata[k]":true}}`; a **recon-side endpoint that runs a stored query** would close
+> that gap and is the obvious follow-up. Re-running it does not reconstruct the evaluation
+> — no point-in-time read (ADR-003) means the deadline half is frozen while balances stay live, so
+> the answer is *the holds still past that cutoff and still funded*. A list captured at evaluation
+> time would be stale by the time anyone opened it anyway.
 
 `periodType: continuous` is the right default: a trapped hold is a live condition, not a
 period-close fact.
 
 ### 4.6 Bounding the blast radius
 
-`per_hold` opens one alert per stale hold, and each costs a control-ledger read and write. On a
-normal day that is three alerts naming three authorisations. On the day a release feed breaks, every
-live hold goes stale at once — and the fan-out is bounded only by the engine's accounts budget
-(50 000).
+A rule reads every hold the deadline filter matches, bounded only by the engine's accounts budget
+(50 000). The outcome is one aggregate per asset, so the exposure is the *read* — and while Q2b (the
+release marker) is unresolved, that read grows with every hold ever placed.
 
-`maxHoldsScanned` lets a rule cap its own read below that. What it is, precisely:
+`maxHoldsScanned` lets a rule cap its own read below the engine's. What it is, precisely:
 
-- **A read cap, not an alert cap.** It bounds the accounts the deadline filter returns. In `per_hold`
-  scope the alert count follows that set, so it bounds the blast radius in practice — but while Q2b
-  (the release marker) is unresolved, the same cap will trip on accumulated dead holds, which makes
-  it a useful early warning for exactly that.
+- **A read cap, and only that.** It bounds the accounts the deadline filter returns — stale holds
+  *plus* any released hold still carrying an expired deadline. While Q2b is unresolved it doubles as
+  an early warning on accumulated dead holds.
 - **Fails, never truncates.** Over the cap, `ListAccounts` aborts, the evaluation is recorded as
   `ERROR` with an engine-health alert, and **the alert transition plan never runs** — existing alerts
-  are untouched ([evaluation.go](../../internal/api/service/evaluation.go)). Truncating would be far
-  worse than failing: a partial outcome list makes the disappearance sweep auto-resolve every hold it
-  dropped, closing alerts *because* there were too many problems.
+  are untouched ([evaluation.go](../../internal/api/service/evaluation.go)). Truncating would be
+  worse than failing in a different way now: a partial read understates `holdsFlagged` and
+  `amountFlagged`, reporting a smaller problem than the one that exists.
 - **Never raises the engine's limit.** `MaxAccountsScanned` protects the ledger from any single
   evaluation, so the effective budget is `min(rule, engine)`, recorded in evidence as `holdsBudget`.
-- **`per_hold` defaults to 1000, not to the engine's 50 000.** The engine limit is sized to protect
-  the *ledger* from one runaway scan. In `per_hold` scope the thing at risk is different — every
-  matched hold can become an alert, each a control-ledger read and write and a line in an operator's
-  inbox — so inheriting that limit would leave a rules-and-alerts module guarding the wrong resource.
-  `aggregate` emits one outcome however large the set, so it keeps the engine's budget.
+  Absent a rule-level cap, a rule reads under the engine's budget.
 
 ### The guard is still in the wrong place
 
@@ -228,14 +236,14 @@ sweep, so no alert resolves because there were too many problems.
 updating and resolving normally; the evaluation and capture are recorded either way.
 
 The two caps are independent layers, and both still apply: `maxHoldsScanned` bounds **one rule's
-read** (and defaults `per_hold` to 1000), while the service cap bounds the **module's alert output**
-across every fan-out template.
+read**, while the service cap bounds the **module's alert output** across every fan-out template.
 
-**What deliberately does not exist is "open at most N alerts" inside a template.** Every version of it breaks the
-fingerprint contract: capping emitted outcomes auto-resolves the remainder, and switching an
-over-budget rule to a summary outcome changes its fingerprints, which resolves the entire open set as
-a side effect. Choosing `aggregate` up front is the supported way to get one alert instead of many —
-and it is a rule-authoring decision, not a runtime fallback: nothing switches scope on its own.
+**What deliberately does not exist is "open at most N alerts" inside a template.** Every version of
+it breaks the fingerprint contract: capping emitted outcomes auto-resolves the remainder, and
+switching an over-budget rule to a summary outcome changes its fingerprints, which resolves the
+entire open set as a side effect. Since 2026-09-08 `stale_holds` emits one aggregate per asset
+unconditionally, so the question no longer arises for this template — but the reasoning is why no
+template gets a runtime fallback that changes its own outcome shape.
 
 ---
 
@@ -246,8 +254,8 @@ assumption, and the `deadline` spec absorbs a different answer without a rewrite
 
 ### Q1 — How are Enfuce holds modelled? ✅ *confirmed by the client (2026-09-07)*
 **Gordon already writes one account per authorisation, keyed by Authorization ID** — the model this
-template was built for. `scope: per_hold` is therefore the right default, Enfuce's per-hold expiry is
-usable directly, and **the watermark fallback below is moot**: it existed only for the aggregated
+template was built for. Enfuce's per-hold expiry is therefore usable directly, and **the watermark
+fallback below is moot**: it existed only for the aggregated
 model, and maintaining one on top of per-authorisation accounts would be redundant work for a
 strictly worse signal. It is kept here as the answer for a *future* client who cannot split accounts.
 
@@ -360,12 +368,12 @@ Two consequences worth carrying:
   no scope and resolves to exactly one balance for one declared asset. `stale_holds` is the first V2
   template with per-account granularity, and it gets there through its own `scope` field rather than
   by reusing the V1 `Scope` type.
-- **When this branch converges with main, the parking is waiting.** Someone will have to decide
-  whether `stale_holds`'s `per_hold` falls under the same rationale. The argument that it does not:
-  the parking was about unbounded PASS evidence, and this template emits outcomes only for *failing*
-  holds (§3.5, §4.5), with `maxHoldsScanned` (§4.6) giving each rule an explicit bound on top. That is
-  a stronger answer than the V1 templates had — but it should be an explicit decision, not an accident
-  of branch lineage.
+- **Resolved 2026-09-08.** The question was whether `stale_holds`'s `per_hold` fell under the same
+  parking rationale. It was argued that it did not — the parking was about unbounded PASS evidence,
+  and per-hold emitted outcomes only for *failing* holds with `maxHoldsScanned` bounding each rule.
+  That argument was sound and beside the point: an alert per stuck hold is the wrong shape for an
+  inbox regardless of how well bounded the read is. `per_hold` is removed (§4.5), so **no template
+  fans out per account.**
 
 ---
 
@@ -402,9 +410,9 @@ were correctly ignored.
 | Piece | Where |
 |---|---|
 | Template kind | `models.TemplateStaleHolds` ([rule.go](../../internal/models/rule.go)) |
-| Evaluator | [internal/templates/stale_holds.go](../../internal/templates/stale_holds.go) — validate, augmented query, deadline resolution, per-hold / aggregate outcomes, identity labels |
+| Evaluator | [internal/templates/stale_holds.go](../../internal/templates/stale_holds.go) — validate, augmented query, deadline resolution, one aggregate outcome per asset |
 | Contract gating | V2 only ([contract_version.go](../../internal/api/service/contract_version.go)) |
-| Tests | [stale_holds_test.go](../../internal/templates/stale_holds_test.go) (36 cases) + the live-ledger IT above |
+| Tests | [stale_holds_test.go](../../internal/templates/stale_holds_test.go) (49 cases) + the live-ledger IT above |
 | Public API | `StaleHoldsSpec` + `stale_holds` in `TemplateKind` ([openapi.yaml](../../openapi.yaml)) |
 | Docs | [templates.md §6](./templates.md), the in-app guide, this design |
 | Web UI | `StaleHoldsEditor` in [CreateRuleDialogV2.tsx](../../frontend/components/reconcile/panels/CreateRuleDialogV2.tsx), `StaleHoldsEvidence` in [V2Evidence.tsx](../../frontend/components/reconcile/V2Evidence.tsx) |
@@ -415,21 +423,13 @@ were correctly ignored.
 ### Revised after the client's answer (2026-09-07)
 
 Confirming one account per authorisation (§5, Q1) changed what an alert should *say*, not how the
-check works — `per_hold` was already the default and the deadline pushdown was already per-account.
-Two things were added.
+check works — the deadline pushdown was already per-account. Two things were added: `identityKeys`,
+to name the hold in an operator's own terms, and `maxHoldsScanned`, to let a rule cap its own read
+below the engine's accounts budget.
 
-**`identityKeys`** names account-metadata keys — the reference, the customer — copied onto each
-flagged hold's evidence, so an alert reads *"hold H-8801 for cust_42, $250, six hours overdue"*
-rather than pointing at a ledger address alone. They are labels, not predicates: read off the account
-already fetched, needing no declared type and no index (verified in the integration test, which
-writes one to an undeclared key), and a hold missing a declared label is still checked.
-
-**`maxHoldsScanned`** (§4.6) lets a rule cap its own read below the engine's accounts budget. One
-account per authorisation makes `per_hold` the right scope *and* ties the alert count to the size of
-the stale set, so a rule that alerts per hold should be able to bound its own blast radius rather
-than inheriting a cluster-wide 50 000.
-
-Nothing else in the evaluation path changed.
+**Superseded 2026-09-08 (§4.5).** `identityKeys` is removed with `per_hold`: with one aggregate per
+asset there is no single hold for a label to name. `maxHoldsScanned` stays, now bounding the read
+alone rather than standing in for an alert cap.
 
 ### Not done
 
@@ -445,7 +445,7 @@ Nothing else in the evaluation path changed.
 ## 8. Still open with the client
 
 Q1 came back confirmed (§5): **one account per authorisation, keyed by Authorization ID**. That
-settles the structural question and makes `per_hold` scope the default. What is left:
+settles the structural question — it is why a per-hold *deadline* is usable at all. What is left:
 
 1. **The deadline field — key name, declared type, unit. 🔴 The remaining blocker.**
    We know Enfuce supplies a per-payment expiration date; we do not know how it lands in the ledger.
@@ -463,9 +463,9 @@ settles the structural question and makes `per_hold` scope the default. What is 
    Does Enfuce ever revise an expiry (extension / re-auth)? Updating the account's deadline in place
    is fine — it is the hold's deadline, not a movement timestamp. Can a hold be *partially* captured,
    leaving a residual balance, and does the original expiry still govern that residual?
-4. **Volume.** Authorisations per day, and the typical and worst-case number of *live* holds. This
-   confirms `per_hold` over `aggregate` and tells us how much headroom there is under the accounts
-   budget.
+4. **Volume.** Authorisations per day, and the typical and worst-case number of *live* holds. The
+   outcome shape no longer depends on the answer (§4.5), but the *read* does: it tells us how much
+   headroom there is under the accounts budget, and therefore how urgent the teardown write is.
 
 ### The teardown write — what to ask for, and where it belongs
 
@@ -521,5 +521,5 @@ evaluating, and needs no write to customer data.
   tolerance, per asset — it has no notion of time and cannot express "this balance has not returned
   to zero past its deadline". Pointed at a holds book it would simply report that live holds exist,
   which is true of every healthy hold too. "Flag any account whose balance has not returned to zero
-  past the expected timestamp" is exactly what `stale_holds` in `per_hold` scope does, and is why it
-  is a separate template rather than a configuration of an existing one.
+  past the expected timestamp" is exactly what `stale_holds` does, and is why it is a separate
+  template rather than a configuration of an existing one.

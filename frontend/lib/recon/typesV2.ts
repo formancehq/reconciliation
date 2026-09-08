@@ -108,7 +108,6 @@ export interface BalanceBoundsSpec {
 }
 
 export type StaleHoldsMode = "stale" | "approaching"
-export type StaleHoldsScope = "per_hold" | "aggregate"
 
 /**
  * How a deadline is written on the account. `datetime` is a key the ledger
@@ -134,10 +133,7 @@ export interface StaleHoldsSpec {
   deadline: HoldDeadline
   mode?: StaleHoldsMode
   warnWithin?: string
-  scope?: StaleHoldsScope
-  /** Metadata keys copied onto each flagged hold's evidence. Labels, not filters: no index needed. */
-  identityKeys?: string[]
-  /** Per-rule read cap. per_hold defaults to 1000 server-side; never exceeds the engine budget. */
+  /** Per-rule read cap. Defaults to the engine budget server-side; never exceeds it. */
   maxHoldsScanned?: number
 }
 
@@ -316,36 +312,19 @@ export interface CoverageRatioBoundsEvidence {
   compiledCEL: string
 }
 
-interface StaleHoldsEvidenceCommon {
+/**
+ * One outcome per asset. It counts and totals the stale set rather than listing
+ * it: `effectiveQuery` is the query this evaluation ran, so the set is
+ * recoverable without every alert carrying a list that grows with the problem.
+ */
+export interface StaleHoldsEvidenceV2 {
   schemaVersion: 2
   operation: "stale_holds"
   mode: StaleHoldsMode
   asset: string
   sourceId: string
+  ledger: string
   evaluatedAt: string
-  compiledCEL: string
-}
-
-/** One flagged hold: what is stuck, for how much, and how far past its deadline. */
-export interface StaleHoldEvidence extends StaleHoldsEvidenceCommon {
-  hold: string
-  amount: string
-  basis: "expiry" | "created_at"
-  deadline: string
-  /** mode "stale" only. */
-  overdueSeconds?: number
-  /** mode "approaching" only. */
-  dueInSeconds?: number
-  /** The rule's identityKeys that this hold carries — absent when it carries none. */
-  identity?: Record<string, string>
-}
-
-/**
- * The scan behind an outcome: emitted for an aggregate rule, and for a per_hold
- * rule that found nothing (so a clean run still records what was checked).
- */
-export interface StaleHoldsSummaryEvidence extends StaleHoldsEvidenceCommon {
-  scope: StaleHoldsScope
   deadlineOnOrBefore: string
   /** The band's lower bound — mode "approaching" only. */
   deadlineAfter?: string
@@ -355,14 +334,15 @@ export interface StaleHoldsSummaryEvidence extends StaleHoldsEvidenceCommon {
   holdsFlagged: number
   amountFlagged: string
   oldestDeadline?: string
-  /** Bounded per-hold breakdown — aggregate scope only. */
-  holds?: StaleHoldEvidence[]
-  holdsSampled?: number
+  /**
+   * The query the ledger answered, deadline cutoff included as a literal.
+   * Re-running it does not reproduce this evaluation — there is no
+   * point-in-time read, so the deadline half is frozen while balances stay
+   * live.
+   */
+  effectiveQuery: string
+  compiledCEL: string
 }
-
-export type StaleHoldsEvidenceV2 =
-  | StaleHoldEvidence
-  | StaleHoldsSummaryEvidence
 
 export interface BalanceBoundsEvidenceV2 {
   schemaVersion: 2

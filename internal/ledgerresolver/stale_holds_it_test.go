@@ -43,8 +43,8 @@ func itAddr() string {
 //
 //   - Queries() (the augmented query) passes the create-time ValidateQuery guard;
 //
-//   - identity labels survive the ledger's metadata round-trip and land on the
-//     flagged hold's evidence, without any index of their own.
+//   - the aggregate counts what the live query returned, and its effectiveQuery
+//     is the query the ledger actually answered.
 //
 //     go test -tags it -run TestIntegration_StaleHolds ./internal/ledgerresolver/...
 func TestIntegration_StaleHolds(t *testing.T) {
@@ -128,7 +128,6 @@ func TestIntegration_StaleHolds(t *testing.T) {
 			Encoding:   templates.EncodingDatetime,
 			MaxAge:     "48h",
 		},
-		IdentityKeys: []string{"hold_reference", "never_written"},
 	})
 
 	evaluator := templates.NewStaleHolds()
@@ -155,38 +154,33 @@ func TestIntegration_StaleHolds(t *testing.T) {
 		if !assert.NoError(c, evalErr) {
 			return
 		}
-		if !assert.Len(c, got, 2, "expected the expired hold and the aged one") {
+		// One aggregate per asset, whatever the stale count.
+		if !assert.Len(c, got, 1) {
+			return
+		}
+		if !assert.Equal(c, 2, got[0].Evidence["holdsFlagged"], "expected the expired hold and the aged one") {
 			return
 		}
 		outcomes = got
 	}, 20*time.Second, 250*time.Millisecond)
 
-	byFingerprint := map[string]templates.Outcome{}
-	for _, outcome := range outcomes {
-		byFingerprint[outcome.Fingerprint] = outcome
-	}
+	evidence := outcomes[0].Evidence
+	require.False(t, outcomes[0].Passed)
+	require.Equal(t, "asset:"+asset, outcomes[0].Fingerprint)
 
-	staleOutcome, ok := byFingerprint["asset:"+asset+"|hold:"+stale]
-	require.True(t, ok, "the expired hold must be flagged: %+v", byFingerprint)
-	require.False(t, staleOutcome.Passed)
-	require.Equal(t, "expiry", staleOutcome.Evidence["basis"], "a recorded expiry wins over the fallback")
-	require.Equal(t, "2500", staleOutcome.Evidence["amount"])
+	// `stale` (2500, past its recorded expiry) and `aged` (2500, no expiry, past
+	// created + 48h) are both in. `fresh` is inside its expiry, and `released`
+	// keeps its expired metadata but was dropped on its zero balance — which the
+	// ledger cannot do, since balances are not filterable.
+	require.Equal(t, "5000", evidence["amountFlagged"])
+	require.Equal(t, 1, evidence["holdsReleased"], "the released hold matched the query and was post-filtered")
+	require.Equal(t, 4, evidence["holdsMatched"], "the query returns every hold past the cutoff, released ones included")
 
-	identity, ok := staleOutcome.Evidence["identity"].(map[string]string)
-	require.True(t, ok, "the alert must name the hold: %+v", staleOutcome.Evidence)
-	require.Equal(t, "H-8801", identity["hold_reference"])
-	require.NotContains(t, identity, "never_written", "a label the hold does not carry is omitted")
-
-	agedIdentity := byFingerprint["asset:"+asset+"|hold:"+aged].Evidence["identity"]
-	require.Nil(t, agedIdentity, "a hold carrying none of the declared labels reports no identity")
-
-	agedOutcome, ok := byFingerprint["asset:"+asset+"|hold:"+aged]
-	require.True(t, ok, "the hold with no expiry must fall back to created + maxAge")
-	require.Equal(t, "created_at", agedOutcome.Evidence["basis"])
-
-	require.NotContains(t, byFingerprint, "asset:"+asset+"|hold:"+fresh, "a hold inside its expiry must pass")
-	require.NotContains(t, byFingerprint, "asset:"+asset+"|hold:"+released,
-		"a released hold keeps its expired metadata and must be dropped on its zero balance")
+	// The set is recoverable from evidence: this is the query the ledger answered.
+	query, _ := evidence["effectiveQuery"].(string)
+	require.Contains(t, query, prefix+"*")
+	require.Contains(t, query, expiryKey)
+	require.Equal(t, ledgerName, evidence["ledger"])
 
 	// The warning band selects the hold that is still inside its expiry, and
 	// excludes the one that already went stale — the escalation handover.
@@ -207,7 +201,9 @@ func TestIntegration_StaleHolds(t *testing.T) {
 		if !assert.NoError(c, evalErr) || !assert.Len(c, got, 1) {
 			return
 		}
-		assert.Equal(c, "asset:"+asset+"|hold:"+fresh, got[0].Fingerprint)
+		// Only `fresh` is inside the 24h band: `stale` has already breached and
+		// belongs to the stale rule.
+		assert.Equal(c, 1, got[0].Evidence["holdsFlagged"])
 		assert.False(c, got[0].Passed)
 	}, 20*time.Second, 250*time.Millisecond)
 }

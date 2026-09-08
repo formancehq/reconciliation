@@ -15,7 +15,6 @@ import {
   backendFieldPath,
   coefficientPath,
   ASSET_WILDCARD,
-  MAX_IDENTITY_KEYS,
   type BoundDraft,
   type InstantEncoding,
   type NamedSource,
@@ -23,7 +22,6 @@ import {
   type RateBoundsDraft,
   type RuleFormDraft,
   type StaleHoldsMode,
-  type StaleHoldsScope,
 } from "@/lib/recon"
 import { useLedgerMetaFields } from "../useLedgerMetaFields"
 
@@ -626,75 +624,27 @@ export function StaleHoldsEditor({
         </p>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <FieldV2 label="Alert granularity">
-          <Select
-            value={draft.scope}
-            onValueChange={(scope) =>
-              onChange({ ...draft, scope: scope as StaleHoldsScope })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="per_hold">One alert per hold</SelectItem>
-              <SelectItem value="aggregate">
-                One alert per asset, with totals
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Per hold opens an alert for each stuck hold, and that alert resolves
-            when the hold clears. Choose totals when the stale set can get large.
-          </p>
-        </FieldV2>
-        <FieldV2
-          label="Hold limit per run"
-          error={backendFieldPath(backendError, "maxHoldsScanned")}
-        >
-          <Input
-            value={draft.maxHoldsScanned}
-            onChange={(event) =>
-              onChange({ ...draft, maxHoldsScanned: event.target.value })
-            }
-            placeholder={draft.scope === "per_hold" ? "1000" : "50000"}
-            inputMode="numeric"
-            className="font-mono"
-          />
-          <p className="mt-1 text-xs text-muted-foreground">
-            Past this the run stops and says so rather than filling the inbox.
-            Leave empty for the default.
-          </p>
-        </FieldV2>
-      </div>
-
       <FieldV2
-        label="Label the alert with (optional)"
-        error={backendFieldPath(backendError, "identityKeys")}
+        label="Hold limit per run"
+        error={backendFieldPath(backendError, "maxHoldsScanned")}
       >
         <Input
-          value={draft.identityKeys.join(", ")}
+          value={draft.maxHoldsScanned}
           onChange={(event) =>
-            onChange({
-              ...draft,
-              identityKeys: event.target.value
-                .split(",")
-                .map((key) => key.trim())
-                .filter(Boolean),
-            })
+            onChange({ ...draft, maxHoldsScanned: event.target.value })
           }
-          placeholder="hold_reference, customer_id"
+          placeholder="50000"
+          inputMode="numeric"
           className="font-mono"
         />
         <p className="mt-1 text-xs text-muted-foreground">
-          Up to {MAX_IDENTITY_KEYS} metadata keys, copied onto each alert so
-          it names the hold in your own terms — a reference, a customer —
-          rather than only a ledger address. These are labels, not filters —
-          they need no index. Alert evidence is durable and widely readable, so
-          leave personal data out.
+          The rule opens one alert per asset however many holds are stale, so
+          this bounds the read, not the inbox. Past it the run stops and says so
+          rather than reporting a smaller problem than the one that exists.
+          Leave empty for the engine default.
         </p>
       </FieldV2>
+
     </Card>
   )
 }

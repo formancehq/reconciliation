@@ -104,6 +104,22 @@ outside this ADR.
 > and the single V2 `balance_equation` that replaces it produce the same outcomes against the same
 > ledger.
 
+> **Amendment (2026-09-08) — `stale_holds` drops `per_hold` too.** The 2026-09-07 amendment above kept
+> `stale_holds`' `per_hold` scope on the grounds that its evidence is proportional to the problem
+> rather than to the account set. That reasoning holds, and it is no longer the deciding one: an
+> alert per stuck hold pages an operator once per problem, which is the wrong shape exactly when a
+> systemic failure strands thousands at once, and the bounds that made it safe (`maxHoldsScanned`
+> plus the service's new-alert cap) protect the system rather than the person reading the inbox.
+>
+> Clarification with the client settled it: rules are written per watched subset — an address prefix
+> plus a metadata match narrowing to one desk or book — so the aggregate over that subset is the
+> useful signal, and separate sets are already separate rules with separate severities. `scope` and
+> `identityKeys` are therefore removed from the spec, and the outcome is one aggregate per asset.
+>
+> The set behind a number stays recoverable without embedding it: evidence carries `effectiveQuery`,
+> the query the evaluation ran with its deadline cutoff as a literal. **Per-account fan-out is now
+> absent from the whole catalogue**, which is the state §2 always described.
+
 > **Amendment (2026-09-08) — the `/v2` prefix is removed.** Decision 1 above put the named-source
 > contract on `/v2` routes so it could run beside the unprefixed V1 contract. With V1 retired the
 > prefix distinguished nothing, and no client depended on it, so the surface is now unversioned:

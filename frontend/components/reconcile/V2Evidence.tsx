@@ -6,7 +6,6 @@ import type {
   EvidenceSource,
   Evidence,
   Rational,
-  StaleHoldEvidence,
 } from "@/lib/recon"
 import { sourceName } from "@/lib/recon/v2"
 
@@ -78,12 +77,11 @@ export function isEvidence(value: unknown): value is Evidence {
       !strings(value, ["mode", "asset", "sourceId", "evaluatedAt", "compiledCEL"])
     )
       return false
-    // One flagged hold, or the scan summary behind an outcome.
-    return "hold" in value
-      ? strings(value, ["hold", "amount", "basis", "deadline"])
-      : typeof value.holdsMatched === "number" &&
-          typeof value.holdsFlagged === "number" &&
-          strings(value, ["deadlineOnOrBefore", "amountFlagged"])
+    return (
+      typeof value.holdsMatched === "number" &&
+      typeof value.holdsFlagged === "number" &&
+      strings(value, ["deadlineOnOrBefore", "amountFlagged", "effectiveQuery"])
+    )
   }
   return false
 }
@@ -671,11 +669,10 @@ function absolute(value: string): string {
 }
 
 /**
- * stale_holds evidence comes in two shapes from the same template: one flagged
- * hold (what an alert carries in per_hold scope) or the scan behind an outcome
- * (aggregate scope, and a clean per_hold run). They render differently because
- * they answer different questions — "which hold, how overdue" versus "how much
- * is trapped in total".
+ * One outcome per asset: how many holds are stale, how much they hold, and the
+ * query that found them. It lists no holds — the query is what an operator takes
+ * to the ledger to see the set, so the alert stays a fixed size however large
+ * the problem gets.
  */
 export function StaleHoldsEvidence({
   evidence,
@@ -683,51 +680,6 @@ export function StaleHoldsEvidence({
   compact,
 }: OperationEvidenceProps<"stale_holds">) {
   const approaching = evidence.mode === "approaching"
-  if ("hold" in evidence) {
-    const elapsed = approaching
-      ? formatSeconds(evidence.dueInSeconds)
-      : formatSeconds(evidence.overdueSeconds)
-    const identity = evidence.identity ?? {}
-    const identityEntries = Object.entries(identity)
-    return (
-      <EvidenceShell
-        title={approaching ? "Hold approaching its deadline" : "Stale hold"}
-        summary={`${describeHold(evidence)} · ${evidence.amount} ${evidence.asset}`}
-        passed={passed}
-        verdict={
-          approaching
-            ? `Due in ${elapsed}: this hold reaches its deadline inside the rule's warning window.`
-            : `Overdue by ${elapsed}: funds are still held past the deadline on this account.`
-        }
-        compiledCEL={evidence.compiledCEL}
-        compact={compact}
-      >
-        {identityEntries.length > 0 && (
-          <MetricGrid
-            metrics={identityEntries.map(
-              ([key, value]) => [key, value] as [string, string]
-            )}
-          />
-        )}
-        <MetricGrid
-          metrics={[
-            ["Hold account", evidence.hold],
-            ["Amount held", `${evidence.amount} ${evidence.asset}`],
-            ["Deadline", evidence.deadline],
-            [
-              "Dated from",
-              evidence.basis === "expiry"
-                ? "the expiry on the hold"
-                : "creation + maximum age",
-            ],
-            [approaching ? "Due in" : "Overdue by", elapsed],
-            ["Evaluated at", evidence.evaluatedAt],
-          ]}
-        />
-      </EvidenceShell>
-    )
-  }
-
   const window = approaching
     ? `deadline after ${evidence.deadlineAfter ?? "now"} and on or before ${evidence.deadlineOnOrBefore}`
     : `deadline on or before ${evidence.deadlineOnOrBefore}`
@@ -761,81 +713,26 @@ export function StaleHoldsEvidence({
           ["Window", window],
         ]}
       />
-      {evidence.holds && evidence.holds.length > 0 && (
-        <StaleHoldSample
-          holds={evidence.holds}
-          asset={evidence.asset}
-          sampled={evidence.holdsSampled ?? evidence.holds.length}
-          total={evidence.holdsFlagged}
-          approaching={approaching}
-        />
+      {evidence.holdsFlagged > 0 && (
+        <div className="min-w-0 space-y-1">
+          <div className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+            The holds behind this alert
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The query this run made against{" "}
+            <span className="font-mono">{evidence.ledger}</span>, cutoff
+            included. It is the same dialect a rule&apos;s own selector uses, so
+            it drops back into a rule to list the set. Balances always read live,
+            so it answers &ldquo;still past that cutoff and still funded&rdquo;
+            rather than replaying this evaluation.
+          </p>
+          <pre className="overflow-x-auto rounded bg-muted/50 p-2 text-[11px] leading-relaxed">
+            {evidence.effectiveQuery}
+          </pre>
+        </div>
       )}
     </EvidenceShell>
   )
-}
-
-function StaleHoldSample({
-  holds,
-  asset,
-  sampled,
-  total,
-  approaching,
-}: {
-  holds: StaleHoldEvidence[]
-  asset: string
-  sampled: number
-  total: number
-  approaching: boolean
-}) {
-  return (
-    <div className="min-w-0 space-y-2">
-      <div className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-        {sampled < total
-          ? `Oldest ${sampled} of ${total} holds`
-          : `All ${total} holds`}
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-0 text-sm">
-          <tbody>
-            {holds.map((hold) => (
-              <tr key={hold.hold} className="border-b last:border-b-0">
-                <td className="py-1 pr-3 font-medium break-all">
-                  {describeHold(hold)}
-                </td>
-                <td className="py-1 pr-3 whitespace-nowrap tabular-nums">
-                  {hold.amount} {asset}
-                </td>
-                <td className="py-1 whitespace-nowrap text-muted-foreground">
-                  {approaching
-                    ? `due in ${formatSeconds(hold.dueInSeconds)}`
-                    : `overdue by ${formatSeconds(hold.overdueSeconds)}`}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
-/** Prefer the operator's own identifiers over the ledger address when the rule supplies them. */
-function describeHold(hold: StaleHoldEvidence): string {
-  const identity = Object.values(hold.identity ?? {}).filter(Boolean)
-  return identity.length > 0 ? identity.join(" · ") : hold.hold
-}
-
-/** Whole units, largest first: "6h 12m", "3d 4h", "45s". */
-function formatSeconds(seconds: number | undefined): string {
-  if (seconds === undefined || !Number.isFinite(seconds)) return "—"
-  const total = Math.max(0, Math.floor(seconds))
-  if (total < 60) return `${total}s`
-  const days = Math.floor(total / 86_400)
-  const hours = Math.floor((total % 86_400) / 3_600)
-  const minutes = Math.floor((total % 3_600) / 60)
-  if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`
-  if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
-  return `${minutes}m`
 }
 
 function MetricGrid({ metrics }: { metrics: Array<[string, string]> }) {
