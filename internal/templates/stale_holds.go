@@ -18,8 +18,8 @@ import (
 // stale_holds is the catalog's only time-based control: it flags held funds
 // whose deadline has passed (mode "stale") or is about to (mode
 // "approaching"). A "hold" is one ledger account carrying a non-zero balance
-// plus a deadline in its metadata — either an issuer-supplied expiry, or a
-// creation instant to which maxAge is added.
+// plus a deadline in its metadata — either an expiry recorded on the hold,
+// or a creation instant to which maxAge is added.
 //
 // Two properties are worth understanding before reading the code.
 //
@@ -28,7 +28,8 @@ import (
 //     derived by comparing "now" against "then". It is read from state instead,
 //     and the comparison is done by the ledger's own metadata index: the
 //     evaluation clock is materialised into an integer cutoff and appended to
-//     the rule's query as a `$lt`/`$lte` clause. The ledger returns only the
+//     the rule's query as a `$lte` clause (plus a `$gt` lower bound in
+//     `approaching` mode). The ledger returns only the
 //     holds that are already past (or approaching) their deadline, so the
 //     evaluation's cost and its evidence scale with the number of *stale*
 //     holds, not the number of holds.
@@ -112,8 +113,8 @@ const defaultPerHoldBudget = 1000
 const maxStaleHoldsIdentityKeys = 8
 
 // HoldDeadlineSpec says where a hold's deadline comes from. When both keys are
-// declared, the issuer-supplied expiry wins for any hold that carries one and
-// createdKey + maxAge is the fallback for the rest — expressed as a single
+// declared, the recorded expiry wins for any hold that carries one and createdKey
+// + maxAge is the fallback for the rest — expressed as a single
 // `$or` so the ledger still does the filtering.
 type HoldDeadlineSpec struct {
 	ExpiryKey  string          `json:"expiryKey,omitempty"`
@@ -143,11 +144,11 @@ type StaleHoldsSpec struct {
 
 	// IdentityKeys are account-metadata keys copied into each flagged hold's
 	// evidence, so an alert names the hold in the operator's own terms — the
-	// authorization id, the card, the merchant — rather than only a ledger
+	// reference, the customer, the counterparty — rather than only a ledger
 	// address. They are labels, not predicates: they are read from the account
 	// already fetched, need no index, and a key a hold does not carry is simply
 	// absent from its evidence. Choose them deliberately; alert evidence is
-	// durable and widely readable, so it is not the place for cardholder PII.
+	// durable and widely readable, so it is not the place for personal data.
 	IdentityKeys []string `json:"identityKeys,omitempty"`
 }
 
@@ -225,7 +226,7 @@ func (t *StaleHolds) Validate(raw json.RawMessage) error {
 		return fmt.Errorf("%w: deadline must set expiryKey, createdKey, or both (fields: deadline.expiryKey, deadline.createdKey)", ErrInvalidSpec)
 	}
 	if spec.Deadline.CreatedKey == "" && spec.Deadline.MaxAge != "" {
-		return fmt.Errorf("%w: deadline.maxAge applies to deadline.createdKey, which is not set — an issuer expiry is used as-is (field: deadline.maxAge)", ErrInvalidSpec)
+		return fmt.Errorf("%w: deadline.maxAge applies to deadline.createdKey, which is not set — an expiry from deadline.expiryKey is used as-is (field: deadline.maxAge)", ErrInvalidSpec)
 	}
 	if _, err := spec.maxAge(); err != nil {
 		return err
@@ -594,7 +595,7 @@ func (spec *StaleHoldsSpec) explainWindow() deadlineWindow {
 	return window
 }
 
-// holdDeadline resolves one hold's deadline: the issuer expiry when the hold
+// holdDeadline resolves one hold's deadline: the recorded expiry when the hold
 // carries one, else creation + maxAge. A hold matched by the query but missing
 // or misencoding its deadline is an error, not a silent skip — the same stance
 // SumAccountMetadataInt takes on a metadata balance that didn't populate.

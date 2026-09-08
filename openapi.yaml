@@ -1081,8 +1081,8 @@ components:
     HoldDeadlineV2:
       type: object
       description: |
-        Where a hold's deadline comes from. Declare `expiryKey` for an
-        issuer-supplied expiry, `createdKey` + `maxAge` for an age-based
+        Where a hold's deadline comes from. Declare `expiryKey` for an expiry
+        recorded on the hold, `createdKey` + `maxAge` for an age-based
         fallback, or both — the expiry then wins for every hold that carries
         one, and the fallback covers the rest.
       properties:
@@ -1180,13 +1180,13 @@ components:
           items: { type: string, minLength: 1 }
           description: |
             Account-metadata keys copied into each flagged hold's evidence, so an
-            alert names the hold in business terms — the authorization id, the
-            card, the merchant — rather than only a ledger address. These are
+            alert names the hold in business terms — the reference, the customer,
+            the counterparty — rather than only a ledger address. These are
             labels, not predicates: they are read from the account already
             fetched, need no metadata index, and a key a hold does not carry is
             omitted from its evidence rather than failing it. Alert evidence is
-            durable and widely readable, so keep cardholder PII out of it.
-          example: [enfuce_auth_id, card_id]
+            durable and widely readable, so keep personal data out of it.
+          example: [hold_reference, customer_id]
 
     RuleRequestCommonV2:
       type: object

@@ -277,7 +277,7 @@ function CreateRuleDialogV2Open({
                 </div>
                 <div className="text-[10px] text-muted-foreground">
                   {draft.kind === "stale_holds"
-                    ? "The accounts holding funds — normally one per authorisation, matched by address prefix."
+                    ? "The accounts holding funds — one per hold, never a shared pool, matched by address prefix."
                     : draft.kind === "balance_bounds"
                       ? "The accounts whose balance is bounded."
                       : "Labels are operator-facing; stable IDs carry every machine reference."}

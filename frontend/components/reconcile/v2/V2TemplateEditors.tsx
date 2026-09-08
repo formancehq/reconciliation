@@ -505,20 +505,21 @@ export function StaleHoldsEditor({
             : "Holds past their deadline"}
         </div>
         <p className="text-xs text-muted-foreground">
-          A hold is one account still holding funds — normally one per
-          authorisation. Its deadline is read from the account&apos;s own
+          A hold is one account still holding funds — each hold in its own
+          account rather than many sharing a pool. Its deadline is read from
+          the account&apos;s own
           metadata; released holds, whose balance is back to zero, are ignored.
         </p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <MetadataKeySelect
-          label="Issuer expiry key"
+          label="Expiry key"
           ledger={draft.sources[0]?.ledger ?? ""}
           value={draft.deadline.expiryKey}
           onChange={(expiryKey) => setDeadline({ expiryKey })}
           error={backendFieldPath(backendError, "deadline.expiryKey")}
-          hint="The date the issuer says the hold expires. Must be an indexed datetime or integer key."
+          hint="The expiry recorded on the hold. Must be an indexed datetime or integer key."
         />
         <FieldV2
           label="Value format"
@@ -550,7 +551,7 @@ export function StaleHoldsEditor({
           value={draft.deadline.createdKey}
           onChange={(createdKey) => setDeadline({ createdKey })}
           error={backendFieldPath(backendError, "deadline.createdKey")}
-          hint="Used for holds with no issuer expiry: this date plus the maximum age below."
+          hint="Used for holds with no recorded expiry: this date plus the maximum age below."
         />
         <FieldV2
           label="Maximum age"
@@ -644,8 +645,8 @@ export function StaleHoldsEditor({
             </SelectContent>
           </Select>
           <p className="mt-1 text-xs text-muted-foreground">
-            Per hold names the stuck authorisation and resolves itself when the
-            hold clears. Choose totals when the stale set can get large.
+            Per hold opens an alert for each stuck hold, and that alert resolves
+            when the hold clears. Choose totals when the stale set can get large.
           </p>
         </FieldV2>
         <FieldV2
@@ -683,14 +684,15 @@ export function StaleHoldsEditor({
                 .filter(Boolean),
             })
           }
-          placeholder="enfuce_auth_id, card_id"
+          placeholder="hold_reference, customer_id"
           className="font-mono"
         />
         <p className="mt-1 text-xs text-muted-foreground">
           Up to {MAX_IDENTITY_KEYS} metadata keys, copied onto each alert so
-          it names the authorisation rather than a ledger address. These are
-          labels, not filters — they need no index. Alert evidence is durable
-          and widely readable, so leave cardholder details out.
+          it names the hold in your own terms — a reference, a customer —
+          rather than only a ledger address. These are labels, not filters —
+          they need no index. Alert evidence is durable and widely readable, so
+          leave personal data out.
         </p>
       </FieldV2>
     </Card>

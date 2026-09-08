@@ -717,7 +717,7 @@ export function StaleHoldsEvidence({
             [
               "Dated from",
               evidence.basis === "expiry"
-                ? "the issuer's expiry"
+                ? "the expiry on the hold"
                 : "creation + maximum age",
             ],
             [approaching ? "Due in" : "Overdue by", elapsed],

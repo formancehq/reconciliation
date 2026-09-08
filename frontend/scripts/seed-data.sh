@@ -63,13 +63,13 @@ tx "world,loan:201:interest:accrued,150000,$ASSET"   "seed:loan-201:int-accrue" 
 tx "loan:201:interest:accrued,world,150000,$ASSET"   "seed:loan-201:int-clear"    # ...then clears => interest:* nets to 0 => PASS
 
 
-# ── Card holds, for the stale_holds demo rules ──────────────────────────────
+# ── Holds, for the stale_holds demo rules ───────────────────────────────────
 # A hold is one account carrying reserved funds plus a deadline in its metadata.
 # The deadline keys must be DECLARED datetime and INDEXED before they can be
 # filtered on — declaring a type does not by itself make a field queryable, and
 # the stale_holds rule is rejected at create time if the index isn't there.
 echo
-echo "Seeding card holds (stale_holds demo)"
+echo "Seeding holds (stale_holds demo)"
 for key in hold_expires_at hold_created_at; do
   lc ledgers set-metadata-type --ledger "$LEDGER" --target account --key "$key" --type datetime >/dev/null 2>&1 \
     && echo "  + declared account.$key as datetime" || echo "  · account.$key already declared"
@@ -88,23 +88,24 @@ meta() {
   lc accounts set-metadata "$address" --ledger "$LEDGER" "${args[@]}" >/dev/null 2>&1 && echo "  + $address $*"
 }
 
-# Three holds of 250.00 each, dated to produce a known verdict against a rule
+# Five holds of 250.00 each (one released below), dated to produce a known
+# verdict against a rule
 # with a 48h fallback and a 24h warning window:
-tx "world,holds:enfuce:auth-8801,25000,$ASSET" "seed:hold:auth-8801"   # expired 6h ago  => STALE
-tx "world,holds:enfuce:auth-8802,25000,$ASSET" "seed:hold:auth-8802"   # expires in 3h   => APPROACHING
-tx "world,holds:enfuce:auth-8803,25000,$ASSET" "seed:hold:auth-8803"   # expires in 5d   => healthy
-tx "world,holds:enfuce:auth-8804,25000,$ASSET" "seed:hold:auth-8804"   # no expiry, placed 50h ago => STALE via the 48h fallback
-tx "world,holds:enfuce:auth-8805,25000,$ASSET" "seed:hold:auth-8805"   # released below, keeps a long-passed expiry => ignored
-tx "holds:enfuce:auth-8805,world,25000,$ASSET" "seed:hold:auth-8805-release"
+tx "world,holds:h-8801,25000,$ASSET" "seed:hold:h-8801"   # expired 6h ago  => STALE
+tx "world,holds:h-8802,25000,$ASSET" "seed:hold:h-8802"   # expires in 3h   => APPROACHING
+tx "world,holds:h-8803,25000,$ASSET" "seed:hold:h-8803"   # expires in 5d   => healthy
+tx "world,holds:h-8804,25000,$ASSET" "seed:hold:h-8804"   # no expiry, placed 50h ago => STALE via the 48h fallback
+tx "world,holds:h-8805,25000,$ASSET" "seed:hold:h-8805"   # released below, keeps a long-passed expiry => ignored
+tx "holds:h-8805,world,25000,$ASSET" "seed:hold:h-8805-release"
 
-# enfuce_auth_id / card_id are identity labels: the rule copies them onto each
-# alert so it names the authorisation, not just an address. Labels are read off
-# the account, never filtered on, so they need no declared type and no index.
-meta holds:enfuce:auth-8801 "hold_created_at=$(iso -30H '-30 hours')" "hold_expires_at=$(iso -6H '-6 hours')"  "enfuce_auth_id=AUTH-8801" "card_id=card_42"
-meta holds:enfuce:auth-8802 "hold_created_at=$(iso -21H '-21 hours')" "hold_expires_at=$(iso +3H '+3 hours')"  "enfuce_auth_id=AUTH-8802" "card_id=card_42"
-meta holds:enfuce:auth-8803 "hold_created_at=$(iso -2H '-2 hours')"   "hold_expires_at=$(iso +5d '+5 days')"   "enfuce_auth_id=AUTH-8803" "card_id=card_17"
-meta holds:enfuce:auth-8804 "hold_created_at=$(iso -50H '-50 hours')"                                          "enfuce_auth_id=AUTH-8804" "card_id=card_17"
-meta holds:enfuce:auth-8805 "hold_created_at=$(iso -20d '-20 days')"  "hold_expires_at=$(iso -19d '-19 days')" "enfuce_auth_id=AUTH-8805" "card_id=card_42"
+# hold_reference / customer_id are identity labels: the rule copies them onto
+# each alert so it names the hold, not just an address. Labels are read off the
+# account, never filtered on, so they need no declared type and no index.
+meta holds:h-8801 "hold_created_at=$(iso -30H '-30 hours')" "hold_expires_at=$(iso -6H '-6 hours')"  "hold_reference=H-8801" "customer_id=cust_42"
+meta holds:h-8802 "hold_created_at=$(iso -21H '-21 hours')" "hold_expires_at=$(iso +3H '+3 hours')"  "hold_reference=H-8802" "customer_id=cust_42"
+meta holds:h-8803 "hold_created_at=$(iso -2H '-2 hours')"   "hold_expires_at=$(iso +5d '+5 days')"   "hold_reference=H-8803" "customer_id=cust_17"
+meta holds:h-8804 "hold_created_at=$(iso -50H '-50 hours')"                                          "hold_reference=H-8804" "customer_id=cust_17"
+meta holds:h-8805 "hold_created_at=$(iso -20d '-20 days')"  "hold_expires_at=$(iso -19d '-19 days')" "hold_reference=H-8805" "customer_id=cust_42"
 
 echo
 echo "✓ Data ledger seeded. Now create the rules:"

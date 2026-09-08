@@ -90,18 +90,18 @@ metadata; signal C is not implementable.
 
 ```jsonc
 {
-  "ledger": "cards",
-  "query":  { "$match": { "address": "holds:enfuce:*" } },   // the hold universe
+  "ledger": "holds",
+  "query":  { "$match": { "address": "holds:*" } },          // the hold universe
   "asset":  "USD/2",
   "deadline": {
-    "expiryKey":  "hold_expires_at",   // Enfuce's per-hold expiry; wins when present
+    "expiryKey":  "hold_expires_at",   // the expiry recorded on the hold; wins when present
     "createdKey": "hold_created_at",   // fallback basis
     "encoding":   "datetime",          // datetime | epoch_seconds | epoch_millis | epoch_micros
     "maxAge":     "48h"                // fallback: createdKey + maxAge
   },
   "warnWithin": "6h",                  // optional — band mode (§4.4)
   "scope": "per_hold",                 // per_hold | aggregate
-  "identityKeys": ["enfuce_auth_id", "card_id"],  // labels copied onto each alert
+  "identityKeys": ["hold_reference", "customer_id"],  // labels copied onto each alert
   "maxHoldsScanned": 500               // optional per-rule read cap (§4.6)
 }
 ```
@@ -111,7 +111,8 @@ metadata; signal C is not implementable.
 1. `now := in.PIT` (defaults to `time.Now().UTC()`,
    [evaluation.go:60](../../internal/api/service/evaluation.go#L60)).
 2. Compute the **cutoff instant** and encode it in the key's declared unit → an integer literal.
-3. Build the effective query: `spec.query AND { "$lt": { "metadata[expiryKey]": <cutoff> } }`.
+3. Build the effective query: `spec.query AND { "$lte": { "metadata[expiryKey]": <cutoff> } }`
+   (plus a `$gt` lower bound in `approaching` mode).
    The ledger returns **only** the holds past (or approaching) their deadline.
 4. `ListAccounts` on that query — budgeted by `MaxAccountsScanned`
    (50 000 default, [budget.go:33](../../internal/engine/budget.go#L33)).
@@ -136,9 +137,9 @@ and the absence is better:
 - The rendered CEL is honest and executable with today's vocabulary:
 
   ```
-  balance(ledgerSet("cards",
-    "{\"$and\":[{\"$match\":{\"address\":\"holds:enfuce:*\"}},
-                {\"$lt\":{\"metadata[hold_expires_at]\":1756809600000000}}]}"), "USD/2") == 0
+  balance(ledgerSet("holds",
+    "{\"$and\":[{\"$match\":{\"address\":\"holds:*\"}},
+                {\"$lte\":{\"metadata[hold_expires_at]\":1756809600000000}}]}"), "USD/2") == 0
   ```
 
   *"No funds sit in a hold whose deadline has passed."* Per-hold outcomes render the same form with
@@ -405,8 +406,9 @@ were correctly ignored.
 | Contract gating | V2 only ([contract_version.go](../../internal/api/service/contract_version.go)) |
 | Tests | [stale_holds_test.go](../../internal/templates/stale_holds_test.go) (36 cases) + the live-ledger IT above |
 | Public API | `StaleHoldsSpecV2` + `stale_holds` in `TemplateKindV2` ([openapi.yaml](../../openapi.yaml)) |
-| Docs | [templates.md §8](./templates.md), the in-app guide, this design |
-| Demo | `holds:enfuce:*` book in `seed-data.sh`, the warn/stale rule pair in `seed-demo.mjs` |
+| Docs | [templates.md §6](./templates.md), the in-app guide, this design |
+| Web UI | `StaleHoldsEditor` in [CreateRuleDialogV2.tsx](../../frontend/components/reconcile/panels/CreateRuleDialogV2.tsx), `StaleHoldsEvidence` in [V2Evidence.tsx](../../frontend/components/reconcile/V2Evidence.tsx) |
+| Demo | `holds:*` book in `seed-data.sh`, the warn/stale rule pair in `seed-demo.mjs` |
 
 **No new CEL builtin was added** (§4.3), and no PIT-read capability was assumed anywhere.
 
@@ -416,9 +418,9 @@ Confirming one account per authorisation (§5, Q1) changed what an alert should 
 check works — `per_hold` was already the default and the deadline pushdown was already per-account.
 Two things were added.
 
-**`identityKeys`** names account-metadata keys — the authorisation id, the card — copied onto each
-flagged hold's evidence, so an alert reads *"AUTH-8801 on card_42, $250, six hours overdue"* rather
-than pointing at a ledger address alone. They are labels, not predicates: read off the account
+**`identityKeys`** names account-metadata keys — the reference, the customer — copied onto each
+flagged hold's evidence, so an alert reads *"hold H-8801 for cust_42, $250, six hours overdue"*
+rather than pointing at a ledger address alone. They are labels, not predicates: read off the account
 already fetched, needing no declared type and no index (verified in the integration test, which
 writes one to an undeclared key), and a hold missing a declared label is still checked.
 
@@ -431,9 +433,6 @@ Nothing else in the evaluation path changed.
 
 ### Not done
 
-- **The web UI has no `stale_holds` create form or evidence renderer.** Rules are created through the
-  API; evidence renders through the generic V2 fallback. Adding both means extending the V2 rule-form
-  union and the evidence switch — a self-contained follow-up.
 - **The signal-B fallback** (age from the ledger's own `first_usage` / `insertion_date`, for a client
   with no deadline metadata) is designed (§3) but not built. It needs those fields plumbed through
   `engine.Account`, costs a full scan of the hold universe, and cannot render its age predicate in

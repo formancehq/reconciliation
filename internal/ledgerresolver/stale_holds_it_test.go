@@ -35,8 +35,8 @@ func itAddr() string {
 //     bound, so the deadline predicate can be pushed into the query (the ledger
 //     stores datetimes as int64 micros, and reads them back as RFC3339);
 //
-//   - the `$or` over `$exists` picks the issuer expiry when a hold carries one
-//     and falls back to creation + maxAge when it does not;
+//   - the `$or` over `$exists` picks the recorded expiry when a hold carries
+//     one and falls back to creation + maxAge when it does not;
 //
 //   - a released hold — zero balance, deadline metadata retained — still matches
 //     the query and is dropped by the template, not by the ledger;
@@ -77,13 +77,13 @@ func TestIntegration_StaleHolds(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	prefix := "holds:enfuce:" + uuid.NewString() + ":"
+	prefix := "holds:" + uuid.NewString() + ":"
 	stale := prefix + "stale"
 	fresh := prefix + "fresh"
 	released := prefix + "released"
 	aged := prefix + "aged"
 
-	// Four holds, each 25.00: one past its issuer expiry, one still inside it,
+	// Four holds, each 25.00: one past its recorded expiry, one still inside it,
 	// one released (balance returned to world) that keeps a long-passed expiry,
 	// and one with no expiry at all that is older than the 48h fallback.
 	for _, address := range []string{stale, fresh, released, aged} {
@@ -95,7 +95,7 @@ func TestIntegration_StaleHolds(t *testing.T) {
 	// no declared type and no index — the write below would fail if it did.
 	require.NoError(t, client.SaveAccountMetadataValues(ctx, ledgerName, stale,
 		map[string]*commonpb.MetadataValue{
-			"enfuce_auth_id": {Type: &commonpb.MetadataValue_StringValue{StringValue: "AUTH-8801"}},
+			"hold_reference": {Type: &commonpb.MetadataValue_StringValue{StringValue: "H-8801"}},
 		}))
 
 	setDatetime(ctx, t, client, ledgerName, stale, map[string]time.Time{
@@ -117,7 +117,7 @@ func TestIntegration_StaleHolds(t *testing.T) {
 
 	spec := mustSpec(t, templates.StaleHoldsSpec{
 		Source: templates.V2NamedSource{
-			ID:     "enfuce-holds",
+			ID:     "holds",
 			Ledger: ledgerName,
 			Query:  json.RawMessage(fmt.Sprintf(`{"$match":{"address":%q}}`, prefix+"*")),
 			Asset:  asset,
@@ -128,7 +128,7 @@ func TestIntegration_StaleHolds(t *testing.T) {
 			Encoding:   templates.EncodingDatetime,
 			MaxAge:     "48h",
 		},
-		IdentityKeys: []string{"enfuce_auth_id", "never_written"},
+		IdentityKeys: []string{"hold_reference", "never_written"},
 	})
 
 	evaluator := templates.NewStaleHolds()
@@ -169,12 +169,12 @@ func TestIntegration_StaleHolds(t *testing.T) {
 	staleOutcome, ok := byFingerprint["asset:"+asset+"|hold:"+stale]
 	require.True(t, ok, "the expired hold must be flagged: %+v", byFingerprint)
 	require.False(t, staleOutcome.Passed)
-	require.Equal(t, "expiry", staleOutcome.Evidence["basis"], "an issuer expiry wins over the fallback")
+	require.Equal(t, "expiry", staleOutcome.Evidence["basis"], "a recorded expiry wins over the fallback")
 	require.Equal(t, "2500", staleOutcome.Evidence["amount"])
 
 	identity, ok := staleOutcome.Evidence["identity"].(map[string]string)
-	require.True(t, ok, "the alert must name the authorisation: %+v", staleOutcome.Evidence)
-	require.Equal(t, "AUTH-8801", identity["enfuce_auth_id"])
+	require.True(t, ok, "the alert must name the hold: %+v", staleOutcome.Evidence)
+	require.Equal(t, "H-8801", identity["hold_reference"])
 	require.NotContains(t, identity, "never_written", "a label the hold does not carry is omitted")
 
 	agedIdentity := byFingerprint["asset:"+asset+"|hold:"+aged].Evidence["identity"]
@@ -192,7 +192,7 @@ func TestIntegration_StaleHolds(t *testing.T) {
 	// excludes the one that already went stale — the escalation handover.
 	bandSpec := mustSpec(t, templates.StaleHoldsSpec{
 		Source: templates.V2NamedSource{
-			ID:     "enfuce-holds",
+			ID:     "holds",
 			Ledger: ledgerName,
 			Query:  json.RawMessage(fmt.Sprintf(`{"$match":{"address":%q}}`, prefix+"*")),
 			Asset:  asset,

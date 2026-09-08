@@ -45,7 +45,7 @@ func (l *holdLedger) ListAccounts(_ context.Context, _ string, query json.RawMes
 func hold(address string, amount int64, metadata map[string]string) engine.Account {
 	return engine.Account{
 		Address:  address,
-		Ledger:   "cards",
+		Ledger:   "holds",
 		Metadata: metadata,
 		Balances: map[string]*big.Int{"USD/2": big.NewInt(amount)},
 	}
@@ -60,8 +60,8 @@ func holdSpec(t *testing.T, mutate func(*StaleHoldsSpec)) json.RawMessage {
 	spec := StaleHoldsSpec{
 		Source: V2NamedSource{
 			ID:     "holds",
-			Ledger: "cards",
-			Query:  json.RawMessage(`{"$match":{"address":"holds:enfuce:*"}}`),
+			Ledger: "holds",
+			Query:  json.RawMessage(`{"$match":{"address":"holds:*"}}`),
 			Asset:  "USD/2",
 		},
 		Deadline: HoldDeadlineSpec{ExpiryKey: "hold_expires_at", Encoding: EncodingDatetime},
@@ -83,12 +83,12 @@ func evaluateHolds(t *testing.T, spec json.RawMessage, accounts []engine.Account
 	return outcomes, ledger
 }
 
-// A hold whose issuer expiry has passed is flagged, one alert per hold.
+// A hold whose recorded expiry has passed is flagged, one alert per hold.
 func TestStaleHolds_FlagsExpiredHold(t *testing.T) {
 	t.Parallel()
 
 	outcomes, _ := evaluateHolds(t, holdSpec(t, nil), []engine.Account{
-		hold("holds:enfuce:h1", 25_00, expiring(evalNow.Add(-3*time.Hour))),
+		hold("holds:h1", 25_00, expiring(evalNow.Add(-3*time.Hour))),
 	})
 
 	if len(outcomes) != 1 {
@@ -98,7 +98,7 @@ func TestStaleHolds_FlagsExpiredHold(t *testing.T) {
 	if outcome.Passed {
 		t.Error("expected the expired hold to fail")
 	}
-	if want := "asset:USD/2|hold:holds:enfuce:h1"; outcome.Fingerprint != want {
+	if want := "asset:USD/2|hold:holds:h1"; outcome.Fingerprint != want {
 		t.Errorf("fingerprint = %q, want %q", outcome.Fingerprint, want)
 	}
 	if got := outcome.Evidence["basis"]; got != "expiry" {
@@ -110,7 +110,7 @@ func TestStaleHolds_FlagsExpiredHold(t *testing.T) {
 	if got := outcome.Evidence["overdueSeconds"]; got != int64(3*3600) {
 		t.Errorf("overdueSeconds = %v, want %d", got, 3*3600)
 	}
-	if cel, _ := outcome.Evidence["compiledCEL"].(string); !strings.Contains(cel, "holds:enfuce:h1") {
+	if cel, _ := outcome.Evidence["compiledCEL"].(string); !strings.Contains(cel, "holds:h1") {
 		t.Errorf("compiledCEL should narrow to the single hold, got %q", cel)
 	}
 }
@@ -121,7 +121,7 @@ func TestStaleHolds_PassesWhenNothingIsStale(t *testing.T) {
 	t.Parallel()
 
 	outcomes, _ := evaluateHolds(t, holdSpec(t, nil), []engine.Account{
-		hold("holds:enfuce:h1", 25_00, expiring(evalNow.Add(12*time.Hour))),
+		hold("holds:h1", 25_00, expiring(evalNow.Add(12*time.Hour))),
 	})
 
 	if len(outcomes) != 1 {
@@ -148,14 +148,14 @@ func TestStaleHolds_IgnoresReleasedHolds(t *testing.T) {
 	t.Parallel()
 
 	outcomes, _ := evaluateHolds(t, holdSpec(t, nil), []engine.Account{
-		hold("holds:enfuce:released", 0, expiring(evalNow.Add(-30*24*time.Hour))),
-		hold("holds:enfuce:stuck", 10_00, expiring(evalNow.Add(-1*time.Hour))),
+		hold("holds:released", 0, expiring(evalNow.Add(-30*24*time.Hour))),
+		hold("holds:stuck", 10_00, expiring(evalNow.Add(-1*time.Hour))),
 	})
 
 	if len(outcomes) != 1 {
 		t.Fatalf("expected only the stuck hold, got %d: %+v", len(outcomes), outcomes)
 	}
-	if outcomes[0].Fingerprint != "asset:USD/2|hold:holds:enfuce:stuck" {
+	if outcomes[0].Fingerprint != "asset:USD/2|hold:holds:stuck" {
 		t.Errorf("flagged the wrong hold: %q", outcomes[0].Fingerprint)
 	}
 }
@@ -170,15 +170,15 @@ func TestStaleHolds_ApproachingIsABand(t *testing.T) {
 		s.WarnWithin = "6h"
 	})
 	outcomes, _ := evaluateHolds(t, spec, []engine.Account{
-		hold("holds:enfuce:soon", 30_00, expiring(evalNow.Add(2*time.Hour))),
-		hold("holds:enfuce:already", 40_00, expiring(evalNow.Add(-2*time.Hour))),
-		hold("holds:enfuce:later", 50_00, expiring(evalNow.Add(24*time.Hour))),
+		hold("holds:soon", 30_00, expiring(evalNow.Add(2*time.Hour))),
+		hold("holds:already", 40_00, expiring(evalNow.Add(-2*time.Hour))),
+		hold("holds:later", 50_00, expiring(evalNow.Add(24*time.Hour))),
 	})
 
 	if len(outcomes) != 1 {
 		t.Fatalf("expected only the hold inside the band, got %d: %+v", len(outcomes), outcomes)
 	}
-	if outcomes[0].Fingerprint != "asset:USD/2|hold:holds:enfuce:soon" {
+	if outcomes[0].Fingerprint != "asset:USD/2|hold:holds:soon" {
 		t.Errorf("flagged the wrong hold: %q", outcomes[0].Fingerprint)
 	}
 	if got := outcomes[0].Evidence["dueInSeconds"]; got != int64(2*3600) {
@@ -186,8 +186,8 @@ func TestStaleHolds_ApproachingIsABand(t *testing.T) {
 	}
 }
 
-// With no issuer expiry, the hold is dated from its creation metadata plus the
-// fallback age.
+// With no recorded expiry, the hold is dated from its creation metadata plus
+// the fallback age.
 func TestStaleHolds_FallsBackToCreatedPlusMaxAge(t *testing.T) {
 	t.Parallel()
 
@@ -201,16 +201,16 @@ func TestStaleHolds_FallsBackToCreatedPlusMaxAge(t *testing.T) {
 	})
 	outcomes, _ := evaluateHolds(t, spec, []engine.Account{
 		// No expiry: created 50h ago, so 2h past the 48h fallback.
-		hold("holds:enfuce:old", 15_00, map[string]string{
+		hold("holds:old", 15_00, map[string]string{
 			"hold_created_at": evalNow.Add(-50 * time.Hour).Format(time.RFC3339),
 		}),
 		// No expiry, created 10h ago: still inside the fallback.
-		hold("holds:enfuce:fresh", 15_00, map[string]string{
+		hold("holds:fresh", 15_00, map[string]string{
 			"hold_created_at": evalNow.Add(-10 * time.Hour).Format(time.RFC3339),
 		}),
-		// Issuer expiry present and still in the future: the expiry wins over
-		// the fallback, even though the hold is 5 days old.
-		hold("holds:enfuce:extended", 15_00, map[string]string{
+		// Recorded expiry present and still in the future: the expiry wins
+		// over the fallback, even though the hold is 5 days old.
+		hold("holds:extended", 15_00, map[string]string{
 			"hold_created_at": evalNow.Add(-5 * 24 * time.Hour).Format(time.RFC3339),
 			"hold_expires_at": evalNow.Add(24 * time.Hour).Format(time.RFC3339),
 		}),
@@ -219,7 +219,7 @@ func TestStaleHolds_FallsBackToCreatedPlusMaxAge(t *testing.T) {
 	if len(outcomes) != 1 {
 		t.Fatalf("expected one flagged hold, got %d: %+v", len(outcomes), outcomes)
 	}
-	if outcomes[0].Fingerprint != "asset:USD/2|hold:holds:enfuce:old" {
+	if outcomes[0].Fingerprint != "asset:USD/2|hold:holds:old" {
 		t.Errorf("flagged the wrong hold: %q", outcomes[0].Fingerprint)
 	}
 	if got := outcomes[0].Evidence["basis"]; got != "created_at" {
@@ -242,7 +242,7 @@ func TestStaleHolds_EpochEncodings(t *testing.T) {
 		t.Run(string(tc.encoding), func(t *testing.T) {
 			spec := holdSpec(t, func(s *StaleHoldsSpec) { s.Deadline.Encoding = tc.encoding })
 			outcomes, _ := evaluateHolds(t, spec, []engine.Account{
-				hold("holds:enfuce:h1", 100, map[string]string{"hold_expires_at": tc.value}),
+				hold("holds:h1", 100, map[string]string{"hold_expires_at": tc.value}),
 			})
 			if len(outcomes) != 1 || outcomes[0].Passed {
 				t.Fatalf("expected the hold to be flagged, got %+v", outcomes)
@@ -260,7 +260,7 @@ func TestStaleHolds_UnreadableDeadlineIsAnError(t *testing.T) {
 	t.Parallel()
 
 	ledger := &holdLedger{accounts: []engine.Account{
-		hold("holds:enfuce:h1", 100, map[string]string{"hold_expires_at": "yesterday"}),
+		hold("holds:h1", 100, map[string]string{"hold_expires_at": "yesterday"}),
 	}}
 	eng, resolvers := newTestEngine(t, ledger)
 	_, err := NewStaleHolds().Evaluate(context.Background(), holdSpec(t, nil), eng, resolvers, engine.EvalInput{PIT: evalNow})
@@ -284,10 +284,10 @@ func TestStaleHolds_AggregateScope(t *testing.T) {
 
 	spec := holdSpec(t, func(s *StaleHoldsSpec) { s.Scope = StaleHoldsAggregate })
 	outcomes, _ := evaluateHolds(t, spec, []engine.Account{
-		hold("holds:enfuce:h1", 25_00, expiring(evalNow.Add(-3*time.Hour))),
-		hold("holds:enfuce:h2", 15_00, expiring(evalNow.Add(-9*time.Hour))),
-		hold("holds:enfuce:ok", 99_00, expiring(evalNow.Add(9*time.Hour))),
-		hold("holds:enfuce:released", 0, expiring(evalNow.Add(-99*time.Hour))),
+		hold("holds:h1", 25_00, expiring(evalNow.Add(-3*time.Hour))),
+		hold("holds:h2", 15_00, expiring(evalNow.Add(-9*time.Hour))),
+		hold("holds:ok", 99_00, expiring(evalNow.Add(9*time.Hour))),
+		hold("holds:released", 0, expiring(evalNow.Add(-99*time.Hour))),
 	})
 
 	if len(outcomes) != 1 {
@@ -314,7 +314,7 @@ func TestStaleHolds_AggregateScope(t *testing.T) {
 		t.Errorf("oldestDeadline = %v", got)
 	}
 	sample, ok := evidence["holds"].([]map[string]any)
-	if !ok || len(sample) != 2 || sample[0]["hold"] != "holds:enfuce:h2" {
+	if !ok || len(sample) != 2 || sample[0]["hold"] != "holds:h2" {
 		t.Errorf("unexpected sample: %+v", evidence["holds"])
 	}
 }
@@ -328,7 +328,7 @@ func TestStaleHolds_QueryPushdown(t *testing.T) {
 
 	t.Run("expiry only", func(t *testing.T) {
 		_, ledger := evaluateHolds(t, holdSpec(t, nil), nil)
-		want := `{"$and":[{"$match":{"address":"holds:enfuce:*"}},{"$lte":{"metadata[hold_expires_at]":` + cutoff + `}}]}`
+		want := `{"$and":[{"$match":{"address":"holds:*"}},{"$lte":{"metadata[hold_expires_at]":` + cutoff + `}}]}`
 		if string(ledger.lastQuery) != want {
 			t.Errorf("query =\n%s\nwant\n%s", ledger.lastQuery, want)
 		}
@@ -340,7 +340,7 @@ func TestStaleHolds_QueryPushdown(t *testing.T) {
 		})
 		_, ledger := evaluateHolds(t, spec, nil)
 		shifted := strconvI(evalNow.Add(-48 * time.Hour).UnixMicro())
-		want := `{"$and":[{"$match":{"address":"holds:enfuce:*"}},{"$lte":{"metadata[hold_created_at]":` + shifted + `}}]}`
+		want := `{"$and":[{"$match":{"address":"holds:*"}},{"$lte":{"metadata[hold_created_at]":` + shifted + `}}]}`
 		if string(ledger.lastQuery) != want {
 			t.Errorf("query =\n%s\nwant\n%s", ledger.lastQuery, want)
 		}
@@ -428,7 +428,7 @@ func TestStaleHolds_QueriesIncludeTheDeadlineClause(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Queries: %v", err)
 	}
-	if len(sources) != 1 || sources[0].Ledger != "cards" {
+	if len(sources) != 1 || sources[0].Ledger != "holds" {
 		t.Fatalf("got %+v", sources)
 	}
 	if !strings.Contains(string(sources[0].Query), "metadata[hold_expires_at]") {
@@ -439,7 +439,7 @@ func TestStaleHolds_QueriesIncludeTheDeadlineClause(t *testing.T) {
 func TestStaleHolds_BudgetIsEnforced(t *testing.T) {
 	t.Parallel()
 
-	ledger := &holdLedger{err: errors.New("listAccounts: matched more than 50000 accounts on \"cards\" (accounts budget)")}
+	ledger := &holdLedger{err: errors.New("listAccounts: matched more than 50000 accounts on \"holds\" (accounts budget)")}
 	eng, resolvers := newTestEngine(t, ledger)
 	_, err := NewStaleHolds().Evaluate(context.Background(), holdSpec(t, nil), eng, resolvers, engine.EvalInput{PIT: evalNow})
 	if err == nil || !strings.Contains(err.Error(), "accounts budget") {
@@ -447,21 +447,21 @@ func TestStaleHolds_BudgetIsEnforced(t *testing.T) {
 	}
 }
 
-// With one account per authorisation, the alert should name the hold in the
-// operator's terms, not only by ledger address. Declared keys a hold does not
+// With each hold in an account of its own, the alert should name the hold in the
+// operator's own terms, not only by ledger address. Declared keys a hold does not
 // carry are omitted rather than failing it.
 func TestStaleHolds_IdentityLabels(t *testing.T) {
 	t.Parallel()
 
 	spec := holdSpec(t, func(s *StaleHoldsSpec) {
-		s.IdentityKeys = []string{"enfuce_auth_id", "card_id", "merchant"}
+		s.IdentityKeys = []string{"hold_reference", "customer_id", "counterparty"}
 	})
 	outcomes, _ := evaluateHolds(t, spec, []engine.Account{
-		hold("holds:enfuce:auth-8801", 2500, map[string]string{
+		hold("holds:h-8801", 2500, map[string]string{
 			"hold_expires_at": evalNow.Add(-2 * time.Hour).Format(time.RFC3339),
-			"enfuce_auth_id":  "AUTH-8801",
-			"card_id":         "card_42",
-			// no `merchant` key on this hold
+			"hold_reference":  "H-8801",
+			"customer_id":     "cust_42",
+			// no `counterparty` key on this hold
 		}),
 	})
 
@@ -472,10 +472,10 @@ func TestStaleHolds_IdentityLabels(t *testing.T) {
 	if !ok {
 		t.Fatalf("identity missing from evidence: %+v", outcomes[0].Evidence)
 	}
-	if identity["enfuce_auth_id"] != "AUTH-8801" || identity["card_id"] != "card_42" {
+	if identity["hold_reference"] != "H-8801" || identity["customer_id"] != "cust_42" {
 		t.Errorf("unexpected identity: %+v", identity)
 	}
-	if _, present := identity["merchant"]; present {
+	if _, present := identity["counterparty"]; present {
 		t.Errorf("a key the hold does not carry must be omitted: %+v", identity)
 	}
 }
@@ -486,7 +486,7 @@ func TestStaleHolds_IdentityAbsentByDefault(t *testing.T) {
 	t.Parallel()
 
 	outcomes, _ := evaluateHolds(t, holdSpec(t, nil), []engine.Account{
-		hold("holds:enfuce:h1", 2500, expiring(evalNow.Add(-time.Hour))),
+		hold("holds:h1", 2500, expiring(evalNow.Add(-time.Hour))),
 	})
 	if _, present := outcomes[0].Evidence["identity"]; present {
 		t.Errorf("identity should be absent when no keys are declared: %+v", outcomes[0].Evidence)
@@ -500,12 +500,12 @@ func TestStaleHolds_IdentityInAggregateSample(t *testing.T) {
 
 	spec := holdSpec(t, func(s *StaleHoldsSpec) {
 		s.Scope = StaleHoldsAggregate
-		s.IdentityKeys = []string{"enfuce_auth_id"}
+		s.IdentityKeys = []string{"hold_reference"}
 	})
 	outcomes, _ := evaluateHolds(t, spec, []engine.Account{
-		hold("holds:enfuce:auth-1", 2500, map[string]string{
+		hold("holds:h-1", 2500, map[string]string{
 			"hold_expires_at": evalNow.Add(-time.Hour).Format(time.RFC3339),
-			"enfuce_auth_id":  "AUTH-1",
+			"hold_reference":  "H-1",
 		}),
 	})
 	sample, ok := outcomes[0].Evidence["holds"].([]map[string]any)
@@ -513,7 +513,7 @@ func TestStaleHolds_IdentityInAggregateSample(t *testing.T) {
 		t.Fatalf("unexpected sample: %+v", outcomes[0].Evidence["holds"])
 	}
 	identity, ok := sample[0]["identity"].(map[string]string)
-	if !ok || identity["enfuce_auth_id"] != "AUTH-1" {
+	if !ok || identity["hold_reference"] != "H-1" {
 		t.Errorf("aggregate sample should carry identity: %+v", sample[0])
 	}
 }
@@ -525,9 +525,9 @@ func TestStaleHolds_RuleLevelBudget(t *testing.T) {
 	t.Parallel()
 
 	accounts := []engine.Account{
-		hold("holds:enfuce:h1", 100, expiring(evalNow.Add(-time.Hour))),
-		hold("holds:enfuce:h2", 100, expiring(evalNow.Add(-time.Hour))),
-		hold("holds:enfuce:h3", 100, expiring(evalNow.Add(-time.Hour))),
+		hold("holds:h1", 100, expiring(evalNow.Add(-time.Hour))),
+		hold("holds:h2", 100, expiring(evalNow.Add(-time.Hour))),
+		hold("holds:h3", 100, expiring(evalNow.Add(-time.Hour))),
 	}
 
 	t.Run("under the cap", func(t *testing.T) {
@@ -706,16 +706,16 @@ func TestStaleHolds_Validate(t *testing.T) {
 		},
 		{
 			name:   "identity keys",
-			mutate: func(s *StaleHoldsSpec) { s.IdentityKeys = []string{"enfuce_auth_id", "card_id"} },
+			mutate: func(s *StaleHoldsSpec) { s.IdentityKeys = []string{"hold_reference", "customer_id"} },
 		},
 		{
 			name:    "empty identity key",
-			mutate:  func(s *StaleHoldsSpec) { s.IdentityKeys = []string{"enfuce_auth_id", " "} },
+			mutate:  func(s *StaleHoldsSpec) { s.IdentityKeys = []string{"hold_reference", " "} },
 			wantErr: "identityKeys[1] is empty",
 		},
 		{
 			name:    "duplicate identity key",
-			mutate:  func(s *StaleHoldsSpec) { s.IdentityKeys = []string{"card_id", "card_id"} },
+			mutate:  func(s *StaleHoldsSpec) { s.IdentityKeys = []string{"customer_id", "customer_id"} },
 			wantErr: "repeats",
 		},
 		{

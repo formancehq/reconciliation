@@ -484,21 +484,22 @@ recognisable to anyone migrating an `account_threshold` rule.
 ### 6. `stale_holds`
 
 The catalog's only **time-based** control: it flags held funds whose deadline has passed — or is
-about to. Designed for card programs where an issuer places holds with an expiry (see
+about to. Designed for books where each hold carries its own deadline — an expiry recorded on the
+hold, or the instant it was placed plus a maximum age (see
 [stale-holds.md](./stale-holds.md) for the design and its assumptions).
 
-A **hold** is one ledger account carrying a non-zero balance and a deadline in its metadata —
-typically **one account per authorization**, which is what lets the rule speak about an individual
-hold rather than a pooled reserve (see [stale-holds.md §5](./stale-holds.md)). The deadline is the
-issuer's expiry when the hold has one, otherwise its creation instant plus `maxAge`.
+A **hold** is one ledger account carrying a non-zero balance and a deadline in its metadata, held on
+its own rather than pooled — which is what lets the rule speak about an individual hold rather than
+a pooled reserve (see [stale-holds.md §5](./stale-holds.md)). The deadline is the expiry recorded on
+the hold when it has one, otherwise its creation instant plus `maxAge`.
 
 ```json
 {
   "source": {
-    "id": "enfuce-holds",
-    "ledger": "cards",
+    "id": "held-funds",
+    "ledger": "holds",
     "query": { "$and": [
-      { "$match": { "address": "holds:enfuce:*" } },
+      { "$match": { "address": "holds:*" } },
       { "$match": { "metadata[hold_status]": "active" } }
     ] },
     "asset": "USD/2"
@@ -511,7 +512,7 @@ issuer's expiry when the hold has one, otherwise its creation instant plus `maxA
   },
   "mode": "stale",
   "scope": "per_hold",
-  "identityKeys": ["enfuce_auth_id", "card_id"],
+  "identityKeys": ["hold_reference", "customer_id"],
   "maxHoldsScanned": 500
 }
 ```
@@ -544,10 +545,10 @@ evaluation clock is materialised into an integer cutoff and appended to the rule
   numbers and are rejected past 2^53.
 - `warnWithin` is required with `mode: approaching` and rejected with `mode: stale`.
 - `identityKeys` (optional, at most 8, non-empty and distinct) names account-metadata keys copied
-  into each flagged hold's evidence, so an alert reads *"authorization AUTH-8801 on card_42"* rather
-  than only a ledger address. They are **labels, not predicates**: read off the account already
+  into each flagged hold's evidence, so an alert reads *"hold H-8801 for cust_42"* rather than only
+  a ledger address. They are **labels, not predicates**: read off the account already
   fetched, so they need **no metadata index**, and a key a hold does not carry is omitted rather than
-  failing it. Alert evidence is durable and widely readable — keep cardholder PII out of it.
+  failing it. Alert evidence is durable and widely readable — keep personal data out of it.
 
 **Released holds.** Releasing a hold zeroes its volume but keeps the account row and its metadata, so
 a released hold still matches a deadline filter. Balances are not filterable in a query, so
@@ -576,8 +577,8 @@ outcomes carry the scan instead: `deadlineOnOrBefore` (and `deadlineAfter` for a
 `aggregate` scope — a `holds` sample bounded to 20 entries with `holdsSampled` saying how many.
 
 > ⚠️ `per_hold` opens **one alert per stale hold** — one control-ledger read and write each. That is
-> the point for a programme with a handful of stuck authorisations, and the wrong shape when a
-> systemic failure strands thousands at once. Bound it with `maxHoldsScanned` (below), and use
+> the point when only a handful of holds are stuck at a time, and the wrong shape when a systemic
+> failure strands thousands at once. Bound it with `maxHoldsScanned` (below), and use
 > `aggregate` where the stale set is expected to be large.
 
 **`maxHoldsScanned`** caps how many hold accounts one evaluation reads, below the engine-wide
@@ -610,9 +611,6 @@ There is deliberately **no "open at most N alerts" setting on the template**. An
 auto-resolve problem above, and switching an over-budget rule to a summary outcome would change its
 fingerprints — resolving the whole open set as a side effect. Choosing `aggregate` up front is the
 supported way to get one alert instead of many.
-
-> ⏳ The web UI has no dedicated create form or evidence renderer for `stale_holds` yet — rules are
-> created through the API and their evidence renders through the generic V2 fallback.
 
 ---
 

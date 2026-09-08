@@ -177,15 +177,15 @@ const RULES = [
 
 // ── V2 rule catalogue ───────────────────────────────────────────────────────
 // stale_holds is a V2 template, so these are created on /v2/rules. They read the
-// holds:enfuce:* book seeded by seed-data.sh, whose deadline metadata is dated
-// relative to seed time — so the verdicts below hold whenever you run this.
+// holds:* book seeded by seed-data.sh, whose deadline metadata is dated relative
+// to seed time — so the verdicts below hold whenever you run this.
 //
 // The pair is the "warn early, page late" pattern: severity is declared per
 // rule, so the advance warning and the breach are two rules over the same holds.
 const HOLDS_SOURCE = {
-  id: 'enfuce-holds',
+  id: 'holds',
   ledger: LEDGER,
-  query: A('holds:enfuce:*'),
+  query: A('holds:*'),
   asset: ASSET,
 };
 const HOLD_DEADLINE = {
@@ -194,16 +194,16 @@ const HOLD_DEADLINE = {
   encoding: 'datetime',
   maxAge: '48h',
 };
-// Labels copied onto each alert so it names the authorisation, not just an
-// address. Read off the account, never filtered on — no index required.
-const HOLD_IDENTITY = ['enfuce_auth_id', 'card_id'];
+// Labels copied onto each alert so it names the hold, not just an address. Read
+// off the account, never filtered on — no index required.
+const HOLD_IDENTITY = ['hold_reference', 'customer_id'];
 
 const V2_RULES = [
   {
     key: 'holds-stale',
     expect: 'FAIL',
     body: {
-      name: 'Card holds past their expiry',
+      name: 'Holds past their expiry',
       templateKind: 'stale_holds',
       templateSpec: {
         source: HOLDS_SOURCE,
@@ -221,7 +221,7 @@ const V2_RULES = [
     key: 'holds-approaching',
     expect: 'FAIL',
     body: {
-      name: 'Card holds expiring within 24 hours',
+      name: 'Holds expiring within 24 hours',
       templateKind: 'stale_holds',
       templateSpec: {
         source: HOLDS_SOURCE,
@@ -287,14 +287,14 @@ async function main() {
   // rejected at create if its deadline keys aren't declared + indexed on the
   // ledger, so report that clearly rather than failing the whole seed.
   for (const rule of V2_RULES) {
-    const body = { ...rule.body, labels: { ...(rule.body.labels || {}), demo: DEMO_LABEL, program: 'cards' } };
+    const body = { ...rule.body, labels: { ...(rule.body.labels || {}), demo: DEMO_LABEL } };
     try {
       const r = await api('POST', '/v2/rules', body);
       created.push({ ...rule, id: r.data.id });
       console.log(`+ rule "${rule.body.name}" [${rule.body.templateKind}] → ${r.data.id}`);
     } catch (e) {
       console.log(`! skipped "${rule.body.name}": ${e.message}`);
-      console.log('  stale_holds needs holds:enfuce:* accounts whose hold_expires_at /');
+      console.log('  stale_holds needs holds:* accounts whose hold_expires_at /');
       console.log('  hold_created_at keys are declared datetime and indexed — re-run ./scripts/seed-data.sh.');
     }
   }

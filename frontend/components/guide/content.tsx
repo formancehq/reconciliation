@@ -174,18 +174,18 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 
 				<SubHeading id="v3-rec-stale-holds">Watch for holds that overstay</SubHeading>
 				<P>
-					A hold ties up money that isn’t spent yet — a card authorisation, a reserve against a pending
-					settlement. The <strong>stale holds</strong>{' '}template watches the clock on those, so funds
-					can’t sit trapped past the point the issuer intended. It reads each hold’s deadline from the
-					account’s own metadata: the expiry the issuer supplied, or, for holds without one, the moment
-					the hold was placed plus a maximum age you set (48 hours, say).
+					A hold ties up money that isn’t spent yet — money in escrow, a reserve against a pending settlement,
+					a deposit awaiting release. The <strong>stale holds</strong>{' '}template watches the clock on
+					those, so funds can’t sit trapped past the point the hold was meant to be released. It reads each hold’s
+					deadline from the account’s own metadata: an expiry recorded on the hold, when it
+					carries one, or otherwise the moment the hold was placed plus a maximum age you set (48 hours, say).
 				</P>
 				<ul className="list-disc space-y-1 pl-5 text-sm">
 					<li><strong>One alert per stuck hold.</strong>{' '}Each overdue hold opens its own alert naming the account, the amount, and how long it is overdue. When the hold is released, its alert resolves on the next run. Choose aggregate scope instead for a single alert per asset carrying the count and the total trapped.</li>
 					<li><strong>A rule bounds its own fan-out.</strong>{' '}Because one stuck hold is one alert, a per-hold rule reads at most a thousand holds in a run unless you raise the limit. Past that the run stops and says so rather than filling the inbox — see <AppLink href="/guide?section=alerts">alerts about the check</AppLink>.</li>
 					<li><strong>Warn before the deadline, not after.</strong>{' '}A rule in <em>approaching</em>{' '}mode flags holds due within a window you choose — the next six hours, for example. Pair it with a second rule in <em>stale</em>{' '}mode at a higher severity: the early warning resolves itself as the breach alert opens, so one hold never leaves two live alerts behind.</li>
 					<li><strong>Set the warning window wider than the run interval.</strong>{' '}A rule that runs hourly with a thirty-minute warning window can step straight over the warning and report the breach.</li>
-					<li><strong>Name the hold in your own terms.</strong>{' '}A hold is normally one account per authorisation, so the alert already points at a specific account. Listing a few metadata keys — the authorisation id, the card — copies them onto the alert, so it reads as <em>authorisation AUTH-8801 on card_42</em>{' '}rather than a ledger address. These are labels only: they need no index, and a hold missing one is still checked.</li>
+					<li><strong>Name the hold in your own terms.</strong>{' '}Each hold sits in an account of its own rather than in a pooled reserve, so an alert already isolates a single hold. Listing a few metadata keys — the hold reference, the customer — copies them onto the alert, so it reads as <em>hold H-8801 for cust_42</em>{' '}rather than a ledger address. These are labels only: they need no index, and a hold missing one is still checked.</li>
 					<li><strong>Released holds keep their metadata.</strong>{' '}Releasing a hold empties the account but leaves the expiry behind, so give the rule a selector that matches live holds only — an address prefix plus something like <Code>metadata[&quot;hold_status&quot;] = active</Code> — rather than every hold ever placed.</li>
 				</ul>
 				<Callout kind="info" title="The deadline key has to be indexed">
