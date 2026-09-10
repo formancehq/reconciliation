@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -93,9 +94,15 @@ func (s *Storage) DeleteRule(ctx context.Context, id uuid.UUID) error {
 // left unchanged. Mutating template_kind or template_spec requires re-validation
 // by the service layer before this is called.
 type RulePatch struct {
-	Name           *string
-	TemplateKind   *models.TemplateKind
-	TemplateSpec   []byte
+	Name         *string
+	TemplateKind *models.TemplateKind
+	// TemplateSpec must stay json.RawMessage, not []byte: the UPDATE below
+	// binds it through a bare `?` placeholder, where bun picks an encoder from
+	// the Go type alone — it can't see that the column is jsonb. A plain []byte
+	// is encoded as a bytea hex literal ('\x7b22...'), which Postgres rejects
+	// with `invalid input syntax for type json`; json.RawMessage is emitted
+	// verbatim.
+	TemplateSpec   json.RawMessage
 	ExplanationCEL *string
 	Enabled        *bool
 	Severity       *models.Severity
