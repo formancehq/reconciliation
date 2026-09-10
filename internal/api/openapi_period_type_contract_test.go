@@ -80,11 +80,28 @@ func TestOpenAPI_PeriodTypeAliasIsSDKSafe(t *testing.T) {
 		require.Equal(t, tc.want, prop["$ref"])
 	}
 
+	// Neither alias may be required on the response, for two different reasons,
+	// and both were found by compiling a fixture against a real regeneration.
+	//
+	// cadence: Speakeasy generates a required property with no schema default
+	// as a VALUE type — compare Severity (required, no default) generating
+	// `Severity` against ExplanationCEL (optional, no default) generating
+	// `*string` in the published SDK. Required here would turn the published
+	// `Rule.Cadence *Cadence` and `GetCadence() *Cadence` into non-pointers,
+	// breaking `CadenceMonthly.ToPointer()` assignment and `!= nil` checks. The
+	// default that used to make it a pointer cannot come back: generators
+	// materialize it into request bodies, which collides with this alias.
+	//
+	// periodType: required would force every consumer that CONSTRUCTS a Rule
+	// (fixtures, models) to change source in a minor release. Additive for
+	// readers is not additive for constructors.
+	//
+	// Both become required at the next API major, when cadence goes.
 	required := s["Rule"]["required"].([]any)
-	require.Contains(t, required, "cadence",
-		"cadence has been required since 2.4.0; dropping it breaks clients generated before 2.5.0")
+	require.NotContains(t, required, "cadence",
+		"cadence must stay optional on the response: required + no default generates a value type and breaks the published *Cadence pointer API")
 	require.NotContains(t, required, "periodType",
-		"periodType stays optional during the deprecation window: making it required forces every consumer that constructs a Rule (fixtures, models) to change source in a minor release. Make it required at the next API major, when cadence goes")
+		"periodType stays optional during the deprecation window: making it required forces every consumer that constructs a Rule (fixtures, models) to change source in a minor release")
 }
 
 func keysOf(m map[string]any) []string {
