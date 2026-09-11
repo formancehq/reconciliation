@@ -256,7 +256,7 @@ func (r *Runner) run(ctx context.Context, store Store, rule *models.Rule, evalua
 				return err
 			}
 		} else {
-			periodID := rule.Cadence.PeriodID(req.PIT.Add(-req.SafetyMargin))
+			periodID := rule.PeriodType.PeriodID(req.PIT.Add(-req.SafetyMargin))
 			if err := driveAlerts(ctx, txStore, rule, evaluation, outcomes, periodID, ended); err != nil {
 				return err
 			}

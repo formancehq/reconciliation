@@ -136,7 +136,7 @@ func newScheduledRunner(t *testing.T, evaluator *testEvaluator) (*Runner, *runne
 	scheduledAt := time.Date(2026, 7, 20, 9, 30, 0, 0, time.UTC)
 	rule := &models.Rule{
 		ID: uuid.New(), Enabled: true, Revision: 7, TemplateKind: evaluator.Kind(),
-		Cadence: models.CadenceContinuous, Schedule: &models.Schedule{Kind: models.ScheduleCron},
+		PeriodType: models.PeriodTypeContinuous, Schedule: &models.Schedule{Kind: models.ScheduleCron},
 	}
 	job := &models.EvaluationJob{
 		ID: uuid.New(), RuleID: rule.ID, RuleRevision: rule.Revision,

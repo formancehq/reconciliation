@@ -124,7 +124,7 @@ erDiagram
         text explanation_cel
         bool enabled
         text severity
-        text cadence "continuous|daily|weekly|monthly"
+        text cadence "continuous|daily|weekly|monthly — Go/API: periodType"
         jsonb schedule
         jsonb notifications
         jsonb labels

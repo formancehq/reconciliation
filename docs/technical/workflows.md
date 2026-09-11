@@ -93,7 +93,7 @@ sequenceDiagram
 
 ## 3. Alert lifecycle
 
-An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one row per triple. Within a period, re-opens flip `status` back to `OPEN` **in place**, they do not create new rows; the same fingerprint failing in a *new* period is a fresh case. A `continuous`-cadence rule has one unbounded period, so it behaves as one immortal case per `(rule, fingerprint)`. The full transition history lives in the `alert_event` log.
+An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)` triple — at most one row per triple. Within a period, re-opens flip `status` back to `OPEN` **in place**, they do not create new rows; the same fingerprint failing in a *new* period is a fresh case. A rule with `periodType: continuous` has one unbounded period, so it behaves as one immortal case per `(rule, fingerprint)`. The full transition history lives in the `alert_event` log.
 
 ```mermaid
 stateDiagram-v2
