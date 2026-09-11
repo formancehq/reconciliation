@@ -187,6 +187,42 @@ func TestRule_PatchFields(t *testing.T) {
 	require.Equal(t, "treasury", got.Labels["team"])
 }
 
+// TestRule_PatchJSONBColumns patches every jsonb-backed column at once, which
+// is what Console sends when a user edits a rule. Regression: template_spec was
+// typed []byte on RulePatch, so bun bound it as a bytea hex literal and
+// Postgres answered "invalid input syntax for type json" — every Console rule
+// edit was a 500. The other three columns travel through the same bare `?`
+// binding and are asserted here to keep that guarantee explicit.
+func TestRule_PatchJSONBColumns(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	rule := makeRule("console-edit")
+	require.NoError(t, s.CreateRule(ctx, rule))
+
+	newSpec := json.RawMessage(`{"ledger":"feed-test","query":{"$match":{"metadata[reconciliation]":"main"}},"mode":"aggregate","bounds":{"USD/2":{"min":-999999999,"max":999999999}}}`)
+	newKind := models.TemplateAccountThreshold
+	newSchedule := &models.Schedule{Kind: models.ScheduleCron, Expr: "0 8 * * 1", TZ: "UTC"}
+	newNotifications := []string{}
+	newLabels := map[string]string{"feeder": "threshold", "kind": "account_threshold"}
+
+	require.NoError(t, s.PatchRule(ctx, rule.ID, RulePatch{
+		TemplateKind:  &newKind,
+		TemplateSpec:  newSpec,
+		Schedule:      newSchedule,
+		Notifications: &newNotifications,
+		Labels:        &newLabels,
+	}))
+
+	got, err := s.GetRule(ctx, rule.ID)
+	require.NoError(t, err)
+	require.JSONEq(t, string(newSpec), string(got.TemplateSpec))
+	require.Equal(t, models.TemplateAccountThreshold, got.TemplateKind)
+	require.NotNil(t, got.Schedule)
+	require.Equal(t, "0 8 * * 1", got.Schedule.Expr)
+	require.Empty(t, got.Notifications)
+	require.Equal(t, newLabels, got.Labels)
+}
+
 // TestRule_PatchEmpty_NotFoundCheck the "empty patch" branch still verifies
 // existence so a typo'd id doesn't silently return 200 OK.
 func TestRule_PatchEmpty_NotFoundCheck(t *testing.T) {
