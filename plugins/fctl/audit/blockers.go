@@ -9,7 +9,7 @@ const ProductRevision = "0221edf2f8727def40368a5e4e2d0d0fafd7d4e7"
 
 // FctlV2Revision pins the fctl-v2 programme tree whose Task 10A/10B text and
 // pinned command inventory this preparation is measured against.
-const FctlV2Revision = "545521bfa222250af6b4419b194c7967cded0379"
+const FctlV2Revision = "e9b1395f46f3100b381dbe00f5213de28e6df0e1"
 
 // ClientSpecSHA256 pins the OpenAPI bytes used to generate pkg/client. A spec
 // change must regenerate the client and update this receipt in the same change.

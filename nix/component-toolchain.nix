@@ -1,7 +1,7 @@
 { pkgs }:
 
 let
-  # Aligned with fctl-v2 545521bfa222250af6b4419b194c7967cded0379.
+  # Aligned with fctl-v2 e9b1395f46f3100b381dbe00f5213de28e6df0e1.
   rustVersion = "1.91.1";
   rustToolchain = pkgs.rust-bin.stable.${rustVersion}.minimal;
   rustPlatform = pkgs.makeRustPlatform {

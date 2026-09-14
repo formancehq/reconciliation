@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	fctlSDKRevision        = "545521bfa222250af6b4419b194c7967cded0379"
+	fctlSDKRevision        = "e9b1395f46f3100b381dbe00f5213de28e6df0e1"
 	fctlCanonicalWITSHA256 = "38fdf377264eeada82b23fef153e6bf106ed0624e8916ff62cabdf210d6255f5"
 )
 

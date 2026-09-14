@@ -364,6 +364,52 @@ func TestGeneratedClientLeavesAuthenticationAndRetryToTheHost(t *testing.T) {
 	}
 }
 
+func TestProductHTTPErrorsSurfaceAsTypedFailuresCarryingTheirStatus(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		status    int32
+		retryable bool
+	}{
+		{"client-error", 404, false},
+		{"server-error", 503, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			host := sdk.NewMemoryHost(func(_ context.Context, _ sdk.Request) (sdk.Responses, error) {
+				return sdk.NewResponseStream(sdk.Response{Status: test.status, ContentType: "application/json", Body: []byte(`{"errorCode":"x","errorMessage":"y"}`)}), nil
+			})
+			err := (Plugin{}).Execute(context.Background(), validRequest("reconciliation.v1.policies.get", nil, sdk.SinglePageContinuationControl()), host)
+			if err == nil {
+				t.Fatalf("HTTP %d accepted", test.status)
+			}
+			var failure sdk.Failure
+			if !errors.As(err, &failure) {
+				t.Fatalf("error is not a typed SDK failure: %v", err)
+			}
+			if failure.Code != string(sdk.FailureProductHTTPError) {
+				t.Fatalf("failure code = %q, want %q", failure.Code, sdk.FailureProductHTTPError)
+			}
+			if failure.Retryable != test.retryable {
+				t.Fatalf("retryable = %v, want %v", failure.Retryable, test.retryable)
+			}
+			var details struct {
+				HTTPStatus int32 `json:"httpStatus"`
+			}
+			if err := json.Unmarshal(failure.Details, &details); err != nil {
+				t.Fatalf("decode failure details: %v (%s)", err, failure.Details)
+			}
+			if details.HTTPStatus != test.status {
+				t.Fatalf("failure details httpStatus = %d, want %d", details.HTTPStatus, test.status)
+			}
+			if strings.Contains(string(failure.Details), "errorMessage") {
+				t.Fatalf("failure details leaked the product response body: %s", failure.Details)
+			}
+			if len(host.Events()) != 0 {
+				t.Fatalf("HTTP %d emitted a plausible result", test.status)
+			}
+		})
+	}
+}
+
 func TestGeneratedDeleteRejectsUnexpectedSuccessStatus(t *testing.T) {
 	host := sdk.NewMemoryHost(func(_ context.Context, _ sdk.Request) (sdk.Responses, error) {
 		return sdk.NewResponseStream(sdk.Response{Status: 200, ContentType: "application/json", Body: []byte(`{}`)}), nil

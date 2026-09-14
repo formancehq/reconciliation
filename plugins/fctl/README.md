@@ -22,6 +22,12 @@ cursors with the SDK's canonical limits: 100 pages, 10,000 items and 4 MiB.
 After the first page, only the opaque cursor is sent; filters and page size are
 not replayed.
 
+A non-2xx product response is not a transport error. The host-bound
+`producthttp` client converts it into the typed `product_http_error` failure,
+carrying the exact HTTP status in its details and marking 5xx retryable. The
+adapter propagates that failure unchanged, emits no result, and never copies
+the product error body into the failure details.
+
 ## Layout
 
 | Path | Role |
@@ -93,7 +99,7 @@ provenance. Until then, the pinned local recipe above is the supported
 regeneration path.
 
 The repository Nix shell pins the component authoring toolchain to the same
-versions and source hashes as fctl-v2 `545521b`: `componentize-go 0.4.1`,
+versions and source hashes as fctl-v2 `e9b1395`: `componentize-go 0.4.1`,
 `wasi-virt 0.2.0`, `wasm-tools 1.239.0` and Binaryen/`wasm-opt 124`. The build
 fails before compilation if any executable reports a different version:
 

@@ -21,7 +21,7 @@ Every fact below was read at these exact revisions.
 | `formancehq/reconciliation` | `0221edf2f8727def40368a5e4e2d0d0fafd7d4e7` (`origin/main`, 2026-09-06) | Base product and server audit revision |
 | generated-client `openapi.yaml` | SHA-256 `92cb000bae9dd087fbad17a5afe2d444d192707442e1d84a5a9b09944b2436c5` | Base contract plus the declared browser-portable `query` parameter amendment |
 | `formancehq/fctl` | `693c58e27865f83332e6c3199d61fed81b742f41` | Legacy CLI baseline: `cmd/reconciliation/` |
-| `fctl-v2` | `545521bfa222250af6b4419b194c7967cded0379` | Final public SDK and programme boundary used by the plugin |
+| `fctl-v2` | `e9b1395f46f3100b381dbe00f5213de28e6df0e1` | Final public SDK and programme boundary used by the plugin |
 
 The Reconciliation checkout used was a non-iCloud clone; the iCloud-backed
 working copy hangs on `git status`, so it was neither read from nor modified.
