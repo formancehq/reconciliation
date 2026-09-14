@@ -6,11 +6,32 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/formancehq/reconciliation/pkg/client/models/components"
 )
+
+// The fctl plugin imports this module by its exact path and injects its own
+// transport through WithClient. Both are part of the published contract, so a
+// rename or a widened injection point must fail here rather than downstream.
+func TestModuleDeclaresTheExactPublicPathAndInjectionPoint(t *testing.T) {
+	const wantModule = "module github.com/formancehq/reconciliation/pkg/client"
+	contents, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(contents), wantModule+"\n") {
+		t.Fatalf("go.mod does not declare %q:\n%s", wantModule, contents)
+	}
+	var injected HTTPClient = contractHTTPClient(func(*http.Request) (*http.Response, error) { return nil, nil })
+	if _, ok := injected.(interface {
+		Do(*http.Request) (*http.Response, error)
+	}); !ok {
+		t.Fatal("HTTPClient is not the declared Do(*http.Request) (*http.Response, error) contract")
+	}
+}
 
 type contractHTTPClient func(*http.Request) (*http.Response, error)
 
