@@ -28,6 +28,42 @@ carrying the exact HTTP status in its details and marking 5xx retryable. The
 adapter propagates that failure unchanged, emits no result, and never copies
 the product error body into the failure details.
 
+## Human table hints
+
+21 of the 23 commands declare an ordered `RenderHints.Table` — a compact
+projection for the human table view only. `PublicOutputSchema` is unchanged and
+stays exhaustive, and every property left out of a table is still present in
+`--output json` and `--output yaml`.
+
+| Result family | Columns, in order |
+|---|---|
+| Policy — `policies create` / `list` / `get` | ID, Name, Ledger, Payments Pool, Created At |
+| Reconciliation — `policies reconcile`, `list`, `get` | ID, Policy ID, Status, Created At |
+| Rule — `rules create` / `list` / `get` / `update` | ID, Name, Template, Enabled, Severity, Cadence |
+| Evaluation — `rules evaluate`, `evaluations list` / `get` | ID, Rule ID, Result, Started At, Ended At |
+| Alert — `alerts list` / `get` / `ack` / `resolve` / `accept` / `snooze` / `unsnooze` | ID, Rule ID, Status, Severity, Occurrences, Last Seen At |
+| Alert event — `alerts events` | ID, Alert ID, Type, New Status, At |
+
+`policies delete` and `rules delete` declare no hint: both operations return 204
+with no response schema and the adapter emits a canonical `{}`, so there is no
+product property to name. Giving them columns needs a product change, not a
+catalogue change.
+
+Every column names a property its result always carries — never an optional
+one — which `core/render_hints_test.go` proves by executing the real adapter
+against a fixture holding only the always-present generated fields and deriving
+the emitted property set from the result envelope. Nested containers are
+excluded by a reflective rule over the generated types; `explanationCEL` and
+`error` (unbounded free text) and `fingerprint` (an opaque dedup digest) are
+excluded by judgement and recorded as such. Reconciliation declares no
+sensitive output, so no column can resolve to one.
+
+The hints are a catalogue contract, not a demonstrated human effect: at the
+pinned fctl revision the host derives table columns from the result itself
+(`internal/render`, `internal/app/presentation.go`) and does not read a
+product-supplied layout. Confirming the rendered output is an external
+acceptance gate.
+
 ## Layout
 
 | Path | Role |
