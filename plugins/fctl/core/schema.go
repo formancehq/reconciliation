@@ -39,21 +39,37 @@ var resultProperties = map[resultFamily]map[string]any{
 	resultRule: {
 		"id": "string", "name": "string", "templateKind": "string", "templateSpec": freeObjectSchema(),
 		"explanationCEL": "string", "enabled": "boolean", "severity": "string", "cadence": "string",
-		"schedule": "object", "notifications": map[string]any{"type": "array", "items": map[string]string{"type": "string"}},
-		"labels": typedMapSchema("string"), "createdAt": "string", "updatedAt": "string",
+		"schedule": closedObjectSchema(map[string]any{
+			"kind": "string", "expr": "string", "tz": "string", "safetyMargin": "string",
+		}, []string{"kind"}),
+		"notifications": map[string]any{"type": "array", "items": map[string]string{"type": "string"}},
+		"labels":        typedMapSchema("string"), "createdAt": "string", "updatedAt": "string",
 	},
 	resultEvaluation: {
 		"id": "string", "ruleID": "string", "startedAt": "string", "endedAt": "string",
 		"pitPerSource": typedMapSchema("string"), "result": "string", "evidence": map[string]any{
-			"type": []string{"array", "object"}, "items": map[string]string{"type": "object"}, "additionalProperties": true,
+			"type": []string{"array", "object"}, "items": knownObjectSchema(map[string]any{
+				"fingerprint": "string", "passed": "boolean", "proof": typedMapSchema("string"), "evidence": freeObjectSchema(),
+			}, nil), "additionalProperties": true,
 		},
 		"error": "string", "costUnits": "integer", "createdAt": "string",
 	},
 	resultAlert: {
 		"id": "string", "ruleID": "string", "fingerprint": "string", "periodID": "string",
 		"status": "string", "severity": "string", "firstSeenAt": "string", "lastSeenAt": "string",
-		"occurrenceCount": "integer", "lastEvaluationID": "string", "evidence": freeObjectSchema(), "ack": "object",
-		"resolution": "object", "snooze": "object", "labels": typedMapSchema("string"), "createdAt": "string", "updatedAt": "string",
+		"occurrenceCount": "integer", "lastEvaluationID": "string", "evidence": freeObjectSchema(),
+		"ack": closedObjectSchema(map[string]any{
+			"by": "string", "at": "string", "note": "string",
+		}, []string{"at", "by"}),
+		"resolution": closedObjectSchema(map[string]any{
+			"kind": "string", "by": "string", "at": "string", "note": "string",
+			"transactionRefs":  map[string]any{"type": "array", "items": map[string]string{"type": "string"}},
+			"evidenceSnapshot": freeObjectSchema(),
+		}, []string{"at", "by", "kind"}),
+		"snooze": closedObjectSchema(map[string]any{
+			"until": "string", "by": "string", "at": "string", "note": "string",
+		}, []string{"at", "by", "until"}),
+		"labels": typedMapSchema("string"), "createdAt": "string", "updatedAt": "string",
 	},
 	resultAlertEvent: {
 		"id": "string", "alertID": "string", "evaluationID": []string{"string", "null"}, "type": "string",
@@ -68,6 +84,33 @@ func freeObjectSchema() map[string]any {
 
 func typedMapSchema(kind string) map[string]any {
 	return map[string]any{"type": "object", "additionalProperties": map[string]string{"type": kind}}
+}
+
+func knownObjectSchema(properties map[string]any, required []string) map[string]any {
+	declared := make(map[string]any, len(properties))
+	for name, schema := range properties {
+		if nested, ok := schema.(map[string]any); ok {
+			declared[name] = nested
+		} else {
+			declared[name] = map[string]any{"type": schema}
+		}
+	}
+	if required == nil {
+		required = []string{}
+	}
+	sort.Strings(required)
+	return map[string]any{
+		"type":                 "object",
+		"properties":           declared,
+		"required":             required,
+		"additionalProperties": true,
+	}
+}
+
+func closedObjectSchema(properties map[string]any, required []string) map[string]any {
+	schema := knownObjectSchema(properties, required)
+	schema["additionalProperties"] = false
+	return schema
 }
 
 var optionalResultProperties = map[resultFamily]map[string]bool{

@@ -56,6 +56,10 @@ const (
 	fullEvaluationFixture = `{"id":"eval-1","ruleID":"rule-1","startedAt":"2026-09-14T08:00:00Z",` +
 		`"endedAt":"2026-09-14T08:00:05Z","pitPerSource":{"ledger":"2026-09-14T07:59:00Z"},"result":"ERROR",` +
 		`"evidence":{"source":"ledger"},"error":"source unavailable","costUnits":7,"createdAt":"2026-09-14T08:00:05Z"}`
+	fullEvaluationArrayFixture = `{"id":"eval-2","ruleID":"rule-1","startedAt":"2026-09-14T08:00:00Z",` +
+		`"endedAt":"2026-09-14T08:00:05Z","pitPerSource":{"ledger":"2026-09-14T07:59:00Z"},"result":"PASS",` +
+		`"evidence":[{"fingerprint":"asset:USD","passed":true,"proof":{"ledger":"100","pool":"100"},` +
+		`"evidence":{"drift":0},"extension":"kept"}],"costUnits":7,"createdAt":"2026-09-14T08:00:05Z"}`
 	fullAlertFixture = `{"id":"alert-1","ruleID":"rule-1","fingerprint":"9f1c","periodID":"2026-09",` +
 		`"status":"RESOLVED","severity":"high","firstSeenAt":"2026-09-14T08:00:00Z","lastSeenAt":"2026-09-14T09:00:00Z",` +
 		`"occurrenceCount":3,"lastEvaluationID":"eval-1","evidence":{"USD":1},` +
@@ -534,20 +538,236 @@ func TestOutputSchemaValidatorRejectsInvalidOptionalValues(t *testing.T) {
 	}
 }
 
+func TestNestedGeneratedStructSchemasAreExhaustive(t *testing.T) {
+	rules, _, _ := commandAndSpec("reconciliation.v1.rules.list")
+	alerts, _, _ := commandAndSpec("reconciliation.v1.alerts.list")
+	evaluations, _, _ := commandAndSpec("reconciliation.v1.evaluations.list")
+
+	tests := []struct {
+		name    string
+		command sdk.Command
+		path    []string
+		want    map[string]any
+	}{
+		{
+			name:    "schedule",
+			command: rules,
+			path:    []string{"schedule"},
+			want: closedObjectSchemaForTest(map[string]any{
+				"kind":         map[string]any{"type": "string"},
+				"expr":         map[string]any{"type": "string"},
+				"tz":           map[string]any{"type": "string"},
+				"safetyMargin": map[string]any{"type": "string"},
+			}, "kind"),
+		},
+		{
+			name:    "ack",
+			command: alerts,
+			path:    []string{"ack"},
+			want: closedObjectSchemaForTest(map[string]any{
+				"by":   map[string]any{"type": "string"},
+				"at":   map[string]any{"type": "string"},
+				"note": map[string]any{"type": "string"},
+			}, "at", "by"),
+		},
+		{
+			name:    "resolution",
+			command: alerts,
+			path:    []string{"resolution"},
+			want: closedObjectSchemaForTest(map[string]any{
+				"kind":             map[string]any{"type": "string"},
+				"by":               map[string]any{"type": "string"},
+				"at":               map[string]any{"type": "string"},
+				"note":             map[string]any{"type": "string"},
+				"transactionRefs":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"evidenceSnapshot": map[string]any{"type": "object", "additionalProperties": true},
+			}, "at", "by", "kind"),
+		},
+		{
+			name:    "snooze",
+			command: alerts,
+			path:    []string{"snooze"},
+			want: closedObjectSchemaForTest(map[string]any{
+				"until": map[string]any{"type": "string"},
+				"by":    map[string]any{"type": "string"},
+				"at":    map[string]any{"type": "string"},
+				"note":  map[string]any{"type": "string"},
+			}, "at", "by", "until"),
+		},
+		{
+			name:    "evaluation evidence array item",
+			command: evaluations,
+			path:    []string{"evidence", "items"},
+			want: objectSchemaForTest(map[string]any{
+				"fingerprint": map[string]any{"type": "string"},
+				"passed":      map[string]any{"type": "boolean"},
+				"proof":       map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+				"evidence":    map[string]any{"type": "object", "additionalProperties": true},
+			}),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := outputSchemaNode(test.command.PublicOutputSchema, test.command.Pagination.Supported, test.path...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("schema node = %s, want %s", compactJSON(got), compactJSON(test.want))
+			}
+		})
+	}
+}
+
+func TestBothEvaluationEvidenceUnionArmsValidateFromTheRealAdapter(t *testing.T) {
+	command, _, _ := commandAndSpec("reconciliation.v1.evaluations.list")
+	tests := map[string]struct {
+		fixture string
+		assert  func(*testing.T, any)
+	}{
+		"object": {fullEvaluationFixture, func(t *testing.T, value any) {
+			evidence := value.([]any)[0].(map[string]any)["evidence"].(map[string]any)
+			if evidence["source"] != "ledger" {
+				t.Fatalf("object-arm evidence = %#v", evidence)
+			}
+		}},
+		"array": {fullEvaluationArrayFixture, func(t *testing.T, value any) {
+			evidence := value.([]any)[0].(map[string]any)["evidence"].([]any)[0].(map[string]any)
+			want := []string{"evidence", "extension", "fingerprint", "passed", "proof"}
+			if got := sortedKeys(evidence); !reflect.DeepEqual(got, want) {
+				t.Fatalf("array-arm evidence properties = %v, want %v", got, want)
+			}
+		}},
+	}
+	for name, fixture := range tests {
+		t.Run(name, func(t *testing.T) {
+			value := decodeEmittedPayload(t, command.ID, fixture.fixture)
+			fixture.assert(t, value)
+			if err := validateJSONSchemaValue(value, command.PublicOutputSchema); err != nil {
+				t.Fatalf("real adapter result does not match PublicOutputSchema: %v", err)
+			}
+		})
+	}
+}
+
+func TestNestedSchemaCheckerRejectsKnownPropertyMutations(t *testing.T) {
+	tests := []struct {
+		name      string
+		commandID string
+		entity    reflect.Type
+		mutate    func(map[string]any)
+	}{
+		{
+			name:      "missing optional schedule property",
+			commandID: "reconciliation.v1.rules.list",
+			entity:    reflect.TypeOf(components.Rule{}),
+			mutate: func(schema map[string]any) {
+				schedule, _ := outputSchemaNodeFromMap(schema, true, "schedule")
+				delete(schedule["properties"].(map[string]any), "expr")
+			},
+		},
+		{
+			name:      "wrong resolution array item type",
+			commandID: "reconciliation.v1.alerts.list",
+			entity:    reflect.TypeOf(components.Alert{}),
+			mutate: func(schema map[string]any) {
+				resolution, _ := outputSchemaNodeFromMap(schema, true, "resolution")
+				transactionRefs := resolution["properties"].(map[string]any)["transactionRefs"].(map[string]any)
+				transactionRefs["items"].(map[string]any)["type"] = "integer"
+			},
+		},
+		{
+			name:      "missing optional evidence item property",
+			commandID: "reconciliation.v1.evaluations.list",
+			entity:    reflect.TypeOf(components.Evaluation{}),
+			mutate: func(schema map[string]any) {
+				item, _ := outputSchemaNodeFromMap(schema, true, "evidence", "items")
+				delete(item["properties"].(map[string]any), "passed")
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, _, _ := commandAndSpec(test.commandID)
+			var schema map[string]any
+			if err := json.Unmarshal(command.PublicOutputSchema, &schema); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(schema)
+			encoded, err := json.Marshal(schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := exactGeneratedSchemaError(encoded, true, test.entity); err == nil {
+				t.Fatal("nested schema mutation still matched the generated result contract")
+			}
+		})
+	}
+}
+
+func TestOutputSchemaValidatorRejectsInvalidNestedGeneratedValues(t *testing.T) {
+	rules, _, _ := commandAndSpec("reconciliation.v1.rules.list")
+	alerts, _, _ := commandAndSpec("reconciliation.v1.alerts.list")
+	evaluations, _, _ := commandAndSpec("reconciliation.v1.evaluations.list")
+	tests := []struct {
+		name    string
+		command sdk.Command
+		fixture string
+		mutate  func(map[string]any)
+	}{
+		{"schedule required property type", rules, fullRuleFixture, func(item map[string]any) {
+			item["schedule"].(map[string]any)["kind"] = float64(42)
+		}},
+		{"schedule undeclared property", rules, fullRuleFixture, func(item map[string]any) {
+			item["schedule"].(map[string]any)["undeclared"] = true
+		}},
+		{"ack required property type", alerts, fullAlertFixture, func(item map[string]any) {
+			item["ack"].(map[string]any)["at"] = false
+		}},
+		{"resolution array item type", alerts, fullAlertFixture, func(item map[string]any) {
+			item["resolution"].(map[string]any)["transactionRefs"].([]any)[0] = float64(42)
+		}},
+		{"snooze required property missing", alerts, fullAlertFixture, func(item map[string]any) {
+			delete(item["snooze"].(map[string]any), "until")
+		}},
+		{"evidence optional scalar type", evaluations, fullEvaluationArrayFixture, func(item map[string]any) {
+			item["evidence"].([]any)[0].(map[string]any)["passed"] = "true"
+		}},
+		{"evidence proof map value type", evaluations, fullEvaluationArrayFixture, func(item map[string]any) {
+			item["evidence"].([]any)[0].(map[string]any)["proof"].(map[string]any)["ledger"] = float64(100)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := decodeEmittedPayload(t, test.command.ID, test.fixture)
+			test.mutate(value.([]any)[0].(map[string]any))
+			if err := validateJSONSchemaValue(value, test.command.PublicOutputSchema); err == nil {
+				t.Fatal("invalid nested value passed recursive schema validation")
+			}
+		})
+	}
+}
+
 func TestOutputSchemaCheckerRejectsOptionalNullabilityMutation(t *testing.T) {
 	command, _, _ := commandAndSpec("reconciliation.v1.alerts.events")
-	var schema map[string]any
-	if err := json.Unmarshal(command.PublicOutputSchema, &schema); err != nil {
-		t.Fatal(err)
-	}
-	item := schema["items"].(map[string]any)
-	item["properties"].(map[string]any)["evaluationID"].(map[string]any)["type"] = "string"
-	encoded, err := json.Marshal(schema)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := exactGeneratedSchemaError(encoded, true, reflect.TypeOf(components.AlertEvent{})); err == nil {
-		t.Fatal("removing nullability still matched the generated result contract")
+	for _, field := range []string{"evaluationID", "prevStatus"} {
+		t.Run(field, func(t *testing.T) {
+			var schema map[string]any
+			if err := json.Unmarshal(command.PublicOutputSchema, &schema); err != nil {
+				t.Fatal(err)
+			}
+			item := schema["items"].(map[string]any)
+			item["properties"].(map[string]any)[field].(map[string]any)["type"] = "string"
+			encoded, err := json.Marshal(schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := exactGeneratedSchemaError(encoded, true, reflect.TypeOf(components.AlertEvent{})); err == nil {
+				t.Fatal("removing nullability still matched the generated result contract")
+			}
+		})
 	}
 }
 
@@ -583,7 +803,7 @@ func generatedSchema(entity reflect.Type, collection bool) map[string]any {
 		if entity == reflect.TypeOf(components.Evaluation{}) && name == "evidence" {
 			properties[name] = map[string]any{
 				"type":                 []any{"array", "object"},
-				"items":                map[string]any{"type": "object"},
+				"items":                generatedObjectSchema(reflect.TypeOf(components.Evidence{})),
 				"additionalProperties": true,
 			}
 			continue
@@ -627,8 +847,65 @@ func generatedPropertySchema(entity reflect.Type, name string, kind any) map[str
 		return map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "integer"}}
 	case "Rule.labels", "Alert.labels", "Evaluation.pitPerSource":
 		return map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}
+	case "Rule.schedule":
+		return generatedObjectSchema(reflect.TypeOf(components.Schedule{}))
+	case "Alert.ack":
+		return generatedObjectSchema(reflect.TypeOf(components.Ack{}))
+	case "Alert.resolution":
+		return generatedObjectSchema(reflect.TypeOf(components.Resolution{}))
+	case "Alert.snooze":
+		return generatedObjectSchema(reflect.TypeOf(components.Snooze{}))
 	default:
 		return map[string]any{"type": kind}
+	}
+}
+
+func generatedObjectSchema(entity reflect.Type) map[string]any {
+	properties := map[string]any{}
+	required := []any{}
+	additionalProperties := false
+	for index := range entity.NumField() {
+		field := entity.Field(index)
+		if field.Tag.Get("additionalProperties") == "true" {
+			additionalProperties = true
+		}
+		name, _, optional := jsonTag(field)
+		if name == "" {
+			continue
+		}
+		properties[name] = generatedValueSchema(field.Type)
+		if !optional {
+			required = append(required, name)
+		}
+	}
+	sort.Slice(required, func(i, j int) bool { return required[i].(string) < required[j].(string) })
+	return map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": additionalProperties,
+	}
+}
+
+func generatedValueSchema(fieldType reflect.Type) map[string]any {
+	for fieldType.Kind() == reflect.Pointer {
+		fieldType = fieldType.Elem()
+	}
+	if fieldType == reflect.TypeOf(time.Time{}) {
+		return map[string]any{"type": "string"}
+	}
+	switch fieldType.Kind() {
+	case reflect.Map:
+		if fieldType.Elem().Kind() == reflect.Interface {
+			return map[string]any{"type": "object", "additionalProperties": true}
+		}
+		return map[string]any{"type": "object", "additionalProperties": generatedValueSchema(fieldType.Elem())}
+	case reflect.Array, reflect.Slice:
+		return map[string]any{"type": "array", "items": generatedValueSchema(fieldType.Elem())}
+	case reflect.Struct:
+		return generatedObjectSchema(fieldType)
+	default:
+		return map[string]any{"type": generatedJSONType(fieldType)}
 	}
 }
 
@@ -807,6 +1084,64 @@ func schemaStrings(value any) []string {
 func compactJSON(value any) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
+}
+
+func objectSchemaForTest(properties map[string]any, required ...string) map[string]any {
+	sort.Strings(required)
+	values := make([]any, len(required))
+	for index, name := range required {
+		values[index] = name
+	}
+	return map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             values,
+		"additionalProperties": true,
+	}
+}
+
+func closedObjectSchemaForTest(properties map[string]any, required ...string) map[string]any {
+	schema := objectSchemaForTest(properties, required...)
+	schema["additionalProperties"] = false
+	return schema
+}
+
+func outputSchemaNode(raw []byte, collection bool, path ...string) (map[string]any, error) {
+	var current map[string]any
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return nil, fmt.Errorf("decode schema: %w", err)
+	}
+	return outputSchemaNodeFromMap(current, collection, path...)
+}
+
+func outputSchemaNodeFromMap(current map[string]any, collection bool, path ...string) (map[string]any, error) {
+	if collection {
+		items, ok := current["items"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("collection schema has no object items schema")
+		}
+		current = items
+	}
+	for _, segment := range path {
+		if segment == "items" {
+			next, ok := current["items"].(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("schema node has no items schema")
+			}
+			current = next
+			continue
+		}
+		properties, ok := current["properties"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("schema node has no properties map before %q", segment)
+		}
+		next, ok := properties[segment].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("schema has no property %q", segment)
+		}
+		current = next
+	}
+	return current, nil
 }
 
 func removeStringValue(values []any, remove string) []any {

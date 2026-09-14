@@ -33,10 +33,13 @@ the product error body into the failure details.
 21 of the 23 commands declare an ordered `RenderHints.Table` — a compact
 projection for the human table view only. `RawOutputSchema` and
 `PublicOutputSchema` remain byte-identical and now describe the stable required
-properties of each result family and the item shape of collections. They
-deliberately permit additional properties, so every property left out of a
-table remains present in `--output json` and `--output yaml` and compatible
-product extensions continue to pass validation.
+properties of each result family and the item shape of collections. Top-level
+results, free-form maps and evidence entries deliberately permit additional
+properties, so compatible product extensions continue to pass validation.
+Fixed generated objects such as schedules and alert transitions enumerate
+their complete emitted shape and reject undeclared nested properties. Every
+declared property left out of a table remains present in `--output json` and
+`--output yaml`.
 
 | Result family | Columns, in order |
 |---|---|
