@@ -370,6 +370,10 @@ func TestProductHTTPErrorsSurfaceAsTypedFailuresCarryingTheirStatus(t *testing.T
 		status    int32
 		retryable bool
 	}{
+		// 3xx is the class that changed shape without changing meaning: the
+		// pinned SDK stopped folding it into the opaque response failure, and
+		// a product redirect is the least expected of the three.
+		{"redirection", 302, false},
 		{"client-error", 404, false},
 		{"server-error", 503, true},
 	} {
