@@ -84,7 +84,7 @@ func TestTwoWorkersRollingRestartCommitsOccurrenceOnce(t *testing.T) {
 	rule := &models.Rule{
 		ID: uuid.New(), Name: "rolling", TemplateKind: models.TemplateLedgerInvariant,
 		TemplateSpec: json.RawMessage(`{}`), ExplanationCEL: "true", Enabled: true,
-		Severity: models.SeverityHigh, Cadence: models.CadenceContinuous,
+		Severity: models.SeverityHigh, PeriodType: models.PeriodTypeContinuous,
 		Schedule: &models.Schedule{Kind: models.ScheduleCron, Expr: "* * * * *", TZ: "UTC"},
 	}
 	require.NoError(t, store.CreateRule(ctx, rule))

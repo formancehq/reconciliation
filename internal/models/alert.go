@@ -87,11 +87,11 @@ type Resolution struct {
 // period_id) guarantees one alert per triple — concurrent failing evaluations
 // of the same period update the same row, and re-opens within the period
 // transition status back to OPEN in place. The same fingerprint failing in a
-// new period is a separate alert (see PeriodID / models.Cadence).
+// new period is a separate alert (see PeriodID / models.PeriodType).
 //
 // OccurrenceCount is the count of FAIL events on this alert across reopen
-// cycles within its period (for a continuous-cadence rule, that is the lifetime
-// count). For finer per-episode counts, query AlertEvent.
+// cycles within its period (for a rule with periodType continuous, that is the
+// lifetime count). For finer per-episode counts, query AlertEvent.
 type Alert struct {
 	bun.BaseModel `bun:"reconciliations.alert" json:"-"`
 
@@ -101,7 +101,7 @@ type Alert struct {
 	// PeriodID scopes the alert to a reconciliation period (e.g. "2026-03",
 	// or "continuous" for a live-monitoring rule). The dedup identity is
 	// (rule_id, fingerprint, period_id): a new period opens a fresh case
-	// rather than reopening a prior period's. See models.Cadence.PeriodID.
+	// rather than reopening a prior period's. See models.PeriodType.PeriodID.
 	PeriodID         string            `bun:"period_id,notnull"             json:"periodID"`
 	Status           AlertStatus       `bun:",notnull"                      json:"status"`
 	Severity         Severity          `bun:",notnull"                      json:"severity"`

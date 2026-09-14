@@ -58,56 +58,60 @@ func (s Severity) Valid() bool {
 	}
 }
 
-// Cadence is the reconciliation rhythm of a rule — it decides how a failing
-// fingerprint is scoped into a period. A fresh alert is opened per period, so a
-// March break and an April break of the same fingerprint are distinct,
-// independently-closable cases; resolving April never rewrites March's record.
+// PeriodType is how long a reconciliation period lasts for a rule — it decides
+// how a failing fingerprint is scoped into a period. A fresh alert is opened per
+// period, so a March break and an April break of the same fingerprint are
+// distinct, independently-closable cases; resolving April never rewrites March's
+// record.
+//
+// This is not how often the rule runs — that is Schedule, and the two are
+// independent: an hourly schedule with a monthly period type is normal.
 // See docs/technical/alert-period-model.md.
-type Cadence string
+type PeriodType string
 
 const (
-	// CadenceContinuous is live monitoring: a single unbounded period. A
+	// PeriodTypeContinuous is live monitoring: a single unbounded period. A
 	// failing fingerprint reopens in place until resolved, like a classic
 	// monitoring alert. Default — periodic scoping is opt-in per rule.
-	CadenceContinuous Cadence = "continuous"
-	// CadenceDaily buckets cases by UTC calendar day (period id "2006-01-02").
-	CadenceDaily Cadence = "daily"
-	// CadenceWeekly buckets cases by ISO week (period id "2026-W12"). The ISO
+	PeriodTypeContinuous PeriodType = "continuous"
+	// PeriodTypeDaily buckets cases by UTC calendar day (period id "2006-01-02").
+	PeriodTypeDaily PeriodType = "daily"
+	// PeriodTypeWeekly buckets cases by ISO week (period id "2026-W12"). The ISO
 	// year can differ from the calendar year near year boundaries — ISOWeek()
 	// returns the correct ISO year, so the bucket is unambiguous.
-	CadenceWeekly Cadence = "weekly"
-	// CadenceMonthly buckets cases by UTC calendar month (period id "2006-01").
-	CadenceMonthly Cadence = "monthly"
+	PeriodTypeWeekly PeriodType = "weekly"
+	// PeriodTypeMonthly buckets cases by UTC calendar month (period id "2006-01").
+	PeriodTypeMonthly PeriodType = "monthly"
 )
 
-// ContinuousPeriod is the sentinel period id for CadenceContinuous and the safe
-// fallback for an unset/unknown cadence: one unbounded scope, which reproduces
-// the original (rule_id, fingerprint) dedup exactly.
+// ContinuousPeriod is the sentinel period id for PeriodTypeContinuous and the
+// safe fallback for an unset/unknown period type: one unbounded scope, which
+// reproduces the original (rule_id, fingerprint) dedup exactly.
 const ContinuousPeriod = "continuous"
 
 // PeriodID maps an evaluation's point-in-time to the period a failing
-// fingerprint belongs to under this cadence. Deterministic: any instant in the
-// same bucket yields the same id, so re-evaluating a period continues its
-// existing case rather than spawning a new one. Bucketing is UTC — the
-// accounting-period timezone is a known V1 simplification (see docs).
-func (c Cadence) PeriodID(pit time.Time) string {
-	switch c {
-	case CadenceDaily:
+// fingerprint belongs to under this period type. Deterministic: any instant in
+// the same bucket yields the same id, so re-evaluating a period continues its
+// existing case rather than spawning a new one. Bucketing is UTC-only, with no
+// per-tenant timezone or fiscal calendar: a known V1 simplification (see docs).
+func (p PeriodType) PeriodID(pit time.Time) string {
+	switch p {
+	case PeriodTypeDaily:
 		return pit.UTC().Format("2006-01-02")
-	case CadenceWeekly:
+	case PeriodTypeWeekly:
 		isoYear, isoWeek := pit.UTC().ISOWeek()
 		return fmt.Sprintf("%04d-W%02d", isoYear, isoWeek)
-	case CadenceMonthly:
+	case PeriodTypeMonthly:
 		return pit.UTC().Format("2006-01")
 	default:
 		return ContinuousPeriod
 	}
 }
 
-// Valid reports whether c is a recognised cadence.
-func (c Cadence) Valid() bool {
-	switch c {
-	case CadenceContinuous, CadenceDaily, CadenceWeekly, CadenceMonthly:
+// Valid reports whether p is a recognised period type.
+func (p PeriodType) Valid() bool {
+	switch p {
+	case PeriodTypeContinuous, PeriodTypeDaily, PeriodTypeWeekly, PeriodTypeMonthly:
 		return true
 	default:
 		return false
@@ -220,17 +224,20 @@ func (s *Schedule) Next(after time.Time) (time.Time, error) {
 type Rule struct {
 	bun.BaseModel `bun:"reconciliations.rule" json:"-"`
 
-	ID             uuid.UUID         `bun:",pk,nullzero"           json:"id"`
-	Name           string            `bun:",notnull"               json:"name"`
-	TemplateKind   TemplateKind      `bun:"template_kind,notnull"  json:"templateKind"`
-	TemplateSpec   json.RawMessage   `bun:"template_spec,type:jsonb,notnull" json:"templateSpec"`
-	ExplanationCEL string            `bun:"explanation_cel,notnull" json:"explanationCEL,omitempty"`
-	Enabled        bool              `bun:",notnull"               json:"enabled"`
-	Severity       Severity          `bun:",notnull"               json:"severity"`
-	Cadence        Cadence           `bun:",notnull"               json:"cadence"`
-	Schedule       *Schedule         `bun:",type:jsonb"            json:"schedule,omitempty"`
-	Notifications  []string          `bun:",type:jsonb"            json:"notifications,omitempty"`
-	Labels         map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`
+	ID             uuid.UUID       `bun:",pk,nullzero"           json:"id"`
+	Name           string          `bun:",notnull"               json:"name"`
+	TemplateKind   TemplateKind    `bun:"template_kind,notnull"  json:"templateKind"`
+	TemplateSpec   json.RawMessage `bun:"template_spec,type:jsonb,notnull" json:"templateSpec"`
+	ExplanationCEL string          `bun:"explanation_cel,notnull" json:"explanationCEL,omitempty"`
+	Enabled        bool            `bun:",notnull"               json:"enabled"`
+	Severity       Severity        `bun:",notnull"               json:"severity"`
+	// The column is still named `cadence`: the rename is an API/Go-level change,
+	// deliberately not a schema migration (renaming the column would force a
+	// non-rolling deploy for a cosmetic gain).
+	PeriodType    PeriodType        `bun:"cadence,notnull"        json:"periodType"`
+	Schedule      *Schedule         `bun:",type:jsonb"            json:"schedule,omitempty"`
+	Notifications []string          `bun:",type:jsonb"            json:"notifications,omitempty"`
+	Labels        map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`
 	// Revision is incremented for every material rule update. Scheduled jobs
 	// capture it and are fenced at commit time so work computed from an old rule
 	// definition can never overwrite results from the current one.

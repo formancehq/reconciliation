@@ -990,7 +990,7 @@ func TestEvaluate_PeriodicOpensFreshCasePerPeriod(t *testing.T) {
 		TemplateKind: models.TemplateLedgerVsPoolDrift,
 		TemplateSpec: driftSpec(t, "buildr", `"q"`, "pool", nil),
 		Severity:     models.SeverityHigh,
-		Cadence:      models.CadenceMonthly,
+		PeriodType:   models.PeriodTypeMonthly,
 	})
 	if err != nil {
 		t.Fatalf("CreateRule: %v", err)

@@ -17,7 +17,7 @@ func mustCreateDailyDriftRule(t *testing.T, svc *Service) *models.Rule {
 		TemplateKind: models.TemplateLedgerVsPoolDrift,
 		TemplateSpec: driftSpec(t, "buildr", `"q"`, "pool", nil),
 		Severity:     models.SeverityHigh,
-		Cadence:      models.CadenceDaily,
+		PeriodType:   models.PeriodTypeDaily,
 	})
 	if err != nil {
 		t.Fatalf("CreateRule: %v", err)
