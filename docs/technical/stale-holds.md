@@ -320,21 +320,29 @@ thousands of authorisations a day, that is a matter of weeks.
 
 **`EPHEMERAL` hold accounts are the client side's proposed answer to this**, and they are the right
 call for the reason given — the client's current jobs poll balances over HTTP and permanent rows for
-every short-lived hold bloat the store. But they do **not** close this particular gap. Two mechanisms
-look like they should solve it for free; **neither does** (both checked on a live cluster, §6):
+every short-lived hold bloat the store. But on the ledger as it behaves **today** they do **not**
+close this particular gap. Two mechanisms look like they should solve it for free; **neither does**
+(both checked on a live cluster, §6):
 
 - **`EPHEMERAL` hold accounts.** Purging on zero empties the account's `volumes` list, but the
   account row **and its metadata survive** — so the hold still matches a deadline filter. Ephemeral
   retires the *volume* rows, not the *account* rows: it is a real answer to store bloat and a
   non-answer to query selectivity.
+  **This is the behaviour [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) changes**
+  (targeted at Ledger V3.0, not shipped at the time of writing): once the last non-zero volume
+  reaches zero, the account row, its metadata and every secondary-index entry are deleted atomically
+  with the transaction. A released hold then stops matching any predicate at all, and this gap closes
+  with **no change on either side** — no client write, no query-DSL work here. The precondition is
+  exactly the account type: the purge is type-gated, and `NORMAL` accounts keep the behaviour
+  described above by design.
 - **The ledger's has-asset account filter** (`AccountHasAssetCondition`). Its semantics are
   *"has **ever** held a volume cell for this asset"*, not "holds it now" — a released, purged hold
   still matches. (Verified both ways: a filter on an asset nobody ever held returns empty, so the
   filter is genuinely applied.) It is also not in reconciliation's query DSL today, and adding it
   would not help.
 
-So the liveness signal has to be an **explicit write at release** — one write, on the client's side
-of the boundary:
+So, until EN-2036 lands, the liveness signal has to be an **explicit write at release** — one write,
+on the client's side of the boundary:
 
 1. **Clear the deadline key** (`hold_expires_at`) when the hold is released. Cheapest: no new key,
    and an absent key is naturally excluded by the range filter, so released holds leave the matched
@@ -342,7 +350,11 @@ of the boundary:
 2. **Flip a status marker** (`metadata[hold_status] = released`) and fold `= active` into the rule's
    own query. More explicit, and it keeps the historical expiry readable.
 
-Ask the client which is achievable in the hold-writing path.
+Ask the client which is achievable in the hold-writing path. Ask it **regardless** of EN-2036: the
+write is the general answer, it works on the ledger we have, and it is the only answer for a book
+whose hold accounts are `NORMAL`. EN-2036 is what makes it stop mattering on a correctly typed
+book — so if the holds are `EPHEMERAL` and the client cannot change the release path, the rule is
+still viable on a V3.0 ledger.
 
 ### Q3 — Fallback semantics ✅ *decided*
 **Expiry wins; else `created_at` + `maxAge` (48h); else nothing** — a hold matched by the query but
@@ -411,6 +423,11 @@ and the check is now a repeatable integration test
 | The has-asset filter means *"ever held"*, not *"holds now"* | ✅ — a released, purged hold still matches; an asset nobody ever held returns empty, so the filter is genuinely applied |
 | An account **without** the deadline key is excluded by the range filter | ✅ — which is what makes "clear the key on release" a working liveness marker |
 
+Two of those rows — the purged `EPHEMERAL` account keeping its row and metadata, and the released
+hold still matching — record the ledger **as it behaves today**. They are what
+[EN-2036](https://formance-team.atlassian.net/browse/EN-2036) is targeted at changing in V3.0 (§5,
+Q2b). Re-run this table against a V3.0 cluster when it lands.
+
 The full vertical slice was then run on an isolated instance (its own port and control ledger): both
 rules created through `POST /rules`, evaluated `FAIL`, and opened exactly three alerts — the
 expired hold (`basis: expiry`, ~6h overdue), the hold with no expiry (`basis: created_at`, via the
@@ -470,9 +487,12 @@ settles the structural question — it is why a per-hold *deadline* is usable at
    filtered at all.
 2. **What happens in the ledger when a hold is captured, voided, or expires?**
    Funds posting out (balance → 0) is assumed. The open part is whether the writer can *also* clear
-   `hold_expires_at` — or set a status marker — in the same step. `EPHEMERAL` does **not** cover this
-   (§5, Q2b): it retires the volume row, not the account row, so without an explicit write every hold
-   ever placed keeps matching the rule's query. See *The teardown write* below for what to ask for.
+   `hold_expires_at` — or set a status marker — in the same step. On today's ledger `EPHEMERAL` does
+   **not** cover this (§5, Q2b): it retires the volume row, not the account row, so without an
+   explicit write every hold ever placed keeps matching the rule's query.
+   [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) closes that for `EPHEMERAL` accounts
+   in V3.0, which lowers the urgency without removing the ask — a `NORMAL`-typed hold book still
+   needs the write. See *The teardown write* below.
 3. **Re-authorisation and partial capture.**
    Does the processor ever revise an expiry (extension / re-auth)? Updating the account's deadline in place
    is fine — it is the hold's deadline, not a movement timestamp. Can a hold be *partially* captured,
@@ -514,12 +534,25 @@ transaction already write?* If it stamps a status, a released-at, or a capture r
 filters on that today and nobody's code changes. Only if the answer is "nothing" does this become a
 change request against the hold-writing path — which is the processor's, not the client's.
 
-**Ledger-side follow-up: [EN-1972](https://formance-team.atlassian.net/browse/EN-1972)** (Ledger
-v3.1 epic, EN-1336) asks for a live-volume predicate on account queries, so a zero-balance account
-can be excluded with no client write at all. It is worth having — it removes the requirement that
-every writer remembers, and makes a book written before the convention repairable without a
-backfill — but it is a robustness feature, not the fix. If the release path clears the key, it stops
-mattering here.
+**Ledger-side follow-up: [EN-2036](https://formance-team.atlassian.net/browse/EN-2036)**, targeted at
+Ledger V3.0 — purge an `EPHEMERAL` account *completely* (row, metadata, every secondary-index entry)
+when its last non-zero volume reaches zero, atomically with the transaction that zeroes it. A
+released hold then matches nothing, `holdsReleased` falls to zero on its own, and the accounts budget
+stops being spent on the dead.
+
+It **supersedes [EN-1972](https://formance-team.atlassian.net/browse/EN-1972)**, which asked for a
+live-volume *query predicate* instead — fixing the symptom at the read rather than the lifecycle at
+its source. The supersession is also worth something concrete to this module: EN-1972 needed work
+here before it was usable (the query DSL in `internal/ledger/resolver.go` understands only `address`
+and `metadata[…]`, so the predicate needed a matching leaf), while EN-2036 needs **no reconciliation
+code at all**.
+
+What it does not do is make the teardown write unnecessary in general. The purge is **type-gated** —
+`NORMAL` accounts keep their zeroed volume cell, their row and their metadata, by design and by this
+ticket's own acceptance criteria. So the fix lands for a book whose hold accounts are declared
+`EPHEMERAL`, and a book that has already accumulated its holds as `NORMAL` still needs the write (or
+a backfill). Ask for the write; treat the purge as the reason it stops mattering on a correctly typed
+book.
 
 **Meanwhile, watch `holdsReleased`.** Every run already reports how many matched holds were dropped
 on a zero balance, and nobody is looking at it. Alerting when that count passes a fraction of
