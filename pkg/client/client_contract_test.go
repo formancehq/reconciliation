@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -25,12 +26,23 @@ func TestModuleDeclaresTheExactPublicPathAndInjectionPoint(t *testing.T) {
 	if !strings.HasPrefix(string(contents), wantModule+"\n") {
 		t.Fatalf("go.mod does not declare %q:\n%s", wantModule, contents)
 	}
-	var injected HTTPClient = contractHTTPClient(func(*http.Request) (*http.Response, error) { return nil, nil })
-	if _, ok := injected.(interface {
-		Do(*http.Request) (*http.Response, error)
-	}); !ok {
-		t.Fatal("HTTPClient is not the declared Do(*http.Request) (*http.Response, error) contract")
+	// Asserting the interface reflectively, not through an assignment: a type
+	// assertion on a value whose method set is the contract is true by
+	// construction, so it would prove nothing. Method count is part of the
+	// contract — a second method would force every host transport to grow one.
+	iface := reflect.TypeOf((*HTTPClient)(nil)).Elem()
+	if iface.NumMethod() != 1 {
+		t.Fatalf("HTTPClient declares %d methods, want exactly 1", iface.NumMethod())
 	}
+	method := iface.Method(0)
+	if method.Name != "Do" {
+		t.Fatalf("HTTPClient method = %q, want %q", method.Name, "Do")
+	}
+	want := reflect.TypeOf(func(*http.Request) (*http.Response, error) { return nil, nil })
+	if method.Type != want {
+		t.Fatalf("Do signature = %v, want %v", method.Type, want)
+	}
+	var _ HTTPClient = contractHTTPClient(func(*http.Request) (*http.Response, error) { return nil, nil })
 }
 
 type contractHTTPClient func(*http.Request) (*http.Response, error)
