@@ -20,6 +20,7 @@ type commandSpec struct {
 	pathArguments                     []string
 	body                              bodyMode
 	paginated                         bool
+	result                            resultFamily
 	table                             []sdk.TableColumn
 }
 
@@ -73,10 +74,10 @@ func (spec commandSpec) command() sdk.Command {
 		risk = sdk.RiskMutation
 	}
 	maxRequests := uint32(1)
-	output := objectSchema
 	if spec.paginated {
-		maxRequests, output = sdk.DefaultAllPagesMaxPages, collectionSchema
+		maxRequests = sdk.DefaultAllPagesMaxPages
 	}
+	output := buildOutputSchema(spec.result, spec.paginated)
 	return sdk.Command{
 		ID: "reconciliation.v1." + strings.Join(spec.path, "."), ExecutionKind: sdk.ExecutionKindService,
 		AuthMode: sdk.AuthModeCapability, Path: append([]string(nil), spec.path...), PathAliases: clonePaths(spec.aliases),
@@ -95,8 +96,8 @@ func (spec commandSpec) command() sdk.Command {
 }
 
 // Table columns are the compact human projection of one result family. They are
-// presentational only: PublicOutputSchema stays exhaustive and every property
-// left out of a table is still in --output json and --output yaml. Nested
+// presentational only: PublicOutputSchema retains the structured result and every
+// property left out of a table is still in --output json and --output yaml. Nested
 // containers cannot occupy a cell, and unbounded free text (`explanationCEL`,
 // `error`) and the opaque `fingerprint` digest are left out on purpose. Every
 // column names a property its result always carries, never an optional one.
@@ -149,29 +150,29 @@ var (
 func catalogueSpecs() []commandSpec {
 	r, w := "reconciliation:read", "reconciliation:write"
 	return []commandSpec{
-		{[]string{"policies", "create"}, [][]string{{"p"}, {"cr", "c"}}, "Create a policy", "createPolicy", "POST", "/policies", w, nil, bodyRequired, false, policyTable},
-		{[]string{"policies", "list"}, [][]string{{"p"}, {"ls", "l"}}, "List policies", "listPolicies", "GET", "/policies", r, nil, bodyQuery, true, policyTable},
-		{[]string{"policies", "get"}, [][]string{{"p"}, {"sh", "s"}}, "Get a policy", "getPolicy", "GET", "/policies/{policyID}", r, []string{"policy-id"}, bodyNone, false, policyTable},
-		{[]string{"policies", "delete"}, [][]string{{"p"}, {"d"}}, "Delete a policy", "deletePolicy", "DELETE", "/policies/{policyID}", w, []string{"policy-id"}, bodyNone, false, nil},
-		{[]string{"policies", "reconcile"}, [][]string{{"p"}, {"r"}}, "Reconcile using a policy", "reconcile", "POST", "/policies/{policyID}/reconciliation", w, []string{"policy-id"}, bodyRequired, false, reconciliationTable},
-		{[]string{"list"}, [][]string{{"ls", "l"}}, "List reconciliations", "listReconciliations", "GET", "/reconciliations", r, nil, bodyQuery, true, reconciliationTable},
-		{[]string{"get"}, [][]string{{"sh", "s"}}, "Get a reconciliation", "getReconciliation", "GET", "/reconciliations/{reconciliationID}", r, []string{"reconciliation-id"}, bodyNone, false, reconciliationTable},
-		{[]string{"rules", "create"}, nil, "Create a rule", "createRule", "POST", "/rules", w, nil, bodyRequired, false, ruleTable},
-		{[]string{"rules", "list"}, nil, "List rules", "listRules", "GET", "/rules", r, nil, bodyQuery, true, ruleTable},
-		{[]string{"rules", "get"}, nil, "Get a rule", "getRule", "GET", "/rules/{ruleID}", r, []string{"rule-id"}, bodyNone, false, ruleTable},
-		{[]string{"rules", "update"}, nil, "Patch a rule", "patchRule", "PATCH", "/rules/{ruleID}", w, []string{"rule-id"}, bodyRequired, false, ruleTable},
-		{[]string{"rules", "delete"}, nil, "Delete a rule", "deleteRule", "DELETE", "/rules/{ruleID}", w, []string{"rule-id"}, bodyNone, false, nil},
-		{[]string{"rules", "evaluate"}, nil, "Evaluate a rule now", "evaluateRule", "POST", "/rules/{ruleID}/evaluate", w, []string{"rule-id"}, bodyOptional, false, evaluationTable},
-		{[]string{"evaluations", "list"}, nil, "List evaluations", "listEvaluations", "GET", "/evaluations", r, nil, bodyQuery, true, evaluationTable},
-		{[]string{"evaluations", "get"}, nil, "Get an evaluation", "getEvaluation", "GET", "/evaluations/{evaluationID}", r, []string{"evaluation-id"}, bodyNone, false, evaluationTable},
-		{[]string{"alerts", "list"}, nil, "List alerts", "listAlerts", "GET", "/alerts", r, nil, bodyQuery, true, alertTable},
-		{[]string{"alerts", "get"}, nil, "Get an alert", "getAlert", "GET", "/alerts/{alertID}", r, []string{"alert-id"}, bodyNone, false, alertTable},
-		{[]string{"alerts", "events"}, nil, "List alert events", "listAlertEvents", "GET", "/alerts/{alertID}/events", r, []string{"alert-id"}, bodyNone, true, alertEventTable},
-		{[]string{"alerts", "ack"}, nil, "Acknowledge an alert", "ackAlert", "POST", "/alerts/{alertID}/ack", w, []string{"alert-id"}, bodyRequired, false, alertTable},
-		{[]string{"alerts", "resolve"}, nil, "Resolve an alert", "resolveAlert", "POST", "/alerts/{alertID}/resolve", w, []string{"alert-id"}, bodyRequired, false, alertTable},
-		{[]string{"alerts", "accept"}, nil, "Accept an alert", "acceptAlert", "POST", "/alerts/{alertID}/accept", w, []string{"alert-id"}, bodyRequired, false, alertTable},
-		{[]string{"alerts", "snooze"}, nil, "Snooze alert notifications", "snoozeAlert", "POST", "/alerts/{alertID}/snooze", w, []string{"alert-id"}, bodyRequired, false, alertTable},
-		{[]string{"alerts", "unsnooze"}, nil, "Lift an alert snooze", "unsnoozeAlert", "POST", "/alerts/{alertID}/unsnooze", w, []string{"alert-id"}, bodyRequired, false, alertTable},
+		{[]string{"policies", "create"}, [][]string{{"p"}, {"cr", "c"}}, "Create a policy", "createPolicy", "POST", "/policies", w, nil, bodyRequired, false, resultPolicy, policyTable},
+		{[]string{"policies", "list"}, [][]string{{"p"}, {"ls", "l"}}, "List policies", "listPolicies", "GET", "/policies", r, nil, bodyQuery, true, resultPolicy, policyTable},
+		{[]string{"policies", "get"}, [][]string{{"p"}, {"sh", "s"}}, "Get a policy", "getPolicy", "GET", "/policies/{policyID}", r, []string{"policy-id"}, bodyNone, false, resultPolicy, policyTable},
+		{[]string{"policies", "delete"}, [][]string{{"p"}, {"d"}}, "Delete a policy", "deletePolicy", "DELETE", "/policies/{policyID}", w, []string{"policy-id"}, bodyNone, false, resultEmpty, nil},
+		{[]string{"policies", "reconcile"}, [][]string{{"p"}, {"r"}}, "Reconcile using a policy", "reconcile", "POST", "/policies/{policyID}/reconciliation", w, []string{"policy-id"}, bodyRequired, false, resultReconciliation, reconciliationTable},
+		{[]string{"list"}, [][]string{{"ls", "l"}}, "List reconciliations", "listReconciliations", "GET", "/reconciliations", r, nil, bodyQuery, true, resultReconciliation, reconciliationTable},
+		{[]string{"get"}, [][]string{{"sh", "s"}}, "Get a reconciliation", "getReconciliation", "GET", "/reconciliations/{reconciliationID}", r, []string{"reconciliation-id"}, bodyNone, false, resultReconciliation, reconciliationTable},
+		{[]string{"rules", "create"}, nil, "Create a rule", "createRule", "POST", "/rules", w, nil, bodyRequired, false, resultRule, ruleTable},
+		{[]string{"rules", "list"}, nil, "List rules", "listRules", "GET", "/rules", r, nil, bodyQuery, true, resultRule, ruleTable},
+		{[]string{"rules", "get"}, nil, "Get a rule", "getRule", "GET", "/rules/{ruleID}", r, []string{"rule-id"}, bodyNone, false, resultRule, ruleTable},
+		{[]string{"rules", "update"}, nil, "Patch a rule", "patchRule", "PATCH", "/rules/{ruleID}", w, []string{"rule-id"}, bodyRequired, false, resultRule, ruleTable},
+		{[]string{"rules", "delete"}, nil, "Delete a rule", "deleteRule", "DELETE", "/rules/{ruleID}", w, []string{"rule-id"}, bodyNone, false, resultEmpty, nil},
+		{[]string{"rules", "evaluate"}, nil, "Evaluate a rule now", "evaluateRule", "POST", "/rules/{ruleID}/evaluate", w, []string{"rule-id"}, bodyOptional, false, resultEvaluation, evaluationTable},
+		{[]string{"evaluations", "list"}, nil, "List evaluations", "listEvaluations", "GET", "/evaluations", r, nil, bodyQuery, true, resultEvaluation, evaluationTable},
+		{[]string{"evaluations", "get"}, nil, "Get an evaluation", "getEvaluation", "GET", "/evaluations/{evaluationID}", r, []string{"evaluation-id"}, bodyNone, false, resultEvaluation, evaluationTable},
+		{[]string{"alerts", "list"}, nil, "List alerts", "listAlerts", "GET", "/alerts", r, nil, bodyQuery, true, resultAlert, alertTable},
+		{[]string{"alerts", "get"}, nil, "Get an alert", "getAlert", "GET", "/alerts/{alertID}", r, []string{"alert-id"}, bodyNone, false, resultAlert, alertTable},
+		{[]string{"alerts", "events"}, nil, "List alert events", "listAlertEvents", "GET", "/alerts/{alertID}/events", r, []string{"alert-id"}, bodyNone, true, resultAlertEvent, alertEventTable},
+		{[]string{"alerts", "ack"}, nil, "Acknowledge an alert", "ackAlert", "POST", "/alerts/{alertID}/ack", w, []string{"alert-id"}, bodyRequired, false, resultAlert, alertTable},
+		{[]string{"alerts", "resolve"}, nil, "Resolve an alert", "resolveAlert", "POST", "/alerts/{alertID}/resolve", w, []string{"alert-id"}, bodyRequired, false, resultAlert, alertTable},
+		{[]string{"alerts", "accept"}, nil, "Accept an alert", "acceptAlert", "POST", "/alerts/{alertID}/accept", w, []string{"alert-id"}, bodyRequired, false, resultAlert, alertTable},
+		{[]string{"alerts", "snooze"}, nil, "Snooze alert notifications", "snoozeAlert", "POST", "/alerts/{alertID}/snooze", w, []string{"alert-id"}, bodyRequired, false, resultAlert, alertTable},
+		{[]string{"alerts", "unsnooze"}, nil, "Lift an alert snooze", "unsnoozeAlert", "POST", "/alerts/{alertID}/unsnooze", w, []string{"alert-id"}, bodyRequired, false, resultAlert, alertTable},
 	}
 }
 

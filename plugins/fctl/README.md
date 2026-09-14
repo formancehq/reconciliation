@@ -31,9 +31,12 @@ the product error body into the failure details.
 ## Human table hints
 
 21 of the 23 commands declare an ordered `RenderHints.Table` — a compact
-projection for the human table view only. `PublicOutputSchema` is unchanged and
-stays exhaustive, and every property left out of a table is still present in
-`--output json` and `--output yaml`.
+projection for the human table view only. `RawOutputSchema` and
+`PublicOutputSchema` remain byte-identical and now describe the stable required
+properties of each result family and the item shape of collections. They
+deliberately permit additional properties, so every property left out of a
+table remains present in `--output json` and `--output yaml` and compatible
+product extensions continue to pass validation.
 
 | Result family | Columns, in order |
 |---|---|
@@ -52,7 +55,9 @@ catalogue change.
 Every column names a property its result always carries — never an optional
 one — which `core/render_hints_test.go` proves by executing the real adapter
 against a fixture holding only the always-present generated fields and deriving
-the emitted property set from the result envelope. Nested containers are
+the emitted property set from the result envelope. The same test walks each
+possibly dotted field path through the declared public schema and requires every
+segment; a nested fixture pins that traversal independently. Nested containers are
 excluded by a reflective rule over the generated types; `explanationCEL` and
 `error` (unbounded free text) and `fingerprint` (an opaque dedup digest) are
 excluded by judgement and recorded as such. Reconciliation declares no

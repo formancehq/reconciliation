@@ -1,10 +1,13 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,16 +201,42 @@ func TestEveryCommandIsAccountedForByARenderDecision(t *testing.T) {
 // set from the result envelope. Every declared Field must be in it, so a column
 // cannot name a property the product does not always return.
 func TestTableColumnFieldsAreAlwaysPresentInTheRealPublicResult(t *testing.T) {
+	declared := map[string]sdk.Command{}
+	for _, command := range Catalogue() {
+		declared[command.ID] = command
+	}
 	for _, test := range renderCases() {
 		t.Run(test.commandID, func(t *testing.T) {
-			present := emittedProperties(t, test.commandID, test.fixture)
+			result := emittedResult(t, test.commandID, test.fixture)
+			command := declared[test.commandID]
 			for _, column := range test.columns {
-				if !present[column.Field] {
-					t.Errorf("column %q field %q is not a property of the real public result %v",
-						column.Header, column.Field, sortedKeys(present))
+				if _, ok := valueAtDottedPath(result, column.Field); !ok {
+					t.Errorf("column %q field %q does not resolve in the real public result",
+						column.Header, column.Field)
+				}
+				if err := schemaRequiresDottedPath(command.PublicOutputSchema, command.Pagination.Supported, column.Field); err != nil {
+					t.Errorf("column %q field %q is not guaranteed by PublicOutputSchema: %v",
+						column.Header, column.Field, err)
 				}
 			}
 		})
+	}
+}
+
+// A future catalogue may use the dotted paths already supported by the public
+// TableColumn contract. Keep the product-side proof honest even though today's
+// Reconciliation projections only need top-level scalar properties.
+func TestRenderHintProofTraversesDottedPaths(t *testing.T) {
+	value := map[string]any{"metadata": map[string]any{"name": "nightly"}}
+	if got, ok := valueAtDottedPath(value, "metadata.name"); !ok || got != "nightly" {
+		t.Fatalf("metadata.name = %#v, %v; want nightly, true", got, ok)
+	}
+	schema := []byte(`{"type":"object","properties":{"metadata":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},"required":["metadata"]}`)
+	if err := schemaRequiresDottedPath(schema, false, "metadata.name"); err != nil {
+		t.Fatalf("metadata.name is not required by nested schema: %v", err)
+	}
+	if err := schemaRequiresDottedPath(schema, false, "metadata.missing"); err == nil {
+		t.Fatal("missing nested field was accepted")
 	}
 }
 
@@ -285,22 +314,24 @@ func TestRenderHintsDeclareNoSensitiveField(t *testing.T) {
 func TestRenderHintsDoNotNarrowThePublicOutputSchema(t *testing.T) {
 	for _, command := range Catalogue() {
 		t.Run(command.ID, func(t *testing.T) {
-			want := objectSchema
-			if command.Pagination.Supported {
-				want = collectionSchema
-			}
-			if string(command.PublicOutputSchema) != string(want) {
-				t.Fatalf("PublicOutputSchema = %s, want the exhaustive %s", command.PublicOutputSchema, want)
-			}
-			if string(command.RawOutputSchema) != string(command.PublicOutputSchema) {
+			if !bytes.Equal(command.RawOutputSchema, command.PublicOutputSchema) {
 				t.Fatalf("RawOutputSchema = %s, PublicOutputSchema = %s; want byte-identical",
 					command.RawOutputSchema, command.PublicOutputSchema)
+			}
+			var schema map[string]any
+			if err := json.Unmarshal(command.PublicOutputSchema, &schema); err != nil {
+				t.Fatalf("decode PublicOutputSchema: %v", err)
+			}
+			if command.Render.Table != nil && command.Pagination.Supported {
+				if _, ok := schema["items"].(map[string]any); !ok {
+					t.Fatal("paginated hinted command has no items schema")
+				}
 			}
 		})
 	}
 }
 
-func emittedProperties(t *testing.T, commandID, fixture string) map[string]bool {
+func emittedResult(t *testing.T, commandID, fixture string) any {
 	t.Helper()
 	command, spec, ok := commandAndSpec(commandID)
 	if !ok {
@@ -330,31 +361,81 @@ func emittedProperties(t *testing.T, commandID, fixture string) map[string]bool 
 		t.Fatalf("events = %#v", host.Events())
 	}
 	result := host.Events()[0].Result
-	present := map[string]bool{}
 	switch result.Shape {
 	case sdk.ResultCollection:
-		var items []map[string]json.RawMessage
+		var items []any
 		if err := json.Unmarshal(result.Data, &items); err != nil {
 			t.Fatalf("decode collection result: %v (%s)", err, result.Data)
 		}
 		if len(items) == 0 {
 			t.Fatalf("collection result is empty: %s", result.Data)
 		}
-		for _, item := range items {
-			for key := range item {
-				present[key] = true
-			}
-		}
+		return items[0]
 	default:
-		var object map[string]json.RawMessage
+		var object any
 		if err := json.Unmarshal(result.Data, &object); err != nil {
 			t.Fatalf("decode object result: %v (%s)", err, result.Data)
 		}
-		for key := range object {
-			present[key] = true
+		return object
+	}
+}
+
+func valueAtDottedPath(value any, path string) (any, bool) {
+	current := value
+	for _, segment := range strings.Split(path, ".") {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = object[segment]
+		if !ok {
+			return nil, false
 		}
 	}
-	return present
+	return current, true
+}
+
+func schemaRequiresDottedPath(raw []byte, collection bool, path string) error {
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return fmt.Errorf("decode schema: %w", err)
+	}
+	current := root
+	if collection {
+		items, ok := current["items"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("collection schema has no object items schema")
+		}
+		current = items
+	}
+	for _, segment := range strings.Split(path, ".") {
+		if !stringArrayContains(current["required"], segment) {
+			return fmt.Errorf("segment %q is not required", segment)
+		}
+		properties, ok := current["properties"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("segment %q has no properties map", segment)
+		}
+		next, ok := properties[segment].(map[string]any)
+		if !ok {
+			return fmt.Errorf("segment %q has no property schema", segment)
+		}
+		current = next
+	}
+	return nil
+}
+
+func stringArrayContains(value any, want string) bool {
+	values, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // alwaysPresentFields returns the JSON property names a generated result type
