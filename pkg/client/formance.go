@@ -5,11 +5,9 @@ package client
 // Generated from OpenAPI doc version RECONCILIATION_VERSION and generator version 2.879.6
 
 import (
-	"context"
 	"github.com/formancehq/reconciliation/pkg/client/internal/config"
 	"github.com/formancehq/reconciliation/pkg/client/internal/hooks"
 	"github.com/formancehq/reconciliation/pkg/client/internal/utils"
-	"github.com/formancehq/reconciliation/pkg/client/models/components"
 	"github.com/formancehq/reconciliation/pkg/client/retry"
 	"net/http"
 	"time"
@@ -76,23 +74,6 @@ func WithClient(client HTTPClient) SDKOption {
 	}
 }
 
-// WithSecurity configures the SDK to use the provided security details
-func WithSecurity(authorization string) SDKOption {
-	return func(sdk *Formance) {
-		security := components.Security{Authorization: authorization}
-		sdk.sdkConfiguration.Security = utils.AsSecuritySource(&security)
-	}
-}
-
-// WithSecuritySource configures the SDK to invoke the Security Source function on each method call to determine authentication
-func WithSecuritySource(security func(context.Context) (components.Security, error)) SDKOption {
-	return func(sdk *Formance) {
-		sdk.sdkConfiguration.Security = func(ctx context.Context) (interface{}, error) {
-			return security(ctx)
-		}
-	}
-}
-
 func WithRetryConfig(retryConfig retry.Config) SDKOption {
 	return func(sdk *Formance) {
 		sdk.sdkConfiguration.RetryConfig = &retryConfig
@@ -115,6 +96,8 @@ func New(serverURL string, opts ...SDKOption) *Formance {
 		},
 		hooks: hooks.New(),
 	}
+	sdk.sdkConfiguration.ServerURL = serverURL
+
 	for _, opt := range opts {
 		opt(sdk)
 	}
@@ -123,8 +106,6 @@ func New(serverURL string, opts ...SDKOption) *Formance {
 	if sdk.sdkConfiguration.Client == nil {
 		sdk.sdkConfiguration.Client = &http.Client{Timeout: 60 * time.Second}
 	}
-
-	sdk.sdkConfiguration.ServerURL = serverURL
 
 	sdk.sdkConfiguration = sdk.hooks.SDKInit(sdk.sdkConfiguration)
 

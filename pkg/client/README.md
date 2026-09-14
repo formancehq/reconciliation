@@ -34,12 +34,11 @@ Developer-friendly & type-safe Go SDK specifically catered to leverage *client* 
 <!-- End Table of Contents [toc] -->
 
 <!-- Start SDK Installation [installation] -->
-## SDK Installation
+## SDK availability
 
-To add the SDK as a dependency to your project:
-```bash
-go get github.com/formancehq/reconciliation/pkg/client
-```
+This generated module is not published independently yet. Consume it only from
+a pinned Reconciliation source revision until a module release is explicitly
+published.
 <!-- End SDK Installation [installation] -->
 
 <!-- Start SDK Example Usage [usage] -->
@@ -61,7 +60,6 @@ func main() {
 
 	s := client.New(
 		"https://api.example.com",
-		client.WithSecurity("<YOUR_API_KEY_HERE>"),
 	)
 
 	res, err := s.Reconciliation.V1.GetServerInfo(ctx)
@@ -79,42 +77,11 @@ func main() {
 <!-- Start Authentication [security] -->
 ## Authentication
 
-### Per-Client Security Schemes
-
-This SDK supports the following security scheme globally:
-
-| Name            | Type   | Scheme  |
-| --------------- | ------ | ------- |
-| `Authorization` | apiKey | API key |
-
-You can configure it using the `WithSecurity` option when initializing the SDK client instance. For example:
-```go
-package main
-
-import (
-	"context"
-	"github.com/formancehq/reconciliation/pkg/client"
-	"log"
-)
-
-func main() {
-	ctx := context.Background()
-
-	s := client.New(
-		"https://api.example.com",
-		client.WithSecurity("<YOUR_API_KEY_HERE>"),
-	)
-
-	res, err := s.Reconciliation.V1.GetServerInfo(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if res.ServerInfo != nil {
-		// handle response
-	}
-}
-
-```
+The OpenAPI document references Authorization but does not define its
+mechanism. This generated client therefore exposes no SDK-owned authentication
+option. Inject an HTTP client that applies the authoritative authentication
+contract at the transport boundary; the fctl plugin uses its host-owned
+transport adapter.
 <!-- End Authentication [security] -->
 
 <!-- Start Available Resources and Operations [operations] -->
@@ -175,7 +142,6 @@ func main() {
 
 	s := client.New(
 		"https://api.example.com",
-		client.WithSecurity("<YOUR_API_KEY_HERE>"),
 	)
 
 	res, err := s.Reconciliation.V1.GetServerInfo(ctx, operations.WithRetries(
@@ -226,7 +192,6 @@ func main() {
 				},
 				RetryConnectionErrors: false,
 			}),
-		client.WithSecurity("<YOUR_API_KEY_HERE>"),
 	)
 
 	res, err := s.Reconciliation.V1.GetServerInfo(ctx)
@@ -276,7 +241,6 @@ func main() {
 
 	s := client.New(
 		"https://api.example.com",
-		client.WithSecurity("<YOUR_API_KEY_HERE>"),
 	)
 
 	res, err := s.Reconciliation.V1.EvaluateRule(ctx, "e9d27cb2-b7fc-4383-b319-936c01a66703", &components.EvaluateRuleRequest{
@@ -328,7 +292,7 @@ import (
 
 var (
 	httpClient = &http.Client{Timeout: 30 * time.Second}
-	sdkClient  = client.New(client.WithClient(httpClient))
+	sdkClient  = client.New("https://api.example.com", client.WithClient(httpClient))
 )
 ```
 
@@ -341,9 +305,8 @@ This can be a convenient way to configure timeouts, cookies, proxies, custom hea
 
 ## Maturity
 
-This SDK is in beta, and there may be breaking changes between versions without a major version update. Therefore, we recommend pinning usage
-to a specific package version. This way, you can install the same version each time without breaking changes unless you are intentionally
-looking for the latest version.
+This is unreleased generated source. It does not claim a published module tag
+or a stable SDK compatibility level.
 
 ## Contributions
 

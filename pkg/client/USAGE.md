@@ -13,7 +13,6 @@ func main() {
 
 	s := client.New(
 		"https://api.example.com",
-		client.WithSecurity("<YOUR_API_KEY_HERE>"),
 	)
 
 	res, err := s.Reconciliation.V1.GetServerInfo(ctx)

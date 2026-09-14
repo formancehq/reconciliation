@@ -212,8 +212,9 @@ host-owned; the generated code owns DTOs, scalars and HTTP serialization.
 - **No authorisation mechanism is invented.** The scope *strings* are quoted
   from the document. The *scheme* is undefined there (D2) and is recorded as
   such rather than guessed.
-- **No product version or supported major is asserted.** The document carries a
-  placeholder (D5); the major must come from a live `/_info` response.
+- **The catalogue declares contract major 1.** That value comes from the
+  `reconciliation.v1` operation surface; actual service compatibility remains
+  host-owned and must be established by the live `/_info` preflight (D5).
 - **The source includes a `producthttp` transport adapter and portable component
   build.** Install, OCI publication, live-service and dual-host acceptance are
   separate release receipts and are not claimed by this inventory.

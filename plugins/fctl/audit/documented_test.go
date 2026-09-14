@@ -77,6 +77,20 @@ func TestSecuritySchemeIsReferencedButUndefined(t *testing.T) {
 	}
 }
 
+func TestImplementationBoundaryDistinguishesContractMajorFromLiveVersion(t *testing.T) {
+	contents, err := os.ReadFile("../docs/command-inventory.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	if strings.Contains(text, "No product version or supported major is asserted") {
+		t.Fatal("implementation boundary denies the catalogue's declared contract major")
+	}
+	if !strings.Contains(text, "contract major 1") || !strings.Contains(text, "live `/_info` preflight") {
+		t.Fatal("implementation boundary does not distinguish contract major 1 from live compatibility")
+	}
+}
+
 // TestDeclaredScopesAreTheTwoServiceScopes asserts the scope vocabulary the
 // inventory quotes: exactly `reconciliation:read` and `reconciliation:write`,
 // one per operation, aligned with the HTTP method's mutability.

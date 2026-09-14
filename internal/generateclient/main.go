@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +70,221 @@ func main() {
 	if err := os.WriteFile(helperPath, []byte(losslessHelper), 0o644); err != nil {
 		fatal(err)
 	}
+	if err := postprocessPublicContract(*clientRoot); err != nil {
+		fatal(err)
+	}
+}
+
+func postprocessPublicContract(clientRoot string) error {
+	formancePath := filepath.Join(clientRoot, "formance.go")
+	formance, err := os.ReadFile(formancePath)
+	if err != nil {
+		return err
+	}
+	formance, err = removeGeneratedFunctions(formance, "WithSecurity", "WithSecuritySource")
+	if err != nil {
+		return err
+	}
+	formance = bytes.ReplaceAll(formance, []byte("\t\"github.com/formancehq/reconciliation/pkg/client/models/components\"\n"), nil)
+	formance = bytes.ReplaceAll(formance, []byte("\t\"context\"\n"), nil)
+	formance = bytes.ReplaceAll(formance, []byte("import \"github.com/formancehq/reconciliation/pkg/client/models/components\"\n"), nil)
+	formance, err = moveConstructorURLBeforeOptions(formance)
+	if err != nil {
+		return err
+	}
+	formance = bytes.ReplaceAll(
+		formance,
+		[]byte("\n\n\n\tsdk.sdkConfiguration = sdk.hooks.SDKInit"),
+		[]byte("\n\n\tsdk.sdkConfiguration = sdk.hooks.SDKInit"),
+	)
+	if err := os.WriteFile(formancePath, formance, 0o644); err != nil {
+		return err
+	}
+
+	for _, relativePath := range []string{
+		"models/components/security.go",
+		"docs/models/components/security.md",
+	} {
+		if err := os.Remove(filepath.Join(clientRoot, relativePath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+
+	readmePath := filepath.Join(clientRoot, "README.md")
+	readme, err := os.ReadFile(readmePath)
+	if err != nil {
+		return err
+	}
+	readmeText := string(readme)
+	readmeText, err = replaceMarkdownSection(readmeText, "<!-- Start SDK Installation [installation] -->", "<!-- End SDK Installation [installation] -->", `<!-- Start SDK Installation [installation] -->
+## SDK availability
+
+This generated module is not published independently yet. Consume it only from
+a pinned Reconciliation source revision until a module release is explicitly
+published.
+<!-- End SDK Installation [installation] -->`)
+	if err != nil {
+		return err
+	}
+	readmeText, err = replaceMarkdownSection(readmeText, "<!-- Start Authentication [security] -->", "<!-- End Authentication [security] -->", `<!-- Start Authentication [security] -->
+## Authentication
+
+The OpenAPI document references Authorization but does not define its
+mechanism. This generated client therefore exposes no SDK-owned authentication
+option. Inject an HTTP client that applies the authoritative authentication
+contract at the transport boundary; the fctl plugin uses its host-owned
+transport adapter.
+<!-- End Authentication [security] -->`)
+	if err != nil {
+		return err
+	}
+	readmeText, err = replaceMarkdownSection(readmeText, "## Maturity", "## Contributions", `## Maturity
+
+This is unreleased generated source. It does not claim a published module tag
+or a stable SDK compatibility level.
+
+## Contributions`)
+	if err != nil {
+		return err
+	}
+	const brokenClientExample = "sdkClient  = client.New(client.WithClient(httpClient))"
+	const fixedClientExample = `sdkClient  = client.New("https://api.example.com", client.WithClient(httpClient))`
+	if strings.Count(readmeText, brokenClientExample) == 1 {
+		readmeText = strings.Replace(readmeText, brokenClientExample, fixedClientExample, 1)
+	} else if strings.Count(readmeText, fixedClientExample) != 1 {
+		return fmt.Errorf("generated README injected-client example drifted")
+	}
+	readmeText = removeLinesContaining(readmeText, "client.WithSecurity(")
+	if err := os.WriteFile(readmePath, []byte(readmeText), 0o644); err != nil {
+		return err
+	}
+
+	for _, relativePath := range []string{"USAGE.md", "docs/sdks/v1/README.md"} {
+		path := filepath.Join(clientRoot, relativePath)
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, []byte(removeLinesContaining(string(contents), "client.WithSecurity(")), 0o644); err != nil {
+			return err
+		}
+	}
+	optionsPath := filepath.Join(clientRoot, "docs/models/operations/option.md")
+	options, err := os.ReadFile(optionsPath)
+	if err != nil {
+		return err
+	}
+	optionsText := string(options)
+	if strings.Contains(optionsText, "### WithSecurity") {
+		optionsText, err = replaceMarkdownSection(optionsText, "### WithSecurity\n", "### WithRetryConfig", "### WithRetryConfig")
+		if err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(optionsPath, []byte(optionsText), 0o644); err != nil {
+		return err
+	}
+	return nil
+}
+
+func removeGeneratedFunctions(contents []byte, names ...string) ([]byte, error) {
+	fileset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileset, "formance.go", contents, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	type interval struct{ start, end int }
+	intervals := make([]interval, 0, len(names))
+	foundByName := make(map[string]*ast.FuncDecl, len(names))
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		for _, name := range names {
+			if function.Name.Name == name {
+				foundByName[name] = function
+			}
+		}
+	}
+	if len(foundByName) == 0 {
+		return contents, nil
+	}
+	if len(foundByName) != len(names) {
+		return nil, fmt.Errorf("generated authentication option set drifted")
+	}
+	for _, name := range names {
+		var found *ast.FuncDecl
+		found = foundByName[name]
+		start := fileset.Position(found.Pos()).Offset
+		if found.Doc != nil {
+			start = fileset.Position(found.Doc.Pos()).Offset
+		}
+		end := fileset.Position(found.End()).Offset
+		for end < len(contents) && contents[end] == '\n' {
+			end++
+		}
+		intervals = append(intervals, interval{start: start, end: end})
+	}
+	for index := len(intervals) - 1; index >= 0; index-- {
+		current := intervals[index]
+		contents = append(contents[:current.start], contents[current.end:]...)
+	}
+	return contents, nil
+}
+
+func moveConstructorURLBeforeOptions(contents []byte) ([]byte, error) {
+	const assignment = "\tsdk.sdkConfiguration.ServerURL = serverURL\n"
+	const optionLoop = "\tfor _, opt := range opts {\n"
+	fileset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileset, "formance.go", contents, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	var constructor *ast.FuncDecl
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && function.Name.Name == "New" {
+			constructor = function
+			break
+		}
+	}
+	if constructor == nil || constructor.Body == nil {
+		return nil, fmt.Errorf("generated server URL initialization drifted")
+	}
+	start := fileset.Position(constructor.Body.Pos()).Offset
+	end := fileset.Position(constructor.Body.End()).Offset
+	body := contents[start:end]
+	if bytes.Count(body, []byte(assignment)) != 1 || bytes.Count(body, []byte(optionLoop)) != 1 {
+		return nil, fmt.Errorf("generated server URL initialization drifted")
+	}
+	if bytes.Index(body, []byte(assignment)) < bytes.Index(body, []byte(optionLoop)) {
+		return contents, nil
+	}
+	body = bytes.Replace(body, []byte(assignment), nil, 1)
+	body = bytes.Replace(body, []byte(optionLoop), []byte(assignment+"\n"+optionLoop), 1)
+	return append(append(append([]byte(nil), contents[:start]...), body...), contents[end:]...), nil
+}
+
+func removeLinesContaining(contents, needle string) string {
+	lines := strings.SplitAfter(contents, "\n")
+	out := lines[:0]
+	for _, line := range lines {
+		if !strings.Contains(line, needle) {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "")
+}
+
+func replaceMarkdownSection(contents, start, end, replacement string) (string, error) {
+	startIndex := strings.Index(contents, start)
+	endIndex := strings.Index(contents, end)
+	if startIndex < 0 || endIndex < startIndex || strings.Count(contents, start) != 1 || strings.Count(contents, end) != 1 {
+		return "", fmt.Errorf("generated README section %q drifted", start)
+	}
+	endIndex += len(end)
+	return contents[:startIndex] + replacement + contents[endIndex:], nil
 }
 
 func fatal(err error) {

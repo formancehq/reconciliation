@@ -50,7 +50,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.GetServerInfo(ctx)
@@ -102,7 +101,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.CreatePolicy(ctx, components.PolicyRequest{
@@ -161,7 +159,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.ListPolicies(ctx, client.Pointer[int64](100), client.Pointer("aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ=="), nil)
@@ -215,7 +212,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.DeletePolicy(ctx, "XXX")
@@ -267,7 +263,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.GetPolicy(ctx, "XXX")
@@ -321,7 +316,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.Reconcile(ctx, "XXX", components.ReconciliationRequest{
@@ -377,7 +371,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.ListReconciliations(ctx, client.Pointer[int64](100), client.Pointer("aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ=="), nil)
@@ -431,7 +424,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.GetReconciliation(ctx, "XXX")
@@ -484,7 +476,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.CreateRule(ctx, components.RuleRequest{
@@ -548,7 +539,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.ListRules(ctx, client.Pointer[int64](100), client.Pointer("aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ=="), nil)
@@ -602,7 +592,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.GetRule(ctx, "fd71d712-041d-4271-b7c5-c9adac177f52")
@@ -655,7 +644,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.PatchRule(ctx, "0b4aa7b1-cc5d-4700-91ec-4983510fef86", components.RulePatchRequest{
@@ -715,7 +703,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.DeleteRule(ctx, "3254b217-2184-4bf4-bbc8-b529fa29bd7c")
@@ -770,7 +757,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.EvaluateRule(ctx, "e9d27cb2-b7fc-4383-b319-936c01a66703", &components.EvaluateRuleRequest{
@@ -830,7 +816,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.ListEvaluations(ctx, client.Pointer[int64](100), client.Pointer("aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ=="), nil)
@@ -884,7 +869,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.GetEvaluation(ctx, "121717d3-a7d1-444d-9d11-6ea2dc0d3db5")
@@ -936,7 +920,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.ListAlerts(ctx, client.Pointer[int64](100), client.Pointer("aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ=="), nil)
@@ -990,7 +973,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.GetAlert(ctx, "c7c54af9-81a4-4208-844b-4f25f89cf8a1")
@@ -1047,7 +1029,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.ListAlertEvents(ctx, "259536e6-acd5-4e38-9154-10e46ea2bc63", client.Pointer[int64](100), client.Pointer("aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ=="))
@@ -1102,7 +1083,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.AckAlert(ctx, "5439ab64-6482-49fb-993f-3411bfe19fef", components.AckAlertRequest{
@@ -1158,7 +1138,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.ResolveAlert(ctx, "53527ec3-b39f-4eee-ac1d-6e2bad87f240", components.ResolveAlertRequest{
@@ -1214,7 +1193,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.AcceptAlert(ctx, "5550ef95-072d-4bbb-9d3b-6a9dd307b2bd", components.AcceptAlertRequest{
@@ -1278,7 +1256,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.SnoozeAlert(ctx, "96529a25-9005-499e-a0ec-daa0ae32f4cb", components.SnoozeAlertRequest{
@@ -1337,7 +1314,6 @@ func main() {
 
     s := client.New(
         "https://api.example.com",
-        client.WithSecurity("<YOUR_API_KEY_HERE>"),
     )
 
     res, err := s.Reconciliation.V1.UnsnoozeAlert(ctx, "a1f12fdd-d9de-483a-b3c6-41ec79a76231", components.UnsnoozeAlertRequest{

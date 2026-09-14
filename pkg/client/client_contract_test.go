@@ -47,6 +47,37 @@ func TestReadUsesInjectedHTTPClientAndDecodesTypedResponse(t *testing.T) {
 	}
 }
 
+func TestServerURLOptionsOverrideConstructorURL(t *testing.T) {
+	tests := map[string]struct {
+		option  SDKOption
+		wantURL string
+	}{
+		"literal": {
+			option:  WithServerURL("https://override.invalid"),
+			wantURL: "https://override.invalid/policies/policy-1",
+		},
+		"templated": {
+			option:  WithTemplatedServerURL("https://{tenant}.invalid", map[string]string{"tenant": "override"}),
+			wantURL: "https://override.invalid/policies/policy-1",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			transport := contractHTTPClient(func(request *http.Request) (*http.Response, error) {
+				if request.URL.String() != test.wantURL {
+					t.Fatalf("request URL = %q, want %q", request.URL, test.wantURL)
+				}
+				return contractResponse(http.StatusOK, `{"data":{"id":"policy-1"}}`), nil
+			})
+
+			_, err := New("https://constructor.invalid", test.option, WithClient(transport)).Reconciliation.V1.GetPolicy(context.Background(), "policy-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestMutationSerializesGeneratedJSONWithoutLosingIntegerTokens(t *testing.T) {
 	transport := contractHTTPClient(func(request *http.Request) (*http.Response, error) {
 		if request.Method != http.MethodPost || request.URL.String() != "https://product.invalid/policies" {
