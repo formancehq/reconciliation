@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -226,8 +227,10 @@ func removeGeneratedFunctions(contents []byte, names ...string) ([]byte, error) 
 		}
 		intervals = append(intervals, interval{start: start, end: end})
 	}
-	for index := len(intervals) - 1; index >= 0; index-- {
-		current := intervals[index]
+	sort.Slice(intervals, func(i, j int) bool {
+		return intervals[i].start > intervals[j].start
+	})
+	for _, current := range intervals {
 		contents = append(contents[:current.start], contents[current.end:]...)
 	}
 	return contents, nil

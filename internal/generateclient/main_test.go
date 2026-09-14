@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestPostprocessorRemovesInventedAuthAndRepairsGeneratedContract(t *testing.T) {
+func TestPostprocessorHandlesReversedSpeakeasyAuthDeclarationsAndRepairsGeneratedContract(t *testing.T) {
 	clientRoot := t.TempDir()
 	writeFixture(t, filepath.Join(clientRoot, "internal/utils/json.go"), strings.Repeat("json.Unmarshal(", expectedUnmarshalCalls))
 	writeFixture(t, filepath.Join(clientRoot, "formance.go"), generatedFormanceFixture)
@@ -26,7 +26,9 @@ func TestPostprocessorRemovesInventedAuthAndRepairsGeneratedContract(t *testing.
 	}
 
 	formance := readFixture(t, filepath.Join(clientRoot, "formance.go"))
-	if strings.Contains(formance, "WithSecurity") || strings.Index(formance, "ServerURL: serverURL") > strings.Index(formance, "for _, opt := range opts") {
+	serverURLAssignment := strings.Index(formance, "sdk.sdkConfiguration.ServerURL = serverURL")
+	optionLoop := strings.Index(formance, "for _, opt := range opts")
+	if strings.Contains(formance, "WithSecurity") || serverURLAssignment < 0 || optionLoop < 0 || serverURLAssignment > optionLoop {
 		t.Fatalf("generated client retained auth or applies constructor URL after options:\n%s", formance)
 	}
 	if strings.Contains(formance, "\n\n\n\tsdk.sdkConfiguration = sdk.hooks.SDKInit") {
@@ -82,11 +84,11 @@ type SDKConfiguration struct { ServerURL string }
 type Formance struct { sdkConfiguration SDKConfiguration }
 type SDKOption func(*Formance)
 func WithServerURL(serverURL string) SDKOption { return func(sdk *Formance) { sdk.sdkConfiguration.ServerURL = serverURL } }
-func WithSecurity(authorization string) SDKOption {
-	return func(sdk *Formance) { _ = components.Security{Authorization: authorization} }
-}
 func WithSecuritySource(source func() components.Security) SDKOption {
 	return func(sdk *Formance) { _ = source }
+}
+func WithSecurity(authorization string) SDKOption {
+	return func(sdk *Formance) { _ = components.Security{Authorization: authorization} }
 }
 func New(serverURL string, opts ...SDKOption) *Formance {
 	sdk := &Formance{}
