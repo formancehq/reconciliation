@@ -57,7 +57,10 @@ one — which `core/render_hints_test.go` proves by executing the real adapter
 against a fixture holding only the always-present generated fields and deriving
 the emitted property set from the result envelope. The same test walks each
 possibly dotted field path through the declared public schema and requires every
-segment; a nested fixture pins that traversal independently. Nested containers are
+segment; a nested fixture pins that traversal independently. It also checks the
+complete required property and type set against each generated result type,
+validates every real adapter result recursively, and mutation-tests collection
+roots, item shapes, non-table properties and scalar types. Nested containers are
 excluded by a reflective rule over the generated types; `explanationCEL` and
 `error` (unbounded free text) and `fingerprint` (an opaque dedup digest) are
 excluded by judgement and recorded as such. Reconciliation declares no

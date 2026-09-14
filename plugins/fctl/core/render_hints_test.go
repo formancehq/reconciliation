@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"strings"
@@ -331,7 +332,330 @@ func TestRenderHintsDoNotNarrowThePublicOutputSchema(t *testing.T) {
 	}
 }
 
+func TestEveryOutputSchemaExactlyMatchesItsGeneratedResult(t *testing.T) {
+	for _, test := range renderCases() {
+		t.Run(test.commandID, func(t *testing.T) {
+			command, _, ok := commandAndSpec(test.commandID)
+			if !ok {
+				t.Fatalf("command %q is not in the catalogue", test.commandID)
+			}
+			assertExactGeneratedSchema(t, command.PublicOutputSchema, command.Pagination.Supported, reflect.TypeOf(test.entity))
+		})
+	}
+
+	for commandID := range commandsWithoutRenderableResults {
+		t.Run(commandID, func(t *testing.T) {
+			command, _, ok := commandAndSpec(commandID)
+			if !ok {
+				t.Fatalf("command %q is not in the catalogue", commandID)
+			}
+			assertStrictEmptyObjectSchema(t, command.PublicOutputSchema)
+		})
+	}
+}
+
+func TestEveryRealAdapterResultValidatesAgainstItsPublicSchema(t *testing.T) {
+	for _, test := range renderCases() {
+		t.Run(test.commandID, func(t *testing.T) {
+			command, _, _ := commandAndSpec(test.commandID)
+			if err := validateJSONSchemaValue(decodeEmittedPayload(t, test.commandID, test.fixture), command.PublicOutputSchema); err != nil {
+				t.Fatalf("real adapter result does not match PublicOutputSchema: %v", err)
+			}
+		})
+	}
+	for commandID := range commandsWithoutRenderableResults {
+		t.Run(commandID, func(t *testing.T) {
+			command, _, _ := commandAndSpec(commandID)
+			if err := validateJSONSchemaValue(decodeEmittedPayload(t, commandID, ""), command.PublicOutputSchema); err != nil {
+				t.Fatalf("canonical 204 result does not match PublicOutputSchema: %v", err)
+			}
+		})
+	}
+}
+
+func TestOutputSchemaCheckerRejectsStructuralMutations(t *testing.T) {
+	command, _, _ := commandAndSpec("reconciliation.v1.policies.list")
+
+	tests := map[string]func(map[string]any){
+		"missing non-table property": func(schema map[string]any) {
+			item := schema["items"].(map[string]any)
+			delete(item["properties"].(map[string]any), "ledgerQuery")
+		},
+		"missing non-table required entry": func(schema map[string]any) {
+			item := schema["items"].(map[string]any)
+			item["required"] = removeStringValue(item["required"].([]any), "ledgerQuery")
+		},
+		"wrong property type": func(schema map[string]any) {
+			item := schema["items"].(map[string]any)
+			item["properties"].(map[string]any)["id"].(map[string]any)["type"] = "integer"
+		},
+		"wrong collection root type": func(schema map[string]any) {
+			schema["type"] = "object"
+		},
+		"wrong items type": func(schema map[string]any) {
+			schema["items"].(map[string]any)["type"] = "string"
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			var schema map[string]any
+			if err := json.Unmarshal(command.PublicOutputSchema, &schema); err != nil {
+				t.Fatal(err)
+			}
+			mutate(schema)
+			encoded, err := json.Marshal(schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := exactGeneratedSchemaError(encoded, true, reflect.TypeOf(components.Policy{})); err == nil {
+				t.Fatal("mutated schema still matched the generated result contract")
+			}
+		})
+	}
+}
+
+func TestOutputSchemaValidatorRejectsInvalidValues(t *testing.T) {
+	command, _, _ := commandAndSpec("reconciliation.v1.policies.list")
+
+	tests := map[string]func(any) any{
+		"missing required value": func(value any) any {
+			delete(value.([]any)[0].(map[string]any), "ledgerQuery")
+			return value
+		},
+		"wrong scalar value type": func(value any) any {
+			value.([]any)[0].(map[string]any)["id"] = float64(42)
+			return value
+		},
+		"wrong root value type": func(value any) any {
+			return value.([]any)[0]
+		},
+		"wrong item value type": func(value any) any {
+			value.([]any)[0] = "not an object"
+			return value
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			value := decodeEmittedPayload(t, command.ID, policyFixture)
+			if err := validateJSONSchemaValue(mutate(value), command.PublicOutputSchema); err == nil {
+				t.Fatal("invalid value passed recursive schema validation")
+			}
+		})
+	}
+}
+
+func assertExactGeneratedSchema(t *testing.T, raw []byte, collection bool, entity reflect.Type) {
+	t.Helper()
+	if err := exactGeneratedSchemaError(raw, collection, entity); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exactGeneratedSchemaError(raw []byte, collection bool, entity reflect.Type) error {
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		return fmt.Errorf("decode output schema: %w", err)
+	}
+	want := generatedSchema(entity, collection)
+	if !reflect.DeepEqual(got, want) {
+		return fmt.Errorf("output schema = %s, want exact generated-result schema %s", compactJSON(got), compactJSON(want))
+	}
+	return nil
+}
+
+func generatedSchema(entity reflect.Type, collection bool) map[string]any {
+	properties := map[string]any{}
+	required := []any{}
+	for index := range entity.NumField() {
+		field := entity.Field(index)
+		name, _, optional := jsonTag(field)
+		if name == "" || optional {
+			continue
+		}
+		properties[name] = map[string]any{"type": generatedJSONType(field.Type)}
+		required = append(required, name)
+	}
+	sort.Slice(required, func(i, j int) bool { return required[i].(string) < required[j].(string) })
+	item := map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": true,
+	}
+	if !collection {
+		item["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+		return item
+	}
+	return map[string]any{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "array",
+		"items":   item,
+	}
+}
+
+func generatedJSONType(fieldType reflect.Type) string {
+	for fieldType.Kind() == reflect.Pointer {
+		fieldType = fieldType.Elem()
+	}
+	if fieldType == reflect.TypeOf(time.Time{}) {
+		return "string"
+	}
+	switch fieldType.Kind() {
+	case reflect.String:
+		return "string"
+	case reflect.Bool:
+		return "boolean"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "integer"
+	case reflect.Float32, reflect.Float64:
+		return "number"
+	case reflect.Map, reflect.Struct, reflect.Interface:
+		return "object"
+	case reflect.Array, reflect.Slice:
+		return "array"
+	default:
+		return ""
+	}
+}
+
+func assertStrictEmptyObjectSchema(t *testing.T, raw []byte) {
+	t.Helper()
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode empty output schema: %v", err)
+	}
+	want := map[string]any{
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"type":                 "object",
+		"additionalProperties": false,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("empty output schema = %s, want %s", compactJSON(got), compactJSON(want))
+	}
+}
+
+func validateJSONSchemaValue(value any, raw []byte) error {
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return fmt.Errorf("decode schema: %w", err)
+	}
+	return validateSchemaNode(value, schema, "$")
+}
+
+func validateSchemaNode(value any, schema map[string]any, path string) error {
+	kind, ok := schema["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s schema has no string type", path)
+	}
+	switch kind {
+	case "object":
+		object, ok := value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s is %T, want object", path, value)
+		}
+		properties, _ := schema["properties"].(map[string]any)
+		for _, required := range schemaStrings(schema["required"]) {
+			if _, present := object[required]; !present {
+				return fmt.Errorf("%s.%s is required", path, required)
+			}
+		}
+		for name, child := range object {
+			property, declared := properties[name]
+			if !declared {
+				if allow, declared := schema["additionalProperties"].(bool); declared && !allow {
+					return fmt.Errorf("%s.%s is not declared", path, name)
+				}
+				continue
+			}
+			childSchema, ok := property.(map[string]any)
+			if !ok {
+				return fmt.Errorf("%s.%s schema is not an object", path, name)
+			}
+			if err := validateSchemaNode(child, childSchema, path+"."+name); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "array":
+		array, ok := value.([]any)
+		if !ok {
+			return fmt.Errorf("%s is %T, want array", path, value)
+		}
+		items, ok := schema["items"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s array schema has no object items schema", path)
+		}
+		for index, item := range array {
+			if err := validateSchemaNode(item, items, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "string":
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("%s is %T, want string", path, value)
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("%s is %T, want boolean", path, value)
+		}
+	case "integer":
+		number, ok := value.(float64)
+		if !ok || math.Trunc(number) != number {
+			return fmt.Errorf("%s is %#v, want integer", path, value)
+		}
+	case "number":
+		if _, ok := value.(float64); !ok {
+			return fmt.Errorf("%s is %T, want number", path, value)
+		}
+	default:
+		return fmt.Errorf("%s schema has unsupported type %q", path, kind)
+	}
+	return nil
+}
+
+func schemaStrings(value any) []string {
+	values, _ := value.([]any)
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func compactJSON(value any) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
+func removeStringValue(values []any, remove string) []any {
+	out := make([]any, 0, len(values))
+	for _, value := range values {
+		if value != remove {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
 func emittedResult(t *testing.T, commandID, fixture string) any {
+	t.Helper()
+	value := decodeEmittedPayload(t, commandID, fixture)
+	command, _, _ := commandAndSpec(commandID)
+	if command.Pagination.Supported {
+		items := value.([]any)
+		if len(items) == 0 {
+			t.Fatal("collection result is empty")
+		}
+		return items[0]
+	}
+	return value
+}
+
+func decodeEmittedPayload(t *testing.T, commandID, fixture string) any {
 	t.Helper()
 	command, spec, ok := commandAndSpec(commandID)
 	if !ok {
@@ -344,6 +668,9 @@ func emittedResult(t *testing.T, commandID, fixture string) any {
 	status := int32(200)
 	if spec.operationID == "createPolicy" || spec.operationID == "createRule" {
 		status = 201
+	}
+	if spec.result == resultEmpty {
+		status, body = 204, ""
 	}
 	host := sdk.NewMemoryHost(func(context.Context, sdk.Request) (sdk.Responses, error) {
 		return sdk.NewResponseStream(sdk.Response{Status: status, ContentType: "application/json", Body: []byte(body)}), nil
@@ -361,23 +688,11 @@ func emittedResult(t *testing.T, commandID, fixture string) any {
 		t.Fatalf("events = %#v", host.Events())
 	}
 	result := host.Events()[0].Result
-	switch result.Shape {
-	case sdk.ResultCollection:
-		var items []any
-		if err := json.Unmarshal(result.Data, &items); err != nil {
-			t.Fatalf("decode collection result: %v (%s)", err, result.Data)
-		}
-		if len(items) == 0 {
-			t.Fatalf("collection result is empty: %s", result.Data)
-		}
-		return items[0]
-	default:
-		var object any
-		if err := json.Unmarshal(result.Data, &object); err != nil {
-			t.Fatalf("decode object result: %v (%s)", err, result.Data)
-		}
-		return object
+	var value any
+	if err := json.Unmarshal(result.Data, &value); err != nil {
+		t.Fatalf("decode result: %v (%s)", err, result.Data)
 	}
+	return value
 }
 
 func valueAtDottedPath(value any, path string) (any, bool) {
