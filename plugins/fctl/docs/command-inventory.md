@@ -6,9 +6,9 @@ proven product facts and the blockers recorded when the inventory was pinned.
 The counted tables live in [`operations.generated.md`](operations.generated.md),
 which is regenerated from `openapi.yaml` and committed alongside this file.
 
-The product plugin now lives beside this inventory. Its catalogue admits all 23
-public product operations; the host-owned `GET /_info` probe is deliberately
-excluded. The implementation uses the public fctl SDK and `producthttp`, and
+The product plugin now lives beside this inventory. Its catalogue admits 23 of
+the 24 operations the document declares; the host-owned `GET /_info` probe is
+the single deliberate exclusion. The implementation uses the public fctl SDK and `producthttp`, and
 ships a reconstructible WIT lifecycle component. The pinned audit below remains
 the provenance for the operation set and historical CLI mapping.
 
@@ -21,7 +21,7 @@ Every fact below was read at these exact revisions.
 | `formancehq/reconciliation` | `0221edf2f8727def40368a5e4e2d0d0fafd7d4e7` (`origin/main`, 2026-09-06) | Base product and server audit revision |
 | generated-client `openapi.yaml` | SHA-256 `92cb000bae9dd087fbad17a5afe2d444d192707442e1d84a5a9b09944b2436c5` | Base contract plus the declared browser-portable `query` parameter amendment |
 | `formancehq/fctl` | `693c58e27865f83332e6c3199d61fed81b742f41` | Legacy CLI baseline: `cmd/reconciliation/` |
-| `fctl-v2` | `e9b1395f46f3100b381dbe00f5213de28e6df0e1` | Final public SDK and programme boundary used by the plugin |
+| `fctl-v2` | `e9b1395f46f3100b381dbe00f5213de28e6df0e1` | Pinned integration-branch SDK and programme boundary used by the plugin. Reachable from `origin/codex/mvp5-integration`, not from `origin/main` (`01fccf28`), so a default clone of the pinned repository does not contain it until that branch is fetched |
 
 The Reconciliation checkout used was a non-iCloud clone; the iCloud-backed
 working copy hangs on `git status`, so it was neither read from nor modified.
@@ -207,8 +207,9 @@ host-owned; the generated code owns DTOs, scalars and HTTP serialization.
 
 ## Current implementation boundary
 
-- **All 23 public product operations are accepted into the plugin catalogue.**
-  `getServerInfo` remains host-owned and is not a product command.
+- **23 of the 24 declared operations are accepted into the plugin catalogue.**
+  `getServerInfo` (`GET /_info`) is the single exclusion: it remains host-owned
+  and is not a product command.
 - **No authorisation mechanism is invented.** The scope *strings* are quoted
   from the document. The *scheme* is undefined there (D2) and is recorded as
   such rather than guessed.

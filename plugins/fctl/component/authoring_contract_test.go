@@ -16,7 +16,7 @@ const (
 
 func TestPluginPinsTheFinalFCTLSDKContract(t *testing.T) {
 	if audit.FctlV2Revision != fctlSDKRevision {
-		t.Fatalf("audit fctl SDK revision = %s, want final %s", audit.FctlV2Revision, fctlSDKRevision)
+		t.Fatalf("audit fctl SDK revision = %s, want pinned %s", audit.FctlV2Revision, fctlSDKRevision)
 	}
 	contents, err := os.ReadFile("../wit/plugin.wit")
 	if err != nil {
