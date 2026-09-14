@@ -23,36 +23,59 @@ const (
 	resultAlertEvent
 )
 
-// resultProperties describes the stable public shape the plugin itself emits.
+// resultProperties describes every known public property the plugin itself emits.
 // Unknown properties remain valid so a compatible product response extension
 // is not rejected merely because it is not part of the human table projection.
-var resultProperties = map[resultFamily]map[string]string{
+var resultProperties = map[resultFamily]map[string]any{
 	resultPolicy: {
 		"id": "string", "name": "string", "createdAt": "string", "ledgerName": "string",
-		"ledgerQuery": "object", "paymentsPoolID": "string",
+		"ledgerQuery": freeObjectSchema(), "paymentsPoolID": "string",
 	},
 	resultReconciliation: {
 		"id": "string", "policyID": "string", "createdAt": "string", "reconciledAtLedger": "string",
-		"reconciledAtPayments": "string", "status": "string", "paymentsBalances": "object",
-		"ledgerBalances": "object", "driftBalances": "object",
+		"reconciledAtPayments": "string", "status": "string", "paymentsBalances": typedMapSchema("integer"),
+		"ledgerBalances": typedMapSchema("integer"), "driftBalances": typedMapSchema("integer"), "error": "string",
 	},
 	resultRule: {
-		"id": "string", "name": "string", "templateKind": "string", "templateSpec": "object",
-		"enabled": "boolean", "severity": "string", "cadence": "string", "createdAt": "string", "updatedAt": "string",
+		"id": "string", "name": "string", "templateKind": "string", "templateSpec": freeObjectSchema(),
+		"explanationCEL": "string", "enabled": "boolean", "severity": "string", "cadence": "string",
+		"schedule": "object", "notifications": map[string]any{"type": "array", "items": map[string]string{"type": "string"}},
+		"labels": typedMapSchema("string"), "createdAt": "string", "updatedAt": "string",
 	},
 	resultEvaluation: {
 		"id": "string", "ruleID": "string", "startedAt": "string", "endedAt": "string",
-		"result": "string", "createdAt": "string",
+		"pitPerSource": typedMapSchema("string"), "result": "string", "evidence": map[string]any{
+			"type": []string{"array", "object"}, "items": map[string]string{"type": "object"}, "additionalProperties": true,
+		},
+		"error": "string", "costUnits": "integer", "createdAt": "string",
 	},
 	resultAlert: {
 		"id": "string", "ruleID": "string", "fingerprint": "string", "periodID": "string",
 		"status": "string", "severity": "string", "firstSeenAt": "string", "lastSeenAt": "string",
-		"occurrenceCount": "integer", "lastEvaluationID": "string", "createdAt": "string", "updatedAt": "string",
+		"occurrenceCount": "integer", "lastEvaluationID": "string", "evidence": freeObjectSchema(), "ack": "object",
+		"resolution": "object", "snooze": "object", "labels": typedMapSchema("string"), "createdAt": "string", "updatedAt": "string",
 	},
 	resultAlertEvent: {
-		"id": "string", "alertID": "string", "type": "string", "newStatus": "string",
+		"id": "string", "alertID": "string", "evaluationID": []string{"string", "null"}, "type": "string",
+		"prevStatus": []string{"string", "null"}, "newStatus": "string", "payload": freeObjectSchema(),
 		"at": "string", "isReopen": "boolean", "notify": "boolean",
 	},
+}
+
+func freeObjectSchema() map[string]any {
+	return map[string]any{"type": "object", "additionalProperties": true}
+}
+
+func typedMapSchema(kind string) map[string]any {
+	return map[string]any{"type": "object", "additionalProperties": map[string]string{"type": kind}}
+}
+
+var optionalResultProperties = map[resultFamily]map[string]bool{
+	resultReconciliation: {"error": true},
+	resultRule:           {"explanationCEL": true, "schedule": true, "notifications": true, "labels": true},
+	resultEvaluation:     {"pitPerSource": true, "evidence": true, "error": true, "costUnits": true},
+	resultAlert:          {"evidence": true, "ack": true, "resolution": true, "snooze": true, "labels": true},
+	resultAlertEvent:     {"evaluationID": true, "prevStatus": true, "payload": true},
 }
 
 func buildOutputSchema(family resultFamily, collection bool) []byte {
@@ -62,8 +85,14 @@ func buildOutputSchema(family resultFamily, collection bool) []byte {
 	properties := map[string]any{}
 	required := make([]string, 0, len(resultProperties[family]))
 	for name, kind := range resultProperties[family] {
-		properties[name] = map[string]string{"type": kind}
-		required = append(required, name)
+		if schema, ok := kind.(map[string]any); ok {
+			properties[name] = schema
+		} else {
+			properties[name] = map[string]any{"type": kind}
+		}
+		if !optionalResultProperties[family][name] {
+			required = append(required, name)
+		}
 	}
 	sort.Strings(required)
 	item := map[string]any{

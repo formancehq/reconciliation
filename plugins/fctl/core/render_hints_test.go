@@ -22,10 +22,11 @@ import (
 // a column is only truthful if it resolves against a result that omits every
 // optional property.
 type renderCase struct {
-	commandID string
-	columns   []sdk.TableColumn
-	entity    any
-	fixture   string
+	commandID   string
+	columns     []sdk.TableColumn
+	entity      any
+	fixture     string
+	fullFixture string
 }
 
 const (
@@ -45,6 +46,25 @@ const (
 		`"createdAt":"2026-09-14T08:00:00Z","updatedAt":"2026-09-14T09:00:00Z"}`
 	alertEventFixture = `{"id":"event-1","alertID":"alert-1","type":"fail","newStatus":"OPEN",` +
 		`"at":"2026-09-14T09:00:00Z","isReopen":false,"notify":true}`
+	fullReconciliationFixture = `{"id":"rec-1","policyID":"pol-1","createdAt":"2026-09-14T08:00:00Z",` +
+		`"reconciledAtLedger":"2026-09-14T07:00:00Z","reconciledAtPayments":"2026-09-14T07:00:00Z",` +
+		`"status":"ERROR","paymentsBalances":{"USD":100},"ledgerBalances":{"USD":99},"driftBalances":{"USD":1},"error":"source unavailable"}`
+	fullRuleFixture = `{"id":"rule-1","name":"pool drift","templateKind":"ledger_vs_pool_drift",` +
+		`"templateSpec":{"ledgerName":"main"},"explanationCEL":"ledger == pool","enabled":true,"severity":"high","cadence":"daily",` +
+		`"schedule":{"kind":"cron","expr":"0 0 * * *","tz":"UTC","safetyMargin":"30s"},` +
+		`"notifications":["ops"],"labels":{"team":"finance"},"createdAt":"2026-09-14T08:00:00Z","updatedAt":"2026-09-14T09:00:00Z"}`
+	fullEvaluationFixture = `{"id":"eval-1","ruleID":"rule-1","startedAt":"2026-09-14T08:00:00Z",` +
+		`"endedAt":"2026-09-14T08:00:05Z","pitPerSource":{"ledger":"2026-09-14T07:59:00Z"},"result":"ERROR",` +
+		`"evidence":{"source":"ledger"},"error":"source unavailable","costUnits":7,"createdAt":"2026-09-14T08:00:05Z"}`
+	fullAlertFixture = `{"id":"alert-1","ruleID":"rule-1","fingerprint":"9f1c","periodID":"2026-09",` +
+		`"status":"RESOLVED","severity":"high","firstSeenAt":"2026-09-14T08:00:00Z","lastSeenAt":"2026-09-14T09:00:00Z",` +
+		`"occurrenceCount":3,"lastEvaluationID":"eval-1","evidence":{"USD":1},` +
+		`"ack":{"by":"ops","at":"2026-09-14T09:00:00Z","note":"checking"},` +
+		`"resolution":{"kind":"accepted_by_business","by":"ops","at":"2026-09-14T09:30:00Z","note":"accepted","transactionRefs":["tx-1"],"evidenceSnapshot":{"USD":1}},` +
+		`"snooze":{"until":"2026-09-15T09:00:00Z","by":"ops","at":"2026-09-14T08:30:00Z","note":"investigating"},` +
+		`"labels":{"team":"finance"},"createdAt":"2026-09-14T08:00:00Z","updatedAt":"2026-09-14T09:30:00Z"}`
+	fullAlertEventFixture = `{"id":"event-1","alertID":"alert-1","evaluationID":"eval-1","type":"fail",` +
+		`"prevStatus":null,"newStatus":"OPEN","payload":{"reason":"drift"},"at":"2026-09-14T09:00:00Z","isReopen":false,"notify":true}`
 )
 
 var (
@@ -95,19 +115,19 @@ var (
 
 func renderCases() []renderCase {
 	policy := func(id string) renderCase {
-		return renderCase{id, policyColumns, components.Policy{}, policyFixture}
+		return renderCase{id, policyColumns, components.Policy{}, policyFixture, policyFixture}
 	}
 	reconciliation := func(id string) renderCase {
-		return renderCase{id, reconciliationColumns, components.Reconciliation{}, reconciliationFixture}
+		return renderCase{id, reconciliationColumns, components.Reconciliation{}, reconciliationFixture, fullReconciliationFixture}
 	}
 	rule := func(id string) renderCase {
-		return renderCase{id, ruleColumns, components.Rule{}, ruleFixture}
+		return renderCase{id, ruleColumns, components.Rule{}, ruleFixture, fullRuleFixture}
 	}
 	evaluation := func(id string) renderCase {
-		return renderCase{id, evaluationColumns, components.Evaluation{}, evaluationFixture}
+		return renderCase{id, evaluationColumns, components.Evaluation{}, evaluationFixture, fullEvaluationFixture}
 	}
 	alert := func(id string) renderCase {
-		return renderCase{id, alertColumns, components.Alert{}, alertFixture}
+		return renderCase{id, alertColumns, components.Alert{}, alertFixture, fullAlertFixture}
 	}
 	return []renderCase{
 		policy("reconciliation.v1.policies.create"),
@@ -130,7 +150,7 @@ func renderCases() []renderCase {
 		alert("reconciliation.v1.alerts.accept"),
 		alert("reconciliation.v1.alerts.snooze"),
 		alert("reconciliation.v1.alerts.unsnooze"),
-		{"reconciliation.v1.alerts.events", alertEventColumns, components.AlertEvent{}, alertEventFixture},
+		{"reconciliation.v1.alerts.events", alertEventColumns, components.AlertEvent{}, alertEventFixture, fullAlertEventFixture},
 	}
 }
 
@@ -358,7 +378,7 @@ func TestEveryRealAdapterResultValidatesAgainstItsPublicSchema(t *testing.T) {
 	for _, test := range renderCases() {
 		t.Run(test.commandID, func(t *testing.T) {
 			command, _, _ := commandAndSpec(test.commandID)
-			if err := validateJSONSchemaValue(decodeEmittedPayload(t, test.commandID, test.fixture), command.PublicOutputSchema); err != nil {
+			if err := validateJSONSchemaValue(decodeEmittedPayload(t, test.commandID, test.fullFixture), command.PublicOutputSchema); err != nil {
 				t.Fatalf("real adapter result does not match PublicOutputSchema: %v", err)
 			}
 		})
@@ -374,16 +394,24 @@ func TestEveryRealAdapterResultValidatesAgainstItsPublicSchema(t *testing.T) {
 }
 
 func TestOutputSchemaCheckerRejectsStructuralMutations(t *testing.T) {
-	command, _, _ := commandAndSpec("reconciliation.v1.policies.list")
+	command, _, _ := commandAndSpec("reconciliation.v1.rules.list")
 
 	tests := map[string]func(map[string]any){
 		"missing non-table property": func(schema map[string]any) {
 			item := schema["items"].(map[string]any)
-			delete(item["properties"].(map[string]any), "ledgerQuery")
+			delete(item["properties"].(map[string]any), "templateSpec")
+		},
+		"missing optional non-table property": func(schema map[string]any) {
+			item := schema["items"].(map[string]any)
+			delete(item["properties"].(map[string]any), "explanationCEL")
+		},
+		"wrong optional property type": func(schema map[string]any) {
+			item := schema["items"].(map[string]any)
+			item["properties"].(map[string]any)["explanationCEL"] = map[string]any{"type": "integer"}
 		},
 		"missing non-table required entry": func(schema map[string]any) {
 			item := schema["items"].(map[string]any)
-			item["required"] = removeStringValue(item["required"].([]any), "ledgerQuery")
+			item["required"] = removeStringValue(item["required"].([]any), "templateSpec")
 		},
 		"wrong property type": func(schema map[string]any) {
 			item := schema["items"].(map[string]any)
@@ -407,7 +435,7 @@ func TestOutputSchemaCheckerRejectsStructuralMutations(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := exactGeneratedSchemaError(encoded, true, reflect.TypeOf(components.Policy{})); err == nil {
+			if err := exactGeneratedSchemaError(encoded, true, reflect.TypeOf(components.Rule{})); err == nil {
 				t.Fatal("mutated schema still matched the generated result contract")
 			}
 		})
@@ -444,6 +472,85 @@ func TestOutputSchemaValidatorRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestOutputSchemaValidatorRejectsInvalidOptionalValues(t *testing.T) {
+	rules, _, _ := commandAndSpec("reconciliation.v1.rules.list")
+	events, _, _ := commandAndSpec("reconciliation.v1.alerts.events")
+	reconciliations, _, _ := commandAndSpec("reconciliation.v1.list")
+	tests := []struct {
+		name    string
+		command sdk.Command
+		fixture string
+		mutate  func(any)
+	}{
+		{
+			name:    "optional scalar type",
+			command: rules,
+			fixture: fullRuleFixture,
+			mutate: func(value any) {
+				value.([]any)[0].(map[string]any)["explanationCEL"] = float64(42)
+			},
+		},
+		{
+			name:    "optional array item type",
+			command: rules,
+			fixture: fullRuleFixture,
+			mutate: func(value any) {
+				value.([]any)[0].(map[string]any)["notifications"].([]any)[0] = float64(42)
+			},
+		},
+		{
+			name:    "nullable field alternative",
+			command: events,
+			fixture: fullAlertEventFixture,
+			mutate: func(value any) {
+				value.([]any)[0].(map[string]any)["evaluationID"] = true
+			},
+		},
+		{
+			name:    "typed optional map value",
+			command: rules,
+			fixture: fullRuleFixture,
+			mutate: func(value any) {
+				value.([]any)[0].(map[string]any)["labels"].(map[string]any)["team"] = float64(42)
+			},
+		},
+		{
+			name:    "typed required map value",
+			command: reconciliations,
+			fixture: fullReconciliationFixture,
+			mutate: func(value any) {
+				value.([]any)[0].(map[string]any)["paymentsBalances"].(map[string]any)["USD"] = "100"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := decodeEmittedPayload(t, test.command.ID, test.fixture)
+			test.mutate(value)
+			if err := validateJSONSchemaValue(value, test.command.PublicOutputSchema); err == nil {
+				t.Fatal("invalid optional value passed recursive schema validation")
+			}
+		})
+	}
+}
+
+func TestOutputSchemaCheckerRejectsOptionalNullabilityMutation(t *testing.T) {
+	command, _, _ := commandAndSpec("reconciliation.v1.alerts.events")
+	var schema map[string]any
+	if err := json.Unmarshal(command.PublicOutputSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	item := schema["items"].(map[string]any)
+	item["properties"].(map[string]any)["evaluationID"].(map[string]any)["type"] = "string"
+	encoded, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exactGeneratedSchemaError(encoded, true, reflect.TypeOf(components.AlertEvent{})); err == nil {
+		t.Fatal("removing nullability still matched the generated result contract")
+	}
+}
+
 func assertExactGeneratedSchema(t *testing.T, raw []byte, collection bool, entity reflect.Type) {
 	t.Helper()
 	if err := exactGeneratedSchemaError(raw, collection, entity); err != nil {
@@ -469,11 +576,29 @@ func generatedSchema(entity reflect.Type, collection bool) map[string]any {
 	for index := range entity.NumField() {
 		field := entity.Field(index)
 		name, _, optional := jsonTag(field)
-		if name == "" || optional {
+		if name == "" {
 			continue
 		}
-		properties[name] = map[string]any{"type": generatedJSONType(field.Type)}
-		required = append(required, name)
+		kind := generatedJSONType(field.Type)
+		if entity == reflect.TypeOf(components.Evaluation{}) && name == "evidence" {
+			properties[name] = map[string]any{
+				"type":                 []any{"array", "object"},
+				"items":                map[string]any{"type": "object"},
+				"additionalProperties": true,
+			}
+			continue
+		}
+		if strings.Contains(field.Type.String(), "optionalnullable.OptionalNullable[") {
+			kind = []any{"string", "null"}
+		}
+		property := generatedPropertySchema(entity, name, kind)
+		if entity == reflect.TypeOf(components.Rule{}) && name == "notifications" {
+			property["items"] = map[string]any{"type": "string"}
+		}
+		properties[name] = property
+		if !optional {
+			required = append(required, name)
+		}
 	}
 	sort.Slice(required, func(i, j int) bool { return required[i].(string) < required[j].(string) })
 	item := map[string]any{
@@ -493,7 +618,21 @@ func generatedSchema(entity reflect.Type, collection bool) map[string]any {
 	}
 }
 
-func generatedJSONType(fieldType reflect.Type) string {
+func generatedPropertySchema(entity reflect.Type, name string, kind any) map[string]any {
+	key := entity.Name() + "." + name
+	switch key {
+	case "Policy.ledgerQuery", "Rule.templateSpec", "Alert.evidence", "AlertEvent.payload":
+		return map[string]any{"type": "object", "additionalProperties": true}
+	case "Reconciliation.paymentsBalances", "Reconciliation.ledgerBalances", "Reconciliation.driftBalances":
+		return map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "integer"}}
+	case "Rule.labels", "Alert.labels", "Evaluation.pitPerSource":
+		return map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}
+	default:
+		return map[string]any{"type": kind}
+	}
+}
+
+func generatedJSONType(fieldType reflect.Type) any {
 	for fieldType.Kind() == reflect.Pointer {
 		fieldType = fieldType.Elem()
 	}
@@ -544,9 +683,9 @@ func validateJSONSchemaValue(value any, raw []byte) error {
 }
 
 func validateSchemaNode(value any, schema map[string]any, path string) error {
-	kind, ok := schema["type"].(string)
-	if !ok {
-		return fmt.Errorf("%s schema has no string type", path)
+	kind, err := matchingSchemaType(value, schema["type"])
+	if err != nil {
+		return fmt.Errorf("%s %w", path, err)
 	}
 	switch kind {
 	case "object":
@@ -563,8 +702,15 @@ func validateSchemaNode(value any, schema map[string]any, path string) error {
 		for name, child := range object {
 			property, declared := properties[name]
 			if !declared {
-				if allow, declared := schema["additionalProperties"].(bool); declared && !allow {
-					return fmt.Errorf("%s.%s is not declared", path, name)
+				switch additional := schema["additionalProperties"].(type) {
+				case bool:
+					if !additional {
+						return fmt.Errorf("%s.%s is not declared", path, name)
+					}
+				case map[string]any:
+					if err := validateSchemaNode(child, additional, path+"."+name); err != nil {
+						return err
+					}
 				}
 				continue
 			}
@@ -609,10 +755,42 @@ func validateSchemaNode(value any, schema map[string]any, path string) error {
 		if _, ok := value.(float64); !ok {
 			return fmt.Errorf("%s is %T, want number", path, value)
 		}
+	case "null":
+		if value != nil {
+			return fmt.Errorf("%s is %T, want null", path, value)
+		}
 	default:
 		return fmt.Errorf("%s schema has unsupported type %q", path, kind)
 	}
 	return nil
+}
+
+func matchingSchemaType(value any, declaration any) (string, error) {
+	if kind, ok := declaration.(string); ok {
+		return kind, nil
+	}
+	kinds := schemaStrings(declaration)
+	for _, kind := range kinds {
+		switch kind {
+		case "null":
+			if value == nil {
+				return kind, nil
+			}
+		case "object":
+			if _, ok := value.(map[string]any); ok {
+				return kind, nil
+			}
+		case "array":
+			if _, ok := value.([]any); ok {
+				return kind, nil
+			}
+		case "string":
+			if _, ok := value.(string); ok {
+				return kind, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("is %T, want one of %v", value, kinds)
 }
 
 func schemaStrings(value any) []string {
