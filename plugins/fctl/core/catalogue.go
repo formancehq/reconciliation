@@ -121,7 +121,6 @@ var (
 		{Header: "Template", Field: "templateKind"},
 		{Header: "Enabled", Field: "enabled"},
 		{Header: "Severity", Field: "severity"},
-		{Header: "Cadence", Field: "cadence"},
 	}
 	evaluationTable = []sdk.TableColumn{
 		{Header: "ID", Field: "id"},

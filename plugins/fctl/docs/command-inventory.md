@@ -18,8 +18,8 @@ Every fact below was read at these exact revisions.
 
 | Source | Revision | Role |
 |---|---|---|
-| `formancehq/reconciliation` | `0221edf2f8727def40368a5e4e2d0d0fafd7d4e7` (`origin/main`, 2026-09-06) | Base product and server audit revision |
-| generated-client `openapi.yaml` | SHA-256 `92cb000bae9dd087fbad17a5afe2d444d192707442e1d84a5a9b09944b2436c5` | Base contract plus the declared browser-portable `query` parameter amendment |
+| `formancehq/reconciliation` | `0221edf2f8727def40368a5e4e2d0d0fafd7d4e7` (`origin/main` at audit time, 2026-09-06) | Base product and server audit revision |
+| generated-client `openapi.yaml` | SHA-256 `fa4475f2a100cc21ea021fc94509fedb5ff38bd6fb456b1e8d5cc6f582732a6f` | Current contract including the browser-portable `query` parameter and the `periodType` migration |
 | `formancehq/fctl` | `693c58e27865f83332e6c3199d61fed81b742f41` | Legacy CLI baseline: `cmd/reconciliation/` |
 | `fctl-v2` | `e9b1395f46f3100b381dbe00f5213de28e6df0e1` | Pinned integration-branch SDK and programme boundary used by the plugin. Reachable from `origin/codex/mvp5-integration`, not from `origin/main` (`01fccf28`), so a default clone of the pinned repository does not contain it until that branch is fetched |
 

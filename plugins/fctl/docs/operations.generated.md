@@ -6,7 +6,7 @@ Source document: `openapi.yaml` (repository root)
 
 Reconciliation revision: `0221edf2f8727def40368a5e4e2d0d0fafd7d4e7`
 
-Generated-client OpenAPI SHA-256: `92cb000bae9dd087fbad17a5afe2d444d192707442e1d84a5a9b09944b2436c5`
+Generated-client OpenAPI SHA-256: `fa4475f2a100cc21ea021fc94509fedb5ff38bd6fb456b1e8d5cc6f582732a6f`
 
 Legacy fctl baseline revision: `693c58e27865f83332e6c3199d61fed81b742f41`
 

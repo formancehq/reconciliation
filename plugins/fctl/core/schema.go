@@ -38,7 +38,8 @@ var resultProperties = map[resultFamily]map[string]any{
 	},
 	resultRule: {
 		"id": "string", "name": "string", "templateKind": "string", "templateSpec": freeObjectSchema(),
-		"explanationCEL": "string", "enabled": "boolean", "severity": "string", "cadence": "string",
+		"explanationCEL": "string", "enabled": "boolean", "severity": "string",
+		"periodType": "string", "cadence": "string",
 		"schedule": closedObjectSchema(map[string]any{
 			"kind": "string", "expr": "string", "tz": "string", "safetyMargin": "string",
 		}, []string{"kind"}),
@@ -115,10 +116,13 @@ func closedObjectSchema(properties map[string]any, required []string) map[string
 
 var optionalResultProperties = map[resultFamily]map[string]bool{
 	resultReconciliation: {"error": true},
-	resultRule:           {"explanationCEL": true, "schedule": true, "notifications": true, "labels": true},
-	resultEvaluation:     {"pitPerSource": true, "evidence": true, "error": true, "costUnits": true},
-	resultAlert:          {"evidence": true, "ack": true, "resolution": true, "snooze": true, "labels": true},
-	resultAlertEvent:     {"evaluationID": true, "prevStatus": true, "payload": true},
+	resultRule: {
+		"explanationCEL": true, "periodType": true, "cadence": true,
+		"schedule": true, "notifications": true, "labels": true,
+	},
+	resultEvaluation: {"pitPerSource": true, "evidence": true, "error": true, "costUnits": true},
+	resultAlert:      {"evidence": true, "ack": true, "resolution": true, "snooze": true, "labels": true},
+	resultAlertEvent: {"evaluationID": true, "prevStatus": true, "payload": true},
 }
 
 func buildOutputSchema(family resultFamily, collection bool) []byte {

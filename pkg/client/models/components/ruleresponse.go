@@ -4,7 +4,7 @@ package components
 
 // RuleResponse - OK
 type RuleResponse struct {
-	// A monitoring rule evaluated on a cadence, raising alerts when it fails
+	// A monitoring rule evaluated on a schedule, raising alerts when it fails
 	Data Rule `json:"data"`
 }
 

@@ -13,7 +13,7 @@ const FctlV2Revision = "e9b1395f46f3100b381dbe00f5213de28e6df0e1"
 
 // ClientSpecSHA256 pins the OpenAPI bytes used to generate pkg/client. A spec
 // change must regenerate the client and update this receipt in the same change.
-const ClientSpecSHA256 = "92cb000bae9dd087fbad17a5afe2d444d192707442e1d84a5a9b09944b2436c5"
+const ClientSpecSHA256 = "fa4475f2a100cc21ea021fc94509fedb5ff38bd6fb456b1e8d5cc6f582732a6f"
 
 // Blocker is a recorded reason an operation cannot yet be admitted into the
 // plugin catalogue, separate from the verified facts about it.

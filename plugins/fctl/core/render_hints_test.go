@@ -36,7 +36,7 @@ const (
 		`"reconciledAtLedger":"2026-09-14T07:00:00Z","reconciledAtPayments":"2026-09-14T07:00:00Z",` +
 		`"status":"OK","paymentsBalances":{"USD":100},"ledgerBalances":{"USD":100},"driftBalances":{"USD":0}}`
 	ruleFixture = `{"id":"rule-1","name":"pool drift","templateKind":"ledger_vs_pool_drift",` +
-		`"templateSpec":{"ledgerName":"main"},"enabled":true,"severity":"high","cadence":"daily",` +
+		`"templateSpec":{"ledgerName":"main"},"enabled":true,"severity":"high",` +
 		`"createdAt":"2026-09-14T08:00:00Z","updatedAt":"2026-09-14T09:00:00Z"}`
 	evaluationFixture = `{"id":"eval-1","ruleID":"rule-1","startedAt":"2026-09-14T08:00:00Z",` +
 		`"endedAt":"2026-09-14T08:00:05Z","result":"FAIL","createdAt":"2026-09-14T08:00:05Z"}`
@@ -50,7 +50,8 @@ const (
 		`"reconciledAtLedger":"2026-09-14T07:00:00Z","reconciledAtPayments":"2026-09-14T07:00:00Z",` +
 		`"status":"ERROR","paymentsBalances":{"USD":100},"ledgerBalances":{"USD":99},"driftBalances":{"USD":1},"error":"source unavailable"}`
 	fullRuleFixture = `{"id":"rule-1","name":"pool drift","templateKind":"ledger_vs_pool_drift",` +
-		`"templateSpec":{"ledgerName":"main"},"explanationCEL":"ledger == pool","enabled":true,"severity":"high","cadence":"daily",` +
+		`"templateSpec":{"ledgerName":"main"},"explanationCEL":"ledger == pool","enabled":true,"severity":"high",` +
+		`"periodType":"daily","cadence":"daily",` +
 		`"schedule":{"kind":"cron","expr":"0 0 * * *","tz":"UTC","safetyMargin":"30s"},` +
 		`"notifications":["ops"],"labels":{"team":"finance"},"createdAt":"2026-09-14T08:00:00Z","updatedAt":"2026-09-14T09:00:00Z"}`
 	fullEvaluationFixture = `{"id":"eval-1","ruleID":"rule-1","startedAt":"2026-09-14T08:00:00Z",` +
@@ -91,7 +92,6 @@ var (
 		{Header: "Template", Field: "templateKind"},
 		{Header: "Enabled", Field: "enabled"},
 		{Header: "Severity", Field: "severity"},
-		{Header: "Cadence", Field: "cadence"},
 	}
 	evaluationColumns = []sdk.TableColumn{
 		{Header: "ID", Field: "id"},
@@ -321,6 +321,30 @@ func TestTableColumnsExcludeLongValueFields(t *testing.T) {
 	}
 }
 
+func TestOptionalRulePeriodFieldsRemainStructuredOnly(t *testing.T) {
+	command, _, _ := commandAndSpec("reconciliation.v1.rules.list")
+	var root map[string]any
+	if err := json.Unmarshal(command.PublicOutputSchema, &root); err != nil {
+		t.Fatal(err)
+	}
+	item := root["items"].(map[string]any)
+	properties := item["properties"].(map[string]any)
+	for _, field := range []string{"periodType", "cadence"} {
+		property, ok := properties[field].(map[string]any)
+		if !ok || property["type"] != "string" {
+			t.Fatalf("%s schema = %#v, want optional string", field, properties[field])
+		}
+		if stringArrayContains(item["required"], field) {
+			t.Fatalf("%s is required, but the v1 response contract keeps it optional", field)
+		}
+		for _, column := range command.Render.Table.Columns {
+			if column.Field == field {
+				t.Fatalf("optional field %s is exposed as table column %q", field, column.Header)
+			}
+		}
+	}
+}
+
 // TestRenderHintsDeclareNoSensitiveField re-proves the sensitivity boundary is
 // unchanged by this surface: Reconciliation declares no sensitive output, so no
 // column can resolve to one.
@@ -492,6 +516,22 @@ func TestOutputSchemaValidatorRejectsInvalidOptionalValues(t *testing.T) {
 			fixture: fullRuleFixture,
 			mutate: func(value any) {
 				value.([]any)[0].(map[string]any)["explanationCEL"] = float64(42)
+			},
+		},
+		{
+			name:    "optional period type",
+			command: rules,
+			fixture: fullRuleFixture,
+			mutate: func(value any) {
+				value.([]any)[0].(map[string]any)["periodType"] = float64(42)
+			},
+		},
+		{
+			name:    "optional deprecated cadence",
+			command: rules,
+			fixture: fullRuleFixture,
+			mutate: func(value any) {
+				value.([]any)[0].(map[string]any)["cadence"] = false
 			},
 		},
 		{

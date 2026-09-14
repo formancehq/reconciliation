@@ -45,7 +45,7 @@ declared property left out of a table remains present in `--output json` and
 |---|---|
 | Policy — `policies create` / `list` / `get` | ID, Name, Ledger, Payments Pool, Created At |
 | Reconciliation — `policies reconcile`, `list`, `get` | ID, Policy ID, Status, Created At |
-| Rule — `rules create` / `list` / `get` / `update` | ID, Name, Template, Enabled, Severity, Cadence |
+| Rule — `rules create` / `list` / `get` / `update` | ID, Name, Template, Enabled, Severity |
 | Evaluation — `rules evaluate`, `evaluations list` / `get` | ID, Rule ID, Result, Started At, Ended At |
 | Alert — `alerts list` / `get` / `ack` / `resolve` / `accept` / `snooze` / `unsnooze` | ID, Rule ID, Status, Severity, Occurrences, Last Seen At |
 | Alert event — `alerts events` | ID, Alert ID, Type, New Status, At |
@@ -54,6 +54,13 @@ declared property left out of a table remains present in `--output json` and
 with no response schema and the adapter emits a canonical `{}`, so there is no
 product property to name. Giving them columns needs a product change, not a
 catalogue change.
+
+Rule tables omit both `periodType` and its deprecated `cadence` alias. The v1
+response schema intentionally keeps both properties optional for generated-SDK
+compatibility, even though current servers emit the two mirrored values. A
+table column must resolve against the declared minimum response, so neither is
+guaranteed strongly enough for the compact view. When present, both properties
+remain available in `--output json` and `--output yaml`.
 
 Every column names a property its result always carries — never an optional
 one — which `core/render_hints_test.go` proves by executing the real adapter
