@@ -20,7 +20,8 @@ import (
 // RecordCapture writes an immutable capture transaction to the control ledger for
 // one evaluation (ADR-003): a self-describing snapshot (verdict, trigger, evidence)
 // on a COMMITTED_TRANSACTION plus a CAPTURE counter unit in the (rule, period)
-// bucket. The transaction is receipt-signed and append-only — the durable audit
+// bucket. The transaction is append-only and — when a signing key is configured —
+// carries reconciliation's Ed25519 signature (EN-1930); it is the durable audit
 // record complementing the alert lifecycle, with every evaluated outcome.
 // Idempotent per (rule, period, evaluation): a gRPC
 // retransmit dedups; a genuinely new evaluation gets a fresh key.

@@ -28,7 +28,8 @@ const (
 // Capture transaction metadata keys — the self-describing capture envelope stamped
 // on each evaluation's capture transaction (ADR-003). Transaction-level
 // (COMMITTED_TRANSACTION payload), undeclared like the alert labels: stored as-is,
-// not indexed. The immutable, receipt-signed transaction is the audit record.
+// not indexed. The immutable, append-only transaction is the audit record — carrying
+// reconciliation's Ed25519 signature when a signing key is configured (EN-1930).
 const (
 	CaptureType                = "reconciliation.capture" // value of CaptureMetaType
 	CaptureMetaType            = "type"

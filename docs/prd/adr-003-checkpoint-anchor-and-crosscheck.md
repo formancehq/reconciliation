@@ -2,7 +2,7 @@
 
 **Status:** Accepted (implemented — see [migration log](../drafts/ledger-v3-migration-log.md), "checkpoint alternative" workstream). Supersedes the Tier-1 aligned-checkpoint model of [ADR-002](./adr-002-pit-consistency.md); narrows [ADR-001](./adr-001-cel-kernel.md) §11.
 **Linked from:** [ADR-002](./adr-002-pit-consistency.md), [RFC §4.4.2/§4.5](../drafts/rfc-ledger-native-storage.md)
-**Last updated:** 2026-07-08
+**Last updated:** 2026-09-14 (upstream-fact corrections: transaction receipts removed by ledger EN-1952; `min_log_sequence` removed by ledger EN-1946; EN-1480 split with EN-1873)
 
 ---
 
@@ -35,7 +35,7 @@ The only thing a checkpoint uniquely provided reconciliation is a **skew-free cr
 | 1 ledger, sub-sets by **metadata** (2 queries) | No | two snapshots → possible skew |
 | **Multiple ledgers** | **No — only a checkpoint** | ledgers share one log; only a checkpoint freezes them together |
 
-So skew — hence any need for atomicity — arises **only** for multi-ledger rules and single-ledger multi-metadata-query rules. Everything else is atomic for free. For those two cases we accept **per-source reads + tolerance**: a period close reconciles settled state (stable regardless of read instant); continuous monitoring self-corrects on the next tick and tolerance absorbs the transient. `min_log_sequence` (a live-read freshness floor) is available but not required.
+So skew — hence any need for atomicity — arises **only** for multi-ledger rules and single-ledger multi-metadata-query rules. Everything else is atomic for free. For those two cases we accept **per-source reads + tolerance**: a period close reconciles settled state (stable regardless of read instant); continuous monitoring self-corrects on the next tick and tolerance absorbs the transient. No freshness knob is needed or available: the `min_log_sequence` floor was removed from the public read contract by ledger EN-1946, and a projection-backed read now aligns automatically to the fixed Raft horizon of the main-store snapshot it uses.
 
 ---
 
@@ -62,7 +62,7 @@ Every evaluation records an **immutable capture transaction** on the control led
 retains every passing and failing outcome so the observed verdict can be reproduced later.
 
 - **Chart**: `capture:rule:{ruleId}:per:{period}` (NORMAL) bucket + `capture:pool:rule:{ruleId}` (NORMAL) mint source; asset `CAPTURE` (precision 0); numscript `capture` mints one `CAPTURE` from the pool into the bucket. `−balance(bucket, CAPTURE)` counts captures for the (rule, period); **one evaluation = one transaction**, so the bucket's transaction log is the period's ordered series of captures.
-- **Snapshot**: the observed state rides the **transaction metadata** (`COMMITTED_TRANSACTION`, self-describing: `type, rule_id, template_kind, period, evaluation_id, captured_at, verdict, trigger, evidence`). The transaction is immutable and receipt-signed — the audit record. The address is a bucket; the transaction carries the distinguishing context (`evaluation_id`, `captured_at`, `trigger`). A mixed-verdict capture contains every fingerprint evaluated, independently of which outcomes mutate alerts.
+- **Snapshot**: the observed state rides the **transaction metadata** (`COMMITTED_TRANSACTION`, self-describing: `type, rule_id, template_kind, period, evaluation_id, captured_at, verdict, trigger, evidence`). The transaction is immutable and append-only — the audit record; with a signing key configured it carries reconciliation's Ed25519 signature (EN-1930), verifiable from the public key alone. The address is a bucket; the transaction carries the distinguishing context (`evaluation_id`, `captured_at`, `trigger`). A mixed-verdict capture contains every fingerprint evaluated, independently of which outcomes mutate alerts.
 - **Idempotent** per (rule, period, evaluation): a gRPC retransmit dedups; a genuinely new evaluation gets a fresh key.
 
 This **revises the "evaluations non-durable" decision** (RFC §4.4.2): the durable record is the capture transaction (ledger-native, immutable), not a queryable Postgres evaluation table.
@@ -71,14 +71,14 @@ This **revises the "evaluations non-durable" decision** (RFC §4.4.2): the durab
 
 ## 7. What we keep, what we lose
 
-- **Kept**: exactness where it exists for free (single-ledger reads are atomic); tolerance-bounded consistency for continuous/heterogeneous (ADR-002 §5); durable audit — now **stronger** (immutable, receipt-signed capture) and covering passes, not just breaks.
+- **Kept**: exactness where it exists for free (single-ledger reads are atomic); tolerance-bounded consistency for continuous/heterogeneous (ADR-002 §5); durable audit — now **stronger** (immutable, append-only capture, Ed25519-signed when a signing key is configured) and covering passes, not just breaks.
 - **Lost**: **replay by re-reading a past cut** — the checkpoint was the only thing that offered it, and it discarded it anyway (deleted per eval). The recorded capture (the numbers) is the audit substrate, per ADR-002 §8. **Provable simultaneous atomicity** for multi-ledger rules — replaced by per-source + tolerance.
 
 ---
 
 ## 8. Future / upstream (documented, not implemented)
 
-- **EN-1480** ([atomic multi-ledger read](https://formance-team.atlassian.net/browse/EN-1480)) — a ledger RPC that aggregates N `(ledger, query)` items against **one** ephemeral snapshot, returning a certifiable cut (log sequence + audit hash + signed receipt). This — not a "scoped checkpoint" — is the right primitive if provable multi-ledger atomicity becomes a hard requirement. It is server-side by construction (a client cannot hold a snapshot across RPCs, nor sign with the ledger key).
+- **EN-1480** ([atomic multi-ledger read](https://formance-team.atlassian.net/browse/EN-1480)) — a ledger RPC that aggregates N `(ledger, query)` items against **one** ephemeral snapshot, returning a certifiable cut. Since split in two: EN-1480 delivers the skew-free cut and `log_sequence`; [EN-1873](https://formance-team.atlassian.net/browse/EN-1873) adds the attestation (`audit_sequence`, `audit_hash`, a ledger-signed payload over `{items, results, log_sequence, audit_hash}`). This — not a "scoped checkpoint" — is the right primitive if provable multi-ledger atomicity becomes a hard requirement. Signing over the **item set** is what makes omission of a source detectable; N separately-signed reads at a shared checkpoint attest each leg but never the completeness of the set. It is server-side by construction (a client cannot hold a snapshot across RPCs, nor sign with the ledger key).
 - **`group_by_prefixes`** — make single-ledger, prefix-partitioned parity/invariant atomic in one call.
 - **Log-fold projections** — maintain scoped running balances from the event stream (atomic cut without a checkpoint) — deferred: reintroduces durable state, high event volume, and a metadata-scope correctness trap.
 - **Capture enhancements** — throttle continuous captures (on-change / heartbeat) if volume bites; store full pass-side observed balances (all outcomes, budget-bounded); attach a ledger-signed read proof (EN-1480).
@@ -90,7 +90,7 @@ This **revises the "evaluations non-durable" decision** (RFC §4.4.2): the durab
 1. `EvaluateRule` acquires no checkpoint; ledger reads are live; the capture is written inside the evaluation.
 2. Built-in template evaluation is typed Go over a single anchored read; CEL is authoring-surface + validation + explanation (ADR-001 §11 narrowed).
 3. Reconciliation stays stateless in process; its durable state (rules, alerts, captures) lives entirely in `_recon`.
-4. Customer language stays honest (ADR-002 §4): atomic-where-free + tolerance-bounded across sources; every evaluation leaves an immutable, receipt-signed audit record.
+4. Customer language stays honest (ADR-002 §4): atomic-where-free + tolerance-bounded across sources; every evaluation leaves an immutable, append-only audit record, Ed25519-signed with reconciliation's registered key when one is configured (EN-1930).
 
 ---
 

@@ -20,7 +20,8 @@ the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consi
 
 **🎉 Checkpoint alternative COMPLETE (2026-07-08, ADR-003).** Query checkpoints **removed** — recon
 reads its data ledgers **live** and records each evaluation as an immutable `_recon` **capture**
-transaction (audit-grade: receipt-signed, append-only; positive assurance on pass, break evidence on
+transaction (audit-grade: append-only, Ed25519-signed when a signing key is configured; positive
+assurance on pass, break evidence on
 fail). Owner-steered pivot away from the per-eval checkpoint (cluster-wide, Raft/SST-heavy, discarded
 per eval). 4 reviewed steps: 1 remove cross-check (`13b0357`), 2 drop checkpoints + live reads
 (`8979795`, **closes F26 + F32**), 3 capture in `_recon` (`932e931`, chart +2 types/+1 asset/+1
@@ -441,7 +442,7 @@ pool, nothing to aggregate). Chart stays 4 types. RFC §4.1.2 updated.
 
 | # | Sev | Finding | Status |
 |---|---|---|---|
-| F25 | MED | The ledger's read-side **metadata index is eventually consistent** with writes: a metadata-filtered read (GetAlert-by-id, ListRules/ListAlerts) right after the write may briefly not see it. The **machine path is unaffected** — `AutoResolveAlert` + the sweep read by structural address (`GetAccount`), which is consistent; only the **operator path** (id-resolution) uses the index, and it is human-paced (ms lag ≪ operator reaction). Surfaced as an it-test flake (immediate GetAlert after open); fixed with `require.EventuallyWithT`. A strict production fix would thread `ReadOptions.min_log_sequence` from the write into the read, or bounded-retry `findAlertItem` on miss. | ⬜ open (deferred; POC-safe) |
+| F25 | MED | The ledger's read-side **metadata index is eventually consistent** with writes: a metadata-filtered read (GetAlert-by-id, ListRules/ListAlerts) right after the write may briefly not see it. The **machine path is unaffected** — `AutoResolveAlert` + the sweep read by structural address (`GetAccount`), which is consistent; only the **operator path** (id-resolution) uses the index, and it is human-paced (ms lag ≪ operator reaction). Surfaced as an it-test flake (immediate GetAlert after open); fixed with `require.EventuallyWithT`. A strict production fix would bounded-retry `findAlertItem` on miss. (This entry originally proposed threading `ReadOptions.min_log_sequence` from the write into the read; that field was removed from the read contract by ledger EN-1946 — reads now self-align to the fixed Raft horizon of their main-store snapshot, so the knob no longer exists.) | ⬜ open (deferred; POC-safe) |
 
 ### Phase 1 step 5a — checkpoint mechanism (SDLC review, 2026-07-03)
 
@@ -882,7 +883,7 @@ on `main`; no OpenAPI change. Large net deletion.
 
 | # | Sev | Finding | Status |
 |---|---|---|---|
-| — | LOW | Live reads are eventually-consistent on the read index (F25/F27): a read just after a write may briefly lag. Acceptable for reconciliation (settled balances; the next tick re-observes); a `min_log_sequence` freshness floor is available if ever needed (deferred). | ✅ noted |
+| — | LOW | Live reads are eventually-consistent on the read index (F25/F27): a read just after a write may briefly lag. Acceptable for reconciliation (settled balances; the next tick re-observes); the `min_log_sequence` freshness floor is gone (ledger EN-1946) — reads self-align to the fixed Raft horizon of their main-store snapshot. | ✅ noted |
 | — | LOW | `in engine.EvalInput` is now unused in `LedgerInvariant`/`AccountThreshold` `Evaluate` (interface-required); still consumed by `SourceParity` (pool PIT) + carried for the period/`RecordCapture` in the service. | ✅ acceptable |
 
 ### Checkpoint alternative — Étape 3: audit-grade capture in `_recon` (`932e931`, SDLC review, 2026-07-08)
@@ -899,7 +900,7 @@ recorded independently of the alert lifecycle. This revises the "evaluations non
   ordered series.
 - **Snapshot** on the transaction metadata (`COMMITTED_TRANSACTION`, undeclared/self-describing):
   `type, rule_id, template_kind, period, evaluation_id, captured_at, verdict, trigger, evidence`. The
-  immutable, receipt-signed transaction is the audit record.
+  immutable, append-only transaction is the audit record.
 - **Store**: `ledgerstore.RecordCapture` (`internal/ledgerstore/capture.go`) via `CreateTransaction`,
   idempotent per (rule, period, evaluation) (`alertActionKey("capture", …)`); `store.CaptureInput`.
 - **Wiring**: `EvaluateRule` records the capture inside the eval's `inTx` (before driving alerts);

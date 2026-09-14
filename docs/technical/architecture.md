@@ -195,16 +195,18 @@ Addresses, assets, metadata keys, and the numscript library live in
 skew-free. Cross-ledger rules read each side separately (per-source); the transient skew is absorbed
 by the template's `tolerance` (a period close reconciles settled state; continuous monitoring
 self-corrects on the next tick). A certifiable atomic multi-ledger read is a future ledger primitive
-([EN-1480](https://formance-team.atlassian.net/browse/EN-1480)); `min_log_sequence` (a live-read
-freshness floor) is available but unused.
+([EN-1480](https://formance-team.atlassian.net/browse/EN-1480)); the `min_log_sequence` freshness
+floor was removed from the read contract (ledger EN-1946) — a read now aligns automatically to the
+fixed Raft horizon of the main-store snapshot it uses.
 
 Every evaluation is recorded as an **immutable capture transaction** on `_recon` (ADR-003): a
 self-describing snapshot (`verdict`, `trigger`, `evidence`, …) on a `COMMITTED_TRANSACTION`, plus a
 `CAPTURE` counter unit in the `capture:rule:{id}:per:{p}` bucket. Evidence retains every outcome,
 including successful outcomes that do not mutate an alert. This is the durable "what reconciled and
-when" — including the exact observed values that
-cleared a prior break — receipt-signed and append-only, replacing a queryable evaluation table
-(RFC §4.4.2). The run result is also returned from `EvaluateRule`.
+when" — including the exact observed values that cleared a prior break — append-only and, when a
+signing key is configured, Ed25519-signed with reconciliation's registered key (EN-1930). It
+replaces a queryable evaluation table (RFC §4.4.2). The run result is also returned from
+`EvaluateRule`.
 
 Every externally meaningful mutation also posts one precision-zero `ACTIVITY`
 unit to `activity:rule:{ruleID}`. Rule metadata changes use a generic activity

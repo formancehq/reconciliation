@@ -38,7 +38,7 @@ Evidence from `github.com/formancehq/ledger` `release/v3.0`:
 The ledger's chain and seal are **keyed** commitments, verifiable only by the ledger (which holds the ClusterID) or through its internal `CheckStore`. Specifically:
 
 - The chapter `sealing_hash` is **unkeyed BLAKE3 over `chapter_id ‖ close_sequence ‖ last_audit_hash ‖ state_hash`** with **no signature** (`internal/infra/state/sealer.go`). Because it anchors on `last_audit_hash` (the tip of the *keyed* chain), an external party needs the ClusterID to verify it.
-- **Receipts are HMAC-SHA256** (symmetric, one shared secret) — `internal/infra/receipt/receipt.go`. The ledger's own docs note no external auditor needs to verify a receipt.
+- **Transaction receipts no longer exist** — removed upstream in EN-1952 (ledger #1900) precisely because the HS256 JWT was symmetric (a cluster-local secret) and so "not independently verifiable by clients". They were never capable of closing this gap.
 - The ledger exposes **no public verify RPC**.
 
 So the "black-box" objection PR #94 exists to answer — *don't make the client's auditor trust our verify endpoint* — is **exactly the property Ledger V3 does not provide**. This is what reconciliation must still build.

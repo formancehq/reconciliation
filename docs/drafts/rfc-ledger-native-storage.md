@@ -309,7 +309,8 @@ cluster-level config, not code we maintain:
 2. **Evaluations — high volume, NOT a durable ledger table (deliberate).** **[Revised by
    [ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md): each evaluation is now recorded as an immutable
    `_recon` **capture transaction** — durable and ledger-native. The reasoning below explains why a
-   Postgres evaluation *table* was rejected; the capture is the durable, receipt-signed record that
+   Postgres evaluation *table* was rejected; the capture is the durable, append-only record (Ed25519-signed
+   when a signing key is configured) that
    replaces it, covering passes (positive assurance) as well as breaks.]** Rationale: an
    evaluation is a **deterministic projection** — `result = f(rule spec, source balances @PIT)`
    — re-derivable because the ledger already holds the balances. Alerts, by contrast, carry

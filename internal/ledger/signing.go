@@ -24,8 +24,8 @@ import (
 //
 // where sig.Payload is the exact serialized ApplyBatch. That reproduces the
 // batch bytes and checks the signature with nobody from Formance in the loop. It
-// is deliberately not the ledger's HMAC receipt scheme, which is symmetric and
-// therefore only self-checkable.
+// is deliberately not the ledger's former HMAC receipt scheme, which was symmetric
+// and therefore only self-checkable — removed upstream in EN-1952 for that reason.
 //
 // This mirrors internal/audit.SigningKey from the Postgres audit-chain design;
 // here the signature travels natively on the ledger log instead of on a period

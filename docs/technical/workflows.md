@@ -95,7 +95,7 @@ sequenceDiagram
   `compiledCEL`; neither uses V1 left/right evidence keys.
 - **A capture per evaluation** (ADR-003). `RecordCapture` mints one `CAPTURE` into
   `capture:rule:{id}:per:{p}`; the observed snapshot (`verdict`, `trigger`, `evidence`, …) rides the
-  `COMMITTED_TRANSACTION` metadata — the durable, receipt-signed "what reconciled and when", covering
+  `COMMITTED_TRANSACTION` metadata — the durable, append-only "what reconciled and when", covering
   passes as well as breaks. Its evidence contains every outcome and the exact values used for the
   verdict, including successful outcomes that do not mutate an alert. It is written **before** the
   planned alert transitions.
@@ -292,10 +292,10 @@ internally consistent server-side snapshot, so a **single-ledger** universe is s
 absorbed by the template's `tolerance` — a period close reconciles settled state (stable regardless
 of read instant), and continuous monitoring self-corrects on the next tick. `PIT` survives only as
 the nominal instant that buckets the reconciliation period and timestamps the capture;
-`min_log_sequence` (a live-read freshness floor) is available but unused.
+the `min_log_sequence` freshness floor was removed from the read contract (ledger EN-1946) — a read now aligns automatically to the fixed Raft horizon of the main-store snapshot it uses.
 
 The durable audit substrate is the per-evaluation **capture** transaction (§2) — an immutable,
-receipt-signed `_recon` record of the observed numbers; the durable break `evidence` on `alert:item`
+append-only `_recon` record of the observed numbers; the durable break `evidence` on `alert:item`
 survives regardless. Provable simultaneous multi-ledger atomicity — the one thing a checkpoint
 uniquely offered, and discarded anyway — is deferred to a future ledger primitive
 ([EN-1480](https://formance-team.atlassian.net/browse/EN-1480)).
