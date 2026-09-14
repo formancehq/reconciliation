@@ -1,0 +1,10 @@
+# ListReconciliationsResponse
+
+
+## Fields
+
+| Field                                                                                                 | Type                                                                                                  | Required                                                                                              | Description                                                                                           |
+| ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `HTTPMeta`                                                                                            | [components.HTTPMetadata](../../models/components/httpmetadata.md)                                    | :heavy_check_mark:                                                                                    | N/A                                                                                                   |
+| `ReconciliationsCursorResponse`                                                                       | [*components.ReconciliationsCursorResponse](../../models/components/reconciliationscursorresponse.md) | :heavy_minus_sign:                                                                                    | OK                                                                                                    |
+| `ErrorResponse`                                                                                       | [*components.ErrorResponse](../../models/components/errorresponse.md)                                 | :heavy_minus_sign:                                                                                    | Error response                                                                                        |

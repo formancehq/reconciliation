@@ -75,8 +75,11 @@ type Report struct {
 	// Only the base name is recorded so the report is identical whether it is
 	// produced from the module root or from a package directory.
 	SpecDocument string `json:"specDocument"`
-	// ProductRevision pins the Reconciliation commit the document was read at.
+	// ProductRevision pins the Reconciliation base commit used for the audit;
+	// the generated-client contract bytes are pinned separately.
 	ProductRevision string `json:"productRevision"`
+	// ClientSpecSHA256 pins the exact amended OpenAPI bytes used for generation.
+	ClientSpecSHA256 string `json:"clientSpecSHA256"`
 	// BaselineRevision pins the legacy fctl tree the baseline came from.
 	BaselineRevision string `json:"baselineRevision"`
 	// FctlV2Revision pins the programme tree this preparation answers to.
@@ -120,6 +123,7 @@ func Build(specPath string) (*Report, error) {
 	report := &Report{
 		SpecDocument:             filepath.Base(specPath),
 		ProductRevision:          ProductRevision,
+		ClientSpecSHA256:         ClientSpecSHA256,
 		BaselineRevision:         BaselineRevision,
 		FctlV2Revision:           FctlV2Revision,
 		Document:                 meta,

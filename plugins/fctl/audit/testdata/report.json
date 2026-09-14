@@ -1,8 +1,9 @@
 {
   "specDocument": "openapi.yaml",
   "productRevision": "0221edf2f8727def40368a5e4e2d0d0fafd7d4e7",
+  "clientSpecSHA256": "92cb000bae9dd087fbad17a5afe2d444d192707442e1d84a5a9b09944b2436c5",
   "baselineRevision": "693c58e27865f83332e6c3199d61fed81b742f41",
-  "fctlV2Revision": "8de8c4539ea6664351762dd8dd0e865292e3f216",
+  "fctlV2Revision": "545521bfa222250af6b4419b194c7967cded0379",
   "document": {
     "title": "Reconciliation API",
     "version": "RECONCILIATION_VERSION",
@@ -27,12 +28,12 @@
     "recordedOperations": 17,
     "withBaseline": 7,
     "withoutBaseline": 17,
-    "blocked": 5,
-    "frozenBlocked": 2,
-    "admissible": 19,
-    "frozenAdmissible": 5,
-    "generationBlockers": 3,
-    "divergences": 7
+    "blocked": 0,
+    "frozenBlocked": 0,
+    "admissible": 24,
+    "frozenAdmissible": 7,
+    "generationBlockers": 0,
+    "divergences": 6
   },
   "operations": [
     {
@@ -591,9 +592,14 @@
           "name": "pageSize",
           "in": "query",
           "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
         }
       ],
-      "requestBody": "QueryBuilder",
+      "requestBody": "",
       "successCode": "200",
       "successBody": "AlertsCursorResponse",
       "family": "alerts",
@@ -604,13 +610,11 @@
         "displayOnce": false,
         "replaySafe": true,
         "paginated": true,
-        "getWithBody": true,
+        "getWithBody": false,
         "stateTransition": false
       },
       "baselineCommands": null,
-      "blockers": [
-        "B1-get-with-body"
-      ]
+      "blockers": null
     },
     {
       "operationId": "listEvaluations",
@@ -636,9 +640,14 @@
           "name": "pageSize",
           "in": "query",
           "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
         }
       ],
-      "requestBody": "QueryBuilder",
+      "requestBody": "",
       "successCode": "200",
       "successBody": "EvaluationsCursorResponse",
       "family": "evaluations",
@@ -649,13 +658,11 @@
         "displayOnce": false,
         "replaySafe": true,
         "paginated": true,
-        "getWithBody": true,
+        "getWithBody": false,
         "stateTransition": false
       },
       "baselineCommands": null,
-      "blockers": [
-        "B1-get-with-body"
-      ]
+      "blockers": null
     },
     {
       "operationId": "listPolicies",
@@ -681,9 +688,14 @@
           "name": "pageSize",
           "in": "query",
           "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
         }
       ],
-      "requestBody": "QueryBuilder",
+      "requestBody": "",
       "successCode": "200",
       "successBody": "PoliciesCursorResponse",
       "family": "policies",
@@ -694,15 +706,13 @@
         "displayOnce": false,
         "replaySafe": true,
         "paginated": true,
-        "getWithBody": true,
+        "getWithBody": false,
         "stateTransition": false
       },
       "baselineCommands": [
         "reconciliation policies list"
       ],
-      "blockers": [
-        "B1-get-with-body"
-      ]
+      "blockers": null
     },
     {
       "operationId": "listReconciliations",
@@ -728,9 +738,14 @@
           "name": "pageSize",
           "in": "query",
           "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
         }
       ],
-      "requestBody": "QueryBuilder",
+      "requestBody": "",
       "successCode": "200",
       "successBody": "ReconciliationsCursorResponse",
       "family": "reconciliations",
@@ -741,15 +756,13 @@
         "displayOnce": false,
         "replaySafe": true,
         "paginated": true,
-        "getWithBody": true,
+        "getWithBody": false,
         "stateTransition": false
       },
       "baselineCommands": [
         "reconciliation list"
       ],
-      "blockers": [
-        "B1-get-with-body"
-      ]
+      "blockers": null
     },
     {
       "operationId": "listRules",
@@ -775,9 +788,14 @@
           "name": "pageSize",
           "in": "query",
           "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
         }
       ],
-      "requestBody": "QueryBuilder",
+      "requestBody": "",
       "successCode": "200",
       "successBody": "RulesCursorResponse",
       "family": "rules",
@@ -788,13 +806,11 @@
         "displayOnce": false,
         "replaySafe": true,
         "paginated": true,
-        "getWithBody": true,
+        "getWithBody": false,
         "stateTransition": false
       },
       "baselineCommands": null,
-      "blockers": [
-        "B1-get-with-body"
-      ]
+      "blockers": null
     },
     {
       "operationId": "patchRule",

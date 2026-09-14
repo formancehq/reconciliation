@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +19,23 @@ func prepare(t *testing.T) string {
 		}
 	}
 	return root
+}
+
+func TestCommandReportsBuildFailureWithoutExiting(t *testing.T) {
+	var stderr bytes.Buffer
+	if status := command([]string{"-spec", filepath.Join(t.TempDir(), "absent.yaml")}, &stderr); status != 1 {
+		t.Fatalf("status = %d, want 1", status)
+	}
+	if got := stderr.String(); got == "" {
+		t.Fatal("missing diagnostic")
+	}
+}
+
+func TestCommandRejectsInvalidFlags(t *testing.T) {
+	var stderr bytes.Buffer
+	if status := command([]string{"-not-a-flag"}, &stderr); status != 2 {
+		t.Fatalf("status = %d, want 2", status)
+	}
 }
 
 func artefacts(root string) []string {

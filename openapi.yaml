@@ -42,11 +42,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/QueryBuilder'
+        - $ref: '#/components/parameters/Query'
       responses:
         '200':
           $ref: '#/components/responses/Policies'
@@ -115,11 +111,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/QueryBuilder'
+        - $ref: '#/components/parameters/Query'
       responses:
         '200':
           $ref: '#/components/responses/Reconciliations'
@@ -165,10 +157,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilder' }
+        - $ref: '#/components/parameters/Query'
       responses:
         '200': { $ref: '#/components/responses/Rules' }
         default: { $ref: '#/components/responses/ErrorResponse' }
@@ -232,10 +221,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilder' }
+        - $ref: '#/components/parameters/Query'
       responses:
         '200': { $ref: '#/components/responses/Evaluations' }
         default: { $ref: '#/components/responses/ErrorResponse' }
@@ -262,10 +248,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilder' }
+        - $ref: '#/components/parameters/Query'
       responses:
         '200': { $ref: '#/components/responses/Alerts' }
         default: { $ref: '#/components/responses/ErrorResponse' }
@@ -424,6 +407,12 @@ components:
       schema:
         type: string
         example: aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ==
+    Query:
+      name: query
+      in: query
+      description: JSON-encoded QueryBuilder filter. Omit it on cursor continuation requests.
+      schema:
+        type: string
     PolicyID:
       name: policyID
       in: path

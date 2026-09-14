@@ -17,6 +17,7 @@ func (r *Report) Markdown() string {
 	b.WriteString("# Reconciliation operation inventory (generated)\n\n")
 	fmt.Fprintf(&b, "Source document: `%s` (repository root)\n\n", r.SpecDocument)
 	fmt.Fprintf(&b, "Reconciliation revision: `%s`\n\n", r.ProductRevision)
+	fmt.Fprintf(&b, "Generated-client OpenAPI SHA-256: `%s`\n\n", r.ClientSpecSHA256)
 	fmt.Fprintf(&b, "Legacy fctl baseline revision: `%s`\n\n", r.BaselineRevision)
 	fmt.Fprintf(&b, "fctl-v2 programme revision: `%s`\n\n", r.FctlV2Revision)
 	fmt.Fprintf(&b, "Document `info.version`: `%s`\n\n", r.Document.Version)

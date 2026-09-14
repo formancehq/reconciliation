@@ -13,8 +13,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -22,15 +24,27 @@ import (
 )
 
 func main() {
-	spec := flag.String("spec", filepath.Join("..", "..", "openapi.yaml"), "path to the Reconciliation OpenAPI document")
-	out := flag.String("out", ".", "plugin module root to write artefacts under")
-	check := flag.Bool("check", false, "verify the committed artefacts are up to date instead of writing them")
-	flag.Parse()
+	os.Exit(command(os.Args[1:], os.Stderr))
+}
+
+func command(args []string, stderr io.Writer) int {
+	flags := flag.NewFlagSet("specaudit", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	spec := flags.String("spec", filepath.Join("..", "..", "openapi.yaml"), "path to the Reconciliation OpenAPI document")
+	out := flags.String("out", ".", "plugin module root to write artefacts under")
+	check := flags.Bool("check", false, "verify the committed artefacts are up to date instead of writing them")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
 
 	if err := run(*spec, *out, *check); err != nil {
-		fmt.Fprintln(os.Stderr, "specaudit:", err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, "specaudit:", err)
+		return 1
 	}
+	return 0
 }
 
 func run(spec, out string, check bool) error {

@@ -1,14 +1,16 @@
 # fctl Reconciliation plugin — operation inventory and blocking record
 
-This is the hand-written source of truth for the fctl Reconciliation plugin
-preparation (fctl-v2 programme Tasks 10A and 10B). It states the method, the
-reasoning, the evidence, and the separation between proven facts and blockers.
+This is the hand-written source of truth for the Reconciliation operation
+inventory. It states the method, the evidence, and the separation between
+proven product facts and the blockers recorded when the inventory was pinned.
 The counted tables live in [`operations.generated.md`](operations.generated.md),
 which is regenerated from `openapi.yaml` and committed alongside this file.
 
-**Nothing in this directory is a plugin.** There is no runtime, no component
-entry point, no HTTP client, no generated SDK, no catalogue, and no ABI. See
-[What is not claimed](#what-is-not-claimed).
+The product plugin now lives beside this inventory. Its catalogue admits all 23
+public product operations; the host-owned `GET /_info` probe is deliberately
+excluded. The implementation uses the public fctl SDK and `producthttp`, and
+ships a reconstructible WIT lifecycle component. The pinned audit below remains
+the provenance for the operation set and historical CLI mapping.
 
 ## Pinned revisions
 
@@ -16,9 +18,10 @@ Every fact below was read at these exact revisions.
 
 | Source | Revision | Role |
 |---|---|---|
-| `formancehq/reconciliation` | `0221edf2f8727def40368a5e4e2d0d0fafd7d4e7` (`origin/main`, 2026-09-06) | The product: `openapi.yaml`, `internal/api/`, `flake.nix`, `Justfile` |
+| `formancehq/reconciliation` | `0221edf2f8727def40368a5e4e2d0d0fafd7d4e7` (`origin/main`, 2026-09-06) | Base product and server audit revision |
+| generated-client `openapi.yaml` | SHA-256 `92cb000bae9dd087fbad17a5afe2d444d192707442e1d84a5a9b09944b2436c5` | Base contract plus the declared browser-portable `query` parameter amendment |
 | `formancehq/fctl` | `693c58e27865f83332e6c3199d61fed81b742f41` | Legacy CLI baseline: `cmd/reconciliation/` |
-| `fctl-v2` | `8de8c4539ea6664351762dd8dd0e865292e3f216` | Programme plan, Task 10A/10B text, pinned command inventory |
+| `fctl-v2` | `545521bfa222250af6b4419b194c7967cded0379` | Final public SDK and programme boundary used by the plugin |
 
 The Reconciliation checkout used was a non-iCloud clone; the iCloud-backed
 working copy hangs on `git status`, so it was neither read from nor modified.
@@ -60,12 +63,12 @@ code, never transcribed by hand.
 | Operations recorded but outside the first tranche | 17 |
 | Operations reached by the legacy baseline | 7 |
 | Operations with no legacy precedent | 17 |
-| Operations carrying a blocker | 5 |
-| First-tranche operations carrying a blocker | 2 |
-| Operations with no recorded blocker | 19 |
-| First-tranche operations with no recorded blocker | 5 |
-| Recorded SDK-generation blockers | 3 |
-| Recorded spec-versus-server divergences | 7 |
+| Operations carrying a blocker | 0 |
+| First-tranche operations carrying a blocker | 0 |
+| Operations with no recorded blocker | 24 |
+| First-tranche operations with no recorded blocker | 7 |
+| Recorded SDK-generation blockers | 0 |
+| Recorded spec-versus-server divergences | 6 |
 
 ## Families and the first tranche
 
@@ -150,38 +153,19 @@ Derived per operation and rendered in the generated tables.
   event envelope for downstream consumer dedup; it gives an fctl caller no
   replay protection.
 - **Pagination: 6 operations** expose `cursor` + `pageSize`. Five of them also
-  take a `QueryBuilder` filter body; `listAlertEvents` is the exception and
-  takes page size only.
+  take a JSON-encoded `QueryBuilder` in the declared `query` parameter;
+  `listAlertEvents` is the exception and takes page size only.
 - **Streaming: none.** Every operation declares exactly one `2xx` JSON response;
   no operation declares a streaming or chunked media type.
 
 ## Blockers
 
-A blocker is a recorded reason an operation cannot yet be admitted into a plugin
-catalogue. It is deliberately kept separate from the facts above.
-
-### B1 — GET with a request body (5 operations)
-
-`listPolicies`, `listReconciliations`, `listRules`, `listEvaluations`,
-`listAlerts` carry their filter in a JSON request body (the free-form
-`QueryBuilder` object) on a `GET`.
-
-A host transport that drops or forbids GET request bodies silently degrades
-these into **unfiltered listings** — a wrong answer rather than an error. The
-browser `fetch` API forbids a body on `GET` outright, so this is load-bearing
-for the programme's dual-host requirement rather than theoretical. The request
-boundary has to be proven to preserve GET bodies, or the undeclared query-string
-form (divergence D3) has to be added to the contract, before these are admitted.
-
-Two of the five are in the first tranche (`listPolicies`,
-`listReconciliations`), which is why the first tranche has 5 unblocked
-operations out of 7.
-
-Evidence: each operation declares
-`requestBody.content.application/json.schema: QueryBuilder` alongside method
-`GET`. The server reads it in `internal/api/utils.go` `getQueryBuilder`, which
-calls `io.ReadAll` on `r.Body` (bounded to 1 MiB by `maxQueryBuilderBodySize`)
-before falling back to the undeclared `query` query-string parameter.
+There are no remaining per-operation admission blockers. The former B1 browser
+transport blocker was resolved by declaring the server's existing `query`
+query-string input in OpenAPI and regenerating the client. The five filtered
+list commands now send no GET body. Their JSON is forwarded as an opaque string,
+which preserves integers beyond JavaScript's safe range without decoding and
+re-encoding them.
 
 ## Spec-versus-server divergences
 
@@ -193,87 +177,68 @@ when the claim stops being true.
 |---|---|
 | **D1** | The document requires `reconciliation:read` on `GET /_info`, but the server registers it above the authenticated group, so it answers unauthenticated. fctl needs the unauthenticated read to learn the major; the server behaviour is the one to rely on and the document is the one to fix. |
 | **D2** | Every operation references a security scheme named `Authorization` that the document never defines, and there is no root-level `security` either. The scope arrays are readable facts; the mechanism they attach to is described nowhere. |
-| **D3** | On the five list endpoints the server also accepts the filter as an undeclared `query` query-string parameter. The document declares only the body form — so the one transport-portable path is invisible to any client generated from this contract. |
 | **D4** | The server exposes `GET /_healthcheck`, which the document does not declare. Absence from the document is therefore not evidence that a route does not exist. |
 | **D5** | `info.version` is the literal unsubstituted placeholder `RECONCILIATION_VERSION`, and the release workflow uploads the file verbatim. The supported-major mapping must come from the live `/_info` response, not from the document. |
 | **D6** | The scope strings appear nowhere in the service's Go sources; `auth.Middleware(authenticator)` authenticates only. An exact-scope catalogue is provable from the document but cannot be validated against this service's behaviour. |
 | **D7** | No operation carries an `x-speakeasy-name-override`. Recorded as a fact, not a defect: an adapter may derive the SDK method from the operationId uniformly, with no per-operation exception of the kind the Payments surface has. |
 
-D2 and D3 are the two that a contract fix should address first: together they
-mean the document neither describes how to authenticate nor describes the only
-filter form a browser host can send.
+D2 remains the contract defect to address next: authentication is referenced
+but its mechanism is not defined.
 
-## Why no Go SDK was generated
+## Generated Go client
 
-Task 10A instructs generating `github.com/formancehq/reconciliation/pkg/client`.
-It was **not** generated in this tranche, for three recorded reasons. This is a
-recorded decision, not an omission; `TestGenerationBlockersAreRecorded` fails if
-the record is removed.
+`pkg/client` is generated from this repository's `openapi.yaml` by Speakeasy
+1.761.1, pinned in `flake.nix`. `just generate-client` is the sole regeneration
+entrypoint and `audit.ClientSpecSHA256` makes an OpenAPI change fail the audit
+until the generated client and receipt move together.
 
-### G1 — MVP4 gates are open
+The repository-owned generation postprocessor changes the generated generic
+JSON decoder to use `json.Decoder.UseNumber`. This preserves free-form numeric
+tokens in request `ledgerQuery` and `templateSpec` objects and response
+`evidence` and `payload` objects, including integers above 2^53. The isolated
+generation check covers the postprocessed result byte-for-byte.
 
-The programme sequences Task 10A after MVP4, and MVP4 is not accepted: the Task
-4B portable runtime cutover, the Task 4C example replay, and the Task 4D
-deletion of the native gRPC and browser Go-WASM paths are all still open, and
-every Task 10A acceptance box is unchecked. Generating and committing an SDK now
-would pin a client shape against an unfrozen adapter and capability boundary.
+The undefined `Authorization` security scheme remains divergence D2. Speakeasy
+can infer a header-shaped security input, but the plugin never configures it:
+the adapter constructs the generated client only with the host-bound
+`producthttp` client. It likewise supplies no generated retry configuration.
+Credentials, endpoint resolution, retry policy and transport therefore remain
+host-owned; the generated code owns DTOs, scalars and HTTP serialization.
 
-### G2 — Speakeasy is absent from the declared toolchain
+## Current implementation boundary
 
-Task 10A requires `just generate-client` to regenerate the SDK inside the
-declared Nix environment **without a globally installed Speakeasy binary**. This
-repository's `flake.nix` provides `ginkgo`, `go_1_26`, `gotools`, `just`,
-`golangci-lint` and `goreleaser-pro` — no Speakeasy. The `Justfile` declares no
-client recipe. The only Speakeasy invocation in the repository is a CI job
-authenticated by the `SPEAKEASY_API_KEY` repository secret. The generation
-therefore cannot be reproduced locally or offline without introducing a
-credential this preparation must not use.
-
-### G3 — The contract cannot express its own authentication
-
-All 24 operations declare `security: [{Authorization: [...]}]` against a scheme
-the document never defines (D2). A generator has no mechanism, type or header
-binding to emit for `Authorization`, so the contract should be repaired before a
-faithful SDK is produced. This does **not** block the plugin catalogue — Task
-10A requires generated auth to stay disabled and the fctl host owns credentials
-— it blocks the generation step producing something faithful.
-
-**What Task 10A work this tranche does complete:** its first checkbox, the
-source audit. The authoritative OpenAPI path is proven to be the public product
-contract (repository root `openapi.yaml`, uploaded verbatim as a release asset,
-written by no generator), the `origin/main` commit is pinned, and the
-generation-blocking properties of that contract are recorded with tests.
-
-## What is not claimed
-
-- **No operation is accepted into a plugin catalogue.** The inventory records
-  proven facts and separately records blockers. "19 operations with no recorded
-  blocker" is not an admission claim; the runtime gates are separate and open.
+- **All 23 public product operations are accepted into the plugin catalogue.**
+  `getServerInfo` remains host-owned and is not a product command.
 - **No authorisation mechanism is invented.** The scope *strings* are quoted
   from the document. The *scheme* is undefined there (D2) and is recorded as
   such rather than guessed.
 - **No product version or supported major is asserted.** The document carries a
   placeholder (D5); the major must come from a live `/_info` response.
-- **No transport, component build, OCI installation, or dual-host behaviour** is
-  claimed, prepared, or gated here.
-- **No generated SDK, no `pkg/client`, no Proto bindings.** See G1–G3.
-- **No fctl-v2 code is imported**, and nothing here depends on fctl-v2 at all.
-  The module's only dependency is `gopkg.in/yaml.v3`.
+- **The source includes a `producthttp` transport adapter and portable component
+  build.** Install, OCI publication, live-service and dual-host acceptance are
+  separate release receipts and are not claimed by this inventory.
+- **No Proto bindings.** The adapter uses the generated Go client and
+  `producthttp`; execution transport remains the portable host ABI. The adapter
+  delegates bounded HTTP serialization to the client generated from the pinned
+  OpenAPI contract.
+- **The current plugin imports only public fctl-v2 SDK contracts.** The pinned
+  inventory and its audit package remain independent of runtime internals.
+  `fctl-sdk.lock.json` records exact module, repository, commit, SDK NAR hash
+  and canonical WIT hash provenance. The wrapper requires `FCTL_SDK_ROOT`,
+  validates that content and any available Git metadata, then uses an ephemeral
+  `go.work` replacement; no workstation-specific path is committed. Tidy runs
+  through an isolated alternate modfile, removes its temporary SDK replacement
+  before comparison or copy-back, and preserves the tracked relative
+  Reconciliation client replacement.
 
-## Gates remaining before a portable component
+## Remaining release evidence
 
-In programme order:
+The source now contains the catalogue, adapter, component entrypoint and local
+artifact recipe. Release still needs a deterministic component build receipt,
+installation and same-byte execution in the native and browser hosts, and one
+real read plus one real mutation against a live service with the `/_info`
+preflight proven.
 
-1. **Task 4B** — portable WASM runtime cutover, both guests across both hosts.
-2. **Task 4C** — accepted commands and examples replayed against 4B.
-3. **Task 4D** — native gRPC and browser Go-WASM paths deleted; MVP4 accepted.
-4. **Task 10A** — public Go SDK generated and committed, which additionally
-   needs G2 (Speakeasy in the declared toolchain) and should have G3 (a defined
-   security scheme) resolved first.
-5. **Task 10B** — catalogue, adapter, component entry point, local artefact
-   recipe, and one real read plus one real mutation integration scenario against
-   a live service, with the `/_info` preflight proven.
-
-B1 must also be resolved — by proving the request boundary preserves GET bodies,
-or by adding the query-string filter form to the contract — before the two
-blocked first-tranche list operations can be admitted.
+The adapter resolves the historical B1 transport risk with the declared
+JSON-encoded `query` parameter and never emits a GET body. Opaque continuation
+requests then send the cursor alone, without replaying the filter or page size.

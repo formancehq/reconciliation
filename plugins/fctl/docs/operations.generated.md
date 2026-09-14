@@ -6,9 +6,11 @@ Source document: `openapi.yaml` (repository root)
 
 Reconciliation revision: `0221edf2f8727def40368a5e4e2d0d0fafd7d4e7`
 
+Generated-client OpenAPI SHA-256: `92cb000bae9dd087fbad17a5afe2d444d192707442e1d84a5a9b09944b2436c5`
+
 Legacy fctl baseline revision: `693c58e27865f83332e6c3199d61fed81b742f41`
 
-fctl-v2 programme revision: `8de8c4539ea6664351762dd8dd0e865292e3f216`
+fctl-v2 programme revision: `545521bfa222250af6b4419b194c7967cded0379`
 
 Document `info.version`: `RECONCILIATION_VERSION`
 
@@ -29,12 +31,12 @@ Document `info.version`: `RECONCILIATION_VERSION`
 | Operations recorded but outside the first tranche | 17 |
 | Operations reached by the legacy baseline | 7 |
 | Operations with no legacy precedent | 17 |
-| Operations carrying a blocker | 5 |
-| First-tranche operations carrying a blocker | 2 |
-| Operations with no recorded blocker | 19 |
-| First-tranche operations with no recorded blocker | 5 |
-| Recorded SDK-generation blockers | 3 |
-| Recorded spec-versus-server divergences | 7 |
+| Operations carrying a blocker | 0 |
+| First-tranche operations carrying a blocker | 0 |
+| Operations with no recorded blocker | 24 |
+| First-tranche operations with no recorded blocker | 7 |
+| Recorded SDK-generation blockers | 0 |
+| Recorded spec-versus-server divergences | 6 |
 
 ## Operations by family
 
@@ -46,7 +48,7 @@ Document `info.version`: `RECONCILIATION_VERSION`
 | `ackAlert` | POST | `/alerts/{alertID}/ack` | `reconciliation:write` | `AckAlertRequest` | 200 `AlertResponse` | state-transition, not-replay-safe | — (no legacy precedent) | — |
 | `getAlert` | GET | `/alerts/{alertID}` | `reconciliation:read` | — | 200 `AlertResponse` | — | — (no legacy precedent) | — |
 | `listAlertEvents` | GET | `/alerts/{alertID}/events` | `reconciliation:read` | — | 200 `AlertEventsCursorResponse` | paginated | — (no legacy precedent) | — |
-| `listAlerts` | GET | `/alerts` | `reconciliation:read` | `QueryBuilder` | 200 `AlertsCursorResponse` | get-with-body, paginated | — (no legacy precedent) | B1-get-with-body |
+| `listAlerts` | GET | `/alerts` | `reconciliation:read` | — | 200 `AlertsCursorResponse` | paginated | — (no legacy precedent) | — |
 | `resolveAlert` | POST | `/alerts/{alertID}/resolve` | `reconciliation:write` | `ResolveAlertRequest` | 200 `AlertResponse` | state-transition, not-replay-safe | — (no legacy precedent) | — |
 | `snoozeAlert` | POST | `/alerts/{alertID}/snooze` | `reconciliation:write` | `SnoozeAlertRequest` | 200 `AlertResponse` | state-transition, not-replay-safe | — (no legacy precedent) | — |
 | `unsnoozeAlert` | POST | `/alerts/{alertID}/unsnooze` | `reconciliation:write` | `UnsnoozeAlertRequest` | 200 `AlertResponse` | state-transition, not-replay-safe | — (no legacy precedent) | — |
@@ -56,7 +58,7 @@ Document `info.version`: `RECONCILIATION_VERSION`
 | operationId | Method | Path | Scopes | Request | Success | Risk | Legacy command(s) | Blockers |
 |---|---|---|---|---|---|---|---|---|
 | `getEvaluation` | GET | `/evaluations/{evaluationID}` | `reconciliation:read` | — | 200 `EvaluationResponse` | — | — (no legacy precedent) | — |
-| `listEvaluations` | GET | `/evaluations` | `reconciliation:read` | `QueryBuilder` | 200 `EvaluationsCursorResponse` | get-with-body, paginated | — (no legacy precedent) | B1-get-with-body |
+| `listEvaluations` | GET | `/evaluations` | `reconciliation:read` | — | 200 `EvaluationsCursorResponse` | paginated | — (no legacy precedent) | — |
 
 ### policies (4) — first tranche
 
@@ -65,14 +67,14 @@ Document `info.version`: `RECONCILIATION_VERSION`
 | `createPolicy` | POST | `/policies` | `reconciliation:write` | `PolicyRequest` | 201 `PolicyResponse` | not-replay-safe | `reconciliation policies create <file>\|-` | — |
 | `deletePolicy` | DELETE | `/policies/{policyID}` | `reconciliation:write` | — | 204 (no body) | destructive | `reconciliation policies delete <policyID>` | — |
 | `getPolicy` | GET | `/policies/{policyID}` | `reconciliation:read` | — | 200 `PolicyResponse` | — | `reconciliation policies get <policyID>` | — |
-| `listPolicies` | GET | `/policies` | `reconciliation:read` | `QueryBuilder` | 200 `PoliciesCursorResponse` | get-with-body, paginated | `reconciliation policies list` | B1-get-with-body |
+| `listPolicies` | GET | `/policies` | `reconciliation:read` | — | 200 `PoliciesCursorResponse` | paginated | `reconciliation policies list` | — |
 
 ### reconciliations (3) — first tranche
 
 | operationId | Method | Path | Scopes | Request | Success | Risk | Legacy command(s) | Blockers |
 |---|---|---|---|---|---|---|---|---|
 | `getReconciliation` | GET | `/reconciliations/{reconciliationID}` | `reconciliation:read` | — | 200 `ReconciliationResponse` | — | `reconciliation get <reconciliationID>` | — |
-| `listReconciliations` | GET | `/reconciliations` | `reconciliation:read` | `QueryBuilder` | 200 `ReconciliationsCursorResponse` | get-with-body, paginated | `reconciliation list` | B1-get-with-body |
+| `listReconciliations` | GET | `/reconciliations` | `reconciliation:read` | — | 200 `ReconciliationsCursorResponse` | paginated | `reconciliation list` | — |
 | `reconcile` | POST | `/policies/{policyID}/reconciliation` | `reconciliation:write` | `ReconciliationRequest` | 200 `ReconciliationResponse` | not-replay-safe | `reconciliation policies reconcile <policyID> <atLedger> <atPayments>` | — |
 
 ### rules (6) — recorded, outside the first tranche
@@ -83,7 +85,7 @@ Document `info.version`: `RECONCILIATION_VERSION`
 | `deleteRule` | DELETE | `/rules/{ruleID}` | `reconciliation:write` | — | 204 (no body) | destructive | — (no legacy precedent) | — |
 | `evaluateRule` | POST | `/rules/{ruleID}/evaluate` | `reconciliation:write` | `EvaluateRuleRequest` | 200 `EvaluationResponse` | not-replay-safe | — (no legacy precedent) | — |
 | `getRule` | GET | `/rules/{ruleID}` | `reconciliation:read` | — | 200 `RuleResponse` | — | — (no legacy precedent) | — |
-| `listRules` | GET | `/rules` | `reconciliation:read` | `QueryBuilder` | 200 `RulesCursorResponse` | get-with-body, paginated | — (no legacy precedent) | B1-get-with-body |
+| `listRules` | GET | `/rules` | `reconciliation:read` | — | 200 `RulesCursorResponse` | paginated | — (no legacy precedent) | — |
 | `patchRule` | PATCH | `/rules/{ruleID}` | `reconciliation:write` | `RulePatchRequest` | 200 `RuleResponse` | — | — (no legacy precedent) | — |
 
 ### server-probe (1) — recorded, outside the first tranche

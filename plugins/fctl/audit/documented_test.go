@@ -1,6 +1,8 @@
 package audit_test
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -167,56 +169,30 @@ func TestHealthcheckIsUndocumented(t *testing.T) {
 	}
 }
 
-// TestGetWithBodyOperationsAreExactlyBlocked asserts blocker B1: the set of
-// GET operations carrying a request body is exactly the set B1 lists.
-func TestGetWithBodyOperationsAreExactlyBlocked(t *testing.T) {
+func TestListFiltersUseTheDeclaredBrowserPortableQueryParameter(t *testing.T) {
 	report := build(t)
-
-	var withBody []string
+	want := map[string]bool{"listAlerts": true, "listEvaluations": true, "listPolicies": true, "listReconciliations": true, "listRules": true}
+	seen := map[string]bool{}
 	for _, rec := range report.Operations {
 		if rec.Risk.GetWithBody {
-			withBody = append(withBody, rec.OperationID)
-			if rec.RequestBody != "QueryBuilder" {
-				t.Errorf("operation %s carries a GET body of %q, want QueryBuilder", rec.OperationID, rec.RequestBody)
-			}
-			if len(rec.Blockers) == 0 {
-				t.Errorf("operation %s is a GET with a body but carries no blocker", rec.OperationID)
-			}
+			t.Errorf("operation %s still carries a browser-incompatible GET body", rec.OperationID)
 		}
-	}
-	sort.Strings(withBody)
-
-	want := []string{"listAlerts", "listEvaluations", "listPolicies", "listReconciliations", "listRules"}
-	if len(withBody) != len(want) {
-		t.Fatalf("GET-with-body operations = %v, want %v", withBody, want)
-	}
-	for i := range want {
-		if withBody[i] != want[i] {
-			t.Errorf("GET-with-body[%d] = %q, want %q", i, withBody[i], want[i])
-		}
-	}
-
-	blocked := audit.BlockedOperationIDs()
-	if len(blocked) != len(want) {
-		t.Fatalf("blocked operations = %v, want %v", blocked, want)
-	}
-}
-
-// TestNoQueryStringFilterParameterIsDeclared asserts divergence D3: the server
-// accepts an undeclared `query` query-string parameter as the filter fallback.
-func TestNoQueryStringFilterParameterIsDeclared(t *testing.T) {
-	utils := readRepoFile(t, "internal/api/utils.go")
-	if !strings.Contains(utils, `query.ParseJSON(r.URL.Query().Get("query"))`) {
-		t.Error("internal/api/utils.go no longer reads the `query` query-string parameter; D3 evidence is stale")
-	}
-
-	report := build(t)
-	for _, rec := range report.Operations {
-		for _, p := range rec.Parameters {
-			if p.Name == "query" {
-				t.Errorf("operation %s now declares a `query` parameter; D3 no longer holds", rec.OperationID)
+		for _, parameter := range rec.Parameters {
+			if parameter.Name == "query" {
+				seen[rec.OperationID] = true
 			}
 		}
+	}
+	if len(seen) != len(want) {
+		t.Fatalf("operations declaring query = %v, want %v", seen, want)
+	}
+	for operationID := range want {
+		if !seen[operationID] {
+			t.Errorf("operation %s does not declare query", operationID)
+		}
+	}
+	if blocked := audit.BlockedOperationIDs(); len(blocked) != 0 {
+		t.Fatalf("resolved browser transport blockers remain: %v", blocked)
 	}
 }
 
@@ -406,57 +382,40 @@ func TestPaginatedOperationsExposeBothCursorParameters(t *testing.T) {
 		}
 	}
 
-	// listAlertEvents is the one paginated read that takes no QueryBuilder
-	// body, which is why it is paginated but not blocked by B1.
+	// listAlertEvents is the one paginated read that takes no filter.
 	for _, rec := range report.Operations {
 		if rec.OperationID == "listAlertEvents" {
 			if rec.HasRequestBody() {
-				t.Error("listAlertEvents now declares a request body; the B1 exception is stale")
+				t.Error("listAlertEvents unexpectedly declares a request body")
 			}
 			if len(rec.Blockers) != 0 {
-				t.Errorf("listAlertEvents carries blockers %v; it was documented as unblocked", rec.Blockers)
+				t.Errorf("listAlertEvents carries blockers %v", rec.Blockers)
 			}
 		}
 	}
 }
 
-// TestGenerationBlockersAreRecorded asserts that the reasons the Task 10A SDK
-// was not generated are present and evidenced, so "no client" stays a recorded
-// decision rather than an omission.
-func TestGenerationBlockersAreRecorded(t *testing.T) {
-	if len(audit.GenerationBlockers) == 0 {
-		t.Fatal("no generation blockers recorded; the absent SDK would be unexplained")
+func TestGeneratedClientToolchainAndSourceReceipt(t *testing.T) {
+	if len(audit.GenerationBlockers) != 0 {
+		t.Fatalf("generation blockers remain after generated-client integration: %#v", audit.GenerationBlockers)
 	}
-
-	seen := map[string]struct{}{}
-	for _, g := range audit.GenerationBlockers {
-		if g.ID == "" || g.Summary == "" || g.Evidence == "" {
-			t.Errorf("generation blocker %q is incomplete", g.ID)
-		}
-		if _, dup := seen[g.ID]; dup {
-			t.Errorf("duplicate generation blocker ID %q", g.ID)
-		}
-		seen[g.ID] = struct{}{}
-	}
-
-	for _, id := range []string{"G1-mvp4-gates-open", "G2-speakeasy-absent-from-toolchain", "G3-undefined-security-scheme"} {
-		if _, ok := seen[id]; !ok {
-			t.Errorf("generation blocker %s is missing", id)
-		}
-	}
-}
-
-// TestSpeakeasyIsAbsentFromTheToolchain asserts generation blocker G2 against
-// the repository's own declared environment.
-func TestSpeakeasyIsAbsentFromTheToolchain(t *testing.T) {
 	flake := readRepoFile(t, "flake.nix")
-	if strings.Contains(strings.ToLower(flake), "speakeasy") {
-		t.Error("flake.nix now provides Speakeasy; G2 no longer holds")
+	if !strings.Contains(strings.ToLower(flake), "speakeasy") {
+		t.Error("flake.nix does not pin Speakeasy")
 	}
-
 	justfile := readRepoFile(t, "Justfile")
-	if strings.Contains(strings.ToLower(justfile), "speakeasy") {
-		t.Error("the Justfile now declares a Speakeasy recipe; G2 no longer holds")
+	if !strings.Contains(justfile, "generate-client:") || !strings.Contains(strings.ToLower(justfile), "speakeasy generate sdk") {
+		t.Error("Justfile does not expose the pinned generated-client recipe")
+	}
+	raw, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(raw)); got != audit.ClientSpecSHA256 {
+		t.Fatalf("OpenAPI SHA-256 = %s, want generated-client receipt %s; regenerate pkg/client", got, audit.ClientSpecSHA256)
+	}
+	if _, err := os.Stat("../../../pkg/client/.speakeasy/gen.lock"); err != nil {
+		t.Fatalf("generated client lock is absent: %v", err)
 	}
 }
 
@@ -477,7 +436,6 @@ func TestDivergencesAreRecorded(t *testing.T) {
 	for _, id := range []string{
 		"D1-info-probe-auth",
 		"D2-undefined-security-scheme",
-		"D3-undeclared-query-parameter",
 		"D4-healthcheck-undocumented",
 		"D5-version-placeholder",
 		"D6-scopes-not-enforced-in-service",

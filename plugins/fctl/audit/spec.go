@@ -57,19 +57,19 @@ type Parameter struct {
 // Scopes is nil when the operation declares no security block at all, which is
 // a different, weaker fact than an empty declared scope array.
 type Operation struct {
-	OperationID string      `json:"operationId"`
-	Method      string      `json:"method"`
-	Path        string      `json:"path"`
-	Tag         string      `json:"tag"`
-	SDKMethod   string      `json:"sdkMethod"`
-	Deprecated  bool        `json:"deprecated"`
-	HasSecurity bool        `json:"hasSecurity"`
-	SecuritySchemes []string `json:"securitySchemes"`
-	Scopes      []string    `json:"scopes"`
-	Parameters  []Parameter `json:"parameters"`
-	RequestBody string      `json:"requestBody"`
-	SuccessCode string      `json:"successCode"`
-	SuccessBody string      `json:"successBody"`
+	OperationID     string      `json:"operationId"`
+	Method          string      `json:"method"`
+	Path            string      `json:"path"`
+	Tag             string      `json:"tag"`
+	SDKMethod       string      `json:"sdkMethod"`
+	Deprecated      bool        `json:"deprecated"`
+	HasSecurity     bool        `json:"hasSecurity"`
+	SecuritySchemes []string    `json:"securitySchemes"`
+	Scopes          []string    `json:"scopes"`
+	Parameters      []Parameter `json:"parameters"`
+	RequestBody     string      `json:"requestBody"`
+	SuccessCode     string      `json:"successCode"`
+	SuccessBody     string      `json:"successBody"`
 }
 
 // Paginated reports whether the operation exposes the Reconciliation cursor
