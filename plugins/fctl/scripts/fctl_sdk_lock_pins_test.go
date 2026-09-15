@@ -171,7 +171,7 @@ func readLock(t *testing.T) sdkLock {
 	if err != nil {
 		t.Fatalf("open lock: %v", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	lock, err := decodeLock(file)
 	if err != nil {
 		t.Fatalf("decode lock: %v", err)

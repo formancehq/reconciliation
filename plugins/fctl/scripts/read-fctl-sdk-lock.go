@@ -28,7 +28,7 @@ func main() {
 	if err != nil {
 		fatalf("open fctl SDK lock: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	lock, err := decodeLock(f)
 	if err != nil {

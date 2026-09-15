@@ -41,7 +41,7 @@ func command(args []string, stderr io.Writer) int {
 	}
 
 	if err := run(*spec, *out, *check); err != nil {
-		fmt.Fprintln(stderr, "specaudit:", err)
+		_, _ = fmt.Fprintln(stderr, "specaudit:", err)
 		return 1
 	}
 	return 0

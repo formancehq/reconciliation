@@ -215,8 +215,7 @@ func removeGeneratedFunctions(contents []byte, names ...string) ([]byte, error) 
 		return nil, fmt.Errorf("generated authentication option set drifted")
 	}
 	for _, name := range names {
-		var found *ast.FuncDecl
-		found = foundByName[name]
+		found := foundByName[name]
 		start := fileset.Position(found.Pos()).Offset
 		if found.Doc != nil {
 			start = fileset.Position(found.Doc.Pos()).Offset
