@@ -55,8 +55,11 @@ fctl-sdk-check:
 fctl-component-test:
     cd plugins/fctl && just test
 
+# Produce the deterministic portable component. Keep the Rust authoring
+# toolchain out of the default shell: it is a heavier release gate and should
+# not make every Go CI job fetch crates.
 fctl-component-build:
-    cd plugins/fctl && just build-component
+    nix shell .#componentize-go .#wasi-virt .#wasm-tools .#wasm-opt --command bash -c 'cd plugins/fctl && just build-component'
 
 # Build the binary locally
 build:

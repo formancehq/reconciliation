@@ -71,17 +71,22 @@
         );
     in
     {
-      devShells = forEachSupportedSystem ({ pkgs, pkgs-unstable, componentTools, speakeasy, system }:
+      # The component authoring toolchain is a set of Rust builds. Keep it out
+      # of the default development shell: making every Go CI job compile it
+      # turns a crates.io rate limit into an unrelated red build. It is exposed
+      # here so the heavier component gate can enter it explicitly.
+      packages = forEachSupportedSystem ({ componentTools, ... }: {
+        inherit (componentTools) componentize-go wasi-virt wasm-tools;
+        wasm-opt = componentTools.binaryen;
+      });
+
+      devShells = forEachSupportedSystem ({ pkgs, pkgs-unstable, speakeasy, system, ... }:
         let
           stablePackages = with pkgs; [
             ginkgo
             go_1_26
             gotools
             just
-            componentTools.binaryen
-            componentTools.componentize-go
-            componentTools.wasi-virt
-            componentTools.wasm-tools
           ];
           unstablePackages = with pkgs-unstable; [
             golangci-lint
@@ -98,13 +103,15 @@
         }
       );
 
-      checks = forEachSupportedSystem ({ pkgs, componentTools, ... }: {
+      # Opt-in gate: it builds the isolated toolchain, so it must stay off the
+      # default `nix develop` path that every Go CI job takes.
+      checks = forEachSupportedSystem ({ pkgs, system, ... }: {
         component-toolchain-versions = pkgs.runCommand "reconciliation-component-toolchain-versions" {
-          nativeBuildInputs = [
-            componentTools.componentize-go
-            componentTools.wasi-virt
-            componentTools.wasm-tools
-            componentTools.binaryen
+          nativeBuildInputs = with self.packages.${system}; [
+            componentize-go
+            wasi-virt
+            wasm-tools
+            wasm-opt
           ];
         } ''
           test "$(componentize-go --version)" = "componentize-go 0.4.1"

@@ -153,10 +153,12 @@ configuration; a workflow copied from another product would not be valid
 provenance. Until then, the pinned local recipe above is the supported
 regeneration path.
 
-The repository Nix shell pins the component authoring toolchain to the same
-versions and source hashes as fctl-v2 `e9b1395`: `componentize-go 0.4.1`,
-`wasi-virt 0.2.0`, `wasm-tools 1.239.0` and Binaryen/`wasm-opt 124`. The build
-fails before compilation if any executable reports a different version:
+The flake pins the component authoring toolchain to the same versions and
+source hashes as fctl-v2 `e9b1395`: `componentize-go 0.4.1`, `wasi-virt 0.2.0`,
+`wasm-tools 1.239.0` and Binaryen/`wasm-opt 124`. It is pinned separately from
+the default development shell, so the ordinary Go gates never build it;
+`just fctl-component-build` enters that explicit tool environment itself. The
+build fails before compilation if any executable reports a different version:
 
 ```sh
 nix develop --no-write-lock-file .# --command \
