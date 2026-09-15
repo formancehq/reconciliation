@@ -225,8 +225,9 @@ host-owned; the generated code owns DTOs, scalars and HTTP serialization.
   OpenAPI contract.
 - **The current plugin imports only public fctl-v2 SDK contracts.** The pinned
   inventory and its audit package remain independent of runtime internals.
-  `fctl-sdk.lock.json` records exact module, repository, commit, SDK NAR hash
-  and canonical WIT hash provenance. The wrapper requires `FCTL_SDK_ROOT`,
+  `fctl-sdk.lock.json` records exact module, repository, commit, SDK NAR hash,
+  committed-snapshot NAR hash and canonical WIT hash provenance. The wrapper
+  falls back to that committed snapshot when `FCTL_SDK_ROOT` is unset,
   validates that content and any available Git metadata, then uses an ephemeral
   `go.work` replacement; no workstation-specific path is committed. Tidy runs
   through an isolated alternate modfile, removes its temporary SDK replacement

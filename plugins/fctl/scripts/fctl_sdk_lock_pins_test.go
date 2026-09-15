@@ -23,11 +23,11 @@ type restatement struct {
 	want func(sdkLock) string
 }
 
-// fctl-sdk.lock.json is the single source of the SDK contract, but nine other
+// fctl-sdk.lock.json is the single source of the SDK contract, but ten other
 // tracked files restate part of it: the audit constant the golden report and
 // the component authoring contract both hang off, the wrapper contract test's
 // fixtures, the plugin module requirement, the Nix provenance comment, and
-// three documents. Repinning used to mean editing all of them by hand with
+// four documents. Repinning used to mean editing all of them by hand with
 // nothing to catch a miss or a leftover.
 var restatements = []restatement{
 	{
@@ -69,6 +69,21 @@ var restatements = []restatement{
 		path:   "test-fctl-sdk-contract.sh",
 		anchor: regexp.MustCompile(`readonly expected_wit_hash='([0-9a-f]{64})'`),
 		want:   func(l sdkLock) string { return l.WITSHA256 },
+	},
+	{
+		path:   "test-fctl-sdk-contract.sh",
+		anchor: regexp.MustCompile(`readonly expected_bundle_nar_hash='(\S+)'`),
+		want:   func(l sdkLock) string { return l.BundleNarHash },
+	},
+	{
+		path:   "test-fctl-sdk-contract.sh",
+		anchor: regexp.MustCompile(`readonly expected_bundle_path='(\S+)'`),
+		want:   func(l sdkLock) string { return l.BundlePath },
+	},
+	{
+		path:   "../sdk/README.md",
+		anchor: regexp.MustCompile("commit\n`([0-9a-f]{40})`"),
+		want:   func(l sdkLock) string { return l.Commit },
 	},
 	{
 		path:   "../go.mod",
@@ -153,6 +168,7 @@ func TestNoSupersededSDKRevisionSurvives(t *testing.T) {
 		"../component/authoring_contract_test.go", "test-fctl-sdk-contract.sh",
 		"../docs/command-inventory.md", "../docs/operations.generated.md",
 		"../../../nix/component-toolchain.nix", "../README.md", "../fctl-sdk.lock.json",
+		"../sdk/README.md",
 	} {
 		for _, found := range fullRevision.FindAllString(read(t, path), -1) {
 			if found == lock.Commit {

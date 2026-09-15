@@ -107,9 +107,17 @@ a separate generated module, with product-owned client contract tests plus the
 byte-identical `generate-client-check` gate. Combining the two profiles would
 hide application regressions behind generated statements.
 
-`FCTL_SDK_ROOT` names an explicit fctl source root. The wrapper validates the
-SDK module's NAR content hash and canonical WIT hash against
-`fctl-sdk.lock.json`. When the source includes Git metadata, it also requires
+The wrapper resolves an fctl source before every gate. Without
+`FCTL_SDK_ROOT` it uses `sdk/fctl-v2-poc`, the minimal SDK snapshot committed
+with this plugin, so a clean checkout needs no fctl clone and no
+cross-repository credential; see `sdk/README.md` for what that snapshot
+contains and why. `FCTL_SDK_ROOT` overrides it with an explicit fctl source
+root. The wrapper validates the source's NAR content hash, against
+`bundleNarHash` for the snapshot and `sdkNarHash` for an override, and its
+canonical WIT hash against `fctl-sdk.lock.json`. `go.mod` and `go.sum` are
+tidied against the committed snapshot, which is the source every gate uses, so
+tidying against a full fctl checkout instead can report the extra module sums
+that the snapshot's unused packages would pull in. When the source includes Git metadata, it also requires
 the locked commit and origin, then projects those exact committed SDK and WIT
 paths before validation. Ignored or modified working-tree files therefore
 cannot affect the command. It then creates an ephemeral Go workspace for the
@@ -123,7 +131,8 @@ path is tracked.
 From the repository root, inside its declared Nix environment:
 
 ```sh
-export FCTL_SDK_ROOT=/path/to/fctl-v2-poc
+# Optional: export FCTL_SDK_ROOT=/path/to/fctl-v2-poc to work against a local
+# fctl checkout instead of the committed snapshot.
 just generate-client
 just generate-client-check
 just fctl-sdk-check

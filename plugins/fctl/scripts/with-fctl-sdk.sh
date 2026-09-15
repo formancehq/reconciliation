@@ -6,16 +6,32 @@ readonly lock_path="$plugin_root/fctl-sdk.lock.json"
 readonly lock_reader="$plugin_root/scripts/read-fctl-sdk-lock.go"
 
 [[ "$#" -gt 0 ]] || { printf 'usage: with-fctl-sdk.sh COMMAND [ARG...]\n' >&2; exit 2; }
-[[ -n "${FCTL_SDK_ROOT:-}" ]] || { printf 'FCTL_SDK_ROOT is required\n' >&2; exit 2; }
-[[ -d "$FCTL_SDK_ROOT" ]] || { printf 'FCTL_SDK_ROOT is not a directory: %s\n' "$FCTL_SDK_ROOT" >&2; exit 2; }
 
-IFS=$'\t' read -r module_path repository expected_commit sdk_path expected_nar_hash wit_path expected_wit_hash < <(
+IFS=$'\t' read -r module_path repository expected_commit bundle_path expected_bundle_nar_hash sdk_path expected_sdk_nar_hash wit_path expected_wit_hash < <(
   GOWORK=off go run "$lock_reader" "$lock_path"
 )
-readonly module_path repository expected_commit sdk_path expected_nar_hash wit_path expected_wit_hash
+readonly module_path repository expected_commit bundle_path expected_bundle_nar_hash sdk_path expected_sdk_nar_hash wit_path expected_wit_hash
 
-sdk_root="$(cd "$FCTL_SDK_ROOT" && pwd -P)"
-readonly sdk_root
+# FCTL_SDK_ROOT stays an override for working against a local SDK checkout.
+# Without it, fall back to the minimal SDK snapshot committed with this plugin:
+# the authoritative repository is private and a repository-scoped CI token
+# cannot clone it, so a credential-free gate needs a source in this tree. Both
+# sources are pinned by commit provenance and fail closed on the content hashes
+# verified below; the snapshot carries its own hash because it is a measured
+# subset of the upstream module rather than a copy of it.
+if [[ -n "${FCTL_SDK_ROOT:-}" ]]; then
+  [[ -d "$FCTL_SDK_ROOT" ]] || { printf 'FCTL_SDK_ROOT is not a directory: %s\n' "$FCTL_SDK_ROOT" >&2; exit 2; }
+  sdk_root="$(cd "$FCTL_SDK_ROOT" && pwd -P)"
+  expected_nar_hash="$expected_sdk_nar_hash"
+  source_description='fctl SDK'
+else
+  sdk_root="$plugin_root/$bundle_path"
+  [[ -d "$sdk_root" ]] || { printf 'bundled fctl SDK is missing: %s\n' "$sdk_root" >&2; exit 1; }
+  sdk_root="$(cd "$sdk_root" && pwd -P)"
+  expected_nar_hash="$expected_bundle_nar_hash"
+  source_description='bundled fctl SDK'
+fi
+readonly sdk_root expected_nar_hash source_description
 
 workspace_directory="$(mktemp -d "${TMPDIR:-/tmp}/fctl-sdk-work.XXXXXXXX")"
 readonly workspace_directory
@@ -58,7 +74,7 @@ command -v nix >/dev/null || { printf 'nix is required to validate the fctl SDK 
 actual_nar_hash="$(nix --extra-experimental-features nix-command hash path --type sha256 --sri "$sdk_directory")"
 readonly actual_nar_hash
 if [[ "$actual_nar_hash" != "$expected_nar_hash" ]]; then
-  printf 'fctl SDK content hash mismatch: got %s, want %s\n' "$actual_nar_hash" "$expected_nar_hash" >&2
+  printf '%s content hash mismatch: got %s, want %s\n' "$source_description" "$actual_nar_hash" "$expected_nar_hash" >&2
   exit 1
 fi
 

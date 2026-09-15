@@ -8,6 +8,8 @@ unset -f nix 2>/dev/null || true
 readonly plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly wrapper="$plugin_root/scripts/with-fctl-sdk.sh"
 readonly expected_nar_hash='sha256-DnTiEFya3R9KCYmgv5SO/1StKTCPmndObQrrVHf79Xk='
+readonly expected_bundle_nar_hash='sha256-pDXwGgWba9XYBbkZfoYKTYC2D+3mDjDIw1e+gSHzpc8='
+readonly expected_bundle_path='sdk/fctl-v2-poc'
 readonly expected_wit_hash='38fdf377264eeada82b23fef153e6bf106ed0624e8916ff62cabdf210d6255f5'
 readonly expected_commit='e9b1395f46f3100b381dbe00f5213de28e6df0e1'
 readonly expected_repository='https://github.com/formancehq/fctl-v2-poc.git'
@@ -120,8 +122,23 @@ chmod +x "$test_root/signal-wrapper.sh"
 
 [[ -x "$wrapper" ]] || fail "wrapper is missing or not executable: $wrapper"
 
-expect_failure 'FCTL_SDK_ROOT is required' env -u FCTL_SDK_ROOT \
+# An unset FCTL_SDK_ROOT is not a failure: the wrapper falls back to the
+# minimal SDK snapshot committed with this plugin, so a clean checkout with no
+# credential and no fctl clone still gets an exact, hash-verified SDK. This
+# case deliberately runs against the real nix so it proves the committed
+# snapshot, not a fixture.
+env -u FCTL_SDK_ROOT "$wrapper" true
+
+# The snapshot is held to its own content hash. The upstream checkout hash
+# covers the whole SDK module and must not unlock the measured subset.
+expect_failure 'bundled fctl SDK content hash mismatch' env -u FCTL_SDK_ROOT \
   PATH="$fake_bin:$PATH" FAKE_NAR_HASH="$expected_nar_hash" "$wrapper" true
+
+expect_failure 'bundled fctl SDK content hash mismatch' env -u FCTL_SDK_ROOT \
+  PATH="$fake_bin:$PATH" FAKE_NAR_HASH='sha256-wrong' "$wrapper" true
+
+expect_failure 'FCTL_SDK_ROOT is not a directory' env \
+  PATH="$fake_bin:$PATH" FCTL_SDK_ROOT="$test_root/absent" FAKE_NAR_HASH="$expected_nar_hash" "$wrapper" true
 
 expect_failure 'fctl SDK content hash mismatch' env \
   PATH="$fake_bin:$PATH" FCTL_SDK_ROOT="$sdk_root" FAKE_NAR_HASH='sha256-wrong' "$wrapper" true
@@ -195,10 +212,17 @@ env PATH="$fake_bin:$PATH" FCTL_SDK_ROOT="$sdk_root" FAKE_NAR_HASH="$expected_na
 actual_wit_hash="$(shasum -a 256 "$plugin_root/wit/plugin.wit" | awk '{print $1}')"
 [[ "$actual_wit_hash" == "$expected_wit_hash" ]] || fail 'vendored plugin WIT differs from the SDK lock'
 
+# The committed snapshot is the source every credential-free gate consumes, so
+# its exact content is asserted here as well as inside the wrapper.
+actual_bundle_nar_hash="$(nix --extra-experimental-features nix-command hash path --type sha256 --sri "$plugin_root/$expected_bundle_path/pkg/plugin")"
+[[ "$actual_bundle_nar_hash" == "$expected_bundle_nar_hash" ]] || fail 'committed fctl SDK snapshot differs from the SDK lock'
+actual_bundle_wit_hash="$(shasum -a 256 "$plugin_root/$expected_bundle_path/wit/formance/fctl/plugin/v1/plugin.wit" | awk '{print $1}')"
+[[ "$actual_bundle_wit_hash" == "$expected_wit_hash" ]] || fail 'committed fctl SDK snapshot WIT differs from the SDK lock'
+
 absolute_prefix="/$('printf' Users)/$('printf' davidragot)"
-if rg -n --fixed-strings "$absolute_prefix" \
+if grep -rn --fixed-strings "$absolute_prefix" \
   "$plugin_root/go.mod" "$plugin_root/fctl-sdk.lock.json" "$plugin_root/Justfile" \
-  "$plugin_root/README.md" "$plugin_root/scripts"; then
+  "$plugin_root/README.md" "$plugin_root/scripts" "$plugin_root/sdk"; then
   fail 'tracked plugin contract contains a workstation-absolute path'
 fi
 
