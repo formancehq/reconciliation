@@ -183,7 +183,7 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 
 ---
 
-## 9. What's already proven (status as of 2026-06-23)
+## 9. What's already proven (status as of 2026-09-14)
 
 - ✅ Storage layer for `Rule` / `Evaluation` / `Alert` / `AlertEvent` / `Resolution` ([migrations](../../internal/storage/migrations/migrations.go))
 - ✅ Internal CEL kernel ([internal/engine/](../../internal/engine/))
@@ -193,7 +193,8 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 - ✅ End-to-end demo UI ([poc-reconciliation-demo](../../../poc-reconciliation-demo)) — replaces the planned dockertest harness
 - ✅ Period-scoped alert identity (rule `periodType`: continuous / daily / weekly / monthly) + webhook event publication on alert transitions
 - ✅ PostgreSQL-backed cron worker with multi-replica safety — see [scheduler.md](../technical/scheduler.md)
-- 🚧 Remaining V1 GA additions: email digest, fctl, EE gating, usage metering
+- ✅ fctl surface — generated Go client ([pkg/client/](../../pkg/client/)) and the product-owned fctl plugin ([plugins/fctl/](../../plugins/fctl/)) covering the 23 plugin-eligible operations of the 24 the contract declares — `getServerInfo` (`GET /_info`) is host-owned; install, host and live-service acceptance are still outstanding
+- 🚧 Remaining V1 GA additions: email digest, EE gating, usage metering
 
 ---
 

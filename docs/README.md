@@ -32,6 +32,7 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | **Lifecycle workflows** | [technical/workflows.md](./technical/workflows.md) |
 | **Template catalog** | [technical/templates.md](./technical/templates.md) |
 | **Architecture overview** | [technical/architecture.md](./technical/architecture.md) |
+| **fctl plugin and generated Go client** | [`../plugins/fctl/README.md`](../plugins/fctl/README.md) · [operation inventory](../plugins/fctl/docs/command-inventory.md) |
 | **End-to-end demo UI** | [`../../poc-reconciliation-demo`](../../poc-reconciliation-demo) (sibling repo) |
 | **ADR-001 — CEL kernel choice** | [prd/adr-001-cel-kernel.md](./prd/adr-001-cel-kernel.md) |
 | **ADR-002 — PIT consistency model** | [prd/adr-002-pit-consistency.md](./prd/adr-002-pit-consistency.md) |
@@ -49,6 +50,6 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | 5 | Service layer — Rule / Evaluation / Alert orchestration + resolution paths + event-log append | ✅ shipped |
 | 6 | API endpoints + legacy `/policies` facade + OpenAPI | ✅ shipped |
 | 7 | End-to-end demo UI ([poc-reconciliation-demo](../../poc-reconciliation-demo)) — replaces the planned dockertest harness | ✅ shipped |
-| 8 | V1 GA additions — webhook events ✅ · durable PostgreSQL scheduler worker ✅ · email digest / fctl / EE gating / metering 🚧 | 🚧 in progress |
+| 8 | V1 GA additions — webhook events ✅ · durable PostgreSQL scheduler worker ✅ · fctl plugin + generated Go client ✅ · email digest / EE gating / metering 🚧 | 🚧 in progress |
 
 Filed upstream: [formancehq/ledger#1416](https://github.com/formancehq/ledger/issues/1416) — `/aggregate/balances` PIT + metadata silently returned empty under `ACCOUNT_METADATA_HISTORY: DISABLED`. **Fixed in ledger v2.4.11** (the version V1 targets); only older ledgers are affected.

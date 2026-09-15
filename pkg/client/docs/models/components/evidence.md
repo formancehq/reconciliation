@@ -1,0 +1,12 @@
+# Evidence
+
+
+## Fields
+
+| Field                                                                                | Type                                                                                 | Required                                                                             | Description                                                                          |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `Fingerprint`                                                                        | `*string`                                                                            | :heavy_minus_sign:                                                                   | N/A                                                                                  |
+| `Passed`                                                                             | `*bool`                                                                              | :heavy_minus_sign:                                                                   | N/A                                                                                  |
+| `Proof`                                                                              | map[string]`string`                                                                  | :heavy_minus_sign:                                                                   | Compact green-proof (observed balance integers as strings). Present on PASS entries. |
+| `Evidence`                                                                           | map[string]`any`                                                                     | :heavy_minus_sign:                                                                   | Full breakdown. Present on FAIL entries.                                             |
+| `AdditionalProperties`                                                               | map[string]`any`                                                                     | :heavy_minus_sign:                                                                   | N/A                                                                                  |

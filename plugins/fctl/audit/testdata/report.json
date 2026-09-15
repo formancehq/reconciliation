@@ -1,0 +1,1008 @@
+{
+  "specDocument": "openapi.yaml",
+  "productRevision": "0221edf2f8727def40368a5e4e2d0d0fafd7d4e7",
+  "clientSpecSHA256": "fa4475f2a100cc21ea021fc94509fedb5ff38bd6fb456b1e8d5cc6f582732a6f",
+  "baselineRevision": "693c58e27865f83332e6c3199d61fed81b742f41",
+  "fctlV2Revision": "e9b1395f46f3100b381dbe00f5213de28e6df0e1",
+  "document": {
+    "title": "Reconciliation API",
+    "version": "RECONCILIATION_VERSION",
+    "declaredSecuritySchemes": null,
+    "referencedSecuritySchemes": [
+      "Authorization"
+    ],
+    "hasRootSecurity": false
+  },
+  "undefinedSecuritySchemes": [
+    "Authorization"
+  ],
+  "totals": {
+    "specOperations": 24,
+    "uniqueOperationIds": 24,
+    "deprecatedOperations": 0,
+    "operationsWithDeclaredScopes": 24,
+    "baselineCommands": 7,
+    "baselineMapped": 7,
+    "baselineExcluded": 0,
+    "frozenOperations": 7,
+    "recordedOperations": 17,
+    "withBaseline": 7,
+    "withoutBaseline": 17,
+    "blocked": 0,
+    "frozenBlocked": 0,
+    "admissible": 24,
+    "frozenAdmissible": 7,
+    "generationBlockers": 0,
+    "divergences": 6
+  },
+  "operations": [
+    {
+      "operationId": "acceptAlert",
+      "method": "POST",
+      "path": "/alerts/{alertID}/accept",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "acceptAlert",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "alertID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "AcceptAlertRequest",
+      "successCode": "200",
+      "successBody": "AlertResponse",
+      "family": "alerts",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": false,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": true
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "ackAlert",
+      "method": "POST",
+      "path": "/alerts/{alertID}/ack",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "ackAlert",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "alertID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "AckAlertRequest",
+      "successCode": "200",
+      "successBody": "AlertResponse",
+      "family": "alerts",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": false,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": true
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "createPolicy",
+      "method": "POST",
+      "path": "/policies",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "createPolicy",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": null,
+      "requestBody": "PolicyRequest",
+      "successCode": "201",
+      "successBody": "PolicyResponse",
+      "family": "policies",
+      "frozen": true,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": false,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": [
+        "reconciliation policies create \u003cfile\u003e|-"
+      ],
+      "blockers": null
+    },
+    {
+      "operationId": "createRule",
+      "method": "POST",
+      "path": "/rules",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "createRule",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": null,
+      "requestBody": "RuleRequest",
+      "successCode": "201",
+      "successBody": "RuleResponse",
+      "family": "rules",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": false,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "deletePolicy",
+      "method": "DELETE",
+      "path": "/policies/{policyID}",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "deletePolicy",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "policyID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "",
+      "successCode": "204",
+      "successBody": "",
+      "family": "policies",
+      "frozen": true,
+      "risk": {
+        "destructive": true,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": [
+        "reconciliation policies delete \u003cpolicyID\u003e"
+      ],
+      "blockers": null
+    },
+    {
+      "operationId": "deleteRule",
+      "method": "DELETE",
+      "path": "/rules/{ruleID}",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "deleteRule",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "ruleID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "",
+      "successCode": "204",
+      "successBody": "",
+      "family": "rules",
+      "frozen": false,
+      "risk": {
+        "destructive": true,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "evaluateRule",
+      "method": "POST",
+      "path": "/rules/{ruleID}/evaluate",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "evaluateRule",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "ruleID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "EvaluateRuleRequest",
+      "successCode": "200",
+      "successBody": "EvaluationResponse",
+      "family": "rules",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": false,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "getAlert",
+      "method": "GET",
+      "path": "/alerts/{alertID}",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "getAlert",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "alertID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "AlertResponse",
+      "family": "alerts",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "getEvaluation",
+      "method": "GET",
+      "path": "/evaluations/{evaluationID}",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "getEvaluation",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "evaluationID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "EvaluationResponse",
+      "family": "evaluations",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "getPolicy",
+      "method": "GET",
+      "path": "/policies/{policyID}",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "getPolicy",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "policyID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "PolicyResponse",
+      "family": "policies",
+      "frozen": true,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": [
+        "reconciliation policies get \u003cpolicyID\u003e"
+      ],
+      "blockers": null
+    },
+    {
+      "operationId": "getReconciliation",
+      "method": "GET",
+      "path": "/reconciliations/{reconciliationID}",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "getReconciliation",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "reconciliationID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "ReconciliationResponse",
+      "family": "reconciliations",
+      "frozen": true,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": [
+        "reconciliation get \u003creconciliationID\u003e"
+      ],
+      "blockers": null
+    },
+    {
+      "operationId": "getRule",
+      "method": "GET",
+      "path": "/rules/{ruleID}",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "getRule",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "ruleID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "RuleResponse",
+      "family": "rules",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "getServerInfo",
+      "method": "GET",
+      "path": "/_info",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "getServerInfo",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": null,
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "ServerInfo",
+      "family": "server-probe",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "listAlertEvents",
+      "method": "GET",
+      "path": "/alerts/{alertID}/events",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "listAlertEvents",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "alertID",
+          "in": "path",
+          "required": true
+        },
+        {
+          "name": "cursor",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "AlertEventsCursorResponse",
+      "family": "alerts",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": true,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "listAlerts",
+      "method": "GET",
+      "path": "/alerts",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "listAlerts",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "cursor",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "AlertsCursorResponse",
+      "family": "alerts",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": true,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "listEvaluations",
+      "method": "GET",
+      "path": "/evaluations",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "listEvaluations",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "cursor",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "EvaluationsCursorResponse",
+      "family": "evaluations",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": true,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "listPolicies",
+      "method": "GET",
+      "path": "/policies",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "listPolicies",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "cursor",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "PoliciesCursorResponse",
+      "family": "policies",
+      "frozen": true,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": true,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": [
+        "reconciliation policies list"
+      ],
+      "blockers": null
+    },
+    {
+      "operationId": "listReconciliations",
+      "method": "GET",
+      "path": "/reconciliations",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "listReconciliations",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "cursor",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "ReconciliationsCursorResponse",
+      "family": "reconciliations",
+      "frozen": true,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": true,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": [
+        "reconciliation list"
+      ],
+      "blockers": null
+    },
+    {
+      "operationId": "listRules",
+      "method": "GET",
+      "path": "/rules",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "listRules",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:read"
+      ],
+      "parameters": [
+        {
+          "name": "cursor",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "required": false
+        },
+        {
+          "name": "query",
+          "in": "query",
+          "required": false
+        }
+      ],
+      "requestBody": "",
+      "successCode": "200",
+      "successBody": "RulesCursorResponse",
+      "family": "rules",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": true,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "patchRule",
+      "method": "PATCH",
+      "path": "/rules/{ruleID}",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "patchRule",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "ruleID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "RulePatchRequest",
+      "successCode": "200",
+      "successBody": "RuleResponse",
+      "family": "rules",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": true,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "reconcile",
+      "method": "POST",
+      "path": "/policies/{policyID}/reconciliation",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "reconcile",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "policyID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "ReconciliationRequest",
+      "successCode": "200",
+      "successBody": "ReconciliationResponse",
+      "family": "reconciliations",
+      "frozen": true,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": false,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": false
+      },
+      "baselineCommands": [
+        "reconciliation policies reconcile \u003cpolicyID\u003e \u003catLedger\u003e \u003catPayments\u003e"
+      ],
+      "blockers": null
+    },
+    {
+      "operationId": "resolveAlert",
+      "method": "POST",
+      "path": "/alerts/{alertID}/resolve",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "resolveAlert",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "alertID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "ResolveAlertRequest",
+      "successCode": "200",
+      "successBody": "AlertResponse",
+      "family": "alerts",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": false,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": true
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "snoozeAlert",
+      "method": "POST",
+      "path": "/alerts/{alertID}/snooze",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "snoozeAlert",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "alertID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "SnoozeAlertRequest",
+      "successCode": "200",
+      "successBody": "AlertResponse",
+      "family": "alerts",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": false,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": true
+      },
+      "baselineCommands": null,
+      "blockers": null
+    },
+    {
+      "operationId": "unsnoozeAlert",
+      "method": "POST",
+      "path": "/alerts/{alertID}/unsnooze",
+      "tag": "reconciliation.v1",
+      "sdkMethod": "unsnoozeAlert",
+      "deprecated": false,
+      "hasSecurity": true,
+      "securitySchemes": [
+        "Authorization"
+      ],
+      "scopes": [
+        "reconciliation:write"
+      ],
+      "parameters": [
+        {
+          "name": "alertID",
+          "in": "path",
+          "required": true
+        }
+      ],
+      "requestBody": "UnsnoozeAlertRequest",
+      "successCode": "200",
+      "successBody": "AlertResponse",
+      "family": "alerts",
+      "frozen": false,
+      "risk": {
+        "destructive": false,
+        "secret": "",
+        "displayOnce": false,
+        "replaySafe": false,
+        "paginated": false,
+        "getWithBody": false,
+        "stateTransition": true
+      },
+      "baselineCommands": null,
+      "blockers": null
+    }
+  ]
+}

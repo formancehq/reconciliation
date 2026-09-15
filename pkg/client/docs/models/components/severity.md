@@ -1,0 +1,27 @@
+# Severity
+
+How serious an alert is, used to route and prioritise notifications
+
+## Example Usage
+
+```go
+import (
+	"github.com/formancehq/reconciliation/pkg/client/models/components"
+)
+
+value := components.SeverityInfo
+
+// Open enum: custom values can be created with a direct type cast
+custom := components.Severity("custom_value")
+```
+
+
+## Values
+
+| Name               | Value              |
+| ------------------ | ------------------ |
+| `SeverityInfo`     | info               |
+| `SeverityLow`      | low                |
+| `SeverityMedium`   | medium             |
+| `SeverityHigh`     | high               |
+| `SeverityCritical` | critical           |

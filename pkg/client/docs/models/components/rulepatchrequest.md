@@ -1,0 +1,17 @@
+# RulePatchRequest
+
+Partial update — only fields supplied are applied.
+
+
+## Fields
+
+| Field                                                                          | Type                                                                           | Required                                                                       | Description                                                                    |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `Name`                                                                         | `*string`                                                                      | :heavy_minus_sign:                                                             | New human-readable name for the rule                                           |
+| `TemplateKind`                                                                 | [*components.TemplateKind](../../models/components/templatekind.md)            | :heavy_minus_sign:                                                             | Which built-in check a rule applies, determining the shape of its templateSpec |
+| `TemplateSpec`                                                                 | map[string]`any`                                                               | :heavy_minus_sign:                                                             | New parameters for the template, whose shape depends on templateKind           |
+| `Enabled`                                                                      | `*bool`                                                                        | :heavy_minus_sign:                                                             | Whether the rule should be evaluated                                           |
+| `Severity`                                                                     | [*components.Severity](../../models/components/severity.md)                    | :heavy_minus_sign:                                                             | How serious an alert is, used to route and prioritise notifications            |
+| `Schedule`                                                                     | [*components.Schedule](../../models/components/schedule.md)                    | :heavy_minus_sign:                                                             | When a rule runs, either on demand or on a cron expression                     |
+| `Notifications`                                                                | []`string`                                                                     | :heavy_minus_sign:                                                             | New set of channels to notify when this rule raises an alert                   |
+| `Labels`                                                                       | map[string]`string`                                                            | :heavy_minus_sign:                                                             | New set of key/value pairs attached to the rule                                |
