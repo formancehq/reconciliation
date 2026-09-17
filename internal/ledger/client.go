@@ -18,6 +18,7 @@ import (
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/auditpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
+	"github.com/formancehq/reconciliation/internal/ledgerpb/grpcprotocol"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/raftcmdpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/signaturepb"
@@ -81,6 +82,11 @@ func NewClient(address string, creds credentials.TransportCredentials, dialOpts 
 
 	baseOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(creds),
+		// Declare the service protocol revision on every RPC (EN-1851). A server
+		// enforcing the gate rejects an undeclared or mismatched client with
+		// FailedPrecondition before the handler runs — which is what keeps a
+		// stale vendored contract from silently misdecoding on the server.
+		grpcprotocol.ClientOption(),
 		grpc.WithDefaultServiceConfig(GRPCRetryPolicy),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallSendMsgSize(64*1024*1024),

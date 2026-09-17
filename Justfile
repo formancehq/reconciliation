@@ -20,6 +20,26 @@ tidy:
 generate: generate-ledger-proto
     go generate ./...
 
+# Re-vendor the Ledger v3 .proto sources from a local ledger checkout, then
+# regenerate. The protos and internal/ledgerpb/grpcprotocol.Version are ONE
+# contract: ledger renumbers proto fields between revisions, so vendoring new
+# protos without bumping the revision (or vice versa) reintroduces the silent
+# misdecode the EN-1851 gate exists to catch. This prints both for comparison.
+sync-ledger-proto ledger_repo="../ledger":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src="{{ ledger_repo }}/misc/proto"
+    test -d "$src" || { echo "no proto dir at $src — pass the ledger checkout: just sync-ledger-proto /path/to/ledger"; exit 1; }
+    for f in "$src"/*.proto; do
+        sed 's#github.com/formancehq/ledger/v3/internal/proto/#github.com/formancehq/reconciliation/internal/ledgerpb/#' \
+            "$f" > "proto/ledger/$(basename "$f")"
+    done
+    echo "synced from $(git -C "{{ ledger_repo }}" rev-parse --short HEAD) on $(git -C "{{ ledger_repo }}" rev-parse --abbrev-ref HEAD)"
+    echo "ledger  protocol revision: $(grep -oE 'Version = "[0-9]+"' "{{ ledger_repo }}/pkg/grpcprotocol/protocol.go" | grep -oE '[0-9]+')"
+    echo "vendored protocol revision: $(grep -oE 'Version = "[0-9]+"' internal/ledgerpb/grpcprotocol/protocol.go | grep -oE '[0-9]+')"
+    echo "^ if these differ, update internal/ledgerpb/grpcprotocol/protocol.go before shipping"
+    just generate-ledger-proto
+
 # Generate the vendored Ledger v3 protobuf bindings
 generate-ledger-proto:
     rm -f internal/ledgerpb/auditpb/*.pb.go internal/ledgerpb/clusterbootstrappb/*.pb.go internal/ledgerpb/clusterpb/*.pb.go internal/ledgerpb/commonpb/*.pb.go internal/ledgerpb/eventspb/*.pb.go internal/ledgerpb/proposalpb/*.pb.go internal/ledgerpb/raftcmdpb/*.pb.go internal/ledgerpb/rafttransportpb/*.pb.go internal/ledgerpb/restorepb/*.pb.go internal/ledgerpb/servicepb/*.pb.go internal/ledgerpb/signaturepb/*.pb.go internal/ledgerpb/snapshotpb/*.pb.go

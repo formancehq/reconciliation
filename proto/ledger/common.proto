@@ -7,6 +7,53 @@ option go_package = "github.com/formancehq/reconciliation/internal/ledgerpb/comm
 import "signature.proto";
 import "google/protobuf/descriptor.proto";
 
+// AuthScope is the exhaustive set of granular scopes that may guard a fixed
+// public-service RPC. The wire values are build-time policy metadata; request
+// authentication continues to use the canonical scope strings in the auth
+// adapter.
+enum AuthScope {
+  AUTH_SCOPE_UNSPECIFIED = 0;
+  AUTH_SCOPE_LEDGER_READ = 1;
+  AUTH_SCOPE_LEDGER_WRITE = 2;
+  AUTH_SCOPE_TRANSACTION_READ = 3;
+  AUTH_SCOPE_TRANSACTION_WRITE = 4;
+  AUTH_SCOPE_ACCOUNT_READ = 5;
+  AUTH_SCOPE_METADATA_WRITE = 6;
+  AUTH_SCOPE_AUDIT_READ = 7;
+  AUTH_SCOPE_AUDIT_WRITE = 8;
+  AUTH_SCOPE_OPS_READ = 9;
+  AUTH_SCOPE_OPS_WRITE = 10;
+  AUTH_SCOPE_QUERY_READ = 11;
+  AUTH_SCOPE_QUERY_WRITE = 12;
+  AUTH_SCOPE_CLUSTER_READ = 13;
+  AUTH_SCOPE_CLUSTER_WRITE = 14;
+}
+
+// DynamicAuthResolver names request-dependent policies that cannot be reduced
+// to one fixed scope before the request message is inspected.
+enum DynamicAuthResolver {
+  DYNAMIC_AUTH_RESOLVER_UNSPECIFIED = 0;
+  DYNAMIC_AUTH_RESOLVER_APPLY = 1;
+  DYNAMIC_AUTH_RESOLVER_GET_INDEX = 2;
+  DYNAMIC_AUTH_RESOLVER_GET_INDEX_ENTRY_STATUS = 3;
+  DYNAMIC_AUTH_RESOLVER_LIST_INDEXES = 4;
+}
+
+// MethodAuthPolicy requires every public-service RPC to choose exactly one
+// authentication policy. protoc-gen-rpcauth rejects missing and invalid
+// declarations and generates the runtime fail-closed registry.
+message MethodAuthPolicy {
+  oneof policy {
+    bool public = 1;
+    AuthScope fixed_scope = 2;
+    DynamicAuthResolver dynamic_resolver = 3;
+  }
+}
+
+extend google.protobuf.MethodOptions {
+  MethodAuthPolicy auth_policy = 71002;
+}
+
 // ============================================================================
 // Core Data Types
 // ============================================================================
@@ -197,9 +244,9 @@ enum MetadataType {
   METADATA_TYPE_DATETIME = 10;
 }
 
-// MetadataConversionStatus and the `status` field on MetadataFieldSchema
-// were removed when the FSM-side value converter was deleted. Stored
-// values are now immutable and API reads return them verbatim:
+// Field-level conversion status was removed with the FSM-side value converter.
+// Schema/type changes do not rewrite stored values, and entity reads return
+// the persisted MetadataValue branch verbatim:
 // declared_type is an index hint only — it governs how the indexer
 // encodes forward entries, never the bytes returned to clients. There
 // is no transition state observable at the field level.
@@ -284,10 +331,10 @@ message Index {
   // lives in `readstore.IndexVersionState.CurrentVersion` (internal)
   // and is exposed on the wire as `IndexEntry.current_version` on
   // `GetIndexStatusResponse`. Queries read from the replica's local
-  // current_version, not from this cluster-wide field. Synchronization
-  // is client-driven via min_log_sequence on the read API — but note
-  // that min_log_sequence pins log application on this replica, NOT
-  // local rewrite completion; see api-comparison.md for the contract.
+  // current_version, not from this cluster-wide field. The read path's Raft
+  // horizon certificate proves causal catch-up of the projection, but does
+  // NOT certify completion of a local build/rewrite; current/pending version
+  // remains the explicit readiness contract. See api-comparison.md.
   uint32 forward_encoding_version = 4;
 }
 
@@ -297,6 +344,10 @@ message Index {
 
 message Idempotency {
   string key = 1;
+  // HLC microseconds when this frozen outcome expires; 0 = never. Server-derived
+  // (created_at + the policy TTL committed for that apply) and chain-bound in the
+  // audit header, so restore and the checker read it back without a node-local TTL.
+  fixed64 expires_at = 2;
 }
 
 // ============================================================================
@@ -308,8 +359,7 @@ message Log {
   LogPayload payload = 2;
   // Batch identity (idempotency key + signature) lives on AppliedProposal
   // (proposal.proto), not on the log.
-  string receipt = 3;
-  signature.SignedLog response_signature = 4;
+  signature.SignedLog response_signature = 3;
 }
 
 message LogPayload {
@@ -322,25 +372,19 @@ message LogPayload {
     SetSigningConfigLog set_signing_config = 6;
     AddedEventsSinkLog added_events_sink = 7;
     RemovedEventsSinkLog removed_events_sink = 8;
-    ClosedChapterLog close_chapter = 9;
-    SealedChapterLog seal_chapter = 10;
-    ArchivedChapterLog archive_chapter = 11;
-    ConfirmedArchiveChapterLog confirm_archive_chapter = 12;
-    SetMaintenanceModeLog set_maintenance_mode = 13;
-    SetChapterScheduleLog set_chapter_schedule = 14;
-    DeletedChapterScheduleLog delete_chapter_schedule = 15;
-    PromotedLedgerLog promote_ledger = 16;
-    CreatedPreparedQueryLog created_prepared_query = 17;
-    UpdatedPreparedQueryLog updated_prepared_query = 18;
-    DeletedPreparedQueryLog deleted_prepared_query = 19;
-    SavedNumscriptLog saved_numscript = 20;
-    CreatedQueryCheckpointLog created_query_checkpoint = 21;
-    DeletedQueryCheckpointLog deleted_query_checkpoint = 22;
-    SetQueryCheckpointScheduleLog set_query_checkpoint_schedule = 23;
-    DeletedQueryCheckpointScheduleLog delete_query_checkpoint_schedule = 24;
-    SavedLedgerMetadataLog saved_ledger_metadata = 25;
-    DeletedLedgerMetadataLog deleted_ledger_metadata = 26;
-    SetClusterPolicyLog set_cluster_policy = 27;
+    SetMaintenanceModeLog set_maintenance_mode = 9;
+    PromotedLedgerLog promote_ledger = 10;
+    CreatedPreparedQueryLog created_prepared_query = 11;
+    UpdatedPreparedQueryLog updated_prepared_query = 12;
+    DeletedPreparedQueryLog deleted_prepared_query = 13;
+    SavedNumscriptLog saved_numscript = 14;
+    CreatedQueryCheckpointLog created_query_checkpoint = 15;
+    DeletedQueryCheckpointLog deleted_query_checkpoint = 16;
+    SetQueryCheckpointScheduleLog set_query_checkpoint_schedule = 17;
+    DeletedQueryCheckpointScheduleLog delete_query_checkpoint_schedule = 18;
+    SavedLedgerMetadataLog saved_ledger_metadata = 19;
+    DeletedLedgerMetadataLog deleted_ledger_metadata = 20;
+    SetClusterPolicyLog set_cluster_policy = 21;
   }
 }
 
@@ -437,22 +481,28 @@ message PersistedClusterState {
 
 // ClusterPolicy is the Raft-replicated cluster-wide policy for behavior that
 // must apply identically on every node during FSM apply (idempotency
-// expiration, query-checkpoint admission). revision is monotonic so a stale
-// proposal can never overwrite a newer committed policy.
+// expiration, query-checkpoint admission, metadata size ceilings). revision is
+// monotonic so a stale proposal can never overwrite a newer committed policy.
+//
+// The metadata ceilings are the configurable form of the canonical metadata
+// size contract (domain.MetadataLimits). They ride in the replicated policy
+// rather than in node-local flags because FSM apply validates the metadata a
+// Numscript program produces against them: a node-local limit would make one
+// committed entry apply differently per node.
 message ClusterPolicy {
   fixed64 revision = 1;
   fixed64 idempotency_ttl_micros = 2;  // 0 means never expires
   fixed64 query_checkpoint_limit = 3;  // must be >= 1
+  // Metadata size ceilings, each scoped to a single command. Every value must
+  // be >= 1; see domain.MetadataLimits for the measurement rule and
+  // docs/technical/architecture/subsystems/admission/metadata-limits.md for the
+  // contract.
+  fixed64 metadata_max_entries_per_entity = 4;
+  fixed64 metadata_max_key_bytes = 5;
+  fixed64 metadata_max_value_bytes = 6;
+  fixed64 metadata_max_entity_bytes = 7;
+  fixed64 metadata_max_command_bytes = 8;
 }
-
-
-// SetChapterScheduleLog records a chapter schedule change.
-message SetChapterScheduleLog {
-  string cron = 1;
-}
-
-// DeletedChapterScheduleLog records the removal of the chapter schedule.
-message DeletedChapterScheduleLog {}
 
 // CreatedPreparedQueryLog records the creation of a prepared query.
 message CreatedPreparedQueryLog {
@@ -553,6 +603,7 @@ message CreatedQueryCheckpointLog {
   fixed64 checkpoint_id = 1;
   fixed64 max_sequence = 2;
   Timestamp created_at = 3;
+  fixed64 applied_index = 4;
 }
 
 // DeletedQueryCheckpointLog records a query checkpoint being deleted.
@@ -706,19 +757,19 @@ message TouchedVolume {
 
 message LedgerLogPayload {
   oneof payload {
-    CreatedTransaction created_transaction = 1;
-    RevertedTransaction reverted_transaction = 2;
-    SavedMetadata saved_metadata = 3;
-    DeletedMetadata deleted_metadata = 4;
-    SetMetadataFieldTypeLog set_metadata_field_type = 5;
-    RemovedMetadataFieldTypeLog removed_metadata_field_type = 6;
-    FilledGapLog fill_gap = 7;
-    CreatedIndexLog create_index = 8;
-    DroppedIndexLog drop_index = 9;
-    AddedAccountTypeLog added_account_type = 10;
-    RemovedAccountTypeLog removed_account_type = 11;
-    UpdatedDefaultEnforcementModeLog updated_default_enforcement_mode = 12;
-    OrderSkippedLog order_skipped = 13;
+    CreatedTransaction created_transaction = 1 [(ledger_log_is_history) = true];
+    RevertedTransaction reverted_transaction = 2 [(ledger_log_is_history) = true];
+    SavedMetadata saved_metadata = 3 [(ledger_log_is_history) = true];
+    DeletedMetadata deleted_metadata = 4 [(ledger_log_is_history) = true];
+    SetMetadataFieldTypeLog set_metadata_field_type = 5 [(ledger_log_is_history) = false];
+    RemovedMetadataFieldTypeLog removed_metadata_field_type = 6 [(ledger_log_is_history) = false];
+    FilledGapLog fill_gap = 7 [(ledger_log_is_history) = false];
+    CreatedIndexLog create_index = 8 [(ledger_log_is_history) = false];
+    DroppedIndexLog drop_index = 9 [(ledger_log_is_history) = false];
+    AddedAccountTypeLog added_account_type = 10 [(ledger_log_is_history) = false];
+    RemovedAccountTypeLog removed_account_type = 11 [(ledger_log_is_history) = false];
+    UpdatedDefaultEnforcementModeLog updated_default_enforcement_mode = 12 [(ledger_log_is_history) = false];
+    OrderSkippedLog order_skipped = 13 [(ledger_log_is_history) = true];
   }
 }
 
@@ -744,11 +795,6 @@ message OrderSkippedLog {
 // CreatedIndexLog records the creation of an index.
 message CreatedIndexLog {
   IndexID id = 1;
-  // initial marks an index declared on a ledger that had no local history yet
-  // (same atomic apply batch as CreateLedger, before any indexable data log).
-  // The read-side indexbuilder promotes such indexes straight to live with no
-  // historical backfill; later indexes (initial=false) keep backfilling. EN-1564.
-  bool initial = 2;
   // bound_type is the declared type of the indexed metadata field at this
   // log's sequence, stamped by the FSM when the log is minted. The index's
   // first version binds to it: every replica encodes that version's rows —
@@ -756,12 +802,12 @@ message CreatedIndexLog {
   // atomic switch rebinds. Stamping at mint time is what keeps the binding
   // stable at any replay distance; the schema readable when a replica folds
   // the log may already be many retypes ahead. EN-1724.
-  MetadataType bound_type = 3;
+  MetadataType bound_type = 2;
   // bound_type_declared is false for builtin indexes, which have no metadata
   // field and therefore no binding: their values keep the natural encoding.
   // Metadata indexes always carry a binding — CreateIndex validates that the
   // field is declared in the schema.
-  bool bound_type_declared = 4;
+  bool bound_type_declared = 3;
 }
 
 // DroppedIndexLog records the removal of an index.
@@ -777,7 +823,6 @@ message FilledGapLog {
 message CreatedTransaction {
   Transaction transaction = 1;
   map<string, MetadataMap> account_metadata = 2;
-  fixed64 chapter_id = 3;  // Chapter that was OPEN when this transaction was created
 }
 
 message RevertedTransaction {
@@ -809,49 +854,6 @@ message RemovedMetadataFieldTypeLog {
   TargetType target_type = 1;
   string key = 2;
   IndexID dropped_index = 3;  // nil when no index was attached to the field
-}
-
-// ============================================================================
-// Chapter
-// ============================================================================
-
-enum ChapterStatus {
-  CHAPTER_OPEN = 0;
-  CHAPTER_CLOSING = 1;
-  CHAPTER_CLOSED = 2;
-  CHAPTER_ARCHIVED = 3;
-  CHAPTER_ARCHIVING = 4;
-}
-
-message Chapter {
-  fixed64 id = 1;
-  Timestamp start = 2;
-  Timestamp end = 3;
-  ChapterStatus status = 4;
-  fixed64 close_sequence = 5;
-  bytes sealing_hash = 6;
-  bytes last_audit_hash = 7;  // Audit chain hash at the time the chapter was closed (for integrity recovery)
-  fixed64 start_sequence = 8;  // First log sequence in this chapter (previous close_sequence + 1, or 1 for the first chapter)
-  bytes state_hash = 9;       // BLAKE3 hash of computed attributes (V+M+T) at seal time
-  fixed64 start_audit_sequence = 10; // First audit sequence in this chapter
-  fixed64 close_audit_sequence = 11; // Last audit sequence when chapter was closed
-}
-
-message ClosedChapterLog {
-  Chapter closed_chapter = 1;
-  Chapter new_chapter = 2;
-}
-
-message SealedChapterLog {
-  Chapter chapter = 1;
-}
-
-message ArchivedChapterLog {
-  Chapter chapter = 1;  // The chapter being archived (still CLOSED at this point)
-}
-
-message ConfirmedArchiveChapterLog {
-  Chapter chapter = 1;  // Chapter now in ARCHIVED status
 }
 
 // ============================================================================
@@ -1182,6 +1184,7 @@ message IdempotencyKeyValue {
   fixed64 created_at = 4;    // HLC microseconds (from Raft entry timestamp)
   IdempotencyFailure failure = 5;  // set instead of the log refs when the first apply was a definitive business failure
   uint32 log_count = 6;  // number of contiguous logs the proposal committed; 0 with failure set
+  fixed64 expires_at = 7;  // HLC microseconds; 0 = never expires. Frozen at write time from the committed policy TTL (created_at + IdempotencyTtlMicros).
 }
 
 // ErrorReason is the typed, wire-bound form of a domain error's Reason()
@@ -1191,7 +1194,10 @@ message IdempotencyKeyValue {
 // AuditFailure and IdempotencyFailure store this instead of a free string so
 // the error kind is re-derivable from the reason (domain.KindForReason) at
 // replay and check time, and a typo cannot silently decode into a known reason.
-// Do NOT renumber or remove values; append new ones. Completeness against the
+// While v3 remains unreleased and its state is wiped between revisions,
+// removing a value also realigns the remaining numbers sequentially, per the
+// repository protobuf policy. After release these persisted values become
+// append-only and must never be renumbered or removed. Completeness against
 // domain errors is enforced by TestEveryDomainErrorImplementsDescribable.
 enum ErrorReason {
   ERROR_REASON_UNSPECIFIED = 0;
@@ -1212,59 +1218,52 @@ enum ErrorReason {
   ERROR_REASON_SINK_ALREADY_EXISTS = 15;
   ERROR_REASON_SINK_NOT_FOUND = 16;
   ERROR_REASON_SINK_BATCH_SIZE_TOO_LARGE = 17;
-  ERROR_REASON_NO_CHAPTER_OPEN = 18;
-  ERROR_REASON_CHAPTER_NOT_FOUND = 19;
-  ERROR_REASON_CHAPTER_NOT_CLOSING = 20;
-  ERROR_REASON_CHAPTER_NOT_CLOSED = 21;
-  ERROR_REASON_CHAPTER_NOT_ARCHIVING = 22;
-  ERROR_REASON_METADATA_NOT_FOUND = 23;
-  ERROR_REASON_INVALID_RECEIPT = 24;
-  ERROR_REASON_MAINTENANCE_MODE = 25;
-  ERROR_REASON_STALE_PROPOSAL = 26;
-  ERROR_REASON_INVALID_CRON_EXPRESSION = 27;
-  ERROR_REASON_LEDGER_IN_MIRROR_MODE = 28;
-  ERROR_REASON_LEDGER_NOT_IN_MIRROR_MODE = 29;
-  ERROR_REASON_PREPARED_QUERY_ALREADY_EXISTS = 30;
-  ERROR_REASON_PREPARED_QUERY_NOT_FOUND = 31;
-  ERROR_REASON_INDEX_NOT_FOUND = 32;
-  ERROR_REASON_INDEX_BUILDING = 33;
-  ERROR_REASON_INDEX_INCONSISTENT = 34;
-  ERROR_REASON_METADATA_FIELD_NOT_IN_SCHEMA = 35;
-  ERROR_REASON_NUMSCRIPT_NOT_FOUND = 36;
-  ERROR_REASON_NUMSCRIPT_VERSION_ALREADY_EXISTS = 37;
-  ERROR_REASON_NUMSCRIPT_INVALID_VERSION = 38;
-  ERROR_REASON_ACCOUNT_NOT_MATCHING_TYPE = 39;
-  ERROR_REASON_ACCOUNT_TYPE_NOT_FOUND = 40;
-  ERROR_REASON_ACCOUNT_TYPE_ALREADY_EXISTS = 41;
-  ERROR_REASON_INVALID_PATTERN = 42;
-  ERROR_REASON_ACCOUNT_TYPE_HAS_ACCOUNTS = 43;
-  ERROR_REASON_ACCOUNT_TYPE_CONFLICT = 44;
-  ERROR_REASON_COLD_STORAGE_DISABLED = 45;
-  ERROR_REASON_TRANSIENT_ACCOUNT_NON_ZERO = 46;
-  ERROR_REASON_FILTER_COMPILATION_ERROR = 47;
-  ERROR_REASON_INVALID_ORDER_TYPE = 48;
-  ERROR_REASON_INVALID_APPLY_TYPE = 49;
-  ERROR_REASON_INVALID_EXECUTION_PLAN = 50;
-  ERROR_REASON_EXECUTION_PLAN_TOO_LARGE = 51;
-  ERROR_REASON_COVERAGE_MISS = 52;
-  ERROR_REASON_IDEMPOTENCY_CHECK_FAILED = 53;
-  ERROR_REASON_STORAGE_OPERATION_FAILED = 54;
-  ERROR_REASON_TRANSACTION_STATE_INCONSISTENT = 55;
-  ERROR_REASON_CHECKPOINT_ID_REQUIRED = 56;
-  ERROR_REASON_NUMSCRIPT_RUNTIME = 57;
-  ERROR_REASON_VOLUME_NOT_MATERIALIZED = 58;
-  ERROR_REASON_CLUSTER_UNHEALTHY = 59;
-  ERROR_REASON_WRITES_BLOCKED_DISK_FULL = 60;
-  ERROR_REASON_WRITES_BLOCKED_CLOCK_SKEW = 61;
-  ERROR_REASON_CHECKPOINT_NOT_READY = 62;
-  ERROR_REASON_MIRROR_V2_LOG_ID_GAP = 63;
-  ERROR_REASON_MIRROR_V2_LOG_ID_INVALID = 64;
+  ERROR_REASON_METADATA_NOT_FOUND = 18;
+  ERROR_REASON_MAINTENANCE_MODE = 19;
+  ERROR_REASON_STALE_PROPOSAL = 20;
+  ERROR_REASON_INVALID_CRON_EXPRESSION = 21;
+  ERROR_REASON_LEDGER_IN_MIRROR_MODE = 22;
+  ERROR_REASON_LEDGER_NOT_IN_MIRROR_MODE = 23;
+  ERROR_REASON_PREPARED_QUERY_ALREADY_EXISTS = 24;
+  ERROR_REASON_PREPARED_QUERY_NOT_FOUND = 25;
+  ERROR_REASON_INDEX_NOT_FOUND = 26;
+  ERROR_REASON_INDEX_BUILDING = 27;
+  ERROR_REASON_INDEX_INCONSISTENT = 28;
+  ERROR_REASON_METADATA_FIELD_NOT_IN_SCHEMA = 29;
+  ERROR_REASON_NUMSCRIPT_NOT_FOUND = 30;
+  ERROR_REASON_NUMSCRIPT_VERSION_ALREADY_EXISTS = 31;
+  ERROR_REASON_NUMSCRIPT_INVALID_VERSION = 32;
+  ERROR_REASON_ACCOUNT_NOT_MATCHING_TYPE = 33;
+  ERROR_REASON_ACCOUNT_TYPE_NOT_FOUND = 34;
+  ERROR_REASON_ACCOUNT_TYPE_ALREADY_EXISTS = 35;
+  ERROR_REASON_INVALID_PATTERN = 36;
+  ERROR_REASON_ACCOUNT_TYPE_HAS_ACCOUNTS = 37;
+  ERROR_REASON_ACCOUNT_TYPE_CONFLICT = 38;
+  ERROR_REASON_TRANSIENT_ACCOUNT_NON_ZERO = 39;
+  ERROR_REASON_FILTER_COMPILATION_ERROR = 40;
+  ERROR_REASON_INVALID_ORDER_TYPE = 41;
+  ERROR_REASON_INVALID_APPLY_TYPE = 42;
+  ERROR_REASON_INVALID_EXECUTION_PLAN = 43;
+  ERROR_REASON_EXECUTION_PLAN_TOO_LARGE = 44;
+  ERROR_REASON_COVERAGE_MISS = 45;
+  ERROR_REASON_IDEMPOTENCY_CHECK_FAILED = 46;
+  ERROR_REASON_STORAGE_OPERATION_FAILED = 47;
+  ERROR_REASON_TRANSACTION_STATE_INCONSISTENT = 48;
+  ERROR_REASON_CHECKPOINT_ID_REQUIRED = 49;
+  ERROR_REASON_NUMSCRIPT_RUNTIME = 50;
+  ERROR_REASON_VOLUME_NOT_MATERIALIZED = 51;
+  ERROR_REASON_CLUSTER_UNHEALTHY = 52;
+  ERROR_REASON_WRITES_BLOCKED_DISK_FULL = 53;
+  ERROR_REASON_WRITES_BLOCKED_CLOCK_SKEW = 54;
+  ERROR_REASON_CHECKPOINT_NOT_READY = 55;
+  ERROR_REASON_MIRROR_V2_LOG_ID_GAP = 56;
+  ERROR_REASON_MIRROR_V2_LOG_ID_INVALID = 57;
   // ERROR_REASON_STALE_INPUTS_RESOLUTION: the balance/metadata values that
   // Numscript dependency resolution read at admission time changed before the
   // FSM applied the transaction, so the preloaded key set may be wrong.
   // Retryable (Kind=Unavailable) — a second admission re-resolves against the
   // new values. See EN-1406.
-  ERROR_REASON_STALE_INPUTS_RESOLUTION = 65;
+  ERROR_REASON_STALE_INPUTS_RESOLUTION = 58;
   // ERROR_REASON_PRELOAD_UNAVAILABLE: admission could not build the preload set
   // for an order (e.g. Numscript dependency discovery failed against current
   // state). When the batch carries an idempotency key, admission forwards the
@@ -1272,54 +1271,45 @@ enum ErrorReason {
   // failing fast, so the FSM can replay a frozen outcome. If no frozen outcome
   // exists the FSM emits THIS reason: retryable (Kind=Unavailable), NOT frozen —
   // a preparation gap, never an authoritative business verdict. See EN-1406.
-  ERROR_REASON_PRELOAD_UNAVAILABLE = 66;
-  ERROR_REASON_AGGREGATE_OVERFLOW = 67;
-  ERROR_REASON_BALANCE_NOT_FOUND = 68;
-  // ERROR_REASON_READ_INDEX_NOT_CAUGHT_UP: an indexed read needs the read
-  // index folded up to the main store's applied sequence and it did not get
-  // there within the alignment grace. Retryable (Kind=Unavailable): the fold
-  // is behind, not broken. See EN-1748.
-  ERROR_REASON_READ_INDEX_NOT_CAUGHT_UP = 69;
-  // ERROR_REASON_CHAPTER_ARCHIVE_IDENTITY_MISMATCH: the confirm names a chapter
-  // incarnation that is not the one now in history. The sealing hash commits a
-  // chapter to its content, so a mismatch means the archive the confirm would
-  // trade hot history for belongs to a timeline this store no longer has — see
-  // docs/technical/architecture/subsystems/chapters/backup.md.
-  ERROR_REASON_CHAPTER_ARCHIVE_IDENTITY_MISMATCH = 70;
-  // ERROR_REASON_CHAPTER_ARCHIVE_OUT_OF_ORDER: the chapter is CLOSED, but it is
-  // not the one immediately after the archived prefix. Archived chapters must
-  // form a contiguous prefix of history so that "below the archive boundary"
-  // and "archived" mean the same thing — see the archival ordering rule in
-  // docs/technical/architecture/subsystems/chapters/lifecycle.md.
-  ERROR_REASON_CHAPTER_ARCHIVE_OUT_OF_ORDER = 71;
-  // ERROR_REASON_CHAPTER_ALREADY_ARCHIVED: the chapter is inside the archived
-  // prefix, so this order has already been carried out and no later archive
-  // changes that. Distinct from CHAPTER_ARCHIVE_OUT_OF_ORDER, which names a
-  // chapter that must be archived first: here there is nothing to archive
-  // first, and the metadata reports how far the prefix reaches instead.
-  ERROR_REASON_CHAPTER_ALREADY_ARCHIVED = 72;
+  ERROR_REASON_PRELOAD_UNAVAILABLE = 59;
+  ERROR_REASON_AGGREGATE_OVERFLOW = 60;
+  ERROR_REASON_BALANCE_NOT_FOUND = 61;
   // ERROR_REASON_STALE_CLUSTER_POLICY: a cluster-policy update carried a
   // revision lower than the applied one. Deterministic rejection — a newer
   // policy already won; the leader-side reconciler re-evaluates on the next
   // tick. See EN-1827.
-  ERROR_REASON_STALE_CLUSTER_POLICY = 73;
+  ERROR_REASON_STALE_CLUSTER_POLICY = 62;
   // ERROR_REASON_CLUSTER_POLICY_REVISION_CONFLICT: two cluster-policy updates
   // carried the same revision with different payloads. The control plane must
   // assign a fresh revision per distinct policy, so this is a contract
   // violation surfaced deterministically on every node. See EN-1827.
-  ERROR_REASON_CLUSTER_POLICY_REVISION_CONFLICT = 74;
+  ERROR_REASON_CLUSTER_POLICY_REVISION_CONFLICT = 63;
   // ERROR_REASON_CLUSTER_POLICY_INVALID: a cluster-policy update carried a
   // structurally invalid payload (missing policy, or query_checkpoint_limit
   // below 1). See EN-1827.
-  ERROR_REASON_CLUSTER_POLICY_INVALID = 75;
+  ERROR_REASON_CLUSTER_POLICY_INVALID = 64;
   // ERROR_REASON_CHECKPOINT_LIMIT_REACHED: a CreateQueryCheckpoint was rejected
   // because the live query-checkpoint count is at the replicated policy limit.
   // Creation never evicts; an existing checkpoint must be deleted first. See
   // EN-1501.
-  ERROR_REASON_CHECKPOINT_LIMIT_REACHED = 76;
+  ERROR_REASON_CHECKPOINT_LIMIT_REACHED = 65;
   // ERROR_REASON_CHECKPOINT_NOT_FOUND: a DeleteQueryCheckpoint targeted an id
   // that is not live (never created, or already deleted). See EN-1501.
-  ERROR_REASON_CHECKPOINT_NOT_FOUND = 77;
+  ERROR_REASON_CHECKPOINT_NOT_FOUND = 66;
+  // ERROR_REASON_SEQUENCE_EXHAUSTED: an authoritative transaction, ledger-log,
+  // global-log, or audit sequence reached its final allocatable value. The
+  // operation is rejected before uint64 wrap can publish a zero/reused key.
+  // Permanent (Kind=ResourceExhausted): retrying cannot create another ID.
+  // See EN-1860.
+  ERROR_REASON_SEQUENCE_EXHAUSTED = 67;
+  // A fresh CreateIndex targets an existing ledger/canonical IndexID.
+  ERROR_REASON_INDEX_ALREADY_EXISTS = 68;
+  // ERROR_REASON_METADATA_LIMIT_EXCEEDED: a command carried — or a Numscript
+  // program produced — metadata beyond a ceiling of the canonical metadata size
+  // contract (entry count, key bytes, value bytes, per-entity bytes, or
+  // per-command bytes). Permanent (Kind=Validation): the caller must send less
+  // metadata, so a retry of the same payload cannot succeed. See EN-1829.
+  ERROR_REASON_METADATA_LIMIT_EXCEEDED = 69;
 }
 
 // IdempotencyFailure captures a definitive business rejection so a retried key
@@ -1421,7 +1411,7 @@ message UpdatedDefaultEnforcementModeLog {
 // "valid nowhere" intent needs its own boolean marker rather than being inferred
 // from absence.
 //
-// Extension numbers 50123-50124 are in the private, non-reserved range for
+// Extension numbers 50123-50125 are in the private, non-reserved range for
 // FieldOptions extensions (50000-99999, per descriptor.proto guidance).
 extend google.protobuf.FieldOptions {
   repeated QueryTarget allowed_query_targets = 50123;
@@ -1429,6 +1419,11 @@ extend google.protobuf.FieldOptions {
   // QueryTarget (rejected everywhere). It is the EXPLICIT opt-in the generator
   // requires instead of inferring "valid nowhere" from a missing annotation.
   bool valid_on_no_query_target = 50124;
+  // ledger_log_is_history is mandatory on every LedgerLogPayload.payload arm.
+  // Explicit false classifies CONTROL; true classifies HISTORY. The generator
+  // rejects a missing annotation, so proto's false default cannot classify by
+  // accident.
+  bool ledger_log_is_history = 50125;
 }
 
 message QueryFilter {
@@ -1770,8 +1765,7 @@ message LedgerStats {
 message PersistedConfig {
   uint64 node_id = 1;
   string cluster_id = 2;
-  uint64 idempotency_ttl_seconds = 3;
-  uint32 storage_schema_version = 4;
+  uint32 storage_schema_version = 3;
 }
 
 // CallerIdentity uniquely identifies who initiated an action. It is
@@ -1852,10 +1846,6 @@ message ReadOptions {
   // the live store. Endpoints that do not support checkpoint reads MUST
   // reject any non-zero value with InvalidArgument.
   fixed64 checkpoint_id = 1;
-  // min_log_sequence requires the store to have applied at least this log
-  // sequence before reading; FailedPrecondition otherwise. Ignored for
-  // checkpoint reads (a checkpoint is a fixed snapshot).
-  fixed64 min_log_sequence = 2;
 }
 
 // ListOptions carries the canonical pagination + consistency + filter

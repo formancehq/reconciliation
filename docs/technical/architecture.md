@@ -20,7 +20,9 @@ internal/
 ├── models/          Go types — Rule, Evaluation, Alert, AlertEvent, Resolution, RuleActivity
 ├── store/           Storage-agnostic contract types + sentinels (leaf; no ORM) — the
 │                    Store interface shape shared by the service and ledgerstore
-├── ledgerpb/        Generated Ledger v3 gRPC protos (synced from Ledger release/v3.0)
+├── ledgerpb/        Generated Ledger v3 gRPC protos (synced from Ledger release/v3.0 via
+│                    `just sync-ledger-proto`; see proto/ledger/README.md) plus
+│                    grpcprotocol — the service protocol revision declared on every RPC
 ├── ledger/          Ledger v3 gRPC client: transactions, metadata, account/log queries,
 │                    events sinks; live Reader; provisioner
 ├── ledgerauth/      Ed25519 request signing + TLS; refuses insecure transport by default (F2)

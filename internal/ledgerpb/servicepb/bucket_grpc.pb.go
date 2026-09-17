@@ -34,18 +34,13 @@ const (
 	BucketService_ListAuditEntries_FullMethodName        = "/ledger.BucketService/ListAuditEntries"
 	BucketService_GetAuditEntry_FullMethodName           = "/ledger.BucketService/GetAuditEntry"
 	BucketService_GetEventsSinks_FullMethodName          = "/ledger.BucketService/GetEventsSinks"
-	BucketService_ListChapters_FullMethodName            = "/ledger.BucketService/ListChapters"
 	BucketService_ListLogs_FullMethodName                = "/ledger.BucketService/ListLogs"
 	BucketService_GetLog_FullMethodName                  = "/ledger.BucketService/GetLog"
-	BucketService_GetChapterSchedule_FullMethodName      = "/ledger.BucketService/GetChapterSchedule"
 	BucketService_ListSigningKeys_FullMethodName         = "/ledger.BucketService/ListSigningKeys"
 	BucketService_Discovery_FullMethodName               = "/ledger.BucketService/Discovery"
 	BucketService_GetMetadataSchemaStatus_FullMethodName = "/ledger.BucketService/GetMetadataSchemaStatus"
 	BucketService_AnalyzeAccounts_FullMethodName         = "/ledger.BucketService/AnalyzeAccounts"
 	BucketService_AnalyzeTransactions_FullMethodName     = "/ledger.BucketService/AnalyzeTransactions"
-	BucketService_CreatePreparedQuery_FullMethodName     = "/ledger.BucketService/CreatePreparedQuery"
-	BucketService_UpdatePreparedQuery_FullMethodName     = "/ledger.BucketService/UpdatePreparedQuery"
-	BucketService_DeletePreparedQuery_FullMethodName     = "/ledger.BucketService/DeletePreparedQuery"
 	BucketService_ListPreparedQueries_FullMethodName     = "/ledger.BucketService/ListPreparedQueries"
 	BucketService_ExecutePreparedQuery_FullMethodName    = "/ledger.BucketService/ExecutePreparedQuery"
 	BucketService_GetIndexStatus_FullMethodName          = "/ledger.BucketService/GetIndexStatus"
@@ -94,30 +89,20 @@ type BucketServiceClient interface {
 	GetAuditEntry(ctx context.Context, in *GetAuditEntryRequest, opts ...grpc.CallOption) (*auditpb.AuditEntry, error)
 	// GetEventsSinks returns the current per-sink configurations and statuses
 	GetEventsSinks(ctx context.Context, in *GetEventsSinksRequest, opts ...grpc.CallOption) (*GetEventsSinksResponse, error)
-	// ListChapters streams all chapters
-	ListChapters(ctx context.Context, in *ListChaptersRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[commonpb.Chapter], error)
 	// ListLogs streams system logs; when ledger is set, streams only logs for that ledger
 	ListLogs(ctx context.Context, in *ListLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[commonpb.Log], error)
 	// GetLog returns a single system log by sequence number
 	GetLog(ctx context.Context, in *GetLogRequest, opts ...grpc.CallOption) (*commonpb.Log, error)
-	// GetChapterSchedule returns the current automatic chapter rotation schedule
-	GetChapterSchedule(ctx context.Context, in *GetChapterScheduleRequest, opts ...grpc.CallOption) (*GetChapterScheduleResponse, error)
 	// ListSigningKeys streams all registered signing keys
 	ListSigningKeys(ctx context.Context, in *ListSigningKeysRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[commonpb.SigningKey], error)
 	// Discovery returns server capabilities and configuration for clients
 	Discovery(ctx context.Context, in *DiscoveryRequest, opts ...grpc.CallOption) (*DiscoveryResponse, error)
-	// GetMetadataSchemaStatus returns the conversion status for all declared metadata fields
+	// GetMetadataSchemaStatus returns the declared type of every metadata field.
 	GetMetadataSchemaStatus(ctx context.Context, in *GetMetadataSchemaStatusRequest, opts ...grpc.CallOption) (*GetMetadataSchemaStatusResponse, error)
 	// AnalyzeAccounts scans all accounts in a ledger and suggests a Chart of Accounts
 	AnalyzeAccounts(ctx context.Context, in *AnalyzeAccountsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AnalyzeAccountsEvent], error)
 	// AnalyzeTransactions scans all transactions in a ledger and discovers flow patterns
 	AnalyzeTransactions(ctx context.Context, in *AnalyzeTransactionsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AnalyzeTransactionsEvent], error)
-	// CreatePreparedQuery creates a named prepared query for a ledger
-	CreatePreparedQuery(ctx context.Context, in *CreatePreparedQueryRequest, opts ...grpc.CallOption) (*CreatePreparedQueryResponse, error)
-	// UpdatePreparedQuery updates the filter of an existing prepared query
-	UpdatePreparedQuery(ctx context.Context, in *UpdatePreparedQueryRequest, opts ...grpc.CallOption) (*UpdatePreparedQueryResponse, error)
-	// DeletePreparedQuery removes a prepared query
-	DeletePreparedQuery(ctx context.Context, in *DeletePreparedQueryRequest, opts ...grpc.CallOption) (*DeletePreparedQueryResponse, error)
 	// ListPreparedQueries lists all prepared queries for a ledger
 	ListPreparedQueries(ctx context.Context, in *ListPreparedQueriesRequest, opts ...grpc.CallOption) (*ListPreparedQueriesResponse, error)
 	// ExecutePreparedQuery executes a prepared query against the read index store
@@ -338,28 +323,9 @@ func (c *bucketServiceClient) GetEventsSinks(ctx context.Context, in *GetEventsS
 	return out, nil
 }
 
-func (c *bucketServiceClient) ListChapters(ctx context.Context, in *ListChaptersRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[commonpb.Chapter], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[5], BucketService_ListChapters_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[ListChaptersRequest, commonpb.Chapter]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type BucketService_ListChaptersClient = grpc.ServerStreamingClient[commonpb.Chapter]
-
 func (c *bucketServiceClient) ListLogs(ctx context.Context, in *ListLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[commonpb.Log], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[6], BucketService_ListLogs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[5], BucketService_ListLogs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -386,19 +352,9 @@ func (c *bucketServiceClient) GetLog(ctx context.Context, in *GetLogRequest, opt
 	return out, nil
 }
 
-func (c *bucketServiceClient) GetChapterSchedule(ctx context.Context, in *GetChapterScheduleRequest, opts ...grpc.CallOption) (*GetChapterScheduleResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetChapterScheduleResponse)
-	err := c.cc.Invoke(ctx, BucketService_GetChapterSchedule_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *bucketServiceClient) ListSigningKeys(ctx context.Context, in *ListSigningKeysRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[commonpb.SigningKey], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[7], BucketService_ListSigningKeys_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[6], BucketService_ListSigningKeys_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +393,7 @@ func (c *bucketServiceClient) GetMetadataSchemaStatus(ctx context.Context, in *G
 
 func (c *bucketServiceClient) AnalyzeAccounts(ctx context.Context, in *AnalyzeAccountsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AnalyzeAccountsEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[8], BucketService_AnalyzeAccounts_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[7], BucketService_AnalyzeAccounts_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +412,7 @@ type BucketService_AnalyzeAccountsClient = grpc.ServerStreamingClient[AnalyzeAcc
 
 func (c *bucketServiceClient) AnalyzeTransactions(ctx context.Context, in *AnalyzeTransactionsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AnalyzeTransactionsEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[9], BucketService_AnalyzeTransactions_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[8], BucketService_AnalyzeTransactions_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -472,36 +428,6 @@ func (c *bucketServiceClient) AnalyzeTransactions(ctx context.Context, in *Analy
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type BucketService_AnalyzeTransactionsClient = grpc.ServerStreamingClient[AnalyzeTransactionsEvent]
-
-func (c *bucketServiceClient) CreatePreparedQuery(ctx context.Context, in *CreatePreparedQueryRequest, opts ...grpc.CallOption) (*CreatePreparedQueryResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CreatePreparedQueryResponse)
-	err := c.cc.Invoke(ctx, BucketService_CreatePreparedQuery_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *bucketServiceClient) UpdatePreparedQuery(ctx context.Context, in *UpdatePreparedQueryRequest, opts ...grpc.CallOption) (*UpdatePreparedQueryResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(UpdatePreparedQueryResponse)
-	err := c.cc.Invoke(ctx, BucketService_UpdatePreparedQuery_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *bucketServiceClient) DeletePreparedQuery(ctx context.Context, in *DeletePreparedQueryRequest, opts ...grpc.CallOption) (*DeletePreparedQueryResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DeletePreparedQueryResponse)
-	err := c.cc.Invoke(ctx, BucketService_DeletePreparedQuery_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
 
 func (c *bucketServiceClient) ListPreparedQueries(ctx context.Context, in *ListPreparedQueriesRequest, opts ...grpc.CallOption) (*ListPreparedQueriesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -555,7 +481,7 @@ func (c *bucketServiceClient) GetIndexEntryStatus(ctx context.Context, in *GetIn
 
 func (c *bucketServiceClient) ListIndexes(ctx context.Context, in *ListIndexesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[commonpb.Index], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[10], BucketService_ListIndexes_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[9], BucketService_ListIndexes_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -604,7 +530,7 @@ func (c *bucketServiceClient) GetNumscript(ctx context.Context, in *GetNumscript
 
 func (c *bucketServiceClient) ListNumscripts(ctx context.Context, in *ListNumscriptsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[commonpb.NumscriptInfo], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[11], BucketService_ListNumscripts_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &BucketService_ServiceDesc.Streams[10], BucketService_ListNumscripts_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -693,30 +619,20 @@ type BucketServiceServer interface {
 	GetAuditEntry(context.Context, *GetAuditEntryRequest) (*auditpb.AuditEntry, error)
 	// GetEventsSinks returns the current per-sink configurations and statuses
 	GetEventsSinks(context.Context, *GetEventsSinksRequest) (*GetEventsSinksResponse, error)
-	// ListChapters streams all chapters
-	ListChapters(*ListChaptersRequest, grpc.ServerStreamingServer[commonpb.Chapter]) error
 	// ListLogs streams system logs; when ledger is set, streams only logs for that ledger
 	ListLogs(*ListLogsRequest, grpc.ServerStreamingServer[commonpb.Log]) error
 	// GetLog returns a single system log by sequence number
 	GetLog(context.Context, *GetLogRequest) (*commonpb.Log, error)
-	// GetChapterSchedule returns the current automatic chapter rotation schedule
-	GetChapterSchedule(context.Context, *GetChapterScheduleRequest) (*GetChapterScheduleResponse, error)
 	// ListSigningKeys streams all registered signing keys
 	ListSigningKeys(*ListSigningKeysRequest, grpc.ServerStreamingServer[commonpb.SigningKey]) error
 	// Discovery returns server capabilities and configuration for clients
 	Discovery(context.Context, *DiscoveryRequest) (*DiscoveryResponse, error)
-	// GetMetadataSchemaStatus returns the conversion status for all declared metadata fields
+	// GetMetadataSchemaStatus returns the declared type of every metadata field.
 	GetMetadataSchemaStatus(context.Context, *GetMetadataSchemaStatusRequest) (*GetMetadataSchemaStatusResponse, error)
 	// AnalyzeAccounts scans all accounts in a ledger and suggests a Chart of Accounts
 	AnalyzeAccounts(*AnalyzeAccountsRequest, grpc.ServerStreamingServer[AnalyzeAccountsEvent]) error
 	// AnalyzeTransactions scans all transactions in a ledger and discovers flow patterns
 	AnalyzeTransactions(*AnalyzeTransactionsRequest, grpc.ServerStreamingServer[AnalyzeTransactionsEvent]) error
-	// CreatePreparedQuery creates a named prepared query for a ledger
-	CreatePreparedQuery(context.Context, *CreatePreparedQueryRequest) (*CreatePreparedQueryResponse, error)
-	// UpdatePreparedQuery updates the filter of an existing prepared query
-	UpdatePreparedQuery(context.Context, *UpdatePreparedQueryRequest) (*UpdatePreparedQueryResponse, error)
-	// DeletePreparedQuery removes a prepared query
-	DeletePreparedQuery(context.Context, *DeletePreparedQueryRequest) (*DeletePreparedQueryResponse, error)
 	// ListPreparedQueries lists all prepared queries for a ledger
 	ListPreparedQueries(context.Context, *ListPreparedQueriesRequest) (*ListPreparedQueriesResponse, error)
 	// ExecutePreparedQuery executes a prepared query against the read index store
@@ -801,17 +717,11 @@ func (UnimplementedBucketServiceServer) GetAuditEntry(context.Context, *GetAudit
 func (UnimplementedBucketServiceServer) GetEventsSinks(context.Context, *GetEventsSinksRequest) (*GetEventsSinksResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetEventsSinks not implemented")
 }
-func (UnimplementedBucketServiceServer) ListChapters(*ListChaptersRequest, grpc.ServerStreamingServer[commonpb.Chapter]) error {
-	return status.Error(codes.Unimplemented, "method ListChapters not implemented")
-}
 func (UnimplementedBucketServiceServer) ListLogs(*ListLogsRequest, grpc.ServerStreamingServer[commonpb.Log]) error {
 	return status.Error(codes.Unimplemented, "method ListLogs not implemented")
 }
 func (UnimplementedBucketServiceServer) GetLog(context.Context, *GetLogRequest) (*commonpb.Log, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetLog not implemented")
-}
-func (UnimplementedBucketServiceServer) GetChapterSchedule(context.Context, *GetChapterScheduleRequest) (*GetChapterScheduleResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetChapterSchedule not implemented")
 }
 func (UnimplementedBucketServiceServer) ListSigningKeys(*ListSigningKeysRequest, grpc.ServerStreamingServer[commonpb.SigningKey]) error {
 	return status.Error(codes.Unimplemented, "method ListSigningKeys not implemented")
@@ -827,15 +737,6 @@ func (UnimplementedBucketServiceServer) AnalyzeAccounts(*AnalyzeAccountsRequest,
 }
 func (UnimplementedBucketServiceServer) AnalyzeTransactions(*AnalyzeTransactionsRequest, grpc.ServerStreamingServer[AnalyzeTransactionsEvent]) error {
 	return status.Error(codes.Unimplemented, "method AnalyzeTransactions not implemented")
-}
-func (UnimplementedBucketServiceServer) CreatePreparedQuery(context.Context, *CreatePreparedQueryRequest) (*CreatePreparedQueryResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method CreatePreparedQuery not implemented")
-}
-func (UnimplementedBucketServiceServer) UpdatePreparedQuery(context.Context, *UpdatePreparedQueryRequest) (*UpdatePreparedQueryResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method UpdatePreparedQuery not implemented")
-}
-func (UnimplementedBucketServiceServer) DeletePreparedQuery(context.Context, *DeletePreparedQueryRequest) (*DeletePreparedQueryResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method DeletePreparedQuery not implemented")
 }
 func (UnimplementedBucketServiceServer) ListPreparedQueries(context.Context, *ListPreparedQueriesRequest) (*ListPreparedQueriesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListPreparedQueries not implemented")
@@ -1099,17 +1000,6 @@ func _BucketService_GetEventsSinks_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _BucketService_ListChapters_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ListChaptersRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(BucketServiceServer).ListChapters(m, &grpc.GenericServerStream[ListChaptersRequest, commonpb.Chapter]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type BucketService_ListChaptersServer = grpc.ServerStreamingServer[commonpb.Chapter]
-
 func _BucketService_ListLogs_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(ListLogsRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -1135,24 +1025,6 @@ func _BucketService_GetLog_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BucketServiceServer).GetLog(ctx, req.(*GetLogRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _BucketService_GetChapterSchedule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetChapterScheduleRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BucketServiceServer).GetChapterSchedule(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: BucketService_GetChapterSchedule_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BucketServiceServer).GetChapterSchedule(ctx, req.(*GetChapterScheduleRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1225,60 +1097,6 @@ func _BucketService_AnalyzeTransactions_Handler(srv interface{}, stream grpc.Ser
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type BucketService_AnalyzeTransactionsServer = grpc.ServerStreamingServer[AnalyzeTransactionsEvent]
-
-func _BucketService_CreatePreparedQuery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreatePreparedQueryRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BucketServiceServer).CreatePreparedQuery(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: BucketService_CreatePreparedQuery_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BucketServiceServer).CreatePreparedQuery(ctx, req.(*CreatePreparedQueryRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _BucketService_UpdatePreparedQuery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(UpdatePreparedQueryRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BucketServiceServer).UpdatePreparedQuery(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: BucketService_UpdatePreparedQuery_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BucketServiceServer).UpdatePreparedQuery(ctx, req.(*UpdatePreparedQueryRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _BucketService_DeletePreparedQuery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeletePreparedQueryRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BucketServiceServer).DeletePreparedQuery(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: BucketService_DeletePreparedQuery_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BucketServiceServer).DeletePreparedQuery(ctx, req.(*DeletePreparedQueryRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
 
 func _BucketService_ListPreparedQueries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListPreparedQueriesRequest)
@@ -1562,28 +1380,12 @@ var BucketService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _BucketService_GetLog_Handler,
 		},
 		{
-			MethodName: "GetChapterSchedule",
-			Handler:    _BucketService_GetChapterSchedule_Handler,
-		},
-		{
 			MethodName: "Discovery",
 			Handler:    _BucketService_Discovery_Handler,
 		},
 		{
 			MethodName: "GetMetadataSchemaStatus",
 			Handler:    _BucketService_GetMetadataSchemaStatus_Handler,
-		},
-		{
-			MethodName: "CreatePreparedQuery",
-			Handler:    _BucketService_CreatePreparedQuery_Handler,
-		},
-		{
-			MethodName: "UpdatePreparedQuery",
-			Handler:    _BucketService_UpdatePreparedQuery_Handler,
-		},
-		{
-			MethodName: "DeletePreparedQuery",
-			Handler:    _BucketService_DeletePreparedQuery_Handler,
 		},
 		{
 			MethodName: "ListPreparedQueries",
@@ -1658,11 +1460,6 @@ var BucketService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ListAuditEntries",
 			Handler:       _BucketService_ListAuditEntries_Handler,
-			ServerStreams: true,
-		},
-		{
-			StreamName:    "ListChapters",
-			Handler:       _BucketService_ListChapters_Handler,
 			ServerStreams: true,
 		},
 		{
