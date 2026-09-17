@@ -1324,6 +1324,21 @@ components:
           additionalProperties: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        lastEvaluatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          description: >-
+            When the rule last completed an evaluation. Absent until the rule has run at least once —
+            which is not the same as a rule that ran and passed, so a consumer must render the absence
+            as unknown rather than green. Stamped by each evaluation; never accepted on create or patch.
+        lastVerdict:
+          type: string
+          enum: [pass, fail, error]
+          readOnly: true
+          description: >-
+            Outcome of the evaluation named by lastEvaluatedAt. `error` is an engine-side failure
+            (resolver timeout, budget exceeded), not a data break. Absent until the rule has run.
     BalanceEquationRule:
       allOf:
         - $ref: '#/components/schemas/RuleCommon'

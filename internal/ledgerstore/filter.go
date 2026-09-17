@@ -100,6 +100,10 @@ func ruleLeaf(op, key string, value any) (*commonpb.QueryFilter, error) {
 		return metaDatetime(op, key, schema.MetaCreatedAt, value)
 	case "updatedAt":
 		return metaDatetime(op, key, schema.MetaUpdatedAt, value)
+	case "lastEvaluatedAt":
+		return metaDatetime(op, key, schema.MetaLastEvaluatedAt, value)
+	case "lastVerdict":
+		return metaEqString(op, key, schema.MetaLastVerdict, value)
 	default:
 		return nil, fmt.Errorf("%w: unknown rule filter key %q", store.ErrInvalidQuery, key)
 	}

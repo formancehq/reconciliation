@@ -101,6 +101,20 @@ func ruleToMetadata(r *models.Rule) (map[string]*commonpb.MetadataValue, error) 
 	return md, nil
 }
 
+// isRuleAccount reports whether a `rule:*` account's metadata describes a live
+// rule, rather than residue left by a non-rule writer.
+//
+// RecordCapture stamps the liveness keys onto the rule account without first
+// reading it (that is the point — no extra round-trip). An evaluation still in
+// flight when DeleteRule runs therefore writes those two keys back onto the
+// just-emptied account, and a rule whose every identifying field is gone would
+// otherwise decode as a nameless ghost that GetRule returns instead of 404 and
+// ListRules shows forever. created_at is written unconditionally by
+// ruleToMetadata and by nothing else, so its presence is the existence marker.
+func isRuleAccount(md map[string]*commonpb.MetadataValue) bool {
+	return !getTime(md, schema.MetaCreatedAt).IsZero()
+}
+
 // ruleFromAccount rebuilds a Rule from its control-ledger account (metadata +
 // address, which carries the UUID).
 func ruleFromAccount(acct *commonpb.Account) (*models.Rule, error) {
@@ -124,6 +138,13 @@ func ruleFromAccount(acct *commonpb.Account) (*models.Rule, error) {
 		PeriodType:      models.PeriodType(getStr(md, schema.MetaPeriodType)),
 		CreatedAt:       getTime(md, schema.MetaCreatedAt),
 		UpdatedAt:       getTime(md, schema.MetaUpdatedAt),
+		LastVerdict:     getStr(md, schema.MetaLastVerdict),
+	}
+
+	// Absent means never evaluated. Left nil rather than zero-valued so a caller
+	// cannot mistake "no run yet" for a run at the zero instant.
+	if t := getTime(md, schema.MetaLastEvaluatedAt); !t.IsZero() {
+		r.LastEvaluatedAt = &t
 	}
 
 	if s := getStr(md, schema.MetaSchedule); s != "" {

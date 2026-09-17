@@ -192,3 +192,67 @@ func TestLedgerStore_DeleteRule_NotFound(t *testing.T) {
 
 	require.ErrorIs(t, New(m, controlLedger).DeleteRule(context.Background(), id), store.ErrNotFound)
 }
+
+// A never-evaluated rule reads back with no liveness fields at all — nil, not a
+// zero instant, so a caller cannot mistake "never ran" for "ran and passed".
+func TestRuleFromAccount_LivenessAbsentUntilFirstEvaluation(t *testing.T) {
+	t.Parallel()
+
+	r := newRule(uuid.New())
+	decoded, err := ruleFromAccount(account(t, r))
+
+	require.NoError(t, err)
+	require.Nil(t, decoded.LastEvaluatedAt)
+	require.Empty(t, decoded.LastVerdict)
+}
+
+// Once stamped, the liveness keys decode alongside the rule's own metadata —
+// they are written by RecordCapture, never by ruleToMetadata.
+func TestRuleFromAccount_DecodesLiveness(t *testing.T) {
+	t.Parallel()
+
+	r := newRule(uuid.New())
+	at := time.Now().Truncate(time.Microsecond).UTC()
+
+	bare, err := ruleFromAccount(account(t, r))
+	require.NoError(t, err)
+
+	acct := account(t, r)
+	acct.Metadata[schema.MetaLastEvaluatedAt] = dtVal(at)
+	acct.Metadata[schema.MetaLastVerdict] = strVal("pass")
+
+	decoded, err := ruleFromAccount(acct)
+
+	require.NoError(t, err)
+	require.NotNil(t, decoded.LastEvaluatedAt)
+	require.True(t, at.Equal(*decoded.LastEvaluatedAt))
+	require.Equal(t, "pass", decoded.LastVerdict)
+	require.Equal(t, bare.Revision, decoded.Revision, "liveness is derived state and must not move the rule's revision")
+}
+
+// A capture racing DeleteRule re-stamps the liveness keys onto the emptied
+// account. That residue must not resurrect the rule: GetRule still 404s, and
+// ListRules skips it rather than returning a nameless ghost.
+func TestLedgerStore_LivenessResidueDoesNotResurrectDeletedRule(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	residue := &commonpb.Account{Address: schema.RuleAccount(id.String()), Metadata: map[string]*commonpb.MetadataValue{
+		schema.MetaLastEvaluatedAt: dtVal(time.Now().UTC()),
+		schema.MetaLastVerdict:     strVal("pass"),
+	}}
+
+	ctrl := gomock.NewController(t)
+	m := NewMockledgerClient(ctrl)
+	m.EXPECT().GetAccount(gomock.Any(), controlLedger, schema.RuleAccount(id.String())).Return(residue, nil)
+	m.EXPECT().QueryAccounts(gomock.Any(), controlLedger, gomock.Any()).Return([]*commonpb.Account{residue}, nil)
+
+	s := New(m, controlLedger)
+
+	_, err := s.GetRule(context.Background(), id)
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	cur, err := s.ListRules(context.Background(), store.NewGetRulesQuery(store.NewPaginatedQueryOptions(store.RulesFilters{})))
+	require.NoError(t, err)
+	require.Empty(t, cur.Data)
+}

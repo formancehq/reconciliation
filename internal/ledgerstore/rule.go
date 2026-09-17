@@ -63,7 +63,7 @@ func (s *LedgerStore) GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, 
 		return nil, fmt.Errorf("get rule %s: %w", id, err)
 	}
 
-	if len(acct.GetMetadata()) == 0 {
+	if !isRuleAccount(acct.GetMetadata()) {
 		return nil, fmt.Errorf("get rule %s: %w", id, store.ErrNotFound)
 	}
 
@@ -135,7 +135,7 @@ func (s *LedgerStore) DeleteRule(ctx context.Context, id uuid.UUID) error {
 		keys = append(keys, k)
 	}
 
-	if len(keys) == 0 {
+	if !isRuleAccount(acct.GetMetadata()) {
 		return fmt.Errorf("delete rule %s: %w", id, store.ErrNotFound)
 	}
 
@@ -173,6 +173,10 @@ func (s *LedgerStore) ListRules(ctx context.Context, q store.GetRulesQuery) (*bu
 
 	rules := make([]models.Rule, 0, len(accts))
 	for _, acct := range accts {
+		if !isRuleAccount(acct.GetMetadata()) {
+			continue
+		}
+
 		r, derr := ruleFromAccount(acct)
 		if derr != nil {
 			return nil, fmt.Errorf("list rules: decode %s: %w", acct.GetAddress(), derr)

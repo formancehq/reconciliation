@@ -507,3 +507,22 @@ func (notFoundErr) Error() string { return "not found" }
 func (notFoundErr) Is(target error) bool {
 	return target.Error() == "not found"
 }
+
+// A rule's liveness fields are read-only projections of its latest evaluation.
+// They must reach the wire — a multi-stack collector reads them to tell a rule
+// that ran and passed from one that silently stopped running — and they must be
+// absent, not zero, before the first evaluation.
+func TestRenderRule_Liveness(t *testing.T) {
+	t.Parallel()
+
+	at := time.Now().UTC().Truncate(time.Second)
+	rendered := renderRule(&models.Rule{ID: uuid.New(), LastEvaluatedAt: &at, LastVerdict: "error"})
+	require.NotNil(t, rendered.LastEvaluatedAt)
+	require.True(t, at.Equal(*rendered.LastEvaluatedAt))
+	require.Equal(t, "error", rendered.LastVerdict)
+
+	body, err := json.Marshal(renderRule(&models.Rule{ID: uuid.New()}))
+	require.NoError(t, err)
+	require.NotContains(t, string(body), "lastEvaluatedAt", "never evaluated must read as unknown, not as a run at the zero instant")
+	require.NotContains(t, string(body), "lastVerdict")
+}

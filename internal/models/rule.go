@@ -177,4 +177,14 @@ type Rule struct {
 	Labels          map[string]string `bun:",type:jsonb"            json:"labels,omitempty"`
 	CreatedAt       time.Time         `bun:"created_at,notnull,nullzero" json:"createdAt"`
 	UpdatedAt       time.Time         `bun:"updated_at,notnull,nullzero" json:"updatedAt"`
+
+	// LastEvaluatedAt and LastVerdict are derived, read-only liveness fields:
+	// the rule's own writes never set them, each evaluation stamps them onto the
+	// rule account as a side effect of recording its capture. They exist so a
+	// caller can answer "did this rule actually run, and what did it say?" from
+	// the rules list alone, instead of one ListCaptures call per rule. Nil /
+	// empty means the rule has never been evaluated -- which is distinct from,
+	// and must not be rendered as, a passing rule.
+	LastEvaluatedAt *time.Time `bun:"-" json:"lastEvaluatedAt,omitempty"`
+	LastVerdict     string     `bun:"-" json:"lastVerdict,omitempty"` // "pass" | "fail" | "error"
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -126,4 +127,52 @@ func TestLedgerStore_ListCaptures_PeriodScoped(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cur.Data, 1)
 	require.Equal(t, "2026-03", cur.Data[0].PeriodID)
+}
+
+// A capture stamps the rule's liveness fields onto its own account, riding the
+// capture transaction — that is what lets GET /rules answer "did this rule run"
+// without one ListCaptures per rule.
+func TestRecordCapture_StampsRuleLiveness(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	m := NewMockledgerClient(ctrl)
+	ruleID := uuid.New()
+	at := time.Now().Truncate(time.Microsecond).UTC()
+
+	m.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tx ledger.CreateTransactionInput) error {
+		md := tx.AccountMetadata[schema.RuleAccount(ruleID.String())].Values
+		require.NotNil(t, md, "the stamp rides the capture transaction, so it costs no extra write")
+		require.Equal(t, "fail", md[schema.MetaLastVerdict].GetStringValue())
+		require.Equal(t, at.UnixMicro(), md[schema.MetaLastEvaluatedAt].GetDatetimeValue())
+		require.NotContains(t, md, schema.MetaRevision, "a capture must not touch the rule's own configuration keys")
+		return nil
+	})
+
+	require.NoError(t, New(m, controlLedger).RecordCapture(context.Background(), store.CaptureInput{
+		RuleID: ruleID, PeriodID: "2026-03", EvaluationID: uuid.New(),
+		TemplateKind: "balance_equation", Verdict: "fail", Trigger: "scheduled",
+		CapturedAt: at, Result: models.EvaluationFail,
+	}))
+}
+
+// An ERROR evaluation is not a passing one: the verdict the collector reads must
+// keep "the control itself broke" distinct from "the control found a break".
+func TestRecordCapture_StampsErrorVerdict(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	m := NewMockledgerClient(ctrl)
+	ruleID := uuid.New()
+
+	m.EXPECT().CreateTransaction(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tx ledger.CreateTransactionInput) error {
+		require.Equal(t, "error", tx.AccountMetadata[schema.RuleAccount(ruleID.String())].Values[schema.MetaLastVerdict].GetStringValue())
+		return nil
+	})
+
+	require.NoError(t, New(m, controlLedger).RecordCapture(context.Background(), store.CaptureInput{
+		RuleID: ruleID, PeriodID: "continuous", EvaluationID: uuid.New(),
+		TemplateKind: "balance_equation", Verdict: "error", Trigger: "scheduled",
+		CapturedAt: time.Now().UTC(), Result: models.EvaluationError, Error: "resolver timed out",
+	}))
 }

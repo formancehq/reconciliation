@@ -212,7 +212,34 @@ See [templates.md](./templates.md) for per-template spec schemas.
 
 #### `GET /rules` — cursor-paginated list
 
-Filterable via query builder: `?type=balance_equation`, `?ledger=buildr`, `?enabled=true`, `?label.team=treasury`.
+Filterable via query builder: `?type=balance_equation`, `?ledger=buildr`, `?enabled=true`, `?label.team=treasury`,
+plus the liveness fields below (`?lastVerdict=error`, `?lastEvaluatedAt<2026-09-17T06:00:00Z`).
+
+##### Liveness: `lastEvaluatedAt` / `lastVerdict`
+
+Every rule — in the list and in `GET /rules/{id}` — carries two **read-only** fields describing its
+most recent evaluation:
+
+| Field | Meaning |
+|---|---|
+| `lastEvaluatedAt` | When the rule last completed an evaluation (the capture's `capturedAt`). |
+| `lastVerdict` | `pass` · `fail` · `error` — `error` is an engine-side failure (resolver timeout, budget exceeded), not a data break. |
+
+**Both are absent until the rule has run at least once.** A rule with no `lastEvaluatedAt` has never
+been evaluated, which is *not* the same as a rule that evaluated and passed — a consumer that renders
+the absence as green reports a dead scheduler as a clean book.
+
+They exist so a caller can answer "did this rule actually run, and what did it say?" from the rules
+list alone, instead of one [`GET /rules/{id}/captures`](#get-rulesidcaptures--evaluation-history-captures)
+call per rule — the read shape a multi-stack collector needs, since a stack whose scheduler is down
+raises no alerts and otherwise looks reconciled. Pair `?lastEvaluatedAt<{cutoff}` with `GET /alerts?status=OPEN`
+to separate *green* from *silent*.
+
+They are a projection, not a new record: each evaluation stamps them onto the rule's control-ledger
+account as account metadata riding its capture transaction, so they cost no extra write and no extra
+round-trip. The capture remains the audit record ([ADR-003 §6](../prd/adr-003-checkpoint-anchor-and-crosscheck.md));
+these two keys are last-write-wins derived state and do not move the rule's `revision`. `POST /rules`
+and `PATCH /rules/{id}` neither accept nor modify them.
 
 #### `GET /rules/{id}` — fetch one
 

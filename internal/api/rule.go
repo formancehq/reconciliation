@@ -32,23 +32,29 @@ type ruleResponse struct {
 	UpdatedAt       time.Time         `json:"updatedAt"`
 	ContractVersion int               `json:"contractVersion,omitempty"`
 	Revision        string            `json:"revision,omitempty"`
+	// Read-only liveness fields, stamped by each evaluation. Both absent means
+	// the rule has never run — which a caller must read as "unknown", not "green".
+	LastEvaluatedAt *time.Time `json:"lastEvaluatedAt,omitempty"`
+	LastVerdict     string     `json:"lastVerdict,omitempty"`
 }
 
 func renderRule(r *models.Rule) *ruleResponse {
 	response := &ruleResponse{
-		ID:            r.ID.String(),
-		Name:          r.Name,
-		TemplateKind:  string(r.TemplateKind),
-		TemplateSpec:  r.TemplateSpec,
-		CompiledCEL:   r.CompiledCEL,
-		Enabled:       r.Enabled,
-		Severity:      string(r.Severity),
-		PeriodType:    string(r.PeriodType),
-		Schedule:      r.Schedule,
-		Notifications: r.Notifications,
-		Labels:        r.Labels,
-		CreatedAt:     r.CreatedAt,
-		UpdatedAt:     r.UpdatedAt,
+		ID:              r.ID.String(),
+		Name:            r.Name,
+		TemplateKind:    string(r.TemplateKind),
+		TemplateSpec:    r.TemplateSpec,
+		CompiledCEL:     r.CompiledCEL,
+		Enabled:         r.Enabled,
+		Severity:        string(r.Severity),
+		PeriodType:      string(r.PeriodType),
+		Schedule:        r.Schedule,
+		Notifications:   r.Notifications,
+		Labels:          r.Labels,
+		CreatedAt:       r.CreatedAt,
+		UpdatedAt:       r.UpdatedAt,
+		LastEvaluatedAt: r.LastEvaluatedAt,
+		LastVerdict:     r.LastVerdict,
 	}
 	if r.ContractVersion.Effective() == models.ContractVersionV2 {
 		response.ContractVersion = int(models.ContractVersionV2)

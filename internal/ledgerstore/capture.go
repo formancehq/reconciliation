@@ -64,7 +64,17 @@ func (s *LedgerStore) RecordCapture(ctx context.Context, in store.CaptureInput) 
 			schema.VarActivityPool: schema.ActivityPool(rule),
 			schema.VarActivity:     schema.ActivityAccount(rule),
 		},
-		TxMetadata:     md,
+		TxMetadata: md,
+		// Liveness stamp on the rule account, carried by the capture transaction
+		// itself so a rule's latest outcome costs no extra write and no extra
+		// round-trip. Last-write-wins, and metadata writes merge, so this never
+		// disturbs the rule's own keys (a concurrent PatchRule rewrites its keys,
+		// not these). The capture transaction stays the audit record; this is a
+		// readable projection of its newest row onto the rule.
+		AccountMetadata: map[string]*commonpb.MetadataMap{schema.RuleAccount(rule): {Values: map[string]*commonpb.MetadataValue{
+			schema.MetaLastEvaluatedAt: dtVal(in.CapturedAt.UTC()),
+			schema.MetaLastVerdict:     strVal(in.Verdict),
+		}}},
 		IdempotencyKey: alertActionKey("capture", rule, in.PeriodID, in.EvaluationID.String()),
 	}); err != nil {
 		return fmt.Errorf("record capture for rule %s period %s: %w", rule, in.PeriodID, err)

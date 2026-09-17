@@ -85,6 +85,15 @@ const (
 	MetaCreatedAt       = "created_at"
 	MetaUpdatedAt       = "updated_at"
 	MetaRevision        = "revision"
+	// MetaLastEvaluatedAt and MetaLastVerdict are the rule's liveness stamp,
+	// written by RecordCapture as account metadata riding the capture
+	// transaction — never by a rule create/patch. They are last-write-wins
+	// derived state, not part of the rule's revision: the capture transaction
+	// remains the audit record, these two keys only make the latest outcome
+	// readable from the rule account itself so a list does not need one capture
+	// scan per rule.
+	MetaLastEvaluatedAt = "last_evaluated_at"
+	MetaLastVerdict     = "last_verdict"
 )
 
 // LabelPrefix namespaces a rule/alert label as a flat, indexable metadata key
@@ -196,6 +205,7 @@ func MetadataSchema() []*commonpb.SetMetadataFieldTypeCommand {
 		{MetaName, str}, {MetaTemplateKind, str}, {MetaEnabled, b}, {MetaSchedule, str},
 		{MetaPeriodType, str}, {MetaSpec, str}, {MetaCompiledCEL, str}, {MetaNotifications, str}, {MetaContractVersion, str},
 		{MetaCreatedAt, dt}, {MetaUpdatedAt, dt}, {MetaRevision, str},
+		{MetaLastEvaluatedAt, dt}, {MetaLastVerdict, str},
 	}
 
 	cmds := make([]*commonpb.SetMetadataFieldTypeCommand, 0, len(fields))
@@ -224,6 +234,9 @@ func MetadataIndexes() []*commonpb.IndexID {
 		MetaFirstSeenAt, MetaLastSeenAt,
 		// rule filter fields
 		MetaName, MetaTemplateKind, MetaEnabled, MetaCreatedAt, MetaUpdatedAt,
+		// rule liveness fields — `lastEvaluatedAt < cutoff` is the staleness
+		// query ("which rules have stopped running"), so it needs its index.
+		MetaLastEvaluatedAt, MetaLastVerdict,
 	}
 
 	idxs := make([]*commonpb.IndexID, 0, len(keys))

@@ -135,3 +135,18 @@ func mustMicros(t *testing.T, s string) int64 {
 
 	return ts.UnixMicro()
 }
+
+// The staleness query — "which rules have stopped running" — is a datetime range
+// on the liveness stamp, so it must translate like createdAt/updatedAt do.
+func TestBuildListFilter_RuleLiveness(t *testing.T) {
+	t.Parallel()
+
+	cutoff := time.Now().Add(-6 * time.Hour).UTC().Format(time.RFC3339)
+	f, err := buildListFilter(schema.RulePrefix(), query.Lt("lastEvaluatedAt", cutoff), ruleLeaf)
+	require.NoError(t, err)
+	require.Equal(t, schema.MetaLastEvaluatedAt, f.GetAnd().GetFilters()[1].GetField().GetField().GetMetadata())
+
+	f, err = buildListFilter(schema.RulePrefix(), query.Match("lastVerdict", "error"), ruleLeaf)
+	require.NoError(t, err)
+	require.Equal(t, schema.MetaLastVerdict, f.GetAnd().GetFilters()[1].GetField().GetField().GetMetadata())
+}
