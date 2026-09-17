@@ -2,7 +2,6 @@ package ledger
 
 import (
 	"context"
-	"net"
 	"testing"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
@@ -10,9 +9,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/test/bufconn"
 )
 
 // protocolCapturingServer records the metadata of the last RPC it served, so a
@@ -36,29 +33,13 @@ func (s *protocolCapturingServer) ListLedgers(_ *servicepb.ListLedgersRequest, s
 	return nil
 }
 
-// dialCapturingServer starts the capturing server over an in-process listener
-// and returns a Client built through NewClient — the real constructor, so the
-// test covers the dial options production uses.
+// dialCapturingServer wires the capturing server to a Client over bufconn.
 func dialCapturingServer(t *testing.T) (*protocolCapturingServer, *Client) {
 	t.Helper()
 
-	listener := bufconn.Listen(1024 * 1024)
 	service := &protocolCapturingServer{}
-	server := grpc.NewServer()
-	servicepb.RegisterBucketServiceServer(server, service)
 
-	go func() { _ = server.Serve(listener) }()
-
-	t.Cleanup(server.Stop)
-
-	client, err := NewClient("passthrough:///bufnet", insecure.NewCredentials(),
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return listener.DialContext(ctx)
-		}))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-
-	return service, client
+	return service, dialBufconn(t, service)
 }
 
 // The ledger rejects any business RPC that does not declare exactly one
