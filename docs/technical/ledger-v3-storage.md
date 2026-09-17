@@ -61,6 +61,49 @@ The four assets all have precision zero:
 | `CAPTURE` | One unit for each recorded evaluation. |
 | `ACTIVITY` | One unit for each rule lifecycle, evaluation, or alert activity item. |
 
+### The one EPHEMERAL type, and why EN-2036 does not affect it
+
+`alert:st:{open|ack}:…` is the only `EPHEMERAL` account type in the chart. Ledger
+[EN-2036](https://formance-team.atlassian.net/browse/EN-2036) changes what an `EPHEMERAL` purge
+removes — today only the zeroed volume cell, afterwards the account row, its metadata and every
+secondary-index entry, atomically with the transaction that zeroes the last volume. That does not
+reach anything this module depends on, for four reasons.
+
+Nothing reads a state account. Alert reads go through the `NORMAL` item account and its `status`
+metadata mirror: both `ListActiveAlertFingerprints` and `ListAlerts` query the `alert:item:` prefix.
+The three open-marker prefix builders in `internal/ledgerschema/addresses.go` have no non-test
+caller.
+
+No metadata is ever written to a state account. Every account-metadata write in
+`internal/ledgerstore` targets the item account or `rule:{ruleId}`, so the purge's metadata deletion
+and its "metadata-only writes cannot resurrect a zero-volume account" rule are both inert here.
+
+The marker is a write-time compare-and-swap, not a read. `alert_move` and `alert_reopen` take the
+current state account as a **bare** source, so an illegal transition fails on insufficient funds.
+A purged account and a zero-balance account behave identically under that check, and re-minting on
+reopen posts to `st_open` as a destination, which acceptance criterion 6 covers explicitly.
+
+Point-in-time semantics do not apply. Acceptance criterion 7 governs pre-purge checkpoint reads, and
+this module removed checkpoints (see [ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md)).
+
+The change is favourable rather than neutral: a drained marker currently leaves a ghost row and
+append-only has-asset index membership that this module never queried but still paid for in account
+scans.
+
+Two caveats. This is a distinct question from the client-side analysis in
+[stale-holds.md](stale-holds.md), which reaches the same conclusion about *client* hold accounts in a
+*client* ledger — that finding does not by itself clear the control ledger, and this one does not
+clear a client book. And the clearance is reasoned from the ticket's acceptance criteria and its
+confirmed design decisions, not from a running build: ledger PR
+[#2058](https://github.com/formancehq/ledger/pull/2058) was still open when this was written. The
+behaviour to re-test when it lands is **close → purge → reopen**, the only place the module relies on
+a purged address accepting a fresh mint.
+
+One loose end this review surfaced: `PQOpenCount` (`AGGREGATE_VOLUMES(ALERT)` over the
+`alert:st:open:` prefix) is registered at bootstrap but has no non-test caller. It stays correct
+either way — it sums zeros over ghosts today and scans nothing afterwards — but it should be wired
+up or removed.
+
 ## Current state and immutable history
 
 Rule and alert accounts are current-state projections. Typed account metadata supports direct reads

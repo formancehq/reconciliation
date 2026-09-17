@@ -547,6 +547,11 @@ here before it was usable (the query DSL in `internal/ledger/resolver.go` unders
 and `metadata[…]`, so the predicate needed a matching leaf), while EN-2036 needs **no reconciliation
 code at all**.
 
+That statement is scoped to *client* hold accounts in a *client* ledger, which is what this page is
+about. The control ledger has its own `EPHEMERAL` type (the alert marker) and needed a separate
+clearance; it is in
+[ledger-v3-storage.md](ledger-v3-storage.md#the-one-ephemeral-type-and-why-en-2036-does-not-affect-it).
+
 What it does not do is make the teardown write unnecessary in general. The purge is **type-gated** —
 `NORMAL` accounts keep their zeroed volume cell, their row and their metadata, by design and by this
 ticket's own acceptance criteria. So the fix lands for a book whose hold accounts are declared
