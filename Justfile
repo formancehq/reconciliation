@@ -62,8 +62,15 @@ generate-ledger-proto:
         proto/ledger/proposal.proto
 
 # Run hermetic tests with race detector and coverage
+#
+# coverpkg excludes the 12 generated internal/ledgerpb/*pb packages: they are
+# ~96% of the statements in this module and ~1.6% covered, so including them
+# reports 4.5% where the hand-written figure is ~76%. grpcprotocol lives under
+# the same tree but is hand-written, so the filter matches only the `*pb`
+# package names. codecov.yml applies the equivalent exclusion server-side.
 tests:
-    go test -race -covermode atomic ./...
+    go test -race -covermode atomic -coverprofile=coverage.out \
+        -coverpkg=$(go list ./... | grep -vE '/internal/ledgerpb/[a-z]+pb$' | paste -sd, -) ./...
 
 # Run the serial integration suite against a live Ledger v3 on localhost:8888
 tests-integration:
