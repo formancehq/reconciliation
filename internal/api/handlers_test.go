@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -339,6 +340,7 @@ func TestListRules_Nominal(t *testing.T) {
 		},
 	}
 	mockSvc.EXPECT().ListRules(gomock.Any(), gomock.Any()).Return(cursor, nil)
+	mockSvc.EXPECT().AlertCountsByRule(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 	r := httptest.NewRequest(http.MethodGet, "/rules", nil)
 	rec := httptest.NewRecorder()
@@ -348,6 +350,73 @@ func TestListRules_Nominal(t *testing.T) {
 	var got sharedapi.BaseResponse[models.Rule]
 	sharedapi.Decode(t, rec.Body, &got)
 	require.Len(t, got.Cursor.Data, 2)
+}
+
+// The live alert tally rides on the list response, read in one aggregate for the
+// whole page rather than one query per rule (EN-2240).
+func TestListRules_CarriesAlertCounts(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
+
+	noisy, quiet := uuid.New(), uuid.New()
+	cursor := &bunpaginate.Cursor[models.Rule]{
+		PageSize: 15,
+		Data: []models.Rule{
+			{ID: noisy, Name: "noisy", TemplateKind: models.TemplateBalanceEquation},
+			{ID: quiet, Name: "quiet", TemplateKind: models.TemplateBalanceBounds},
+		},
+	}
+	mockSvc.EXPECT().ListRules(gomock.Any(), gomock.Any()).Return(cursor, nil)
+	// One call, carrying every rule on the page.
+	mockSvc.EXPECT().AlertCountsByRule(gomock.Any(), []uuid.UUID{noisy, quiet}).
+		Return(map[uuid.UUID]models.AlertCounts{
+			noisy: {Open: 3, Acknowledged: 1},
+			quiet: {},
+		}, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/rules", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got struct {
+		Cursor struct {
+			Data []struct {
+				ID     string              `json:"id"`
+				Alerts *models.AlertCounts `json:"alerts"`
+			} `json:"data"`
+		} `json:"cursor"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Len(t, got.Cursor.Data, 2)
+
+	require.Equal(t, noisy.String(), got.Cursor.Data[0].ID)
+	require.Equal(t, &models.AlertCounts{Open: 3, Acknowledged: 1}, got.Cursor.Data[0].Alerts)
+	// A rule with nothing live still reports, explicitly, that it has nothing —
+	// an absent tally would read as "not counted".
+	require.Equal(t, &models.AlertCounts{}, got.Cursor.Data[1].Alerts)
+}
+
+// A tally that cannot be read fails the list rather than being dropped: it comes
+// from the same control ledger as the rules themselves.
+func TestListRules_AlertCountFailureFailsTheList(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
+
+	cursor := &bunpaginate.Cursor[models.Rule]{
+		Data: []models.Rule{{ID: uuid.New(), Name: "a", TemplateKind: models.TemplateBalanceEquation}},
+	}
+	mockSvc.EXPECT().ListRules(gomock.Any(), gomock.Any()).Return(cursor, nil)
+	mockSvc.EXPECT().AlertCountsByRule(gomock.Any(), gomock.Any()).Return(nil, errors.New("boom"))
+
+	r := httptest.NewRequest(http.MethodGet, "/rules", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.GreaterOrEqual(t, rec.Code, http.StatusInternalServerError)
 }
 
 // TestListRuleCaptures_Nominal — the capture-history endpoint: DTO rendering plus

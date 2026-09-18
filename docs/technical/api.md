@@ -235,6 +235,23 @@ call per rule — the read shape a multi-stack collector needs, since a stack wh
 raises no alerts and otherwise looks reconciled. Pair `?lastEvaluatedAt<{cutoff}` with `GET /alerts?status=OPEN`
 to separate *green* from *silent*.
 
+##### Live alert tally: `alerts`
+
+`GET /rules` — the list only — also carries each rule's live alert counts:
+
+```json
+"alerts": { "open": 3, "acknowledged": 1 }
+```
+
+Both figures span every period of the rule. Resolved and accepted alerts are in neither: they hold no
+lifecycle marker, and the tally is an aggregate of those markers rather than a scan of alerts, so the
+whole page costs **one** control-ledger call regardless of how many alerts exist (see
+[ledger-v3-storage.md](./ledger-v3-storage.md#counting-alerts-one-grouped-aggregate-not-a-scan)).
+
+`alerts` is **absent from `GET /rules/{id}`**, where it would buy a round trip for a number
+`GET /alerts?ruleID=…` already answers. Absent therefore means *not asked for* — never zero. A rule
+with nothing live appears in the list with explicit zeroes.
+
 They are a projection, not a new record: each evaluation stamps them onto the rule's control-ledger
 account as account metadata riding its capture transaction, so they cost no extra write and no extra
 round-trip. The capture remains the audit record ([ADR-003 §6](../prd/adr-003-checkpoint-anchor-and-crosscheck.md));

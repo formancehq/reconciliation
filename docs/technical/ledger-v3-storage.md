@@ -172,6 +172,34 @@ Rule and alert filters, capture history, and activity history use structured `Qu
 built at runtime. Multi-source data reads use the data-ledger aggregation/account APIs and are
 separate from these control-ledger queries.
 
+### Counting alerts: one grouped aggregate, not a scan
+
+`GET /rules` carries each rule's live alert tally (`alerts.open` / `alerts.acknowledged`), and it is
+read as an **aggregate of marker balances** rather than by listing alerts. A live alert holds exactly
+one `ALERT` unit at `alert:st:{state}:rule:{id}:per:{period}:fp:{hash}`, so the balance of a
+`(state, rule)` prefix *is* the number of alerts in that state. Resolved and accepted alerts have
+burned their marker back to the pool, so they are excluded by construction rather than by a filter.
+
+A page of rules is **one call**: every rule contributes two group prefixes to a single
+`AggregateVolumes` with `group_by_prefixes` (`AggregateVolumesGrouped` in
+[client.go](../../internal/ledger/client.go), `CountAlertsByRule` in
+[alert_counts.go](../../internal/ledgerstore/alert_counts.go)). The filter scopes the server's scan
+to `alert:st:`; the prefixes bucket what it iterates, first match wins, and an account matching none
+is excluded. Two properties of that RPC are easy to trip over:
+
+- the grouped response arrives on `AggregateResult.Groups`, and `Volumes` is left **empty** — a caller
+  that reads `Volumes` gets nothing back and no error;
+- a prefix that matched nothing is **absent** from the response, not zero, so the caller decides what
+  absence means (here: a rule with no live alerts, reported as an explicit zero).
+
+A period-scoped tally needs no new layout — `(rule, period)` nests under the by-rule prefix, so it is
+one prefix string away — but there is no builder for it while nothing calls one.
+
+The per-rule **pool gauges** (`-balance(alert:pool:rule:{id}, ALERT)` = live alerts,
+`-balance(…, OCC)` = total occurrences) remain true — every mint and burn goes through the pool — but
+they are an *invariant*, not the read path: they cannot separate open from acknowledged, which is what
+an operator wants from a list. Use the grouped aggregate above.
+
 ## Provisioning and schema evolution
 
 The provisioner runs at startup. It creates the control ledger when absent, then reconciles missing

@@ -60,6 +60,29 @@ type Store interface {
 	ListAlertEvents(ctx context.Context, alertID uuid.UUID, q store.GetAlertEventsQuery) (*bunpaginate.Cursor[models.AlertEvent], error)
 }
 
+// alertCountStore is the optional capability of counting live alerts per rule.
+// Like ruleActivityStore it sits outside the Store contract so in-memory test
+// fakes stay minimal; the ledger-native store implements it.
+type alertCountStore interface {
+	CountAlertsByRule(ctx context.Context, ruleIDs []uuid.UUID) (map[uuid.UUID]models.AlertCounts, error)
+}
+
+// AlertCountsByRule returns each rule's live (open / acknowledged) alert tally.
+// It is one aggregate over the control ledger's marker accounts, not a scan, so
+// the cost does not grow with the number of alerts — see
+// docs/technical/ledger-v3-storage.md.
+//
+// A store without the capability returns a nil map and no error: the tally
+// decorates a list, and a fake that cannot count should not fail the list.
+func (s *Service) AlertCountsByRule(ctx context.Context, ruleIDs []uuid.UUID) (map[uuid.UUID]models.AlertCounts, error) {
+	countStore, ok := s.store.(alertCountStore)
+	if !ok {
+		return nil, nil
+	}
+
+	return countStore.CountAlertsByRule(ctx, ruleIDs)
+}
+
 type ruleActivityStore interface {
 	ListRuleActivities(context.Context, uuid.UUID, store.GetRuleActivitiesQuery) (*bunpaginate.Cursor[models.RuleActivity], error)
 }

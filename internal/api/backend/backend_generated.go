@@ -75,6 +75,21 @@ func (mr *MockServiceMockRecorder) AckAlert(ctx, id, req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckAlert", reflect.TypeOf((*MockService)(nil).AckAlert), ctx, id, req)
 }
 
+// AlertCountsByRule mocks base method.
+func (m *MockService) AlertCountsByRule(ctx context.Context, ruleIDs []uuid.UUID) (map[uuid.UUID]models.AlertCounts, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AlertCountsByRule", ctx, ruleIDs)
+	ret0, _ := ret[0].(map[uuid.UUID]models.AlertCounts)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AlertCountsByRule indicates an expected call of AlertCountsByRule.
+func (mr *MockServiceMockRecorder) AlertCountsByRule(ctx, ruleIDs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AlertCountsByRule", reflect.TypeOf((*MockService)(nil).AlertCountsByRule), ctx, ruleIDs)
+}
+
 // CreateRule mocks base method.
 func (m *MockService) CreateRule(ctx context.Context, req *service.CreateRuleRequest) (*models.Rule, error) {
 	m.ctrl.T.Helper()

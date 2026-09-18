@@ -17,6 +17,9 @@ type Service interface {
 	CreateRule(ctx context.Context, req *service.CreateRuleRequest) (*models.Rule, error)
 	GetRule(ctx context.Context, id uuid.UUID) (*models.Rule, error)
 	ListRules(ctx context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error)
+	// AlertCountsByRule returns each rule's live alert tally, read as one
+	// aggregate over the control ledger rather than one query per rule.
+	AlertCountsByRule(ctx context.Context, ruleIDs []uuid.UUID) (map[uuid.UUID]models.AlertCounts, error)
 	PatchRule(ctx context.Context, id uuid.UUID, patch store.RulePatch) error
 	DeleteRule(ctx context.Context, id uuid.UUID) error
 	EvaluateRule(ctx context.Context, id uuid.UUID, req service.EvaluateRuleRequest) (*models.Evaluation, error)

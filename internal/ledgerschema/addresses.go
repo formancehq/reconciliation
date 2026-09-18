@@ -128,16 +128,16 @@ func CaptureRulePrefix(ruleID string) string {
 // OpenPrefix aggregates ALERT markers across all open alerts (all rules).
 func OpenPrefix() string { return "alert:st:" + StateOpen + ":" }
 
-// OpenByRulePrefix aggregates open ALERT markers for one rule (all periods).
-func OpenByRulePrefix(ruleID string) string {
-	return "alert:st:" + StateOpen + ":rule:" + ruleID + ":"
-}
+// StatePrefix matches every live alert marker, whatever its state or rule. It is
+// the scan scope for a grouped aggregation: the group prefixes below bucket the
+// accounts, this keeps the server from iterating the rest of the chart.
+func StatePrefix() string { return "alert:st:" }
 
-// OpenByRulePeriodPrefix matches the open ALERT markers of a (rule, period). The
-// trailing segment of each match is `fp:{fpHash}` — the auto-resolve sweep reads
-// them to list active fingerprints (ListActiveAlertFingerprints).
-func OpenByRulePeriodPrefix(ruleID, period string) string {
-	return "alert:st:" + StateOpen + ":rule:" + ruleID + ":per:" + period + ":"
+// StateByRulePrefix matches one rule's markers in one lifecycle state, across all
+// periods. One prefix per (state, rule) is what AGGREGATE_VOLUMES groups on, so a
+// page of rules costs one call rather than one per rule.
+func StateByRulePrefix(state, ruleID string) string {
+	return "alert:st:" + state + ":rule:" + ruleID + ":"
 }
 
 // RulePrefix matches all rule-definition accounts.

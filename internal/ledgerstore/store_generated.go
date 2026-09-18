@@ -11,6 +11,7 @@ package ledgerstore
 
 import (
 	context "context"
+	big "math/big"
 	reflect "reflect"
 
 	ledger "github.com/formancehq/reconciliation/internal/ledger"
@@ -40,6 +41,21 @@ func NewMockledgerClient(ctrl *gomock.Controller) *MockledgerClient {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockledgerClient) EXPECT() *MockledgerClientMockRecorder {
 	return m.recorder
+}
+
+// AggregateVolumesGrouped mocks base method.
+func (m *MockledgerClient) AggregateVolumesGrouped(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, prefixes []string) (map[string]map[string]*big.Int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AggregateVolumesGrouped", ctx, ledgerName, filter, prefixes)
+	ret0, _ := ret[0].(map[string]map[string]*big.Int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AggregateVolumesGrouped indicates an expected call of AggregateVolumesGrouped.
+func (mr *MockledgerClientMockRecorder) AggregateVolumesGrouped(ctx, ledgerName, filter, prefixes any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AggregateVolumesGrouped", reflect.TypeOf((*MockledgerClient)(nil).AggregateVolumesGrouped), ctx, ledgerName, filter, prefixes)
 }
 
 // ApplyMetadata mocks base method.

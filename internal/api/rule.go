@@ -36,6 +36,10 @@ type ruleResponse struct {
 	// the rule has never run — which a caller must read as "unknown", not "green".
 	LastEvaluatedAt *time.Time `json:"lastEvaluatedAt,omitempty"`
 	LastVerdict     string     `json:"lastVerdict,omitempty"`
+	// Alerts is the rule's live tally, served on the list endpoint. Absent on the
+	// single-rule reads, where it would cost a second round trip for a number the
+	// caller can get from /alerts; absent is "not asked for", never "zero".
+	Alerts *models.AlertCounts `json:"alerts,omitempty"`
 }
 
 func renderRule(r *models.Rule) *ruleResponse {
@@ -186,10 +190,27 @@ func listRulesHandler(b backend.Backend) http.HandlerFunc {
 			handleServiceErrors(w, r, err)
 			return
 		}
+		// One aggregate for the whole page, not one query per rule. A failure here
+		// fails the list: the tally is read from the same control ledger as the
+		// rules, so a count that cannot be read means the page cannot be trusted
+		// either — quietly dropping it would hide that.
+		ids := make([]uuid.UUID, 0, len(cursor.Data))
+		for i := range cursor.Data {
+			ids = append(ids, cursor.Data[i].ID)
+		}
+		counts, err := b.GetService().AlertCountsByRule(r.Context(), ids)
+		if err != nil {
+			handleServiceErrors(w, r, err)
+			return
+		}
 		// Render through renderRule on both contracts (it branches on the
 		// contract version internally for the V2-only fields).
 		api.RenderCursor(w, *bunpaginate.MapCursor(cursor, func(rule models.Rule) *ruleResponse {
-			return renderRule(&rule)
+			rendered := renderRule(&rule)
+			if tally, ok := counts[rule.ID]; ok {
+				rendered.Alerts = &tally
+			}
+			return rendered
 		}))
 	}
 }

@@ -1067,6 +1067,61 @@ func (c *Client) AggregateVolumes(ctx context.Context, ledgerName string, filter
 	return out, nil
 }
 
+// AggregateVolumesGrouped aggregates volumes into one bucket per account prefix,
+// in a single call. filter selects the accounts the server iterates; prefixes
+// bucket them, first match wins, and an account matching none is excluded — so a
+// page of rules costs one round trip instead of one per rule.
+//
+// The grouped response arrives on a different field: the server fills
+// AggregateResult.Groups and leaves Volumes empty, which is why this cannot be
+// folded into AggregateVolumes above. Returns balances keyed by prefix, then by
+// asset; a prefix that matched nothing is absent rather than zero, so the caller
+// decides what absence means.
+func (c *Client) AggregateVolumesGrouped(
+	ctx context.Context,
+	ledgerName string,
+	filter *commonpb.QueryFilter,
+	prefixes []string,
+) (map[string]map[string]*big.Int, error) {
+	if len(prefixes) == 0 {
+		return map[string]map[string]*big.Int{}, nil
+	}
+
+	resp, err := c.service.AggregateVolumes(ctx, &servicepb.AggregateVolumesRequest{
+		Ledger:          ledgerName,
+		Filter:          filter,
+		GroupByPrefixes: prefixes,
+		CollapseColors:  true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("aggregate volumes by prefix on %s: %w", ledgerName, err)
+	}
+
+	out := make(map[string]map[string]*big.Int, len(resp.GetGroups()))
+	for _, group := range resp.GetGroups() {
+		if group == nil {
+			continue
+		}
+
+		byAsset := make(map[string]*big.Int, len(group.GetVolumes()))
+		for _, v := range group.GetVolumes() {
+			if v == nil {
+				continue
+			}
+
+			balance := new(big.Int).Sub(v.GetInput().ToBigInt(), v.GetOutput().ToBigInt())
+			if byAsset[v.GetAsset()] == nil {
+				byAsset[v.GetAsset()] = new(big.Int)
+			}
+			byAsset[v.GetAsset()].Add(byAsset[v.GetAsset()], balance)
+		}
+
+		out[group.GetPrefix()] = byAsset
+	}
+
+	return out, nil
+}
+
 // GetAccount retrieves an account (volumes + metadata) by address, from live state.
 func (c *Client) GetAccount(ctx context.Context, ledgerName, address string) (*commonpb.Account, error) {
 	acct, err := c.service.GetAccount(ctx, &servicepb.GetAccountRequest{

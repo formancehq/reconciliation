@@ -63,14 +63,15 @@ func TestOpenPrefixMatchesMarkers(t *testing.T) {
 		t.Errorf("%q is not under global open prefix %q", open, schema.OpenPrefix())
 	}
 
-	if !strings.HasPrefix(open, schema.OpenByRulePrefix(ruleID)) {
-		t.Errorf("%q is not under by-rule open prefix %q", open, schema.OpenByRulePrefix(ruleID))
+	if !strings.HasPrefix(open, schema.StateByRulePrefix(schema.StateOpen, ruleID)) {
+		t.Errorf("%q is not under by-rule open prefix %q", open, schema.StateByRulePrefix(schema.StateOpen, ruleID))
 	}
 
-	// The (rule, period) sweep prefix must match this open marker, and its
-	// remainder is the fp segment.
-	if !strings.HasPrefix(open, schema.OpenByRulePeriodPrefix(ruleID, period)) {
-		t.Errorf("%q is not under (rule,period) open prefix %q", open, schema.OpenByRulePeriodPrefix(ruleID, period))
+	// The layout still nests (rule, period) under the by-rule prefix, so a
+	// period-scoped marker aggregation stays one prefix away whenever something
+	// needs it. There is no builder for it while nothing calls one.
+	if !strings.HasPrefix(open, schema.StateByRulePrefix(schema.StateOpen, ruleID)+"per:"+period+":") {
+		t.Errorf("%q is not under the (rule,period) open prefix", open)
 	}
 
 	// A resolved marker must NOT be counted as open.

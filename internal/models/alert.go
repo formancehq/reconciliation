@@ -128,6 +128,15 @@ type Resolution struct {
 // OccurrenceCount is the count of FAIL events on this alert across reopen
 // cycles within its period (for a rule with periodType continuous, that is the lifetime
 // count). For finer per-episode counts, query AlertEvent.
+// AlertCounts is a rule's live alert tally, read from the control ledger as an
+// aggregate of its marker accounts rather than by listing alerts. Resolved and
+// accepted alerts hold no marker, so they are absent from both figures by
+// construction.
+type AlertCounts struct {
+	Open         int64 `json:"open"`
+	Acknowledged int64 `json:"acknowledged"`
+}
+
 type Alert struct {
 	bun.BaseModel `bun:"reconciliations.alert" json:"-"`
 

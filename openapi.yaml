@@ -1339,6 +1339,27 @@ components:
           description: >-
             Outcome of the evaluation named by lastEvaluatedAt. `error` is an engine-side failure
             (resolver timeout, budget exceeded), not a data break. Absent until the rule has run.
+        alerts:
+          $ref: '#/components/schemas/AlertCounts'
+    AlertCounts:
+      type: object
+      readOnly: true
+      description: >-
+        A rule's live alert tally, served on the rule **list** endpoint only. Read as one aggregate
+        over the control ledger's marker accounts, so its cost does not grow with the number of
+        alerts. Resolved and accepted alerts hold no marker and are counted in neither figure.
+        Absent on the single-rule reads, where it would cost a round trip for a number `/alerts`
+        already answers — absent means "not asked for", never zero.
+      required: [open, acknowledged]
+      properties:
+        open:
+          type: integer
+          format: int64
+          description: Alerts currently OPEN for this rule, across every period.
+        acknowledged:
+          type: integer
+          format: int64
+          description: Alerts currently ACKNOWLEDGED for this rule, across every period.
     BalanceEquationRule:
       allOf:
         - $ref: '#/components/schemas/RuleCommon'

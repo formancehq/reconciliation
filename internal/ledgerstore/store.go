@@ -7,6 +7,7 @@ package ledgerstore
 
 import (
 	"context"
+	"math/big"
 
 	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
@@ -22,6 +23,7 @@ type ledgerClient interface {
 	DeleteAccountMetadata(ctx context.Context, ledgerName, address string, keys ...string) error
 	GetAccount(ctx context.Context, ledgerName, address string) (*commonpb.Account, error)
 	QueryAccounts(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter) ([]*commonpb.Account, error)
+	AggregateVolumesGrouped(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, prefixes []string) (map[string]map[string]*big.Int, error)
 	ListTransactionsFunc(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, fn func(*commonpb.Transaction) error) error
 	CreateTransaction(ctx context.Context, in ledger.CreateTransactionInput) error
 }
