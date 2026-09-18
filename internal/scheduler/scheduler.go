@@ -15,6 +15,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
@@ -49,12 +50,36 @@ const maxRulePages = 100
 // store's rule leaf mapper spells it (internal/ledgerstore/filter.go).
 const filterKeyEnabled = "enabled"
 
+// defaultShutdownGrace bounds how long a stopping scheduler waits for the
+// evaluations already in flight.
+//
+// It exists because an evaluation is not one atomic write. `Service.inTx` is a
+// passthrough — the control ledger has no cross-operation transaction — so a
+// single EvaluateRule records its capture and then opens or resolves each alert
+// as separate ledger transactions. Cancelling between those leaves the audit
+// record and the alert state disagreeing, and cancelling before the capture
+// loses the whole run: the control evaluated and reported nothing, which is the
+// silent-non-execution failure this product exists to catch.
+//
+// 30s matches engine.DefaultLimits.MaxWallClock, so a well-behaved evaluation
+// that has already started has roughly its own budget to finish in. Past the
+// grace the work context is cancelled — the process is going down either way,
+// and an unbounded wait would hang shutdown.
+const defaultShutdownGrace = 30 * time.Second
+
 // Scheduler periodically fires due cron-scheduled rule evaluations.
 type Scheduler struct {
 	svc      RuleService
 	interval time.Duration
 	logger   v5log.Logger
 	now      func() time.Time // injectable for tests
+
+	// shutdownGrace bounds the drain; defaultShutdownGrace unless a test lowers it.
+	shutdownGrace time.Duration
+
+	// inFlight counts the evaluations started by tick and not yet finished, so a
+	// stopping scheduler can wait for them instead of cancelling them mid-write.
+	inFlight sync.WaitGroup
 }
 
 // New builds a Scheduler. interval is the tick granularity (cron is
@@ -63,12 +88,22 @@ func New(svc RuleService, interval time.Duration, logger v5log.Logger) *Schedule
 	if interval <= 0 {
 		interval = time.Minute
 	}
-	return &Scheduler{svc: svc, interval: interval, logger: logger, now: time.Now}
+	return &Scheduler{svc: svc, interval: interval, logger: logger, now: time.Now, shutdownGrace: defaultShutdownGrace}
 }
 
 // Run loops until ctx is cancelled, ticking every interval. Each tick fires any
 // rule whose cron expression came due in the window since the previous tick.
+//
+// Cancelling ctx stops the loop from starting new work; it does **not** cancel
+// the evaluations already running. Those hold a separate, deliberately detached
+// context so an evaluation that has already written its capture can finish
+// opening the alerts that capture claims. Run returns once they drain, or once
+// the shutdown grace expires — so a caller that waits for Run to return has waited
+// for the drain. See defaultShutdownGrace for why the two contexts are split.
 func (s *Scheduler) Run(ctx context.Context) {
+	workCtx, cancelWork := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelWork()
+
 	s.logger.Infof("reconciliation scheduler started (tick %s)", s.interval)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -76,13 +111,32 @@ func (s *Scheduler) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.logger.Infof("reconciliation scheduler stopped")
+			s.drain()
 			return
 		case <-ticker.C:
 			now := s.now()
-			s.tick(ctx, last, now)
+			s.tick(workCtx, last, now)
 			last = now
 		}
+	}
+}
+
+// drain waits for the in-flight evaluations, bounded by s.shutdownGrace. On expiry
+// it returns and lets Run's deferred cancel unwind whatever is left — logged as
+// an error, because an evaluation cut off there may have recorded a capture
+// whose alerts were never opened.
+func (s *Scheduler) drain() {
+	done := make(chan struct{})
+	go func() {
+		s.inFlight.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		s.logger.Infof("reconciliation scheduler stopped")
+	case <-time.After(s.shutdownGrace):
+		s.logger.Errorf("reconciliation scheduler: evaluations still running after %s — cancelling them; a capture may be left without its alerts", s.shutdownGrace)
 	}
 }
 
@@ -103,7 +157,11 @@ func (s *Scheduler) tick(ctx context.Context, last, now time.Time) {
 			continue
 		}
 		if due {
-			go s.fire(ctx, r)
+			s.inFlight.Add(1)
+			go func() {
+				defer s.inFlight.Done()
+				s.fire(ctx, r)
+			}()
 		}
 	}
 }

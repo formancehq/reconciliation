@@ -156,11 +156,9 @@ func TestTick_FiresOnlyDueCronRules(t *testing.T) {
 	last := time.Date(2026, 3, 15, 8, 59, 0, 0, time.UTC)
 	now := time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)
 	s.tick(context.Background(), last, now)
+	s.inFlight.Wait()
 
-	require.Eventually(t, func() bool { return svc.fired(due.ID) }, time.Second, 5*time.Millisecond,
-		"the due cron rule should be evaluated")
-	// Give any stray goroutines a moment, then assert nothing else fired.
-	time.Sleep(50 * time.Millisecond)
+	require.True(t, svc.fired(due.ID), "the due cron rule should be evaluated")
 	require.False(t, svc.fired(notDue.ID), "rule not due this window")
 	require.False(t, svc.fired(onDemand.ID), "on-demand rule is never scheduled")
 	require.False(t, svc.fired(disabled.ID), "disabled rule is never scheduled")
@@ -220,4 +218,168 @@ func TestListCronRules_RefusesAPartialSet(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, rules)
 	require.Equal(t, maxRulePages, svc.calls())
+}
+
+// --- shutdown ----------------------------------------------------------------
+
+// minuteSteppingClock advances a minute per call, so every tick window contains
+// a firing of `* * * * *`. Run derives its window from s.now(), and on the wall
+// clock a minute-granular cron is due only when a real minute boundary falls
+// inside the window — which would make these tests wait up to 60s for their
+// first evaluation.
+func minuteSteppingClock() func() time.Time {
+	var (
+		mu  sync.Mutex
+		now = time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)
+	)
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		now = now.Add(time.Minute)
+		return now
+	}
+}
+
+// blockingRuleSvc holds every evaluation open until release is closed, and
+// records the state of the context each one was handed at the moment it
+// finished. That recorded error is the whole assertion: if the scheduler passed
+// its loop context to the evaluation, cancelling the loop would show up here as
+// context.Canceled.
+type blockingRuleSvc struct {
+	rules   []models.Rule
+	started chan struct{}
+	release chan struct{}
+
+	mu      sync.Mutex
+	ctxErrs []error
+	once    sync.Once
+}
+
+func newBlockingRuleSvc(rules ...models.Rule) *blockingRuleSvc {
+	return &blockingRuleSvc{
+		rules:   rules,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (f *blockingRuleSvc) ListRules(_ context.Context, q store.GetRulesQuery) (*bunpaginate.Cursor[models.Rule], error) {
+	if q.Offset > 0 {
+		return &bunpaginate.Cursor[models.Rule]{}, nil
+	}
+	return &bunpaginate.Cursor[models.Rule]{Data: f.rules}, nil
+}
+
+func (f *blockingRuleSvc) EvaluateRule(ctx context.Context, id uuid.UUID, _ service.EvaluateRuleRequest) (*models.Evaluation, error) {
+	f.once.Do(func() { close(f.started) })
+	<-f.release
+
+	f.mu.Lock()
+	f.ctxErrs = append(f.ctxErrs, ctx.Err())
+	f.mu.Unlock()
+
+	return &models.Evaluation{ID: uuid.New(), RuleID: id}, nil
+}
+
+func (f *blockingRuleSvc) contextErrors() []error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]error(nil), f.ctxErrs...)
+}
+
+// An evaluation already in flight when the loop is cancelled runs to completion
+// on a live context, and Run does not return until it has.
+//
+// This is the shutdown-safety property: EvaluateRule records the capture and
+// opens each alert as separate ledger writes (Service.inTx is a passthrough), so
+// cancelling between them would leave the audit record claiming breaks whose
+// alerts were never opened — and cancelling before the capture would lose the
+// run entirely.
+func TestRun_DrainsInFlightEvaluationOnCancel(t *testing.T) {
+	t.Parallel()
+
+	svc := newBlockingRuleSvc(models.Rule{ID: uuid.New(), Enabled: true, Schedule: cronSched("* * * * *")})
+	s := New(svc, time.Millisecond, testLogger())
+	s.now = minuteSteppingClock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		s.Run(ctx)
+	}()
+
+	<-svc.started // an evaluation is in flight
+	cancel()      // ... and now the loop is told to stop
+
+	select {
+	case <-returned:
+		t.Fatal("Run returned while an evaluation was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(svc.release)
+
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after the in-flight evaluation finished")
+	}
+
+	errs := svc.contextErrors()
+	require.NotEmpty(t, errs, "the in-flight evaluation should have completed")
+	for _, err := range errs {
+		require.NoError(t, err, "a draining evaluation must not see a cancelled context")
+	}
+}
+
+// Past the grace, a stuck evaluation stops holding shutdown open.
+func TestRun_StopsWaitingAfterTheShutdownGrace(t *testing.T) {
+	t.Parallel()
+
+	svc := newBlockingRuleSvc(models.Rule{ID: uuid.New(), Enabled: true, Schedule: cronSched("* * * * *")})
+	s := New(svc, time.Millisecond, testLogger())
+	s.now = minuteSteppingClock()
+	s.shutdownGrace = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		s.Run(ctx)
+	}()
+
+	<-svc.started
+	cancel()
+
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run kept waiting past the shutdown grace")
+	}
+
+	close(svc.release) // let the stuck goroutine unwind so the test does not leak it
+}
+
+// A rule whose cron expression does not parse is logged and skipped; the rest of
+// the tick still fires. cronExpr is the accessor that names it in that log line.
+func TestTick_SkipsAnUnparseableCronWithoutPoisoningTheTick(t *testing.T) {
+	t.Parallel()
+
+	bad := models.Rule{ID: uuid.New(), Enabled: true, Schedule: cronSched("not a cron")}
+	good := models.Rule{ID: uuid.New(), Enabled: true, Schedule: cronSched("* * * * *")}
+
+	svc := &fakeRuleSvc{rules: []models.Rule{bad, good}}
+	s := New(svc, time.Minute, testLogger())
+
+	last := time.Date(2026, 3, 15, 8, 59, 0, 0, time.UTC)
+	now := time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)
+	s.tick(context.Background(), last, now)
+	s.inFlight.Wait()
+
+	require.False(t, svc.fired(bad.ID), "an unparseable cron is skipped")
+	require.True(t, svc.fired(good.ID), "a bad neighbour must not poison the tick")
+	require.Equal(t, "not a cron", cronExpr(bad.Schedule))
+	require.Equal(t, "", cronExpr(nil))
 }

@@ -37,9 +37,34 @@ func FXModuleFromFlags(cmd *cobra.Command) fx.Option {
 		// Detached context: the loop lives for the app's lifetime, not the
 		// (short-lived) OnStart context. OnStop cancels it.
 		ctx, cancel := context.WithCancel(context.Background())
+		stopped := make(chan struct{})
 		lc.Append(fx.Hook{
-			OnStart: func(context.Context) error { go s.Run(ctx); return nil },
-			OnStop:  func(context.Context) error { cancel(); return nil },
+			OnStart: func(context.Context) error {
+				go func() {
+					defer close(stopped)
+					s.Run(ctx)
+				}()
+				return nil
+			},
+			// Cancelling only tells the loop to stop starting work; Run then
+			// drains the evaluations already in flight before returning. Waiting
+			// here is what makes that drain mean anything — returning straight
+			// after cancel would let the process exit mid-evaluation, which is
+			// the very thing Run's split contexts exist to prevent.
+			//
+			// The wait is bounded by fx's own stop context so a stuck drain
+			// cannot hold the process open past its shutdown budget, and it
+			// never fails shutdown: by this point the loop is stopped either
+			// way, and returning an error would only mask the real cause.
+			OnStop: func(stopCtx context.Context) error {
+				cancel()
+				select {
+				case <-stopped:
+				case <-stopCtx.Done():
+					logger.Errorf("reconciliation scheduler did not drain within the shutdown budget: %s", stopCtx.Err())
+				}
+				return nil
+			},
 		})
 	})
 }

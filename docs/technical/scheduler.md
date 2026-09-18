@@ -38,6 +38,46 @@ never the host's local zone).
 **Enabling it:** off by default. `--scheduler-enabled` turns it on;
 `--scheduler-interval` (default `1m`) sets the tick granularity.
 
+## Shutdown — evaluations drain, they are not cancelled
+
+An evaluation is **not one atomic write**. The control ledger has no
+cross-operation transaction (`Service.inTx` is a passthrough), so a single
+`EvaluateRule` records its capture and then opens or resolves each alert as
+*separate* ledger transactions. Cutting an evaluation off partway is therefore
+not a clean abort:
+
+| Cancelled… | Result |
+|---|---|
+| before the capture | the control read the ledgers and recorded **nothing** — from the outside the rule never ran that tick |
+| between capture and alerts | the capture claims N breaks whose alerts were never opened — audit record and alert state disagree |
+| partway through the alerts | some of that evaluation's alerts opened, the rest did not |
+
+The first is the silent-non-execution failure this product exists to catch, and
+none of the three is visible after the fact. Because it only happens on process
+stop, it would otherwise land on **every rolling deploy**.
+
+So the scheduler keeps two contexts apart:
+
+- the **loop** context — cancelled on stop, which stops *starting* new work;
+- the **work** context — deliberately detached (`context.WithoutCancel`), so an
+  evaluation already in flight runs to completion.
+
+`Run` returns only once the in-flight evaluations drain, bounded by a 30s grace
+(`defaultShutdownGrace`, matching `engine.DefaultLimits.MaxWallClock` so a
+well-behaved evaluation has roughly its own budget to finish in). Past the grace
+the work context *is* cancelled, with an error logged naming the risk — an
+unbounded wait would hang shutdown, and the process is going down regardless.
+
+The fx `OnStop` hook waits for `Run` to return, bounded by fx's own stop context.
+That wait is what makes the drain mean anything: returning straight after
+cancelling would let the process exit mid-evaluation. It never fails shutdown —
+by then the loop is stopped either way, and an error would only mask the real
+cause.
+
+> This is about **shutdown**, not throughput. A tick still fans out one goroutine
+> per due rule with no concurrency limit, so N rules sharing a midnight cron start
+> N evaluations at once. Bounding that is tracked separately.
+
 ## ⚠️ Single-active-instance assumption
 
 This scheduler fires on **every process it runs in**. With multiple replicas it
