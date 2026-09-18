@@ -20,7 +20,12 @@ expression is rejected up front, not discovered silently at run time.
 A single goroutine ([internal/scheduler/](../../internal/scheduler/)) ticks once a
 minute (cron is minute-granular):
 
-1. List enabled rules with a cron schedule.
+1. List enabled rules with a cron schedule. `enabled` is filtered **server-side**
+   (it is a declared, indexed metadata field), and the scan **drains every page** —
+   a tick never schedules a subset of the rules it was supposed to see. Cron-ness
+   is still checked in-process, because `schedule` is stored as opaque JSON with no
+   indexed discriminator. An implausibly large rule set (100k enabled rules) fails
+   the tick loudly rather than firing an arbitrary slice of it.
 2. For each, check whether its cron expression came due in the last tick window
    (`dueInWindow`: the schedule's next firing after the previous tick is `<= now`).
 3. Fire the due ones via `EvaluateRule` (each in its own goroutine; failures are

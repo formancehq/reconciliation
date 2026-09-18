@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
+	"github.com/formancehq/go-libs/query"
 	v5log "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	"github.com/formancehq/reconciliation/internal/api/service"
 	"github.com/formancehq/reconciliation/internal/models"
@@ -33,9 +34,20 @@ type RuleService interface {
 	EvaluateRule(ctx context.Context, id uuid.UUID, req service.EvaluateRuleRequest) (*models.Evaluation, error)
 }
 
-// maxRulesPerTick caps how many rules a single tick enumerates. If a deployment
-// exceeds it the scheduler logs a warning rather than silently skipping rules.
-const maxRulesPerTick = 1000
+// rulesPageSize is the batch size of the per-tick rule scan. Every page is
+// drained, so this is a batching knob — not a ceiling on how many rules a
+// deployment can schedule.
+const rulesPageSize = 1000
+
+// maxRulePages bounds the drain loop so a store that never stops reporting
+// another page cannot spin a tick forever. At rulesPageSize per page it allows
+// 100k enabled rules; past that the tick fails loudly rather than scheduling an
+// arbitrary subset.
+const maxRulePages = 100
+
+// filterKeyEnabled is the rule-list filter key for the enabled flag, as the
+// store's rule leaf mapper spells it (internal/ledgerstore/filter.go).
+const filterKeyEnabled = "enabled"
 
 // Scheduler periodically fires due cron-scheduled rule evaluations.
 type Scheduler struct {
@@ -107,26 +119,58 @@ func (s *Scheduler) fire(ctx context.Context, r models.Rule) {
 	}
 }
 
-// listCronRules returns enabled rules with a cron schedule. One page, capped at
-// maxRulesPerTick; logs a warning if the deployment has more (rather than
-// silently dropping the overflow).
+// listCronRules returns the enabled rules that carry a cron schedule.
+//
+// `enabled` is filtered **server-side**: it is a declared, indexed metadata field
+// (ledgerschema.MetadataIndexes) and the rule filter translator maps the key, so
+// the ledger returns candidates rather than every rule in the deployment. Cron-ness
+// stays a client-side check — `schedule` is opaque JSON with no indexed
+// discriminator — and the Enabled re-check is kept as a cheap guard so correctness
+// does not rest on the filter alone.
+//
+// Every page is drained. A scheduler that quietly enumerates a subset is a control
+// that stops running without saying so, which is the failure mode this product
+// exists to catch, so an implausibly large rule set fails the tick instead of
+// firing an arbitrary slice of it.
+//
+// Paging is not free: the ledger store fetches the whole matching set and then
+// offset-slices it, so each extra page re-reads everything. Below rulesPageSize
+// enabled rules — every deployment we expect — this is exactly one call, and past
+// it correctness is worth more than the second read.
 func (s *Scheduler) listCronRules(ctx context.Context) ([]models.Rule, error) {
-	q := store.NewGetRulesQuery(store.NewPaginatedQueryOptions(store.RulesFilters{}).WithPageSize(maxRulesPerTick))
-	cursor, err := s.svc.ListRules(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	if cursor.HasMore {
-		s.logger.Errorf("scheduler: more than %d rules — only the first page is scheduled this tick", maxRulesPerTick)
-	}
-	out := make([]models.Rule, 0, len(cursor.Data))
-	for i := range cursor.Data {
-		r := cursor.Data[i]
-		if r.Enabled && r.Schedule != nil && r.Schedule.Kind == models.ScheduleCron && r.Schedule.Expr != "" {
-			out = append(out, r)
+	opts := store.NewPaginatedQueryOptions(store.RulesFilters{}).
+		WithQueryBuilder(query.Match(filterKeyEnabled, true)).
+		WithPageSize(rulesPageSize)
+
+	var (
+		out    []models.Rule
+		offset uint64
+	)
+
+	for page := 0; page < maxRulePages; page++ {
+		q := store.NewGetRulesQuery(opts)
+		q.Offset = offset
+
+		cursor, err := s.svc.ListRules(ctx, q)
+		if err != nil {
+			return nil, err
 		}
+
+		for i := range cursor.Data {
+			r := cursor.Data[i]
+			if r.Enabled && r.Schedule != nil && r.Schedule.Kind == models.ScheduleCron && r.Schedule.Expr != "" {
+				out = append(out, r)
+			}
+		}
+
+		if !cursor.HasMore || len(cursor.Data) == 0 {
+			return out, nil
+		}
+
+		offset += uint64(len(cursor.Data))
 	}
-	return out, nil
+
+	return nil, fmt.Errorf("rule scan exceeded %d pages of %d: refusing to schedule a partial set", maxRulePages, rulesPageSize)
 }
 
 func cronExpr(sched *models.Schedule) string {
