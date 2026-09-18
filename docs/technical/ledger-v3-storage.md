@@ -29,7 +29,7 @@ authoritative:
 | Concern | Definition |
 |---|---|
 | Ledger name, assets, and account address builders | [`internal/ledgerschema/addresses.go`](../../internal/ledgerschema/addresses.go) |
-| Account types, typed metadata, indexes, and prepared queries | [`internal/ledgerschema/schema.go`](../../internal/ledgerschema/schema.go) |
+| Account types, typed metadata, and indexes | [`internal/ledgerschema/schema.go`](../../internal/ledgerschema/schema.go) |
 | Stored Numscript programs and their pinned version | [`internal/ledgerschema/scripts.go`](../../internal/ledgerschema/scripts.go) |
 | Query-filter construction and JSON-query translation | [`internal/ledgerschema/filters.go`](../../internal/ledgerschema/filters.go), [`internal/ledgerschema/query.go`](../../internal/ledgerschema/query.go), and [`internal/ledgerstore/filter.go`](../../internal/ledgerstore/filter.go) |
 | Idempotent startup provisioning | [`internal/ledger/provisioner.go`](../../internal/ledger/provisioner.go) |
@@ -163,14 +163,34 @@ it, Ledger rejects address-filtered transaction queries with `FailedPrecondition
 reads can temporarily return `Unavailable` with `index is still building` even though the index is
 already declared.
 
-Only two fixed hot paths are prepared queries:
+### No prepared queries, and why
 
-- `alerts-open-count` aggregates open alert markers;
-- `rules-enabled` lists rules used by the scheduler.
+The control ledger used to register two — `alerts-open-count` and `rules-enabled` — and executed
+neither. Both were dropped (EN-2241) rather than wired up, because the trade does not hold once you
+look at what the execute RPC offers:
 
-Rule and alert filters, capture history, and activity history use structured `QueryFilter` values
-built at runtime. Multi-source data reads use the data-ledger aggregation/account APIs and are
-separate from these control-ledger queries.
+- **It is strictly less expressive than a direct aggregate.** `ExecutePreparedQueryRequest` carries a
+  name, parameters, paging and a mode — and no `group_by_prefixes`, `collapse_colors` or
+  `use_max_precision`. The per-rule alert tally above is a *grouped* aggregate, so it cannot be
+  expressed as a prepared query at all.
+- **The one execution fast path does not apply.** `AGGREGATE_VOLUMES` skips index alignment, filter
+  compilation and account enumeration only for an *exactly nil* filter. Every filter this module
+  would store is non-nil.
+- **The acceleration is not where it looks.** The bloom filter wired to prepared queries
+  short-circuits looking up the *definition*; the iterator optimisations live in the shared filter
+  compiler and help ad-hoc filters identically.
+
+That leaves create-time validation of filters authored as Go literals — which this module's own tests
+already cover — against a second, stored, Raft-replicated definition of queries it also builds at
+runtime. Rule and alert filters, capture history, and activity history therefore use structured
+`QueryFilter` values built at runtime, and the scheduler's enabled-rule scan pushes its predicate
+down the same way.
+
+If a future ledger release makes a *named* shape genuinely faster, `ledgerschema/schema.go` carries
+the note and re-adding is a client wrapper plus a provisioner pass.
+
+Multi-source data reads use the data-ledger aggregation/account APIs and are separate from these
+control-ledger queries.
 
 ### Counting alerts: one grouped aggregate, not a scan
 
@@ -203,7 +223,7 @@ an operator wants from a list. Use the grouped aggregate above.
 ## Provisioning and schema evolution
 
 The provisioner runs at startup. It creates the control ledger when absent, then reconciles missing
-account types and typed metadata fields, creates indexes and prepared queries, and saves every
+account types and typed metadata fields, creates indexes, and saves every
 Numscript version. Re-running it is idempotent.
 
 Additive changes are applied to an existing ledger. Destructive changes—removing or retyping a

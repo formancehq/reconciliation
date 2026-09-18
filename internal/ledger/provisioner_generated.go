@@ -84,20 +84,6 @@ func (mr *MockprovisionAPIMockRecorder) CreateLedger(ctx, name, schema, accountT
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateLedger", reflect.TypeOf((*MockprovisionAPI)(nil).CreateLedger), ctx, name, schema, accountTypes, enforcement)
 }
 
-// CreatePreparedQuery mocks base method.
-func (m *MockprovisionAPI) CreatePreparedQuery(ctx context.Context, ledger string, query *commonpb.PreparedQuery) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreatePreparedQuery", ctx, ledger, query)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// CreatePreparedQuery indicates an expected call of CreatePreparedQuery.
-func (mr *MockprovisionAPIMockRecorder) CreatePreparedQuery(ctx, ledger, query any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreatePreparedQuery", reflect.TypeOf((*MockprovisionAPI)(nil).CreatePreparedQuery), ctx, ledger, query)
-}
-
 // GetLedgerInfo mocks base method.
 func (m *MockprovisionAPI) GetLedgerInfo(ctx context.Context, name string) (*commonpb.LedgerInfo, error) {
 	m.ctrl.T.Helper()

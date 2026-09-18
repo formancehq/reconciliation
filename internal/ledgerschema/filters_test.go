@@ -144,31 +144,3 @@ func TestMetadataIndexes(t *testing.T) {
 		t.Errorf("missing required %q index", schema.MetaID)
 	}
 }
-
-func TestPreparedQueries(t *testing.T) {
-	t.Parallel()
-
-	qs := schema.PreparedQueries()
-	if len(qs) != 2 {
-		t.Fatalf("got %d prepared queries, want 2", len(qs))
-	}
-
-	names := map[string]bool{}
-	for _, q := range qs {
-		names[q.GetName()] = true
-
-		if q.GetTarget() != commonpb.QueryTarget_QUERY_TARGET_ACCOUNTS {
-			t.Errorf("%s: target %v, want ACCOUNTS", q.GetName(), q.GetTarget())
-		}
-
-		if q.GetFilter() == nil {
-			t.Errorf("%s: nil filter", q.GetName())
-		}
-	}
-
-	for _, want := range []string{schema.PQOpenCount, schema.PQRulesEnabled} {
-		if !names[want] {
-			t.Errorf("missing prepared query %q", want)
-		}
-	}
-}

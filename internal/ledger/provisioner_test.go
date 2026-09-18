@@ -78,18 +78,6 @@ func TestProvisioner_Provision(t *testing.T) {
 		Return(nil).
 		Times(len(schema.MetadataIndexes()) + len(schema.TransactionIndexes()))
 
-	// Capture the prepared queries actually registered.
-	var registered []string
-
-	m.EXPECT().
-		CreatePreparedQuery(gomock.Any(), testLedger, gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, q *commonpb.PreparedQuery) error {
-			registered = append(registered, q.GetName())
-
-			return nil
-		}).
-		Times(2)
-
 	// Capture the numscripts actually registered (assert non-empty content +
 	// pinned version).
 	var scripts []string
@@ -110,12 +98,6 @@ func TestProvisioner_Provision(t *testing.T) {
 	p := NewProvisioner(m, testLedger, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	if err := p.Provision(context.Background()); err != nil {
 		t.Fatalf("Provision: %v", err)
-	}
-
-	for _, want := range []string{schema.PQOpenCount, schema.PQRulesEnabled} {
-		if !slices.Contains(registered, want) {
-			t.Errorf("prepared query %q not registered (got %v)", want, registered)
-		}
 	}
 
 	for _, want := range []string{schema.NumscriptAlertOpen, schema.NumscriptAlertBump, schema.NumscriptAlertReopen, schema.NumscriptAlertMove} {
@@ -169,7 +151,6 @@ func TestProvisioner_UpToDateLedgerSkipsReconcile(t *testing.T) {
 
 	// The remaining passes still run (idempotent no-ops at the client layer).
 	m.EXPECT().CreateIndex(gomock.Any(), testLedger, gomock.Any()).Return(nil).Times(len(schema.MetadataIndexes()) + len(schema.TransactionIndexes()))
-	m.EXPECT().CreatePreparedQuery(gomock.Any(), testLedger, gomock.Any()).Return(nil).Times(len(schema.PreparedQueries()))
 	m.EXPECT().SaveNumscript(gomock.Any(), testLedger, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(len(schema.Numscripts()))
 
 	p := NewProvisioner(m, testLedger, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
@@ -187,8 +168,8 @@ func TestProvisioner_CreateLedgerErrorShortCircuits(t *testing.T) {
 	m.EXPECT().
 		CreateLedger(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("boom"))
-	// CreatePreparedQuery must not be called when CreateLedger fails: no EXPECT set,
-	// so gomock fails the test if it is called.
+	// No further pass may run when CreateLedger fails: no EXPECT is set for any of
+	// them, so gomock fails the test if one is called.
 
 	p := NewProvisioner(m, testLedger, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	if err := p.Provision(context.Background()); err == nil {

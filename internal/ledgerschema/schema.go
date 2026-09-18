@@ -259,28 +259,23 @@ func TransactionIndexes() []*commonpb.IndexID {
 	}
 }
 
-// Prepared query names. Only fixed-shape hot queries are prepared; per-rule /
-// per-status / label-filtered lists are built ad-hoc by the filter translator (step 4).
-const (
-	PQOpenCount    = "alerts-open-count" // AGGREGATE_VOLUMES(ALERT) over all open markers
-	PQRulesEnabled = "rules-enabled"     // LIST enabled rules (scheduler)
-)
-
-// PreparedQueries returns the fixed-shape prepared queries to register at
-// bootstrap, as ready-to-apply commonpb.PreparedQuery protos.
-func PreparedQueries() []*commonpb.PreparedQuery {
-	return []*commonpb.PreparedQuery{
-		{
-			// filterexpr: address == "alert:st:open:*"
-			Name:   PQOpenCount,
-			Target: commonpb.QueryTarget_QUERY_TARGET_ACCOUNTS,
-			Filter: FilterAddressPrefix(OpenPrefix()),
-		},
-		{
-			// filterexpr: address == "rule:*" and metadata[enabled] == true
-			Name:   PQRulesEnabled,
-			Target: commonpb.QueryTarget_QUERY_TARGET_ACCOUNTS,
-			Filter: FilterAll(FilterAddressPrefix(RulePrefix()), FilterMetadataBool(MetaEnabled, true)),
-		},
-	}
-}
+// No prepared queries. The control ledger registered two — an open-alert count and
+// an enabled-rules list — and executed neither; both were dropped (EN-2241) after
+// the trade was measured against what the ledger actually offers:
+//
+//   - The execute RPC is strictly less expressive than a direct aggregate:
+//     ExecutePreparedQueryRequest carries only a name, parameters, paging and a
+//     mode — no group_by_prefixes, no collapse_colors, no use_max_precision. The
+//     per-rule alert tally (ledgerstore.CountAlertsByRule) is a grouped aggregate
+//     and therefore cannot be expressed as a prepared query at all.
+//   - The one execution fast path (AggregateAllVolumes) applies to an *exactly nil*
+//     filter. Every filter recon would store is non-nil, so none of them qualify.
+//   - The bloom accelerator wired to prepared queries short-circuits looking up the
+//     definition, not the scan; the iterator optimisations live in the shared filter
+//     compiler and benefit ad-hoc filters identically.
+//
+// What is left is create-time validation of a filter authored as a Go literal in
+// this file — which the module's own tests already cover — against the standing
+// cost of a second, stored, Raft-replicated definition of queries it also builds at
+// runtime. If a future accelerator makes a named shape genuinely faster, this is the
+// place to bring them back; re-adding is a client wrapper and a provisioner pass.

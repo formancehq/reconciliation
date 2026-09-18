@@ -21,7 +21,6 @@ type provisionAPI interface {
 	AddAccountType(ctx context.Context, ledger string, accountType *commonpb.AccountType) error
 	SetMetadataFieldType(ctx context.Context, ledger string, cmd *commonpb.SetMetadataFieldTypeCommand) error
 	CreateIndex(ctx context.Context, ledger string, index *servicepb.CreateIndexRequest) error
-	CreatePreparedQuery(ctx context.Context, ledger string, query *commonpb.PreparedQuery) error
 	SaveNumscript(ctx context.Context, ledger, name, content, version string) error
 }
 
@@ -30,8 +29,9 @@ type provisionAPI interface {
 var _ provisionAPI = (*Client)(nil)
 
 // Provisioner ensures the control-ledger exists with reconciliation's chart of
-// accounts, typed metadata schema and prepared queries. Idempotent — safe to run
-// on every boot.
+// accounts, typed metadata schema, indexes and numscript library. Idempotent —
+// safe to run on every boot. It registers no prepared queries: see the note in
+// ledgerschema/schema.go for why they were dropped.
 type Provisioner struct {
 	client      provisionAPI
 	ledger      string
@@ -112,12 +112,6 @@ func (p *Provisioner) Provision(ctx context.Context) error {
 	for _, idx := range slices.Concat(schema.MetadataIndexes(), schema.TransactionIndexes()) {
 		if err := p.client.CreateIndex(ctx, p.ledger, &servicepb.CreateIndexRequest{Id: idx}); err != nil {
 			return fmt.Errorf("create index %v: %w", idx, err)
-		}
-	}
-
-	for _, q := range schema.PreparedQueries() {
-		if err := p.client.CreatePreparedQuery(ctx, p.ledger, q); err != nil {
-			return fmt.Errorf("register prepared query %q: %w", q.GetName(), err)
 		}
 	}
 

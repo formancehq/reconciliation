@@ -716,20 +716,6 @@ func (c *Client) CreateIndex(ctx context.Context, ledger string, index *servicep
 	return err
 }
 
-// CreatePreparedQuery registers a named prepared query on a ledger. Ignores AlreadyExists.
-func (c *Client) CreatePreparedQuery(ctx context.Context, ledger string, query *commonpb.PreparedQuery) error {
-	_, err := c.Apply(ctx, &servicepb.Request{
-		Type: &servicepb.Request_CreatePreparedQuery{
-			CreatePreparedQuery: &servicepb.CreatePreparedQueryRequest{Ledger: ledger, Query: query},
-		},
-	})
-	if status.Code(err) == codes.AlreadyExists {
-		return nil
-	}
-
-	return err
-}
-
 // SaveNumscript registers a numscript in the ledger's library so transactions
 // can reference it by name+version instead of sending the source inline. Ignores
 // AlreadyExists. Reconciliation uses this for the alert-lifecycle transitions.
