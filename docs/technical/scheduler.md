@@ -62,17 +62,30 @@ So the scheduler keeps two contexts apart:
 - the **work** context — deliberately detached (`context.WithoutCancel`), so an
   evaluation already in flight runs to completion.
 
-`Run` returns only once the in-flight evaluations drain, bounded by a 30s grace
-(`defaultShutdownGrace`, matching `engine.DefaultLimits.MaxWallClock` so a
-well-behaved evaluation has roughly its own budget to finish in). Past the grace
-the work context *is* cancelled, with an error logged naming the risk — an
-unbounded wait would hang shutdown, and the process is going down regardless.
+`Run` returns only once the in-flight evaluations drain, bounded by
+`defaultShutdownGrace` (10s). Past the grace the work context *is* cancelled,
+with an error logged naming the risk — an unbounded wait would hang shutdown,
+and the process is going down regardless.
 
 The fx `OnStop` hook waits for `Run` to return, bounded by fx's own stop context.
 That wait is what makes the drain mean anything: returning straight after
 cancelling would let the process exit mid-evaluation. It never fails shutdown —
 by then the loop is stopped either way, and an error would only mask the real
 cause.
+
+**Why 10s, and why it must stay under fx's timeout.** fx cancels the `OnStop`
+context at `fx.DefaultTimeout` (15s; this app does not override it). A grace at
+or above that is unreachable — fx would cut the drain short first, and the
+warning that names the risk to the capture would never print, leaving an
+operator with fx's generic timeout message instead.
+
+The grace is a *shutdown* budget, not a bound on how long an evaluation may run.
+There is no evaluation-level wall clock to match it to: `engine.Limits
+.MaxWallClock` guards only `Engine.Evaluate`, the CEL kernel path, and since
+[ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md) removed the
+kernel/template cross-check no shipped template calls it — templates compute
+directly and read through `resolvers.Ledger` on the caller's context. An
+evaluation is therefore untimed end to end, which is worth fixing separately.
 
 > This is about **shutdown**, not throughput. A tick still fans out one goroutine
 > per due rule with no concurrency limit, so N rules sharing a midnight cron start

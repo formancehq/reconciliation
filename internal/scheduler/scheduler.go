@@ -61,11 +61,22 @@ const filterKeyEnabled = "enabled"
 // loses the whole run: the control evaluated and reported nothing, which is the
 // silent-non-execution failure this product exists to catch.
 //
-// 30s matches engine.DefaultLimits.MaxWallClock, so a well-behaved evaluation
-// that has already started has roughly its own budget to finish in. Past the
-// grace the work context is cancelled — the process is going down either way,
-// and an unbounded wait would hang shutdown.
-const defaultShutdownGrace = 30 * time.Second
+// The value has to sit **below** fx's stop timeout, which is fx.DefaultTimeout
+// (15s) since this app never overrides it. fx cancels the OnStop context at its
+// own deadline, so a grace at or above that is unreachable: the drain would be
+// cut short by fx and the specific warning below — the one naming the risk to
+// the capture — would never print, leaving an operator with fx's generic
+// timeout message instead. 10s leaves headroom for the rest of the graph's
+// OnStop hooks.
+//
+// It is a shutdown budget, not a bound derived from how long an evaluation may
+// take: there is no evaluation-level wall clock to match. engine.Limits
+// .MaxWallClock guards only Engine.Evaluate — the CEL kernel path — and since
+// ADR-003 removed the kernel/template cross-check no shipped template calls it;
+// templates compute directly and read through resolvers.Ledger on the caller's
+// context. Past the grace the work context is cancelled, because the process is
+// going down either way and an unbounded wait would hang shutdown.
+const defaultShutdownGrace = 10 * time.Second
 
 // Scheduler periodically fires due cron-scheduled rule evaluations.
 type Scheduler struct {
@@ -125,6 +136,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 // it returns and lets Run's deferred cancel unwind whatever is left — logged as
 // an error, because an evaluation cut off there may have recorded a capture
 // whose alerts were never opened.
+//
+// The waiter goroutine outlives drain in that case, until the cancelled
+// evaluations unwind. That is bounded by how fast they honour cancellation, and
+// the process is exiting regardless.
 func (s *Scheduler) drain() {
 	done := make(chan struct{})
 	go func() {

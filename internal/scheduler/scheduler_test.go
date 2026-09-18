@@ -15,6 +15,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/store"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/fx"
 )
 
 func cronSched(expr string) *models.Schedule {
@@ -332,6 +333,19 @@ func TestRun_DrainsInFlightEvaluationOnCancel(t *testing.T) {
 	for _, err := range errs {
 		require.NoError(t, err, "a draining evaluation must not see a cancelled context")
 	}
+}
+
+// The drain grace must stay strictly under fx's stop timeout. fx cancels the
+// OnStop context at its own deadline, so a grace at or above it is unreachable:
+// the drain gets cut short by fx and Run's expiry branch — the one whose log
+// names the risk to the capture — never runs, leaving an operator with fx's
+// generic timeout message. A first pass set 30s against fx's 15s and the branch
+// was dead in production.
+func TestShutdownGraceFitsInsideFxStopTimeout(t *testing.T) {
+	t.Parallel()
+
+	require.Less(t, defaultShutdownGrace, fx.DefaultTimeout,
+		"the drain grace must expire before fx gives up on OnStop, or Run's expiry path is unreachable")
 }
 
 // Past the grace, a stuck evaluation stops holding shutdown open.

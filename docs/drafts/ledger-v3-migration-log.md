@@ -1596,10 +1596,17 @@ Only reachable on process stop — so, on a rolling deploy, reachable every rele
 
 Fixed by splitting the two contexts the code conflated. The loop context still stops the loop; the
 work context is detached (`context.WithoutCancel`) so an in-flight evaluation finishes. `Run` drains
-before returning, bounded by `defaultShutdownGrace = 30s` (matching
-`engine.DefaultLimits.MaxWallClock`), and `OnStop` waits for `Run` — bounded by fx's own stop
-context, never failing shutdown. Past the grace the work context *is* cancelled with a loud log: an
-unbounded wait would hang shutdown.
+before returning, bounded by `defaultShutdownGrace = 10s`, and `OnStop` waits for `Run` — bounded by
+fx's own stop context, never failing shutdown. Past the grace the work context *is* cancelled with a
+loud log: an unbounded wait would hang shutdown.
+
+The grace **must** stay under fx's stop timeout (`fx.DefaultTimeout`, 15s, not overridden here), or
+fx cuts the drain short first and the warning naming the risk to the capture never prints. A first
+pass used 30s and justified it as "matching `engine.DefaultLimits.MaxWallClock`" — wrong twice over,
+and caught by the SDLC review: the value was unreachable, and that limit guards only
+`Engine.Evaluate`, the CEL kernel path, which no shipped template has called since ADR-003 removed
+the kernel/template cross-check. A scheduled evaluation is untimed end to end; the grace is a
+shutdown budget and nothing more.
 
 Both regressions are pinned: reverting either the detached context or the drain fails
 `TestRun_DrainsInFlightEvaluationOnCancel`. Package coverage 51.4% → 73.0% (`Run` and `drain` at
