@@ -32,7 +32,13 @@ Three clients (Buildr + 2) have independently asked for the same shape — *"ale
 
 ### What ships today
 
-Reconciliation v1 ([`internal/api/service/reconciliation.go:43`](../../internal/api/service/reconciliation.go)) compares **one dynamic set of ledger accounts** (resolved at run-time from a metadata query) against **one dynamic payments pool** (membership resolved at run-time from the Payments module), on the same asset basis, on demand, synchronously, with no notification surface. The dynamic-set primitive already lives on both sides — it's hardcoded into a fixed *(ledger query, payments pool)* pair.
+*As written (2026-06-17), this described the pre-revamp module. That surface was removed in
+`299b7a7d` — legacy `/policies`, the cash-pool comparison and `ledger_vs_pool_drift` — and the module
+was rebuilt on the named-source model over Ledger V3. The gap analysis below is what drove that
+rebuild, so it is kept as written; see [templates.md](../technical/templates.md) for what the
+catalogue is now.*
+
+Reconciliation v1 (`internal/api/service/reconciliation.go:43`, since removed) compares **one dynamic set of ledger accounts** (resolved at run-time from a metadata query) against **one dynamic payments pool** (membership resolved at run-time from the Payments module), on the same asset basis, on demand, synchronously, with no notification surface. The dynamic-set primitive already lives on both sides — it's hardcoded into a fixed *(ledger query, payments pool)* pair.
 
 ### What's actually missing
 
@@ -197,12 +203,17 @@ See the full v0.5 spec for §16 (open questions) and §17 (risks). Highlights:
 
 ## 9. What's already proven (status as of 2026-06-23)
 
-- ✅ Storage layer for `Rule` / `Evaluation` / `Alert` / `AlertEvent` / `Resolution` ([migrations](../../internal/storage/migrations/migrations.go))
+*Left as the status record it was. Two entries have since been superseded by the Ledger V3
+migration — the Postgres storage layer and the three template evaluators — and are marked inline.*
+
+- ✅ Storage layer for `Rule` / `Evaluation` / `Alert` / `AlertEvent` / `Resolution` — Postgres
+  migrations in `internal/storage/migrations/migrations.go`, **deleted in `31c5ca60`**; storage is
+  now accounts and typed metadata on the control ledger ([ledger-v3-storage.md](../technical/ledger-v3-storage.md))
 - ✅ Internal CEL kernel ([internal/engine/](../../internal/engine/))
-- ✅ Three V1 GA template evaluators — `source_parity`, `ledger_invariant`, `account_threshold` — on a shared `Source` primitive ([internal/templates/](../../internal/templates/))
+- ✅ Three V1 GA template evaluators — `source_parity`, `ledger_invariant`, `account_threshold` — on a shared `Source` primitive ([internal/templates/](../../internal/templates/)). **All three since retired**; see §6.1 for the six that ship.
 - ✅ Service layer — rule / evaluation / alert orchestration + resolution paths + append-only event log
 - ✅ API endpoints + OpenAPI
-- ✅ End-to-end demo UI ([poc-reconciliation-demo](../../../poc-reconciliation-demo)) — replaces the planned dockertest harness
+- ✅ End-to-end demo UI (`formancehq/poc-reconciliation-demo`, a separate repo) — replaces the planned dockertest harness
 - ✅ Period-scoped alert identity (rule `periodType`: continuous / daily / weekly / monthly) + webhook event publication on alert transitions
 - ✅ In-process cron scheduler (single-instance MVP — see [scheduler.md](../technical/scheduler.md))
 - 🚧 Remaining V1 GA additions: email digest, fctl, EE gating, usage metering · scheduler multi-replica safety (advisory-lock / Temporal)
