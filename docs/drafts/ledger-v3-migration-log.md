@@ -1,152 +1,225 @@
 # Ledger-native migration — development log
 
 Traceability record for the Reconciliation → Ledger v3 storage migration. One row per
-phase/step with status + commit; SDLC reviews and tracked follow-ups below. Design lives in
-the [RFC](./rfc-ledger-native-storage.md) and [ADR-002](../prd/adr-002-pit-consistency.md).
+phase/step/workstream with status + commit; SDLC reviews and tracked follow-ups below. Design lives
+in the [RFC](./rfc-ledger-native-storage.md) and the ADRs
+([001](../prd/adr-001-cel-kernel.md) · [002](../prd/adr-002-pit-consistency.md) ·
+[003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md) ·
+[004](../prd/adr-004-multi-source-comparisons.md)).
 
-**Branch:** `feat/reconciliation-ledger-v3` (based on `feat/ledger-clarity-v1`; rebase onto
-`main` after PR #83 merges). Dedicated PR to follow.
+**Branch:** `feat/reconciliation-ledger-v3`. Forked from `feat/ledger-clarity-v1` at `5868ce01`
+(2026-06-24). PR #83 (Ledger Clarity V1) landed on `main` 2026-07-23 (`3b61a0f7`); `main` was merged
+into this branch 2026-09-08 (`a5f6e051`), so the original "rebase after #83" instruction is
+discharged. Dedicated PR still to open.
 
 ---
 
 ## 👋 Handoff — resume here
 
-> **Current implementation note (2026-07-18).** This file is a chronological development log, so
-> older sections intentionally preserve decisions that were later superseded. The current branch
-> adds the `ACTIVITY` asset and rule-scoped activity accounts, stores lifecycle and snooze/unsnooze
-> history as transactions, and exposes a combined rule timeline. The exact current chart, six
-> Numscript programs at `v2.0.0`, indexes, queries, and provisioning behavior are consolidated in
-> [Ledger v3 storage model](../technical/ledger-v3-storage.md).
+> **How to read this file.** It is a chronological development log: the *review* and *workstream*
+> sections below intentionally preserve decisions that were later superseded, and are not edited
+> after the fact. The two sections above them — this handoff and the phase tables — are *status*
+> artifacts and are kept current. When the two disagree, the status sections win.
 
-**🎉 Checkpoint alternative COMPLETE (2026-07-08, ADR-003).** Query checkpoints **removed** — recon
-reads its data ledgers **live** and records each evaluation as an immutable `_recon` **capture**
-transaction (audit-grade: append-only, Ed25519-signed when a signing key is configured; positive
-assurance on pass, break evidence on
-fail). Owner-steered pivot away from the per-eval checkpoint (cluster-wide, Raft/SST-heavy, discarded
-per eval). 4 reviewed steps: 1 remove cross-check (`13b0357`), 2 drop checkpoints + live reads
-(`8979795`, **closes F26 + F32**), 3 capture in `_recon` (`932e931`, chart +2 types/+1 asset/+1
-numscript, it-ledger `recon-it4`→`recon-it5`), 4 docs (ADR-003 rewrite + ADR-002/RFC/architecture
-sync). Multi-ledger atomic-read gap tracked upstream as **EN-1480**. All green: unit -race, live
-it-suite, lint 0, gofmt. Details in the "checkpoint alternative" workstream section below.
+**Last updated:** 2026-09-18, at `3aec0837`.
 
-**Done (earlier):** Phase 1 steps 0–4 + **5a** (checkpoint mechanism, `6a7e110`) + **all of step 6a** — the
-server is now **Postgres-free and stateless**, running entirely on the control-ledger `_recon`
-(`LedgerStore` is the sole `service.Store`, F2-secured, provisioned at boot; shared contract types
-live in `internal/store`; `internal/storage`+`internal/events` deleted, net −3.5k lines; `31c5ca6`).
-Legacy `/policies`+cash-pool gone, evaluations non-durable, alert-events deferred to a Phase-3 sink.
-`CheckpointReader` reads data ledgers at a query checkpoint (ADR-002 cut, it-proven). Chart
-**finalized** — 4 account types (see §4.1.1/§4.1.2 + phase table). Scope rationale in "Step 6 — scope
-decisions" below; per-sub-step SDLC reviews follow. **Verified:** DB-less boot smoke + fresh it-tests.
+### State in one paragraph
 
-**🎉 Step 6b COMPLETE — Phase 1 is done. Reconciliation is Postgres-free, stateless, and reads data
-ledgers at checkpoint-consistent cuts.** Option C (owner, 2026-07-06): flip the single `LedgerResolver`
-interface `pit`→`checkpointID`, retire the pit-based `SDKLedgerResolver`. Rationale: ADR-002 §6 literally
-prescribes the single-interface flip ("Tier-2 resolvers keep PIT/latest") — Phase 1 has **no live Tier-2
-*ledger* source** (cross-cluster ledger is §11 future); the only Tier-2 source is the payments pool, which
-already has its own `PaymentsResolver`. So the Tier-1/Tier-2 split *is* the existing `SourceKind` switch
-(ledger→checkpoint, pool→latest); A (two ledger interfaces) / B (`ReadAnchor` union) both preserved a
-Tier-2 ledger path nothing constructs — dropped as YAGNI (re-introduce A at §11).
+Reconciliation is Postgres-free and stateless, running entirely on a Ledger v3 control-ledger
+(default `reconciliation`, `_recon` in design shorthand). It reads its data ledgers **live** — query
+checkpoints are gone (ADR-003) — and records every evaluation as an immutable, Ed25519-signed
+capture transaction. Every `_recon` write commits as a `SignedApplyBatch`, so the control ledger's
+own audit chain covers reconciliation's history and an external auditor can verify it from a public
+key alone (EN-1930 Phase 1, complete). The template catalogue has converged on a **single**
+named-source contract: six templates, no positional V1 shapes, no `/v2` route prefix, aggregate-only
+(no per-account fan-out anywhere).
 
-**6b sub-steps (all done):**
-- **6b-1 ✅ (`32e6bb0`)** — `CheckpointReader.ListAccounts` + streaming `Client.QueryAccountsFunc`
-  (budget-enforced mid-stream, returns engine-free `ledger.Account`).
-- **6b-2 ✅ (`15639d8`)** — the flip: `engine.LedgerResolver` `pit`→`checkpointID`;
-  `EvalInput{CheckpointID, PIT}` (SafetyMargin subtraction dropped); templates read ledger @ checkpoint,
-  pool @ latest; `pitPerSource` **Tier-2-only**; `SDKLedgerResolver` retired + `engine.SDKClient` trimmed;
-  new adapter `internal/ledgerresolver`; `EvaluateRule` pins ONE checkpoint per eval
-  (Acquire→Evaluate→Release, cancellation-surviving ctx). **F32** found+fixed: `AcquireCheckpoint` waits
-  for the async read-index to materialize before returning. End-to-end it-test
-  `TestIntegration_EvaluateAtCheckpoint` proves the flip on a live ledger.
-- **6b-2b ✅ (`4bc73be`)** — removed the now-inert `SafetyMargin` end-to-end (model/API/scheduler/service
-  + OpenAPI); `Schedule` dropped its custom marshalers (default encoder). −139 net.
-- **6b-3 ✅ (`4fb1ad0`)** — checkpoint reaper (**F26 resolved**): control-ledger registry
-  (`internal:checkpoints`, `cp:<id>` keys), recorded on Acquire / forgotten on Release;
-  `ReapOrphanedCheckpoints` (age-thresholded 15m ≫ 30s MaxWallClock, so never reaps a live checkpoint even
-  another instance's) runs at startup in the provisioner OnStart. it-test `TestIntegration_ReapOrphanedCheckpoints`.
+`just tests` is green — 24 packages, **73.9%** coverage on hand-written code (the 12 generated
+`internal/ledgerpb/*pb` packages are excluded; see the recipe's comment and `codecov.yml`).
 
-**Post-Phase-1: Event delivery ✅ COMPLETE (ED-1 + ED-2).** The original Phase 2/3 (Postgres) framing was
-absorbed by the 6a pivot. This workstream delivered alert events without a recon-owned message bus (RFC §4.4):
-owner chose **"delivery now, history deferred" (2026-07-06)**. Key mechanic: most transitions are
-`CreateTransaction` batches (marker move + `account_metadata`) → `COMMITTED_TRANSACTION` events; only
-snooze/unsnooze are `SAVED_METADATA`/`DELETED_METADATA` — the sink must cover all three.
-- **ED-1 ✅ (`07a0bd5`)** — self-describing `last_transition` envelope stamped on every transition so each
-  log event says what happened. `Client.ApplyMetadata` (atomic set+delete) added for unsnooze.
-- **ED-2 ✅ (`c769e17`)** — `Client.{Add,Remove,Get}EventsSink` + boot-provision an idempotent HTTP webhook
-  sink when `--events-sink-url` is set (`event_types=[COMMITTED_TRANSACTION,SAVED_METADATA,DELETED_METADATA]`;
-  `--events-sink-secret` optional), replacing the publisher dropped at 6a-5a. Server is add-only (swallow
-  AlreadyExists for boot; config change = manual remove+re-add, which resets the cursor). Verified via
-  it-test + a boot smoke (`ledgerctl events list` confirms the sink + live delivery attempts).
-- **Deferred (Phase 4):** `ListAlertEvents` (the *alert-transition* timeline) needs a **queryable sink**
-  (ClickHouse/Databricks — the ledger log has no account filter, so per-request replay is O(all _recon
-  writes)); semantic event types + replay API; checkpoint **anchor persistence** (needs retained/
-  scheduled checkpoints, §7 — not needed while break evidence is the durable audit, §8).
-- **Live now (not the sink):** the *evaluation* history — `GET /rules/{id}/captures` — reads the
-  per-eval capture **transactions** via `ListTransactions` (captures are first-class txns, unlike the
-  metadata-log alert timeline), so it needs no sink. See the "capture history endpoint" workstream.
+> ℹ️ **`just tests` passes `-count=1`.** Go's test cache replays a cached package without
+> re-emitting its full coverage profile, so a warm-cache run understated the total and the figure
+> drifted between runs on an unchanged tree — 64.6% against the same tree that reports a stable
+> 73.9% cold. The recipe now defeats the cache so a local run measures what CI (always cold)
+> measures. Every package really re-runs; use plain `go test ./...` for a fast inner loop.
 
-A dedicated PR off `main` should follow (rebase after PR #83).
+> ⚠️ **Prefix `PATH` with the toolchain bin.** `/opt/homebrew/bin/go` resolves the go1.26.0
+> toolchain via `GOTOOLCHAIN=auto`, but a 1.25.6 `compile` on `PATH` shadows it and `just tests`
+> exits 1 with `compile: version "go1.26.0" does not match go tool version "go1.25.6"`. Fix:
+> `export PATH="$(go env GOROOT)/bin:$PATH"`.
 
-**Watch:** open findings F1/F17/F22/F23/F25/F27/F31 (✅ resolved: F2 @ 6a-5a, F16/F29/F30 @ 6a-5b, F26 @ 6b-3, **F33** @ metadata-type-audit — `MetadataToMap` lossless, **F8** @ idempotent-schema-provisioning — `Provision` reconciles account types + metadata fields additively on an existing ledger (delta-based to avoid a per-boot index rewrite — new upstream note **F34**), so additive chart changes no longer need an it-ledger rename; **F26 + F32 now without object** — checkpoints removed @ checkpoint-alternative step 2). Metadata schema **audited & correctly typed** (dead `reopened_at`/`parent_resolution` removed). **Don't touch:**
-`feat/ledger-clarity-v1`; untracked V1 files (`docs/drafts/v1-epic-*`, `v1-stories/`); the
-uncommitted `Justfile` change (orphaned `generate-ledger-proto`, leave unstaged); `ledger-local/`.
-**Build/test:** `export PATH=$PATH:$(go env GOPATH)/bin` then `GOROOT= go build ./...`,
-`GOROOT= go test -race ./internal/ledger{,store,schema}/...`, it-tests `GOROOT= go test -tags it
--p 1 -run TestIntegration ./internal/ledgerstore/... ./internal/ledger/...` (**`-p 1`**: packages
-share one live ledger; F8 **resolved** — `Provision` now reconciles additively, so an it-ledger rename is only needed for a **destructive** chart change (removing/retyping a field, or changing an account type with accounts); current control ledger `recon-it6`). Conventions: `feat(ledger-v3):` commits, update this log
-+ SDLC review per sub-step, stamp commit refs.
+### What is done
+
+| Area | State |
+|---|---|
+| Storage | `LedgerStore` is the sole `service.Store`; no Postgres, no `internal/storage`, no `internal/events` |
+| Reads | live `AggregateVolumes` / `ListAccounts` per source; **no checkpoints** (ADR-003) |
+| Consistency | cross-ledger skew absorbed by tolerance; upstream atomic-read gap tracked as EN-1480 |
+| Audit | every `_recon` write is a `SignedApplyBatch`; entries + signing keys + tx→audit-entry resolution served over HTTP; verification recipe + zero-dep reference verifier published |
+| Attribution | `subjectMiddleware` binds the verified token subject into the signed payload for ack/resolve/accept **and** snooze/unsnooze |
+| Events | ledger-native events sink provisioned at boot (`--events-sink-url`) |
+| Alert history | `GET /alerts/{id}/events` **implemented** as a projection over the `_recon` activity stream |
+| Catalogue | 6 templates, one contract: `balance_equation`, `exchange_rate_bounds`, `source_consensus`, `coverage_ratio_bounds`, `balance_bounds`, `stale_holds` |
+| Scheduler | in-process cron, single-instance |
+
+### What is NOT done
+
+- **`GET /rules/{id}/revisions`** — the remaining half of EN-1930 W6. Never built; absent from
+  `openapi.yaml`. (`/alerts/{id}/events`, the other half, shipped.)
+- **EN-1930 Phase 2 (signed closures)** — ⚠️ **the design needs re-specifying before it can be
+  estimated.** [`audit-chain-v3.md`](../technical/audit-chain-v3.md) §P2.1 anchors a closure on the
+  ledger's *chapter* head, and cites `internal/infra/state/sealer.go` for the sealing hash. Ledger
+  removed chapters and cold storage in `d095a8b0` ("remove chapters and cold storage (EN-1945)",
+  #1884): `CloseChapter` is gone from `misc/proto/`, `sealer.go` is deleted, and this repo's own
+  [`proto/ledger/README.md`](../../proto/ledger/README.md) records the removal (it freed tags 9–15).
+  The open question at §109 — *is a recon closure a ledger `CloseChapter` on `_recon`, or a recon
+  artefact citing the chapter boundary?* — is therefore settled by elimination in favour of the
+  latter, and P2.1 needs a new anchor. `audit_sequence` plus the P1 `SignedApplyBatch` are the
+  candidates already in hand.
+- **Scheduler robustness** — `listCronRules` pages at `maxRulesPerTick = 1000` over *all* rules with
+  an empty `RulesFilters{}`, then filters `Enabled && Kind == cron` in Go, so a deployment with 1000+
+  rules can starve its cron rules off the page (only an `Errorf` marks it). `tick` fans out
+  `go s.fire(...)` unbounded and `Run` returns on `ctx.Done()` without draining in-flight
+  evaluations. `Run` and `cronExpr` are at 0% coverage.
+- **`contractVersion` is a degenerate abstraction.** Nothing on this branch can write a V1 stamp
+  (Postgres-free, no data migration), so the middleware, `internal/contractversion`,
+  `requireContractVersion`, `validateTemplateContract` and the `RulesFilters.ContractVersion`
+  threading all resolve to one value. The persisted field and the `models` constant must stay — they
+  are written into signed metadata that cannot be rewritten — but the live plumbing need not.
+- **`internal/templates` still speaks "V2"** (`V2NamedSource`, `v2_source.go`, `validateV2Sources`,
+  `resolveV2Sources`, `resolvedV2Source`, `maxV2Sources`, `v2Queries`) although the API and the UI
+  dropped the suffix. `SourceSpec` and `V2NamedSource` are two types for one concept with three
+  resolution paths between them (`SourceSpec.resolve`, `resolveV2Source`,
+  `resolveV2SourceBalances`) and the `account_metadata` branch written twice.
+- **Frontend has no CI job.** `frontend/` is a standalone Next app (~16.8k LOC) with no typecheck,
+  lint or test step in `.github/workflows/main.yml`. Recorded as a known gap; out of scope for the
+  current review pass.
+
+### Upstream dependencies
+
+| Ticket | State | Bearing on this branch |
+|---|---|---|
+| [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) | draft PR [ledger#2058](https://github.com/formancehq/ledger/pull/2058), design confirmed | Purges `EPHEMERAL` accounts fully at zero. When it lands, **version-gate** — do not delete — the released-hold post-filter at `stale_holds.go:289` and the `holdsReleased` evidence key: older ledgers still return released holds, and existing captures carry the key. |
+| [EN-1480](https://formance-team.atlassian.net/browse/EN-1480) | backlog, v3.1 | Batched multi-ledger aggregate on one snapshot. **Not blocking** — ADR-003 is per-source reads + tolerance. |
+| [EN-1873](https://formance-team.atlassian.net/browse/EN-1873) | backlog, gated on EN-1480 | Ledger-signed attestation of a read result. The value of a completeness proof is gated with it. |
+| [EN-1932](https://formance-team.atlassian.net/browse/EN-1932) | backlog, gated on Ledger 3.1 | K/V store for mutable control state. Until it ships, the marker/EPHEMERAL/Numscript model is the correct V3-native approach. Worth re-checking the epic's premise against EN-1941's bare-source CAS before estimating. |
+| [EN-1930](https://formance-team.atlassian.net/browse/EN-1930) | Phase 1 done; Phase 2 needs re-spec | See "What is NOT done". |
+
+### Open findings
+
+Still open / deferred: **F1** (CI proto regeneration + pinned gen plugins), **F17** (content-sensitive
+ledger idempotency — latent, no evaluation retry today), **F22** (CAS loser gets a raw
+`FailedPrecondition`), **F23** (`ListRules`/`ListAlerts` collect-all then sort client-side),
+**F25** (metadata read index is eventually consistent; operator path only), **F27** (noted),
+**F31** (noted), **F34** (mitigated in-recon; upstream `SetMetadataFieldType` no-op guard).
+
+Resolved: F2 @ 6a-5a · F16/F29/F30 @ 6a-5b · F33 @ metadata-type-audit · F8 @
+idempotent-schema-provisioning · F26 + F32 **without object** (checkpoints removed).
+
+### Build / test
+
+```
+just tests               # hermetic, race, coverage → coverage.out
+just tests-integration   # -tags it, -p 1, against a live Ledger v3 on localhost:8888
+just lint                # golangci-lint --fix --build-tags it
+just sync-ledger-proto   # re-vendor protos AND diff the protocol revision (see appendix)
+```
+
+`-p 1` on the integration suite is required: the `internal/ledgerstore` and `internal/api/service`
+suites share one hardcoded control ledger, **`recon-it6`**. The newer `internal/ledger` and
+`internal/ledgerresolver` tests provision their own per-run ledger instead
+(`recon-it-<case>-<uuid>`) and are not affected by it.
+
+Since F8 closed, `Provision` reconciles account types and metadata fields **additively** on an
+existing ledger, so an additive chart change no longer needs a fresh it-ledger. A **destructive**
+change still does — removing or retyping a metadata field, or changing an account type that already
+has accounts — and that means bumping the hardcoded `recon-it6` to `recon-it7` in all three call
+sites (`ledgerstore/store_it_test.go`, `ledgerstore/transition_event_it_test.go`,
+`api/service/evaluation_it_test.go`).
+
+**Conventions:** conventional commits; update this log per workstream; stamp commit refs. Never
+amend + force-push after a human review — the repo squash-merges with `COMMIT_MESSAGES`, so branch
+messages land on `main`.
 
 ---
 
 ## Phase status
 
+### Phase 1 — ledger-native storage (2026-07-03 → 07-06) — ✅ complete
+
+> **⛔ marks a step whose mechanism was later removed.** Steps 5a and 6b built the query-checkpoint
+> read path; ADR-003 deleted it two days after 6b closed. The steps are recorded as done because they
+> were done — but nothing they built survives in the code: `grep -ri checkpoint internal/` (minus the
+> vendored `ledgerpb`) now returns two stray comments and no identifier. Read the "checkpoint alternative" workstream for what replaced them.
+
 | Phase | Step | Scope | Status | Commit |
 |---|---|---|---|---|
-| 0 | — | Reads first: point "pool" at a ledger, PIT → checkpoints | ⬜ todo | — |
+| 0 | — | Reads first: point "pool" at a ledger, PIT → checkpoints | ⬜ never started (absorbed by 6a) | — |
 | **1** | **0** | **Ledger v3 gRPC transport** (proto + BucketService client) | ✅ done · reviewed | `5583a69` |
 | 1 | 1 | Chart-of-accounts / schema definition (`internal/ledgerschema`) | ✅ done | `c51be9a` |
 | 1 | 2 | Bootstrap provisioner (CreateLedger + account-types AUDIT + typed metadata + prepared queries) | ✅ done | `bd95a35` |
-| 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | 🚧 in progress | `8e75db4` |
+| 1 | 3 | `LedgerStore` behind the `Store` interface (rules/alerts as Numscript batches) | ✅ **done** (all sub-steps closed) | `2f3ffc3` |
 | 1 | 3a | ↳ store skeleton + rule serialization + CreateRule/GetRule | ✅ done | `8e75db4` |
 | 1 | 3b | ↳ PatchRule/DeleteRule (+ `ParseRuleAccount`, `DeleteAccountMetadata`) | ✅ done | `d023826` |
 | 1 | 3c | ↳ alert lifecycle | ✅ done | — |
 | 1 | 3c-1 | ↳ address reorder (per→fp), `MetaID`, `Alert↔metadata` serialization (OCC from balance, status mirror) | ✅ done | `f959ea1` |
 | 1 | 3c-2 | ↳ `OpenOrUpdateAlert` (mint from pool → st:open, OCC, mirror, idempotency) | ✅ done · reviewed | `66b64e2` |
-| 1 | 3c-2b | ↳ chart merge (`alert:issued`+`alert:occ` → `alert:pool`, 5→4 types) + Numscript **library** (SaveNumscript + ScriptReference) | ✅ done | `739efe7` |
+| 1 | 3c-2b | ↳ chart merge (`alert:issued`+`alert:occ` → `alert:pool`, 5→4 types) + Numscript **library** | ✅ done | `739efe7` |
 | 1 | 3c-3 | ↳ alert lifecycle: reads + guarded transitions + snooze | ✅ done | — |
 | 1 | 3c-3a | ↳ id→address resolution (`QueryAccounts` stream + `findAlertItem`, `id` metadata index) + `GetAlert` | ✅ done | `59e4d7b` |
 | 1 | 3c-3b | ↳ guarded transitions (Ack/Resolve/Accept/AutoResolve) + `ListActiveAlertFingerprints` + `alert_move` script | ✅ done | `9cc6025` |
 | 1 | 3c-3c | ↳ Snooze/UnsnoozeAlert (metadata-only) | ✅ done | `32603fa` |
-| 1 | 3c-4 | ↳ burn-on-close (resolve burns the marker → pool → EPHEMERAL purge; reopen re-mints; markers only for active states) | ✅ done | `2f3ffc3` |
-| 1 | 4 | Filter translator (`query.Builder`→filter) + **`ListRules`/`ListAlerts`** (ListAccounts streaming + trailer cursor → `bunpaginate.Cursor`) | ✅ done · reviewed | `916fee3` |
-| 1 | 5 | Resolver change `pit` → `checkpointID` + checkpoint acquisition | 🚧 mechanism done | — |
-| 1 | 5a | ↳ checkpoint mechanism: client (`CreateQueryCheckpoint`/`Delete` + `AggregateVolumes`) + `Checkpoint` lifecycle + `CheckpointReader` (data-ledger reads at a checkpoint) | ✅ done | `6a7e110` |
-| 1 | 5b | ↳ engine interface flip (`LedgerResolver` pit→checkpointID) + anchor + service acquisition | ⬜ folded into step 6b | — |
+| 1 | 3c-4 | ↳ burn-on-close (resolve burns the marker → pool → EPHEMERAL purge; reopen re-mints) | ✅ done | `2f3ffc3` |
+| 1 | 4 | Filter translator (`query.Builder`→filter) + `ListRules`/`ListAlerts` | ✅ done · reviewed | `916fee3` |
+| 1 | 5a | ↳ checkpoint mechanism: client + `Checkpoint` lifecycle + `CheckpointReader` | ✅ done · **⛔ removed @ ADR-003** | `6a7e110` |
+| 1 | 5b | ↳ engine interface flip | ✅ folded into 6b | — |
 | 1 | **6a** | **Ledger-only `Store`** (transport + simplification + wiring; Postgres removed) | ✅ **done** | `31c5ca6` |
 | 1 | 6a-1 | ↳ secure transport (`internal/ledgerauth`: Ed25519 signing + TLS + F2 insecure guard) | ✅ done · reviewed | `5f4ab4b` |
 | 1 | 6a-2 | ↳ drop legacy `/policies`+`/reconciliations` + `ledger_vs_pool_drift` template (+ openapi) | ✅ done · reviewed | `299b7a7` |
-| 1 | 6a-2b | ↳ sync product docs to the ledger-only surface (delete v1-vs-legacy, purge legacy refs) | ✅ done | `7acda74` |
-| 1 | 6a-3 | ↳ evaluations non-durable — drop the read surface (`Get/ListEvaluation` + `/evaluations`); `CreateEvaluation` kept (no-op on ledger @ 6a-5) | ✅ done · reviewed | `e282f78` |
-| 1 | 6a-4 | ↳ `ListAlertEvents` → empty + TODO (SAVED_METADATA sink deferred) | ✅ done (folded into 6a-5a) | `03d3a84` |
-| 1 | 6a-5a | ↳ bind `LedgerStore` as sole `Store` + `ledger.Client` fx/flags + provision at boot + remove Postgres wiring (boot DB-less) | ✅ done · reviewed | `03d3a84` |
-| 1 | 6a-5b | ↳ delete dead Postgres code (storage impl, migrations, `RunInTx`, DB flags, `internal/events`) + extract shared types to `internal/store` (F16/F29/F30) | ✅ done · reviewed | `31c5ca6` |
-| 1 | **6b** | **engine flip** (`LedgerResolver` pit→checkpointID, Option C) + checkpoint acquisition (no migration) | ✅ **done** | `4fb1ad0` |
-| 1 | 6b-1 | ↳ `CheckpointReader.ListAccounts` + streaming `Client.QueryAccountsFunc` (budget-enforced, engine-free `ledger.Account`) | ✅ done · reviewed | `32e6bb0` |
-| 1 | 6b-2 | ↳ interface flip `pit`→`checkpointID` + `EvalInput.CheckpointID` + per-source read + `internal/ledgerresolver` adapter + rewire + service checkpoint acquisition + **F32 readiness wait** | ✅ done · reviewed | `15639d8` |
+| 1 | 6a-2b | ↳ sync product docs to the ledger-only surface | ✅ done | `7acda74` |
+| 1 | 6a-3 | ↳ evaluations non-durable — drop the read surface | ✅ done · reviewed | `e282f78` |
+| 1 | 6a-4 | ↳ `ListAlertEvents` → empty + TODO | ✅ done (folded into 6a-5a) · **later implemented, see W-7** | `03d3a84` |
+| 1 | 6a-5a | ↳ bind `LedgerStore` as sole `Store` + fx/flags + provision at boot + DB-less boot | ✅ done · reviewed | `03d3a84` |
+| 1 | 6a-5b | ↳ delete dead Postgres code + extract shared types to `internal/store` (F16/F29/F30) | ✅ done · reviewed | `31c5ca6` |
+| 1 | **6b** | **engine flip** to checkpoint-anchored reads (Option C) | ✅ done · **⛔ removed @ ADR-003** | `4fb1ad0` |
+| 1 | 6b-1 | ↳ `CheckpointReader.ListAccounts` + streaming `Client.QueryAccountsFunc` | ✅ done · ⛔ partially removed (the streaming reader survives) | `32e6bb0` |
+| 1 | 6b-2 | ↳ interface flip `pit`→`checkpointID` + `internal/ledgerresolver` adapter + F32 readiness wait | ✅ done · **⛔ removed @ ADR-003** (the adapter survives, now live) | `15639d8` |
 | 1 | 6b-2b | ↳ remove inert `SafetyMargin` from request/schedule/API + OpenAPI | ✅ done · reviewed | `4bc73be` |
-| 1 | 6b-3 | ↳ checkpoint reaper for crash orphans — control-ledger registry + age-thresholded startup reap (F26 resolved) | ✅ done · reviewed | `4fb1ad0` |
-| 2/3 | — | ~~Flip reads / Postgres shadow / drop Postgres~~ — **absorbed by the 6a Postgres-free pivot** (already done) | ✅ absorbed | — |
-| **ED** | — | **Event delivery** (RFC §4.4) — self-describing transitions + ledger event sink; "delivery now, history deferred" (owner, 2026-07-06) | ✅ **done** | `c769e17` |
-| ED | ED-1 | ↳ self-describing `last_transition` envelope stamped on every alert transition (+ `Client.ApplyMetadata` atomic set+delete) | ✅ done · reviewed | `07a0bd5` |
-| ED | ED-2 | ↳ provision the ledger `AddEventsSink` (HTTP webhook, `event_types=[COMMITTED_TRANSACTION,SAVED_METADATA,DELETED_METADATA]`) at boot; `--events-sink-url`/`--events-sink-secret` | ✅ done · reviewed | `c769e17` |
-| 4 | — | `ListAlertEvents` (queryable history via a ClickHouse/Databricks sink) + semantic events / replay (generic event-log) | ⬜ deferred | — |
+| 1 | 6b-3 | ↳ checkpoint reaper for crash orphans (F26) | ✅ done · **⛔ removed @ ADR-003** (F26 without object) | `4fb1ad0` |
+| 2/3 | — | ~~Flip reads / Postgres shadow / drop Postgres~~ — absorbed by the 6a pivot | ✅ absorbed | — |
+| **ED** | — | **Event delivery** (RFC §4.4) — "delivery now, history deferred" | ✅ **done** | `c769e17` |
+| ED | ED-1 | ↳ self-describing `last_transition` envelope + `Client.ApplyMetadata` | ✅ done · reviewed | `07a0bd5` |
+| ED | ED-2 | ↳ provision the ledger `AddEventsSink` at boot | ✅ done · reviewed | `c769e17` |
+| 4 | — | ~~`ListAlertEvents` via a ClickHouse/Databricks sink~~ — **superseded**: delivered as an activity-stream projection instead, no external sink required | ✅ **done, differently** | `3344546` |
+
+### Post-Phase-1 workstreams (2026-07-08 → 09-18)
+
+Each has a section below. `!` marks a breaking public-surface change.
+
+| # | Workstream | Scope | Status | Head commit |
+|---|---|---|---|---|
+| W-1 | Checkpoint alternative (ADR-003) | remove cross-check → drop checkpoints, live reads → audit-grade `_recon` capture → docs | ✅ done · 4 steps reviewed | `0eb4839` |
+| W-2 | Metadata type audit | typed schema round-trip; `MetadataToMap` lossless (F33) | ✅ done | `96dc949` |
+| W-3 | Idempotent schema provisioning | `Provision` reconciles additively on an existing ledger (F8; upstream note F34) | ✅ done | `c9efdfc` |
+| W-4 | Capture history endpoint | `GET /rules/{id}/captures` over capture transactions | ✅ done | `9abcbfb` |
+| W-5 | Ledger-only reconciliation | drop Payments / Tier-2; strictly ledger↔ledger | ✅ done | `1891f19` |
+| W-6 | `account_metadata` source | reconcile a balance synced into account metadata; per-asset mode; unified on the prefix shape | ✅ done | `452519c` |
+| W-7 | **EN-1930 Phase 1 — audit chain** | sign every `_recon` write; end-user attribution; serve entries + signing keys + tx→audit-entry resolution; `GET /alerts/{id}/events`; verification recipe + reference verifier | ✅ **done** (P1.1–P1.4) | `3094b08` |
+| W-8 | **`stale_holds`** | the catalogue's only time-based control; deadline pushed into the ledger query as a literal cutoff; new-alert cap; generalised beyond card authorizations; made aggregate-only | ✅ **done** | `f95eaf8` |
+| W-9 | **Catalogue convergence** `!` | `balance_bounds` + the `*` asset wildcard close the last V1 gaps → retire the V1 template catalogue, unmount the V1 API surface, drop the `/v2` route prefix and the V2 suffix from the spec | ✅ **done** | `e430c00` |
+| W-10 | `cadence` → `periodType` `!` | rename across API, docs and frontend | ✅ done | `a57b21e` |
+| W-11 | Upstream-fact corrections | three stale Ledger v3 facts corrected; EN-2036 recorded as superseding EN-1972; protos re-synced + service protocol revision declared | ✅ done | `5facf76` |
+| W-12 | Coverage & CI | exclude generated bindings from the coverage figure; cover `Queries()` and the signed-batch write path; codecov wiring | 🚧 codecov wiring uncommitted | `36f8f8a` |
+| W-13 | Docs consolidation | one catalogue / one API surface; retire `per_account` from the reference; record the colour-segregation cost; repoint PRD §2/§9 at code that still exists | ✅ done | `3aec083` |
+| W-14 | **Scheduler correctness** | EN-2239: filter `enabled` server-side and drain every page. Plus: stop cancelling in-flight evaluations on shutdown | 🚧 uncommitted | — |
 
 Docs baseline commit: `c54dc4d` (RFC + ADR-002 rewrite).
 
 **✅ Integration-validated (2026-07-03)** against a live Ledger v3.0.0-alpha.3 (local, insecure
 `127.0.0.1:8888`): `store_it_test.go` (`-tags it`) provisions the control-ledger and runs the
-full rule CRUD (create → get → patch+label-prune → delete → not-found). `ledgerctl account-types
-list` confirms the 5 account types landed with correct patterns (alert-state=EPHEMERAL). Proves
-the gRPC transport, provisioner, and typed metadata round-trip end-to-end.
+full rule CRUD (create → get → patch+label-prune → delete → not-found). Proves the gRPC transport,
+provisioner, and typed metadata round-trip end-to-end. The suite has grown since; see
+`just tests-integration`.
 
 ---
 
@@ -822,7 +895,7 @@ after); no-flag boot clean. Conventional commit; not on `main`; no OpenAPI chang
 | — | LOW | Server is **add-only** (not add-or-update despite the proto comment): changing an existing sink's endpoint/filter needs a manual `RemoveEventsSink` first, which resets the per-sink cursor (re-delivery from the log head). Documented on the method; operator action. | ✅ documented |
 | — | LOW | A failed `AddEventsSink` at boot **fails startup** (consistent with the provisioner). Right for a genuine config error; a transient ledger blip would crash-loop → k8s restart self-heals. Soften to log-and-continue if flaky. | ⬜ noted |
 
-## Workstream: checkpoint alternative (live reads + `_recon` capture)
+## W-1 — Workstream: checkpoint alternative (live reads + `_recon` capture)
 
 Owner-steered pivot (2026-07-08, ADR-003): **drop query checkpoints entirely** in favour of live
 reads + an immutable audit-grade **capture transaction** in `_recon`. Rationale + option analysis in
@@ -921,7 +994,7 @@ Conventional commit; not on `main`; no OpenAPI change.
 | — | LOW | The capture stores the evaluation's (failing-outcome) evidence + verdict; full pass-side observed balances (all outcomes) and a ledger-signed read proof (EN-1480) are documented follow-ups. | ⬜ noted |
 | F8 | — | Chart evolution on an existing ledger is still unhandled: a fresh deploy gets the capture chart via CreateLedger; an existing one needs an idempotent add-types pass. it-ledger bumped to `recon-it5`. | ⬜ open |
 
-## Workstream: metadata type audit (typed schema round-trip)
+## W-2 — Workstream: metadata type audit (typed schema round-trip)
 
 Audit of every metadata key recon declares/writes/reads against the ledger's 11 typed
 `MetadataType`s (STRING/INT64/UINT64/INT8/16/32/UINT8/16/32/BOOL/DATETIME), verifying the
@@ -970,7 +1043,7 @@ OpenAPI change.
 | F33 | LOW | `commonpb.MetadataToMap` silently dropped non-`StringValue` keys when flattening ledger metadata to `map[string]string` (data-ledger read path → `engine.Account.Metadata`), so a typed data-ledger field would vanish from a rule's view. Latent (the field is not yet read by CEL). **Fixed:** lossless stringify of every scalar type. Full typed metadata in the CEL object model (a typed `map[string]any`) stays a Phase 4 concern. | ✅ fixed |
 | F8 | — | Same schema-evolution gap as before: removing the two dead fields is only picked up by a fresh `CreateLedger`; an existing ledger keeps the orphan declarations until an idempotent reconcile pass (`SetMetadataFieldType`/`RemovedMetadataFieldType`) exists. it-ledger bumped to `recon-it6`. | ✅ superseded by idempotent-schema-provisioning (additive) |
 
-## Workstream: idempotent schema provisioning (F8 resolved)
+## W-3 — Workstream: idempotent schema provisioning (F8 resolved)
 
 `Provision` runs on every boot but only ever called `CreateLedger`, which applies the full chart
 **atomically on first boot** and returns `AlreadyExists` (swallowed) forever after — so an
@@ -1022,7 +1095,7 @@ ledger, deleted on teardown). Not on `main`; no OpenAPI change.
 | F34 | LOW | Ledger `SetMetadataFieldType` has **no unchanged-type guard**: it bumps `forward_encoding_version` (an index rewrite) even when the declared type is identical. recon works around it by diffing against `GetLedgerInfo` and only declaring the delta. Upstream fix: the FSM could no-op an identical redeclaration. | 🟡 mitigated in-recon; upstream follow-up |
 | — | LOW | Destructive evolution (remove/retype a field, change a populated account type) is still unhandled and needs an it-ledger rename or a manual `RemoveMetadataFieldType`/type migration. Low frequency; documented. | ⬜ noted |
 
-## Workstream: capture history endpoint (`GET /rules/{id}/captures`)
+## W-4 — Workstream: capture history endpoint (`GET /rules/{id}/captures`)
 
 Exposes a rule's **evaluation history** — the immutable captures recorded per evaluation (ADR-003) —
 as a read API. Key insight (owner): captures are **transactions**, not the alert-transition log, so
@@ -1061,7 +1134,7 @@ live, period filter). OpenAPI validated (`yq`). Not on `main`.
 | — | LOW | `ListCaptures` collects one rule's captures and offset-slices client-side (F23-class). Bounded per rule, but a long-lived continuous rule accumulates one capture per evaluation — a native `ListTransactions` cursor threaded to the HTTP layer is the follow-up. | ⬜ noted |
 | — | LOW | Capture reads are eventually-consistent on the transaction read index (F25/F27 class): a list right after `RecordCapture` may briefly lag; the it-test waits via `require.EventuallyWithT`. | ⬜ noted |
 
-## Workstream: ledger-only reconciliation (drop Payments/Tier-2)
+## W-5 — Workstream: ledger-only reconciliation (drop Payments/Tier-2)
 
 **Commit:** `feat(ledger-v3): make reconciliation strictly ledger-only` (`12496f9`, single reviewed
 increment, 2026-07-09). Not on `main`.
@@ -1100,7 +1173,7 @@ fx graph wires without the SDK; passing `--stack-url` now errors `unknown flag`)
 |---|---|---|---|
 | — | NOTE | `workflows.md` still describes reads at a "query checkpoint" (superseded by ADR-003 live reads) — pre-existing drift from the checkpoint-alternative workstream, out of scope here; flagged for a follow-up doc sync. | ⬜ noted |
 
-## Workstream: account_metadata source (reconcile a synced-into-metadata balance)
+## W-6 — Workstream: account_metadata source (reconcile a synced-into-metadata balance)
 
 **Commit:** `feat(ledger-v3): account_metadata source — reconcile a balance synced into account metadata`
 (`f0711ae`, 2026-07-09). Not on `main`.
@@ -1268,20 +1341,311 @@ the Postgres alert row; bounding it is a retention concern (RFC §10.5). `per:{p
 segment; continuous rules use the constant `per:continuous` (functionally used by the period-scoped
 sweep) — kept uniform to avoid forking the address shape/code path for a cosmetic gain.
 
-## Proto re-sync procedure (F5)
+## W-7 — EN-1930 Phase 1: externally-verifiable audit chain (2026-09-01 → 09-07)
 
-The Ledger protos are **copied**, not submoduled. To update:
+**Epic:** [EN-1930](https://formance-team.atlassian.net/browse/EN-1930). Design:
+[`audit-chain-v3.md`](../technical/audit-chain-v3.md). Recipe + reference verifier:
+[`audit-verification.md`](../technical/audit-verification.md), [`verify-audit.mjs`](../technical/verify-audit.mjs).
 
-1. Check out the target Ledger revision (currently the `release/v3.0` branch) and copy
-   `<ledger>/misc/proto/*.proto` to `proto/ledger/`.
-2. Rewrite every `go_package` prefix from
-   `github.com/formancehq/ledger/v3/internal/proto/` to
-   `github.com/formancehq/reconciliation/internal/ledgerpb/`.
-3. Run `nix develop --command just generate-ledger-proto`. The Nix shell pins `protoc`,
-   `protoc-gen-go`, `protoc-gen-go-grpc`, and `protoc-gen-go-vtproto`; the recipe replaces only
-   generated `*.pb.go` files, preserving hand-written helpers.
-4. Run `go mod tidy && go test ./...`, then the tagged live-ledger suite with `-p 1`.
-5. Verify `git diff --check` and review all protobuf/API shape changes before committing the
-   vendored definitions and regenerated output.
+**The reorder that shaped this.** The plan originally opened with signed closures, inherited from the
+abandoned Postgres design ([PR #94](https://github.com/formancehq/reconciliation/pull/94)) which had
+no native chain to lean on. On V3 roughly two-thirds of that PR is subsumed by the ledger itself — a
+Raft-replicated keyed-BLAKE3 chain, a dense `audit_sequence`, a built-in `CheckStore` verifier — so
+the auditor's question (*did the control run, is anything missing, was anything changed?*) is
+answered directly by the ledger's per-batch Ed25519 signing. Closures became a later, separable
+phase that adds a compact per-period summary. `3ebf4dee` records the reorder.
 
-Record the exact Ledger revision each sync targets in the commit message.
+| Step | Scope | Commit |
+|---|---|---|
+| P1.1 | Every `_recon` write commits as a `SignedApplyBatch`; key registered via `RegisterSigningKey`, pinned by `--audit-signing-key-seed`. The ledger verifies unconditionally, so **an accepted write is a passed verification**. Same-seed restart is idempotent. | `fcda3fd` |
+| P1.2 | End-user attribution. `CallerSnapshot` is *reconciliation's* identity, so the human is bound inside the signed payload instead: `subjectMiddleware` decodes the already-verified bearer subject, `resolveActor` writes a `{subject, source, declared}` provenance actor, and the self-declared `by` is demoted to a note. ack/resolve/accept first (`f6dd1cc`), snooze/unsnooze as the fast-follow (`7b6f994`). | `f6dd1cc`, `7b6f994` |
+| P1.3 | Serve the chain: `GET /audit/signing-keys` (`8185a2c`), `GET /audit/entries` (`2a34be7`), `GET /audit/entries/{sequence}` with failure detail (`453a09e`), per-order business-intent decoding (`01c2d07`), `GET /audit/entries/by-transaction/{transactionId}` (`030d41b`). An auditor needs no ledger credentials. | `030d41b` |
+| P1.4 | Publish the verification recipe + a zero-dependency reference verifier, and correct the guide's completeness overclaim. | `45c80d6`, `f9760f2` |
+| W6 (half) | `GET /alerts/{id}/events` backed by a projection over the `_recon` activity stream (`3344546`) — see the note below. `GET /rules/{id}/revisions` remains unbuilt. | `3344546` |
+
+**The `/alerts/{id}/events` reversal.** Phase 1 step 6a-4 stubbed this to empty and the phase table
+deferred it to a ClickHouse/Databricks sink, on the reasoning that the ledger log has no account
+filter so per-request replay would be O(all `_recon` writes). That premise was narrower than it
+looked: the rule-scoped **activity accounts** added alongside the `ACTIVITY` asset give exactly the
+filter that was assumed missing. `ListAlertEvents` now scans the rule's activity account and shapes
+the committed transitions as append-only events, each carrying the `TransactionID` of the write
+behind it — so an auditor can pull an alert's whole history and locate every write in the signed
+chain. The cost is O(rule history) per page, the same order the rule timeline already paid; an
+alert-keyed index would make it O(alert) and is noted as a follow-up in `alert_events.go`. **No
+external sink is required, and Phase 4 is closed on those grounds.**
+
+**The completeness question, resolved (`27f2abe`).** Whether to isolate `_recon` in its own bucket so
+the audit sequence would be reconciliation's alone. Rejected: the ledger's `audit_sequence` is
+bucket-wide and dense, so gap-detection over a filtered view is not gap-detection over the chain.
+The recipe reads entries in sequence order and checks for gaps against the bucket sequence instead.
+`13c8d91` notes the interaction with EN-1932 (§9): moving mutable control state to a K/V store would
+move those writes off the transaction log, and the completeness argument has to be restated for
+whatever the K/V store's own ordering guarantee turns out to be.
+
+**Security fixes found in-flight.** `f928285` — the Ed25519 signing seed was reaching the logs.
+`eaf458a` — the UI verified every audit entry against the *current* key rather than the entry's own,
+which both broke verification after a rotation and masked a resolved entry. `455ea85` — the API
+trusted the token subject even when auth enforcement was off, letting an unauthenticated caller
+self-attribute an action into the signed payload; the subject is now only honoured when auth is
+actually enforced.
+
+**Verified** live against ledger `release/v3.0`.
+
+---
+
+## W-8 — `stale_holds`: the catalogue's first time-based control (2026-09-07 → 09-08)
+
+**Design:** [`stale-holds.md`](../technical/stale-holds.md) (includes the decision log Q1–Q6).
+
+Flags held funds whose deadline has passed (mode `stale`) or is about to (mode `approaching`). A
+hold is one ledger account with a non-zero balance plus a deadline in its metadata — either a
+recorded expiry, or a creation instant plus `maxAge`.
+
+Two properties drove the design:
+
+1. **The time predicate is pushed into the ledger query.** Ledger V3 has no point-in-time read
+   (ADR-003), so age cannot be derived by comparing *now* against *then*. It is read from state, and
+   the comparison is done by the ledger's own metadata index: the evaluation clock is materialised
+   into an integer cutoff and appended to the rule's query as a `$lte` clause (plus a `$gt` lower
+   bound in `approaching` mode). The read therefore scales with the number of *stale* holds, not the
+   number of holds.
+2. **The kernel stays time-free.** The clock enters as a literal, never as a `now()` builtin, so the
+   `compiledCEL` recorded in evidence is an exact, re-runnable record of the predicate that ran. A
+   builtin reading the wall clock would silently re-clock on replay.
+
+| Step | Scope | Commit |
+|---|---|---|
+| — | template + spec + deadline encodings (`datetime`, `epoch_{seconds,millis,micros}`; nanos excluded — JSON numbers are rejected past 2^53) | `8e944fe` |
+| — | exposed on the contract | `455580c` |
+| — | **new-alert cap**: one evaluation may newly open at most `DefaultMaxNewAlertsPerEvaluation = 200` alerts; beyond that the transitions are withheld rather than paging an operator 10 000 times | `258b692` |
+| — | generalised beyond card authorizations (the motivating client shape) | `0f0b413` |
+| `!` | **made aggregate-only** — `scope` and `identityKeys` removed; one outcome per asset | `8bab4ce` |
+| — | count the holds the authoritative in-Go recheck declines (`holdsRejected`), rather than dropping them and breaking the evidence partition | `f95eaf8` |
+| — | `GET /ledgers/{ledger}/accounts?filter=…` runs a stored account query, so an operator can list the accounts behind an aggregate alert from its recorded `effectiveQuery` instead of the alert embedding a list that grows with the problem | `9578fb1`, `aeb209c` |
+
+**Why aggregate-only** (ADR-004 amendment, 2026-09-08). `per_hold` was kept at first on the grounds
+that its evidence is proportional to the problem rather than to the account set — true, and beside
+the point. An alert per stuck hold pages an operator once per problem, which is the wrong shape
+exactly when a systemic failure strands thousands at once; the bounds that made it safe protect the
+system, not the person reading the inbox. Client clarification settled it: rules are written per
+watched subset (address prefix + a metadata match narrowing to one desk or book), so the aggregate
+over that subset *is* the signal, and separate sets are already separate rules with separate
+severities. With this, **per-account fan-out is absent from the whole catalogue**.
+
+**EN-2036 dependency.** A released hold keeps its account row and its deadline metadata — Ledger v3
+evicts only the zeroed volume — so it still matches the deadline filter and must be discarded
+client-side (`stale_holds.go:289`), counted as `holdsReleased`. [EN-2036](https://formance-team.atlassian.net/browse/EN-2036)
+fixes this at the source (draft PR [ledger#2058](https://github.com/formancehq/ledger/pull/2058)),
+superseding EN-1972's proposed live-volume query predicate (`0127f22`). When it lands the counter
+should be **version-gated, not deleted**: older ledgers still return released holds, and captures
+already written carry the key in a `schemaVersion: 2` evidence document.
+
+---
+
+## W-9 — Catalogue convergence: one contract, one catalogue (2026-09-07 → 09-08) `!`
+
+The V1 catalogue could not be *migrated*, only re-implemented, for two missing capabilities. Both
+closed in this workstream, after which the positional contract had nothing left that the named-source
+model could not say — so it was retired rather than carried.
+
+| Gap | Closed by | Commit |
+|---|---|---|
+| `account_threshold` had no named-source equivalent (no template gave one source a target band) | **`balance_bounds`** — one named source's balance inside inclusive per-asset limits. The only template whose asset universe is *declared* (the bounds table) rather than discovered from what its source holds: a floor must keep failing when a set drains to nothing. | `3f45377` |
+| a multi-asset V1 rule (`tolerance: {USD/2: 0, EUR/2: 0}`) is one rule emitting one outcome per asset; its named-source equivalent was one rule *per asset* | **the `*` asset wildcard** — a source declares every asset it holds and the operation fans out, aligning by exact asset code. A spec must be wholly wildcard or wholly fixed; mixing is rejected, because that is precisely the case where an operation would have to guess how `USD/2` lines up with "any asset". Rejected on `account_metadata` sources and by `exchange_rate_bounds`. | `3706bb8`, `5ba809b` |
+
+`TestAssetWildcard_MatchesV1MultiAssetParity` pins the claim: a V1 multi-asset `source_parity` rule
+and the single `balance_equation` replacing it produce the same outcomes against the same ledger.
+
+Then the retirement, in dependency order:
+
+| Step | Scope | Commit |
+|---|---|---|
+| — | migrate every demo rule onto the converged catalogue | `cdd5af1` |
+| `!` | retire the V1 template catalogue (`ledger_invariant`, `source_parity`, `account_threshold`) | `cc5f7d6` |
+| `!` | unmount the V1 API surface and prune its spec | `09913df` |
+| `!` | drop the `/v2` route prefix — it distinguished nothing once V1 was gone | `52c0cdb` |
+| `!` | drop the V2 suffix from the spec's names | `5e5ec51` |
+| — | surface an unknown template kind instead of failing silently — a persisted rule naming a retired kind now takes the engine-error path visibly | `6d00484` |
+
+**What was deliberately dropped, not overlooked.** Per-account fan-out (`account_threshold` mode
+`per_account`, `source_parity` scope `per_account`) has no named-source equivalent and is retired.
+It had already been parked out of the V1 GA surface once (`1bd99ec`) for unbounded PASS evidence;
+reviving it needs an explicit alignment key and missing-row semantics that no shipped rule asks for.
+Recorded in the ADR-004 amendment (2026-09-07) so retirement is a decision rather than a side effect
+of a cleanup.
+
+**What was *not* rewritten.** No data migration. A persisted V1 rule still names a retired kind and
+evaluates to an ERROR rather than being translated; historical captures, alerts and accepted
+evidence snapshots keep the shape they were written with. The immutable `contractVersion` stamp is
+unaffected — it was never derived from the route.
+
+**Residue, tracked in the handoff.** `internal/templates` still carries the V2 vocabulary
+(`V2NamedSource` et al.) although the API and UI dropped it, and `contractVersion`'s live plumbing is
+now single-valued.
+
+---
+
+## W-10 — `cadence` → `periodType` (2026-09-01) `!`
+
+Renamed across the API contract, the docs and the frontend in three paired commits
+(`e4f568d`, `35f6873`, `a57b21e`). "Cadence" read as *how often the rule runs*, which is the
+schedule; the field actually names *how long a reconciliation period lasts*, which is what scopes
+alert identity. Breaking, and taken while the V3 surface is pre-GA.
+
+---
+
+## W-11 — Upstream-fact corrections (2026-09-14 → 09-17)
+
+Recon's docs and tickets had drifted against Ledger v3 in ways that were invisible locally because
+nothing referenced the removed code. Three corrections (`ec869c6`):
+
+- **Transaction receipts are gone.** Ledger EN-1952 (#1900) removed `common.Log.receipt`,
+  `GetTransactionResponse.receipt` and `internal/infra/receipt`. The removal note disqualifies them
+  for attestation anyway — the HS256 JWT used a symmetric cluster-local secret and was never
+  client-verifiable. The primitive that *does* fit is `signature.SignedLog`: server-signed, Ed25519,
+  verifiable against the public key from `Discovery`.
+- **`min_log_sequence` is gone** from the public read contract (ledger EN-1946, #1881). Live reads
+  now align automatically to the fixed Raft applied horizon of their main-store snapshot. Any
+  design text offering it as a freshness knob is stale — including F25's original proposal.
+- **`previous_audit_hash` is not a stored field.** It is an input to a **keyed** BLAKE3 hash derived
+  from the immutable ClusterID. Consequence for the audit story: the Ed25519 signature is verifiable
+  by anyone holding the public key, but the `audit_hash` chain is only re-verifiable by the ledger or
+  its `CheckStore`. The two anchors have different audiences, and text that blurs them overpromises.
+
+Also `faa9993` (clear EN-2036 against the control ledger's own `EPHEMERAL` usage — recon's alert
+markers are burn-on-close, so the purge change is safe for `_recon` itself) and `5facf76` (re-sync
+protos **and** declare the service protocol revision — see the appendix).
+
+**This is a recurring class of drift, not a one-off.** Ledger renumbers proto fields between
+revisions and Go names do not move, so a stale vendored proto misdecodes silently. Diff the protos
+before blaming business logic.
+
+---
+
+## W-12 — Coverage & CI (2026-09-17) 🚧
+
+- `36f8f8a` — the coverage figure excluded nothing, so the 12 generated `internal/ledgerpb/*pb`
+  packages (~96% of statements, ~1.6% covered) reported 4.5% where the hand-written figure is ~68%.
+  `just tests` now builds `-coverpkg` from `go list` minus the `*pb` packages; `codecov.yml` applies
+  the equivalent exclusion server-side. `grpcprotocol` lives under the same tree but is hand-written,
+  so the filter matches only the `*pb` package *names*.
+- `7e27d1b` — `Queries()` exercised for every registered template.
+- `e562e78` — the signed-batch write path covered.
+- **Uncommitted:** codecov wiring in `.github/workflows/main.yml` (`enable-codecov`,
+  `coverage-files`, `CODECOV_TOKEN`).
+
+Known gaps at the time of writing: `internal/ledgerresolver` 20.0% (its real suite is `it`-tagged),
+`internal/ledger` 57.0%, `internal/api` 66.2% (`service.ListRules` / `service.ListAlerts` /
+`service.ListRuleActivities` at 0%), and `frontend/` with no CI job at all. `internal/scheduler`
+was 40.7% here; W-14 took it to 69.7%.
+
+---
+
+## W-13 — Docs consolidation (2026-09-18)
+
+- `46fb644` — describe one catalogue and one API surface (with W-9).
+- `be7fb21` — retire `per_account` from the catalogue reference, which still documented it as
+  available after W-9 removed it.
+- `3885ada` — record what colour segregation costs the catalogue.
+- `3aec083` — repoint PRD §2 and §9 at code that still exists.
+
+Docs still carrying known residue, tracked in the handoff rather than fixed here:
+`architecture.md` §tree and §layer-table still describe `templates/` as "V1 binary controls + V2
+named-source controls"; ADR-004's closing `## Migration` section still says V1 APIs keep returning
+their existing bodies; and the word "V1" means the product milestone, the retired contract *and* the
+Postgres implementation across the doc set.
+
+---
+
+## W-14 — Scheduler correctness (2026-09-18) 🚧
+
+Two defects in the same file, found in the branch review. Both are *silent* — the scheduler keeps
+reporting healthy while a control stops running, which is the failure class this product exists to
+catch.
+
+### Which rules a tick sees — [EN-2239](https://formance-team.atlassian.net/browse/EN-2239)
+
+`listCronRules` asked for **one page of all rules** with an empty filter and narrowed to enabled cron
+rules in Go. The 1000-rule cap therefore counted disabled and on-demand rules against a budget only
+enabled cron rules can spend, and a full page was logged and **scheduled anyway** — so past 1000
+rules, an enabled rule sorting late simply never fired.
+
+Fixed by pushing the predicate down and draining the cursor:
+
+- `enabled` is filtered **server-side** — it is type-declared and indexed (`MetaEnabled` in
+  `MetadataIndexes()`), and `ruleLeaf` already mapped the key (`ledgerstore/filter.go`), so this
+  passes a predicate rather than building anything.
+- Every page is drained, bounded by `maxRulePages = 100` (100k enabled rules). Past that the tick
+  **fails** instead of firing an arbitrary slice.
+- Cron-ness stays a client-side check: `schedule` is opaque JSON with no indexed discriminator.
+
+### Shutdown — [`scheduler.md`](../technical/scheduler.md#shutdown--evaluations-drain-they-are-not-cancelled)
+
+`tick` fired `go s.fire(ctx, r)` on the **loop's** context, and fx's `OnStop` cancelled it and
+returned without waiting. Because `Service.inTx` is a passthrough — the control ledger has no
+cross-operation transaction — one `EvaluateRule` records its capture and then opens each alert as
+separate ledger transactions. A stop mid-tick therefore cut evaluations at an arbitrary point:
+
+| Cancelled… | Result |
+|---|---|
+| before the capture | read the ledgers, recorded **nothing** — the rule silently never ran that tick |
+| between capture and alerts | capture claims N breaks whose alerts were never opened |
+| partway through the alerts | some of that evaluation's alerts opened, the rest did not |
+
+Only reachable on process stop — so, on a rolling deploy, reachable every release.
+
+Fixed by splitting the two contexts the code conflated. The loop context still stops the loop; the
+work context is detached (`context.WithoutCancel`) so an in-flight evaluation finishes. `Run` drains
+before returning, bounded by `defaultShutdownGrace = 30s` (matching
+`engine.DefaultLimits.MaxWallClock`), and `OnStop` waits for `Run` — bounded by fx's own stop
+context, never failing shutdown. Past the grace the work context *is* cancelled with a loud log: an
+unbounded wait would hang shutdown.
+
+Both regressions are pinned: reverting either the detached context or the drain fails
+`TestRun_DrainsInFlightEvaluationOnCancel`. Package coverage 51.4% → 73.0% (`Run` and `drain` at
+100%, `cronExpr` 0% → 100%).
+
+**Not addressed — the fan-out bound.** A tick still starts one unbounded goroutine per due rule, so
+N rules sharing a midnight cron start N concurrent evaluations, each issuing a live read per source.
+Deliberately left open: bounding it would falsify the premise of the EN-1480 comment arguing the
+ledger's checkpoint cap binds *because* peak concurrency equals the number of rules due at once.
+That argument survives restatement — the cap is cluster-wide and shared, and a self-imposed bound
+would serialize evaluations behind checkpoint availability — but the two need deciding together.
+
+**Also untested:** `FXModuleFromFlags`. The drain logic is covered; the fx wiring that calls it is
+not, and exercising `OnStop` needs an fx harness with a `backend.Service`.
+
+---
+
+## Appendix — proto re-sync procedure (F5)
+
+The Ledger protos are **copied**, not submoduled. Steps 1–3 below are now automated:
+
+```
+just sync-ledger-proto /path/to/ledger    # defaults to ../ledger
+```
+
+The recipe copies `<ledger>/misc/proto/*.proto` into `proto/ledger/`, rewrites every `go_package`
+prefix from `github.com/formancehq/ledger/v3/internal/proto/` to
+`github.com/formancehq/reconciliation/internal/ledgerpb/`, prints the source revision and branch,
+and regenerates the bindings (replacing only generated `*.pb.go`, preserving hand-written helpers).
+
+**The step the old manual procedure omitted, and the reason this drifts silently.** The vendored
+protos and `internal/ledgerpb/grpcprotocol/protocol.go` are **one contract**. Ledger renumbers proto
+fields between revisions while the Go names stay put, so vendoring new protos without bumping the
+declared revision — or bumping without re-vendoring — reintroduces exactly the silent misdecode the
+EN-1851 gate exists to catch. It builds, it runs, and the hot path can keep working, which is why it
+is invisible until something far away is wrong. `just sync-ledger-proto` therefore prints both
+revisions side by side for comparison; `5facf76` declared the service protocol revision so there is
+something to compare against.
+
+After the recipe:
+
+1. If the two printed revisions differ, update `internal/ledgerpb/grpcprotocol/protocol.go` **before
+   shipping**.
+2. `go mod tidy && just tests`, then `just tests-integration` (`-p 1`, live ledger).
+3. `git diff --check`, and review every protobuf/API shape change before committing the vendored
+   definitions and the regenerated output.
+
+Record the exact Ledger revision each sync targets in the commit message. When a diagnosis points at
+business logic after a ledger bump, **diff the protos first**.
