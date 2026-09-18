@@ -101,6 +101,8 @@ returned color rows for the same asset, and control-ledger point reads request c
 Consequently, an observed `USD/2` balance is the total of its uncolored and colored buckets. The
 vendored protobuf contract preserves `color`, but selecting or comparing an individual color is
 not exposed by V1 or V2 templates; that would require an explicit, versioned source selector.
+What that costs, what it provably does not, and what the selector would take are in
+[color-of-money.md](./color-of-money.md).
 
 ```mermaid
 flowchart LR

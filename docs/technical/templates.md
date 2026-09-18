@@ -106,13 +106,23 @@ Every template is aggregate-only and uses the shared named-source shape below.
 | `kind` | Optional; defaults to `ledger`. Supported values are `ledger` and `account_metadata`. |
 | `ledger` | Required ledger name. |
 | `query` | Required, non-null query; validated against the ledger before persistence. |
-| `asset` | Required valid asset code. One V2 source produces one declared asset amount. |
+| `asset` | Required valid asset code. One V2 source produces one declared asset amount, summed across every Ledger color bucket (see below). |
 | `metadataKey` | Required only for `account_metadata`; the matched accounts' integer values are summed. |
 
 Each V2 spec accepts at most 32 sources and at least two unless the template is stricter;
 `exchange_rate_bounds` requires exactly two. A ledger source whose declared asset is absent resolves to
 `balance: "0"` and `present: false`. A missing or non-integer metadata value is an evaluation
 `ERROR`, not a silent zero. V2 does not support `per_account` scope.
+
+> **A source balance is the sum across Ledger color buckets.** Ledger v3 segregates balances by
+> `(account, asset, color)`, and a source declares an asset, never a bucket — so `asset: "USD/2"`
+> resolves to the total of the uncolored bucket and every colored one. Two consequences worth
+> knowing before writing a rule: a control over one segregated bucket (safeguarded client money,
+> say) is **not expressible today**, and because each `(asset, color)` is its own conservation
+> universe, a `tolerance: "0"` equation is satisfied by a surplus in one bucket offsetting a
+> deficit in another. Neither shows up as an `ERROR` — they pass. See
+> [color-of-money.md](./color-of-money.md) for the read paths, what it does not affect, and what a
+> bucket-aware source would take.
 
 ### 1. `balance_equation`
 
