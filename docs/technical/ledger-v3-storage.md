@@ -61,6 +61,69 @@ The four assets all have precision zero:
 | `CAPTURE` | One unit for each recorded evaluation. |
 | `ACTIVITY` | One unit for each rule lifecycle, evaluation, or alert activity item. |
 
+### Address conventions
+
+Prefix aggregation only works along one segment ordering, so an address layout is a decision about
+which questions stay cheap — and that decision is invisible from the addresses themselves. Four rules,
+recorded so the next account type is not a coin flip:
+
+1. **Namespace first, then discriminator** — `rule:`, `alert:item:`, `alert:st:`, `alert:pool:`,
+   `capture:`, `activity:`. A top-level namespace is a prefix no other address falls under, which is
+   why `RulePrefix()` (`rule:`) matches rule accounts only, even though `:rule:` appears inside almost
+   every other pattern.
+2. **Every variable segment is label-then-value** — `rule:{id}`, `per:{period}`, `fp:{hash}`. The
+   label keeps a prefix unambiguous and an address readable in a ledger dump without a decoder.
+3. **The segments you aggregate on go left.** Two deliberate choices follow: status is leftmost on
+   marker accounts (`alert:st:{state}:rule:…`) so open markers aggregate across rules, and
+   rule → per → fp on both item and marker accounts so a `(rule, period)` is a prefix — which is what
+   the auto-resolve sweep scans.
+4. **A segment whose value can contain `:` or `|` is hashed, not escaped.** The fingerprint is a
+   16-hex-char SHA-256 prefix (`FingerprintHash`), with the raw value kept in metadata for
+   readability. The period is deliberately *not* hashed: the account type constrains it to
+   `^[0-9A-Za-z-]+$`, so it embeds raw — which is the constraint any new period type must satisfy.
+
+**On abbreviation**: `st`, `per` and `fp` are abbreviated; `item`, `pool`, `rule`, `capture` and
+`activity` are not. That is historical rather than principled — `alert:st:` saves four bytes where
+`alert:item:` does not bother. Addresses are persisted and the chart is provisioned with typed
+patterns, so renaming is a migration of every account and is not worth doing; new account types should
+match the existing spelling rather than introduce a third style.
+
+Two consequences worth knowing before designing a query:
+
+- **There is no single prefix for "active".** `open` and `ack` are sibling values of the `{state}`
+  segment, so an active-alert aggregation is two prefixes, never one. `group_by_prefixes` takes a
+  list, which is how `CountAlertsByRule` gets both in one call.
+- **Nothing period-scoped across rules is prefixable** — the period never leads an address. *"Is
+  2026-03 green across every rule?"* and *"this fingerprint's history across periods"* are
+  **metadata-index** queries (`period` and `fingerprint` are both declared and indexed), not address
+  aggregations. The split is deliberate — the address answers per-rule questions, the index answers
+  cross-rule ones — but it is not visible from the chart, and a period-status endpoint depends on it.
+
+### Why there are three pools per rule
+
+`alert:pool:`, `capture:pool:` and `activity:pool:` are three source accounts per rule where one could
+mint all four assets: `alert:pool` already mints two (`ALERT` and `OCC`), because a balance is per
+`(account, asset)` and the counters are independent.
+
+The split is **namespace locality, not write contention.** Each namespace owns its mint source, so
+`alert:*`, `capture:*` and `activity:*` stay self-contained and no prefix scan has to step around a
+foreign account. `CaptureRulePrefix` depends on exactly that: `capture:rule:{id}:per:` excludes
+`capture:pool:rule:{id}` by construction, so listing a rule's capture history cannot pick up its own
+mint source. Folding the three into one `pool:rule:{id}` would add a fourth top-level namespace and
+break that property to save two accounts per rule — against a chart whose size is set by alert items,
+one per `(rule, fingerprint, period)`.
+
+The reason that does **not** apply is worth stating, because it is the intuitive one: a shared
+per-rule source would not serialize the capture path against the alert path any more than separate
+ones do. The ledger consumes committed Raft entries sequentially in strict index order, single
+threaded, one batch in flight, so every write to a ledger is totally ordered whatever accounts it
+touches. Separate pools protect nothing there.
+
+**Sign convention.** A pool is an overdraft source, so its balance is the negative of what it has
+minted: `-balance(alert:pool:rule:{id}, ALERT)` is the rule's live alert count and `-balance(…, OCC)`
+its total occurrences. Both are invariants of the mint/burn path rather than a read path — neither
+separates open from acknowledged — so the rule list counts with the grouped aggregate above.
+
 ### The one EPHEMERAL type, and why EN-2036 does not affect it
 
 `alert:st:{open|ack}:…` is the only `EPHEMERAL` account type in the chart. Ledger

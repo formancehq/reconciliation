@@ -87,9 +87,21 @@ func AlertStateAccount(state, ruleID, period, fpHash string) string {
 // period of the rule. Keyed by rule only (not rule+period) so the source
 // footprint is O(#rules), not O(#rules×#periods) — the period scoping added no
 // value the marker/item aggregations don't already give. Keeping every posting
-// source a declared account satisfies STRICT enforcement. Two per-rule gauges
-// live on it: -balance(this, ALERT) = live alerts for the rule (all periods);
-// -balance(this, OCC) = total occurrences for the rule.
+// source a declared account satisfies STRICT enforcement.
+//
+// There is one pool per namespace rather than one per rule, and the reason is
+// locality, not write contention: each namespace owning its own source is what
+// lets `alert:*`, `capture:*` and `activity:*` be scanned by prefix without
+// stepping around a foreign account (CaptureRulePrefix depends on it). Ledger
+// writes are totally ordered whatever accounts they touch, so splitting sources
+// would buy nothing on that front. See ledger-v3-storage.md.
+//
+// Two per-rule gauges follow from every mint and burn passing through here:
+// -balance(this, ALERT) = live alerts for the rule (all periods);
+// -balance(this, OCC) = total occurrences. They are invariants of the write path,
+// not the read path — neither separates open from acknowledged, so the rule list
+// counts alerts with a grouped aggregate over StateByRulePrefix instead (see
+// ledgerstore.CountAlertsByRule).
 func PoolAccount(ruleID string) string {
 	return "alert:pool:rule:" + ruleID
 }
@@ -104,7 +116,9 @@ func CaptureAccount(ruleID, period string) string {
 
 // CapturePool is the per-rule overdraft source that mints the CAPTURE marker for
 // every capture of the rule (keyed by rule → O(#rules) source accounts, mirroring
-// the alert pool). A declared source keeps STRICT enforcement satisfied.
+// the alert pool). A declared source keeps STRICT enforcement satisfied, and living
+// inside the `capture:` namespace is what keeps that namespace prefix-scannable —
+// see PoolAccount for why the pools are not folded into one.
 func CapturePool(ruleID string) string {
 	return "capture:pool:rule:" + ruleID
 }
@@ -112,7 +126,8 @@ func CapturePool(ruleID string) string {
 // ActivityAccount is the single append-only transaction stream for a rule.
 func ActivityAccount(ruleID string) string { return "activity:rule:" + ruleID }
 
-// ActivityPool mints the precision-zero activity counter for a rule.
+// ActivityPool mints the precision-zero activity counter for a rule. Per-namespace
+// like the other two pools (see PoolAccount).
 func ActivityPool(ruleID string) string { return "activity:pool:rule:" + ruleID }
 
 // CaptureRulePrefix matches all capture buckets of a rule across every period
