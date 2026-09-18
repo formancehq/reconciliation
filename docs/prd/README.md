@@ -137,11 +137,25 @@ See [docs/technical/architecture.md](../technical/architecture.md) for the imple
 
 ### 6.1 V1 GA template catalog
 
+*Revised 2026-09-18: the three positional templates this section originally listed —
+`source_parity`, `ledger_invariant` and `account_threshold` — were **retired** once
+`balance_bounds` gave the last of them a target. Their files no longer exist; every rule they
+expressed has an equivalent below. Per-account fan-out went with them, deliberately
+([ADR-004 amendment](./adr-004-multi-source-comparisons.md)). §7 below is left as the phasing
+record it was written as, and still names them.*
+
 | Template                | Semantic                                                 | Code |
 | ----------------------- | -------------------------------------------------------- | ---- |
-| `source_parity`         | Two balance sources agree within tolerance (built on the shared `Source` primitive) | ✅ [source_parity.go](../../internal/templates/source_parity.go) |
-| `ledger_invariant`      | Σ signed balances ≤ tolerance                            | ✅ [ledger_invariant.go](../../internal/templates/ledger_invariant.go) |
-| `account_threshold`     | Each / aggregate balance within `[lo, hi]`               | ✅ [account_threshold.go](../../internal/templates/account_threshold.go) (aggregate + per-account scope) |
+| `balance_equation`      | `abs(Σ cᵢ · balanceᵢ) ≤ tolerance` — control totals, sub-ledger against GL, multi-leg invariants; absorbs `ledger_invariant` and two-sided parity | ✅ [balance_equation.go](../../internal/templates/balance_equation.go) |
+| `balance_bounds`        | `min ≤ balance ≤ max`, per asset, signed and inclusive; declares its asset universe rather than discovering it | ✅ [balance_bounds.go](../../internal/templates/balance_bounds.go) |
+| `source_consensus`      | `max(bᵢ) − min(bᵢ) ≤ tolerance` across N sources, presence required | ✅ [source_consensus.go](../../internal/templates/source_consensus.go) |
+| `coverage_ratio_bounds` | `minRatio ≤ Σnumerator / Σdenominator ≤ maxRatio`, exact rational arithmetic | ✅ [coverage_ratio_bounds.go](../../internal/templates/coverage_ratio_bounds.go) |
+| `exchange_rate_bounds`  | quote/base ratio within bounds, by exact cross-multiplication accounting for both precisions | ✅ [exchange_rate_bounds.go](../../internal/templates/exchange_rate_bounds.go) |
+| `stale_holds`           | held funds whose deadline has passed, or is approaching — the one time-based control | ✅ [stale_holds.go](../../internal/templates/stale_holds.go) |
+
+All six are aggregate-only and use the named-source model: every source has a stable `id` and one
+declared `asset` (or `*` to fan out across assets), and operations refer to sources by ID rather
+than positional left/right fields ([ADR-004](./adr-004-multi-source-comparisons.md)).
 
 ### 6.2 V1.1 fast-follow catalog
 

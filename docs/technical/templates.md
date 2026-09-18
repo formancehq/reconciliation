@@ -40,7 +40,7 @@ Every template:
 A golden **kernel/template consistency guard** checks rendered CEL against the authoritative direct
 math, catching future semantic drift without repeating live reads in production evaluation.
 
-Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a ledger account-set descriptor (`ledger` + `query`) that knows how to resolve to per-asset balances and render its `balance(ledgerSet…)` CEL term. `source_parity` composes sources through it, so there is one code path for "read a balance source".
+Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a ledger account-set descriptor (`ledger` + `query`) that knows how to resolve to per-asset balances and render its `balance(ledgerSet…)` CEL term. Every shipped template composes its sources through it, so there is one code path for "read a balance source".
 
 Every template uses **named aggregate sources**. Every source has a
 stable `id` and one declared `asset`; operations refer to IDs rather than positional left/right
@@ -63,9 +63,21 @@ amount and deadline are per account *and* asset, which needs its own outcome sha
 > either side means the equation holds). For a **minimum** it is backwards, which is exactly why
 > `balance_bounds` declares its universe instead of discovering it.
 
-**Scope.** A ledger source can be read in one of two scopes, a native capability of the Source primitive:
-- **aggregate** (default): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
-- **per_account**: the source fans out — each matched account is evaluated individually, producing one Outcome per (account, asset) with the account address as the fingerprint axis. The account address is the alignment key when two ledger sources are compared per account. Fan-out is bounded by the engine's `MaxAccountsScanned` budget.
+**One scope: aggregate.** A ledger source resolves to one balance per asset — the sum over the
+matched account set. A query matching a single account is the degenerate case, so "single account"
+and "set of accounts" differ only in the query, never in the read. There is no second scope: no spec
+carries a `scope` field, and the one `mode` field in the catalogue (`stale_holds`) selects a deadline
+band, not a fan-out.
+
+> **Per-account fan-out was retired, not parked.** It existed only as `account_threshold`'s
+> `mode: "per_account"` and `source_parity`'s `scope: "per_account"` and went with those templates —
+> a deliberate decision, recorded in the
+> [ADR-004 amendment](../prd/adr-004-multi-source-comparisons.md): reviving it in the named-source
+> model needs an explicit alignment key and missing-row semantics that no shipped rule asks for.
+> The operator-facing consequence is worth stating plainly — **an aggregate break does not say which
+> account drifted.** The one exception is [`stale_holds`](#6-stale_holds): its evidence carries
+> `effectiveQuery` ([stale_holds.go](../../internal/templates/stale_holds.go)), the exact query that
+> evaluation ran, so the matching accounts can be listed straight from the alert.
 
 **Query selector.** A source's `query` is translated to a ledger account filter by `dataLedgerLeaf` ([resolver.go](../../internal/ledger/resolver.go)). Leaf keys `address` and `metadata[<key>]` combine with `$and`/`$or`/`$not`:
 - `address` — `$match` only: trailing-`*` prefix, else exact.
@@ -112,7 +124,8 @@ Every template is aggregate-only and uses the shared named-source shape below.
 Each V2 spec accepts at most 32 sources and at least two unless the template is stricter;
 `exchange_rate_bounds` requires exactly two. A ledger source whose declared asset is absent resolves to
 `balance: "0"` and `present: false`. A missing or non-integer metadata value is an evaluation
-`ERROR`, not a silent zero. V2 does not support `per_account` scope.
+`ERROR`, not a silent zero. Sources are aggregate-only — there is no per-account scope (see
+[How templates work](#how-templates-work)).
 
 > **A source balance is the sum across Ledger color buckets.** Ledger v3 segregates balances by
 > `(account, asset, color)`, and a source declares an asset, never a bucket — so `asset: "USD/2"`
@@ -428,9 +441,9 @@ fixed residual tolerance.
 ### 5. `balance_bounds`
 
 Asserts that one named source's balance stays inside inclusive per-asset limits, in minor units. The
-V2 form of [`account_threshold`](#2-account_threshold--shipped--aggregate--per_account)'s aggregate
-mode, and the template that makes the V1 catalogue *migratable* rather than merely
-re-implementable — an equation between sources cannot express a bound on a single balance.
+V2 form of the retired `account_threshold`'s aggregate mode, and the template that makes the V1
+catalogue *migratable* rather than merely re-implementable — an equation between sources cannot
+express a bound on a single balance.
 
 ```json
 {
@@ -685,4 +698,4 @@ func (*MyTemplate) Evaluate(ctx, spec, eng, resolvers, in) ([]Outcome, error) {
 
 Register it in `templates.DefaultRegistry()` ([internal/templates/template.go](../../internal/templates/template.go)) and add its `TemplateKind` constant in [internal/models/rule.go](../../internal/models/rule.go).
 
-The test pattern is well-established — see [internal/templates/templates_test.go](../../internal/templates/templates_test.go) for the round-trip shape (fake resolvers, mustJSON helper, fingerprint assertions, validation table tests).
+The test pattern is well-established: [harness_test.go](../../internal/templates/harness_test.go) holds the shared fakes and the `mustJSON` helper, and any per-template file — [balance_equation_test.go](../../internal/templates/balance_equation_test.go), say — shows the round-trip shape (validation table tests, rendered CEL cross-checked against the direct math, fingerprint and evidence assertions). [queries_test.go](../../internal/templates/queries_test.go) exercises `Queries()` for every registered template, so a new one is covered there the moment it is registered.
