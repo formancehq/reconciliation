@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "formance-plugins": {
+      "source": { "source": "github", "repo": "formancehq/internal-skills" }
+    }
+  },
+  "enabledPlugins": {
+    "formance-skills@formance-plugins": true
+  }
+}

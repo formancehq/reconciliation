@@ -14,3 +14,6 @@ reconciliation
 # Isolated local dev stack — Compose file, Dockerfile, gateway config, smoke
 # script, and per-developer .env live here. Not part of the shipped product.
 local/
+
+# Claude Code per-developer settings (the shared ones live in settings.json).
+.claude/settings.local.json
