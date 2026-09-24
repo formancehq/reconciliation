@@ -101,6 +101,43 @@ best avoided: each one is a log in the rewind window.
 **Refunds and chargebacks** are their own pair: a refund hold, a refund reference, and a payment
 with its own `payment_ref` on the PSP side (ADR-005 decision 7).
 
+### Mapping a connector for reconciliation
+
+The PSP ledger is fed by a Connectivity connector, and the mapping from PSP events to ledger
+transactions is configured **per customer, when they implement it**. Nothing here requires a change
+to a connector. It is the checklist an implementer follows so that the connector's output can be
+reconciled with a `lettering_match` rule. The rule adapts to field names: it names the key field
+and the state field per side, so `payment_id` and `event_type` work as well as `payment_ref` and
+`state`.
+
+| # | The connector mapping must… | Why |
+|---|---|---|
+| 1 | carry the **PSP payment reference** as declared transaction metadata, **with an index**, on every transaction of a payment | The flow is read by filtering on its presence. The rule rejects a key without an index (EN-2316). The hold address is never used as the key (§7.6) |
+| 2 | book **one transaction per event of one payment reference**. A batched payout that settles many payments is split into one transaction per payment | The control cannot split a multi-reference transaction: it reads the key from the transaction, not from the postings' addresses |
+| 3 | carry the **state** of the event (pending, succeeded, failed…) as transaction metadata | The rule maps its values to `pending`, `final` and `failed` per deployment |
+| 4 | carry **`merchant_ref`**, the business id the merchant passed when creating the payment (Stripe `metadata`, Adyen `merchantReference`…) | It turns an `unapplied_payment` into "invoice X is paid: apply it" |
+| 5 | keep key and state metadata **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one | A filtered re-read of a past day must not change. Recon flags violations in the rewind window (`key_metadata_mutated`) |
+| 6 | book **refunds and chargebacks as their own payment references**, not as a reversal of the original payment | Each is its own 1-to-1 pair (ADR-005 decision 7) |
+| 7 | book **fees and FX as explicit postings** to their own accounts | The comparison is exact, with no tolerance |
+| 8 | use **EPHEMERAL holds, one per payment, under one prefix per kind** | The open book is then a prefix listing, and lettered holds leave it |
+| 9 | set `reference = {payment_ref}:{state}` | Re-delivery of an event is idempotent |
+| 10 | have the **`inserted_at` or log-date index** created on the ledger | It resolves the cut-off in one read, instead of by bisection |
+
+**Where two existing mappings stand**, as a starting point:
+
+- `formancepayments` (`ledger-connect-plugins-poc` @ `89f4eb72`): rows 1, 3 and 8 are covered
+  (`payment_id` and `event_type` are indexed; the holds are EPHEMERAL). Rows 4, 6, 7 and 10 need
+  configuration. There is no `merchant_ref`. No mapping handles refunds or chargebacks, so they fall
+  into the `PAYMENT_OBSERVED` catch-all (`formancepayments.yaml:498`). A `fees` account is declared
+  (`:75`), but none of the ten mappings posts to it. Its documentation also describes more than
+  `fp.yaml` implements.
+- The Stripe plugin (`ledger-connect`) does not model holds. It books balance transactions keyed by
+  `stripe_txn_id`, so rows 1–3 and 8 need a lettering mapping first.
+
+The product side is the customer's own Numscript. Its conventions are in the booking table above,
+and the booking guide ([EN-2335](https://formance-team.atlassian.net/browse/EN-2335)) will turn both
+sides into a customer-facing document.
+
 ## 3. Workflow
 
 ```mermaid

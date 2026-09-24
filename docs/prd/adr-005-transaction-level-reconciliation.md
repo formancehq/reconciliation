@@ -511,6 +511,11 @@ The rules that the engine's efficiency depends on:
    ledger is no longer needed for performance. Metadata-only writes on holds are still best avoided:
    each one is a log to read in the rewind.
 
+On the PSP ledger, these conventions come from the **connector mapping**, which is configured per
+customer at implementation time. The implementer's checklist is in the
+[design doc §2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation).
+No connector change is required.
+
 ## 9. Upstream asks
 
 | Ask | Why | Size |
