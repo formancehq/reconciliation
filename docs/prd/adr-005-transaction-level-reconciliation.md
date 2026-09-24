@@ -352,7 +352,14 @@ checkpoint's listing.
   "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no", "state": {"field": "transition_kind", "final": ["to_final"]}, "holdPrefix": "main:hold:invoice:"}
   ```
 
-  A transaction whose state value is in no set is ignored. The rule's validation rejects overlapping
+  A transaction whose state value is in no set takes no part in matching, but it is **never dropped
+  silently**. It is counted per side, per state value and per asset as `unclassified` in the
+  statement, with a warning, and listed in the flow file. Connectivity's `formancepayments` profile
+  books refunds on the original payment id with the state `payin.refunded`
+  (`formancehq/connectivity-plugins-poc` @ `9df05c5b`), so a default mapping shows up there instead
+  of vanishing. The connector mapping checklist
+  ([design doc §2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation))
+  tells the implementer to give refunds their own reference. The rule's validation rejects overlapping
   sets.
 - **No tolerance.** Owner decision, 2026-09-24. The comparison is exact: a fee or FX difference on a
   payment is a break, never an accepted gap. Fees and FX must be booked explicitly on the side that
