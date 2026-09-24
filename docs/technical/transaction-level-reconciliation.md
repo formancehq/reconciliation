@@ -32,8 +32,8 @@ cut-off. It takes **no query checkpoint**.
 ```mermaid
 flowchart LR
     subgraph Q["PSP ledger (Connectivity) — seen first"]
-      Q1["payin.pending<br/>payment_id=PAY-42"] -->|opens| QH["fpay:{conn}:payment:hold:pending:PAY-42<br/>EPHEMERAL"]
-      QH -->|"payin.succeeded<br/>payment_id=PAY-42"| QF["fpay:{conn}:account:{acct}:main"]
+      Q1["payin.pending<br/>payment-id=PAY-42"] -->|opens| QH["fpay:{conn}:payment:hold:pending:PAY-42<br/>EPHEMERAL"]
+      QH -->|"payin.succeeded<br/>payment-id=PAY-42"| QF["fpay:{conn}:account:{acct}:main"]
     end
     subgraph P["Product ledger — later"]
       P1["invoice issued<br/>invoice_no=INV-7"] -->|opens| PH["main:hold:invoice:open:INV-7<br/>EPHEMERAL, ≠ 0 = unpaid"]
@@ -58,10 +58,11 @@ only in the product transaction.
   - its `post_commit_volumes` still shows the hold at `100 − 100 = 0`.
 - **The join key must therefore be indexed transaction metadata**, and the address cannot be the
   only carrier.
-  - Connectivity's `formancepayments` profile already does this: `payment_id` and `event_type` are
-    indexed (`ledger-connect-plugins-poc/plugins/formancepayments/profiles/formancepayments.yaml:807-811`).
+  - Connectivity's `formancepayments` profile already does this: `payments.formance.com/payment-id`
+    and `formance.com/observation.event-type` are indexed (`formancehq/connectivity-plugins-poc`,
+    `plugins/formancepayments/profiles/formancepayments.yaml:1143-1147` @ `9df05c5b`).
   - The shipped Stripe plugin does not model holds at all. It books Stripe balance transactions
-    with `stripe_txn_id` indexed (`ledger-connect/plugins/stripe/internal/adapter/grpc/server.go:227-236`).
+    with `stripe_txn_id` indexed (`formancehq/connectivity`, `plugins/stripe/internal/adapter/grpc/server.go:227-236` @ `e7ca3e29`).
 
 ### Recommended booking design (ADR-005 §8)
 
@@ -125,13 +126,20 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
 
 **Where two existing mappings stand**, as a starting point:
 
-- `formancepayments` (`ledger-connect-plugins-poc` @ `89f4eb72`): rows 1, 3 and 8 are covered
-  (`payment_id` and `event_type` are indexed; the holds are EPHEMERAL). Rows 4, 6, 7 and 10 need
-  configuration. There is no `merchant_ref`. No mapping handles refunds or chargebacks, so they fall
-  into the `PAYMENT_OBSERVED` catch-all (`formancepayments.yaml:498`). A `fees` account is declared
-  (`:75`), but none of the ten mappings posts to it. Its documentation also describes more than
-  `fp.yaml` implements.
-- The Stripe plugin (`ledger-connect`) does not model holds. It books balance transactions keyed by
+- `formancepayments`, in [`formancehq/connectivity-plugins-poc`](https://github.com/formancehq/connectivity-plugins-poc)
+  (`plugins/formancepayments/profiles/formancepayments.yaml` @ `9df05c5b`):
+  - **covered:** row 1, with `payments.formance.com/payment-id` on every payment transaction and
+    indexed (`:1143-1147`); row 3, with `formance.com/observation.event-type` indexed and
+    `payments.formance.com/payment-status`; row 8, with an EPHEMERAL
+    `fpay:{conn}:payment:hold:pending:{payment_id}` hold (`:64-73`); row 9 in intent, since
+    `reference = {conn}:padj:{adjustment_id}` is idempotent per event;
+  - **to configure:** row 4, as there is no merchant reference on transactions
+    (`payments.formance.com/reference` is account metadata); row 6, as refunds are mapped
+    (`PAYIN_REFUNDED` and five siblings, `:430-704`) but as deltas **on the original payment id**,
+    not as their own payment reference; row 7, as a `fees` account is declared (`:82`) but no mapping
+    posts to it; row 10, as the profile indexes `timestamp` but neither `inserted_at` nor the log
+    date.
+- The Stripe plugin, in [`formancehq/connectivity`](https://github.com/formancehq/connectivity) (`plugins/stripe` @ `e7ca3e29`), does not model holds. It books balance transactions keyed by
   `stripe_txn_id`, so rows 1–3 and 8 need a lettering mapping first.
 
 The product side is the customer's own Numscript. Its conventions are in the booking table above,

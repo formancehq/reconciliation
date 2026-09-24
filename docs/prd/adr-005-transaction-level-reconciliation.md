@@ -14,7 +14,8 @@ L6 EN-2328, L7 EN-2329, L8 EN-2326, L5 EN-2331.
 - ledger `release/v3.0` @ `0b4676d97` (local checkout) and @ `a08f99bc3` (`origin/release/v3.0` tip, 2026-09-24);
 - ledger branch `codex/en-2036-purge-ephemeral-accounts` @ `92b378e4b`, then @ `20a5595d6`;
 - Pebble `v2.1.4`;
-- Connectivity: `ledger-connect` @ `e7ca3e29` and `ledger-connect-plugins-poc` @ `89f4eb72`.
+- Connectivity: `formancehq/connectivity` @ `e7ca3e29` and `formancehq/connectivity-plugins-poc` @ `9df05c5b`
+  (re-checked 2026-09-24; first read at `89f4eb72`).
 
 ---
 
@@ -78,8 +79,10 @@ Hold accounts are **EPHEMERAL**, so a lettered hold is **purged** at zero. Conne
 books this way:
 
 - the `formancepayments` profile uses `fpay:{conn}:payment:hold:pending:{payment_id}` (EPHEMERAL);
-- its transactions carry `payment_id`, `event_type` and `transition_kind` metadata;
-- `payment_id` and `event_type` are indexed (`plugins/formancepayments/profiles/formancepayments.yaml:59-67, 715-811`).
+- its payment transactions carry `payments.formance.com/payment-id`,
+  `formance.com/observation.event-type` and `formance.com/accounting.transition` metadata;
+- the payment id and the event type are indexed (`plugins/formancepayments/profiles/formancepayments.yaml:64-73, 1143-1147`
+  in `formancehq/connectivity-plugins-poc` @ `9df05c5b`).
 
 ### 2.2 What a purged hold leaves behind (verified)
 
@@ -345,7 +348,7 @@ checkpoint's listing.
   side**, the metadata field or fields and the value sets that mean `pending`, `final` and `failed`:
 
   ```json
-  "psp":     {"ledger": "psp",  "key": "payment_id",      "state": {"field": "event_type", "final": ["payin.succeeded"], "failed": ["payin.failed", "payin.cancelled"], "pending": ["payin.pending"]}, "holdPrefix": "fpay:stripe:payment:hold:"},
+  "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id", "state": {"field": "formance.com/observation.event-type", "final": ["payin.succeeded"], "failed": ["payin.compensate"], "pending": ["payin.pending"]}, "holdPrefix": "fpay:stripe:payment:hold:pending:"},
   "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no", "state": {"field": "transition_kind", "final": ["to_final"]}, "holdPrefix": "main:hold:invoice:"}
   ```
 
