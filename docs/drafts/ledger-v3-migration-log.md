@@ -21,7 +21,7 @@ discharged. Dedicated PR still to open.
 > after the fact. The two sections above them — this handoff and the phase tables — are *status*
 > artifacts and are kept current. When the two disagree, the status sections win.
 
-**Last updated:** 2026-09-18, at `3aec0837`.
+**Last updated:** 2026-09-24 (ADR-005 design recorded; code status unchanged since `400578da`).
 
 ### State in one paragraph
 
@@ -104,6 +104,20 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 | [EN-1873](https://formance-team.atlassian.net/browse/EN-1873) | backlog, gated on EN-1480 | Ledger-signed attestation of a read result. The value of a completeness proof is gated with it. |
 | [EN-1932](https://formance-team.atlassian.net/browse/EN-1932) | backlog, gated on Ledger 3.1 | K/V store for mutable control state. Until it ships, the marker/EPHEMERAL/Numscript model is the correct V3-native approach. Worth re-checking the epic's premise against EN-1941's bare-source CAS before estimating. |
 | [EN-1930](https://formance-team.atlassian.net/browse/EN-1930) | Phase 1 done; Phase 2 needs re-spec | See "What is NOT done". |
+
+### Planned next (design only, nothing implemented)
+
+[ADR-005](../prd/adr-005-transaction-level-reconciliation.md), still proposed, adds transaction-level
+(lettering) reconciliation between a PSP ledger and a product ledger.
+
+- **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315); wave 1 is EN-2316
+  to EN-2323.
+- **Reads:** it keeps ADR-003's no-checkpoint stance. The flow is read with filtered
+  `ListTransactions`, and the stock by rewinding a live listing through the log window.
+- **New dependency:** object storage for the results.
+- **This branch carries** the design ([transaction-level-reconciliation.md](../technical/transaction-level-reconciliation.md))
+  and its bench (`tools/bench-txlevel`) only.
+- **Not filed yet:** the Ledger asks L1, L2 and L5–L8.
 
 ### Open findings
 

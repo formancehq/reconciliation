@@ -318,3 +318,24 @@ Ledger transaction-address index and expose one ordered feed.
 - The rule timeline is the canonical product read model. The existing per-alert
   events endpoint remains a compatibility surface and can later be projected
   from the same journal.
+
+---
+
+## 9. Transaction-level (lettering) reconciliation (⏳ planned) — aggregate now, detail later
+
+```mermaid
+flowchart LR
+    Cut["Cut = log id S per ledger<br/>(last log with date ≤ cut-off)"] --> Agg["Phase 1 — AggregateVolumes on hold prefixes<br/>(live exposure) → capture"]
+    Cut --> Flow["Phase 2 — flow: ListTransactions (T_prev, T]<br/>∧ payment_ref EXISTS, 8 id ranges per side"]
+    Cut --> Stock["Phase 2 — stock: live ListAccounts of open holds<br/>rewound with ListLogs (S, head]"]
+    Flow --> Join["Join on the PSP payment reference<br/>(+ unapplied payments carried from earlier days)<br/>+ continuity: open(S) = open(S_prev) + opened − lettered"]
+    Stock --> Join
+    Join --> Art["flow / stock / pending / breaks .ndjson.gz + manifest (sha256)<br/>→ backup storage, recon prefix, 90 days"]
+    Art --> Cap["Detail capture on _recon<br/>(counts, drifts, S per ledger, artifact hash) — Ed25519"]
+    Cap --> Alert["One aggregate alert per (rule, period)<br/>top-K breaks + artifact link"]
+```
+
+No query checkpoint is taken: the log is the immutable cut, and the rewind makes a live listing
+exact at `S`. Aggregate templates keep reading live (§7). Full design, booking conventions and
+measurements: [transaction-level-reconciliation.md](./transaction-level-reconciliation.md); decision
+record: [ADR-005](../prd/adr-005-transaction-level-reconciliation.md).

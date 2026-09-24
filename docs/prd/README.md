@@ -4,11 +4,11 @@
 | -------------- | -------------------------------------- |
 | Owner          | Arnaud                                 |
 | Status         | Draft v0.5                             |
-| Last updated   | 2026-06-17                             |
+| Last updated   | 2026-09-24 (transaction-level scope)   |
 | Code module    | `reconciliation` (unchanged)           |
 | Product name   | **Ledger Clarity** *(working title)*   |
 | Tier           | EE (V1) + EE+ "Finance Ops" pack (V2+) |
-| Sub-pages      | [ADR-001](./adr-001-cel-kernel.md) · [ADR-002](./adr-002-pit-consistency.md) |
+| Sub-pages      | [ADR-001](./adr-001-cel-kernel.md) · [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [ADR-005](./adr-005-transaction-level-reconciliation.md) *(proposed)* |
 
 ---
 
@@ -51,9 +51,31 @@ Reconciliation v1 (`internal/api/service/reconciliation.go:43`, since removed) c
 
 Generalizing source + predicate also opens a second product line: **continuous reconciliation against external corporate GLs** (NetSuite / Sage / Xero / SAP) — a high-WTP enterprise use case for any company using Formance as their financial backbone. Ledger v3 opens cross-ledger queries; the same engine extends to multi-ledger invariants (consolidated balance sheets, intercompany) with no shape changes.
 
-### Out of scope — sibling project's domain
+### Transaction-level reconciliation — in scope (amended 2026-09-24)
 
-Transaction-level reconciliation (pairwise matching of postings ↔ external statement lines, "2-way / 3-way match", fuzzy matching, unmatched-item workflows). This module asserts **aggregate** correctness; the sibling project resolves **line-level** divergence. Breaks found here become tickets the transaction-recon tool investigates.
+*Until 2026-09-24 this section handed transaction-level reconciliation to a sibling project, and the
+module asserted only aggregate correctness. The owner has since placed it **in this project's scope**
+([ADR-005](./adr-005-transaction-level-reconciliation.md)).*
+
+The shape is **lettering reconciliation**, per PSP payment reference, between the PSP ledger that
+Connectivity feeds and the product ledger that pilots the business. It has two legs:
+
+- **flow**: every payment the PSP finalised is applied by the product for the same amount, and every
+  application points at a real payment;
+- **stock**: the holds still open at the cut-off, aged.
+
+It runs daily at a business cut-off. It reads the ledgers' transactions and logs, and takes no query
+checkpoint. The
+complete break list is kept 90 days in the backup object storage. The rule runs daily on the
+existing `periodType` (daily, weekly or monthly). Its alert carries the aggregate comparison and
+points at each day's detail. The comparison is exact, with no tolerance, and refunds and chargebacks
+are their own 1-to-1 pairs.
+
+External statements reach the module *as a ledger*, through Connectivity. There is no separate
+statement-file matching path.
+
+Not in the first iteration, and not yet decided: fuzzy or tolerance-based matching of references,
+match suggestions, and an unmatched-item workflow beyond the alert lifecycle.
 
 ---
 
@@ -96,9 +118,12 @@ The engine internals (rules, expressions, kernel) exist to serve this lifecycle,
 - No streaming / CDC ingestion.
 - **No automated remediation via the Transaction Plane** — resolution stays human-first.
 
-### Out of scope — sibling project's domain
+### Transaction-level reconciliation (amended 2026-09-24)
 
-- Transaction-level matching, unmatched-item workflows, posting suggestion.
+- **In scope:** exact lettering reconciliation per PSP payment reference, between the PSP ledger and
+  the product ledger ([ADR-005](./adr-005-transaction-level-reconciliation.md), ⏳ planned).
+- **Not in the first iteration:** fuzzy matching, posting suggestion, and an unmatched-item workflow
+  beyond the alert lifecycle.
 
 ---
 

@@ -36,6 +36,7 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | **ADR-001 — CEL kernel choice** | [prd/adr-001-cel-kernel.md](./prd/adr-001-cel-kernel.md) |
 | **ADR-002 — PIT consistency model** | [prd/adr-002-pit-consistency.md](./prd/adr-002-pit-consistency.md) |
 | **ADR-004 — multi-source comparisons** | [prd/adr-004-multi-source-comparisons.md](./prd/adr-004-multi-source-comparisons.md) |
+| **ADR-005 — transaction-level (lettering) reconciliation** *(proposed)* | [prd/adr-005-transaction-level-reconciliation.md](./prd/adr-005-transaction-level-reconciliation.md) · design, measurements and evidence in [technical/transaction-level-reconciliation.md](./technical/transaction-level-reconciliation.md) |
 
 ---
 
@@ -52,6 +53,7 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | 7 | End-to-end demo UI ([poc-reconciliation-demo](../../poc-reconciliation-demo)) — replaces the planned dockertest harness | ✅ shipped |
 | 8 | V1 GA additions — event delivery via the ledger events sink ✅ · in-process cron scheduler ✅ (single-instance) · email digest / fctl / EE gating / metering 🚧 | 🚧 in progress |
 | 9 | V2 additive API — `balance_equation`, `exchange_rate_bounds`, `source_consensus`, and `coverage_ratio_bounds`, isolated from V1 persisted contracts | ✅ implemented |
+| 10 | Transaction-level (lettering) reconciliation — PSP ledger ↔ product ledger per PSP payment reference: flow read with `ListTransactions` filtered on the reference, open holds rewound to the cut through the log window, no query checkpoint; async detail in object storage ([ADR-005](./prd/adr-005-transaction-level-reconciliation.md)) | ⏳ proposed — evaluation done, tickets pending |
 
 ## V2 compatibility boundary
 

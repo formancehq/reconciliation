@@ -83,6 +83,17 @@ outside this ADR.
 > (§2), which no shipped rule asks for. Recorded here so retirement is a decision rather than a side
 > effect of a cleanup.
 >
+> *Follow-up (2026-09-24):* a design partner now asks for exactly that shape: a product ledger and a
+> PSP ledger, joined on the PSP payment reference. [ADR-005](./adr-005-transaction-level-reconciliation.md)
+> (proposed) supplies the three missing pieces:
+>
+> - **the alignment key:** an indexed transaction metadata field, because the address index
+>   forgets purged holds;
+> - **the missing-row semantics:** explicit flow and stock break classes;
+> - **bounded evidence:** one aggregate alert, with the complete list in object storage.
+>
+> It is a new template on its own execution path, not a revival of the retired fan-out.
+>
 > This does **not** touch `stale_holds`' `per_hold` scope, which is a different thing and stays: it
 > emits outcomes only for *failing* holds, so its evidence is proportional to the problem rather than
 > to the account set, and it is bounded twice over — by the rule's own `maxHoldsScanned` and by the
