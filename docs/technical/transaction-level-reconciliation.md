@@ -56,6 +56,10 @@ only in the product transaction.
     open;
   - `reference == "{id}:done"` still finds the lettering transaction;
   - its `post_commit_volumes` still shows the hold at `100 − 100 = 0`.
+
+  EN-2036 (formancehq/ledger#2058 @ `20a5595d6`, open, not merged) makes a purged hold reachable
+  by **exact address** again. Its prefix path then scales with every hold ever created (§7.6). None
+  of this changes the design, which never reads the flow by address.
 - **The join key must therefore be indexed transaction metadata**, and the address cannot be the
   only carrier.
   - Connectivity's `formancepayments` profile already does this: `payments.formance.com/payment-id`
@@ -79,7 +83,7 @@ This design is tuned for the read paths measured in §7:
 |---|---|---|
 | **In-flight hold** (EPHEMERAL) | `psp:{conn}:payment:pending:{payment_ref}` (and `psp:{conn}:refund:pending:{refund_ref}`), a single prefix per kind | `product:hold:invoice:{business_ref}` (and `product:hold:refund:{refund_no}`): **one hold per business object**, not one per state |
 | **Final accounts** (NORMAL) | `psp:{conn}:account:{acct}:main`, and **`psp:{conn}:fees`**: with no tolerance, every fee is an explicit posting | **`product:clearing:{conn}`**: the application transaction credits the invoice hold from the clearing account, so the clearing balance is the product's view of cash at the PSP (an aggregate control total) |
-| **One transaction =** | one event of one payment: pending, succeeded, failed, refunded… | one application of one payment to one business object. A payment split across two invoices is two transactions with the same `payment_ref` |
+| **One transaction =** | one event of one payment: pending, succeeded, failed… A refund or a chargeback is **its own payment reference**, not an event of the original payment (decision 7) | one application of one payment to one business object. A payment split across two invoices is two transactions with the same `payment_ref` |
 | **Transaction metadata** (declared, typed) | `payment_ref`, **`merchant_ref`** (the business id the merchant passed when it created the payment: Stripe `metadata`, Adyen `merchantReference`…), `state` (the rule maps its values to pending, final and failed), `kind` (payment, refund, chargeback) | `payment_ref` on applications; `business_ref` on **every** transaction touching a business hold, including its opening; `kind` |
 | **`reference`** | `{payment_ref}:{state}`: idempotent on re-delivery | `{payment_ref}:{business_ref}` |
 | **`timestamp`** | the PSP event time | the business event time |
@@ -204,12 +208,12 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Read | RPC | Index needed |
 |---|---|---|
 | Head of a ledger's log | `GetLedgerStats` → `log_count` (per-ledger log ids are contiguous from 1) | none |
-| Resolve `S` from the cut-off | `ListLogs`, filter `log_builtin_uint(DATE) > cut-off`, page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`). Without it, fall back to bisecting on log id: page-1 `ListLogs` calls filtered on `log_id`, reading each log's date, about 20 calls for 1M logs (not benched) |
+| Resolve `S` from the cut-off | `ListLogs`, filter `log_builtin_uint(DATE) > cut-off`, page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`). Without it, fall back to bisecting on log id: page-1 `ListLogs` calls filtered on `log_id`, reading each log's date, about 20 calls for 1M logs (not benched). **A main path, not an edge case**: Connectivity's `formancepayments` profile creates neither this index nor `inserted_at` (checklist row 10), so the run records which path resolved the cut and the statement names the index to add |
 | Resolve `T` (transaction-id cut) | `ListTransactions`, filter `builtin_uint(INSERTED_AT) > cut-off`, page 1 → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`), or bisection on id |
-| **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], membership)`, page 1000. Membership is `metadata[payment_ref] EXISTS` on the PSP ledger, and `Or(payment_ref EXISTS, business_ref EXISTS)` on the product ledger, so that hold openings are returned for continuity | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
+| **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], membership)`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, and `Or(<product.key> EXISTS, <product.businessId> EXISTS)` on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
 | Rewind window `(S, head]`, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
-| Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch, but it is the only lookup left once a hold is purged, since the address index forgets it (§2) |
+| Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch. Until EN-2036 merges, it is the only lookup left once a hold is purged, since address filters miss it (§2). After that, an exact address reaches it too |
 
 Each `ListLogs` call is a server stream of at most 1,000 `Log`. The transaction sits at
 `payload.apply.log.data.created_transaction.transaction`, or
@@ -286,6 +290,11 @@ vocabulary.
 - **Refunds and chargebacks are ordinary 1-to-1 pairs.** On the PSP ledger they are a payment with
   its own reference; on the product ledger, a refund hold lettered by a transaction carrying that
   reference. They go through the same classes and are never a reversal of the original payment.
+- **A transaction whose state is in no set is never dropped silently.** It takes no part in matching,
+  but it is counted per side, per state value and per asset as `unclassified`, with a warning, and
+  listed in `flow.ndjson.gz`. This catches a connector mapping that doesn't follow the conventions.
+  For example, `formancepayments` books refunds on the original payment id as `payin.refunded`
+  (checklist row 6).
 - The two stock books are **aged, not joined**: an unpaid invoice has no PSP counterpart by design.
 - Ageing (`new` / `persisting` / `cleared`) comes from the previous day's artifact.
 - Arithmetic is exact in minor units, colors are collapsed per asset, and `asset: "*"` fans out per
@@ -336,7 +345,9 @@ Around the bridge, the statement shows:
   Each class shows its top-K by amount, **new versus persisting** from the previous day, and the
   detail's path and filter (`breaks.ndjson.gz`, `class = …`).
 - **when `merchant_ref` exists**, every unapplied payment is paired with the open business hold it
-  names.
+  names;
+- **`unclassified` transactions**, per side and state value, with a warning. They do not change the
+  verdict, but they say the rule's state sets or the connector mapping need attention.
 
 The alert's evidence is this statement, not a single drift figure. Its headline states the verdict
 and the gross amount first, and the net second.

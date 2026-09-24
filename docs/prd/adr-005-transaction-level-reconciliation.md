@@ -134,8 +134,8 @@ is a Ledger matter, and an address prefix must not be extended to purged account
 **Consequence for the recommended booking.** Every lettering transaction, on both ledgers, must carry
 the **PSP payment reference** as declared, indexed transaction metadata. On the product ledger, it
 should also carry the **business id** of the hold it letters. Its postings name that hold, but the
-address index forgets it once the hold is purged, and a metadata field makes "which payments settled
-invoice X" a query.
+address filters miss it once the hold is purged (until EN-2036 merges, and then only by exact
+address), and a metadata field makes "which payments settled invoice X" a query.
 
 ### 2.3 The need
 
@@ -504,7 +504,7 @@ The rules that the engine's efficiency depends on:
 
    **`payment_ref` must be declared and indexed on both ledgers**, because the flow is read by
    filtering on its presence (§5). Index `merchant_ref` and `business_ref` too, for investigation:
-   the address index forgets purged holds (§2.2).
+   address filters miss purged holds today, and an address prefix scales with history (§2.2).
    **These fields are write-once.** A correction is a new transaction, never a `SavedMetadata` on an
    existing one, because a filtered re-read would otherwise change a past day (§5, caveat 1).
    **`merchant_ref` is what turns an `unapplied_payment` into "invoice X is paid: apply it".**
