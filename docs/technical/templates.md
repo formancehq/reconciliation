@@ -614,6 +614,10 @@ holdsMatched = holdsReleased + holdsRejected + holdsFlagged
 - `holdsFlagged` — funded and past the deadline. The verdict: `amountFlagged` and `oldestDeadline`
   describe exactly these.
 
+> ⏳ **Revisit planned ([EN-2324](https://formance-team.atlassian.net/browse/EN-2324)).** Keep the
+> flagged holds themselves as a result artifact in the ADR-005 result store: the as-evaluated view,
+> with `effectiveQuery` kept as the live view. See [stale-holds.md §9](./stale-holds.md#9-revisit-after-adr-005--keep-the-flagged-holds-as-a-result-artifact-).
+
 `effectiveQuery` is what makes the set recoverable without embedding it. It is the query this
 evaluation ran, deadline cutoff included as an integer literal, in **this module's query dialect** —
 the same shape a rule's own `source.query` takes. Run it with

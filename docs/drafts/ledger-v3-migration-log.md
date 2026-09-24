@@ -111,7 +111,8 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 (lettering) reconciliation between a PSP ledger and a product ledger.
 
 - **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315); wave 1 is EN-2316
-  to EN-2323.
+  to EN-2323, and EN-2324 moves `stale_holds` onto the same result store
+  ([stale-holds.md §9](../technical/stale-holds.md#9-revisit-after-adr-005--keep-the-flagged-holds-as-a-result-artifact-)).
 - **Reads:** it keeps ADR-003's no-checkpoint stance. The flow is read with filtered
   `ListTransactions`, and the stock by rewinding a live listing through the log window.
 - **New dependency:** object storage for the results.

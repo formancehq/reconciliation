@@ -3,7 +3,7 @@
 **Status:** Proposed. The design is under evaluation and nothing is implemented. The owner's answers
 of 2026-09-24 settle the questions of the first draft (§10).
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316 to
-EN-2323 (R1–R8). The Ledger asks of §9 are not filed yet.
+EN-2323 (R1–R8). EN-2324 reuses the result store for `stale_holds`. The Ledger asks of §9 are not filed yet.
 **Date:** 2026-09-24
 **Decision owners:** Reconciliation maintainers
 **Related:** [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [design, measurements and evidence](../technical/transaction-level-reconciliation.md)
@@ -514,6 +514,11 @@ new `periodType` without changing this design.
 - **Recon gains object storage** (the backup destination, under its own prefix) as its first durable
   dependency outside the ledger. It stays stateless in process. The artifacts are outputs, plus the
   previous run's pending set and ageing. Every one of them can be recomputed from the permanent logs.
+- **The result store is shared, not ADR-005-specific.** Its first other consumer is `stale_holds`,
+  which should keep its flagged holds as an artifact instead of only a query to re-run
+  ([stale-holds.md §9](../technical/stale-holds.md#9-revisit-after-adr-005--keep-the-flagged-holds-as-a-result-artifact-),
+  [EN-2324](https://formance-team.atlassian.net/browse/EN-2324)). The layout, the manifest, the hash
+  in the capture and the retention are generic by construction.
 - **ADR-003 stands.** Evaluations never take query checkpoints; one is used only as a test oracle
   and for an optional proof run.
 - **A new template kind, with its own async execution path** and resumable jobs. The scheduler's

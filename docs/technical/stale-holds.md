@@ -575,3 +575,69 @@ evaluating, and needs no write to customer data.
   which is true of every healthy hold too. "Flag any account whose balance has not returned to zero
   past the expected timestamp" is exactly what `stale_holds` does, and is why it is a separate
   template rather than a configuration of an existing one.
+
+---
+
+## 9. Revisit after ADR-005 — keep the flagged holds as a result artifact ⏳
+
+*Added 2026-09-24. Tracked as [EN-2324](https://formance-team.atlassian.net/browse/EN-2324) in the
+ADR-005 epic, and blocked by the result store it reuses
+([EN-2322](https://formance-team.atlassian.net/browse/EN-2322)).*
+
+[ADR-005](../prd/adr-005-transaction-level-reconciliation.md) introduces a result store: files in
+the backup object storage, anchored by hash in the signed capture and kept 90 days. `stale_holds`
+is the first template outside ADR-005 that should use it. Four points of this design need
+revisiting.
+
+**1. The evidence should keep the holds, not only a query to re-find them.** §4.5 leaves the set
+behind a number recoverable through `effectiveQuery`, and argues that "a list captured at evaluation
+time would be stale by the time anyone opened it anyway". ADR-005 reverses that argument.
+
+- A re-run of `effectiveQuery` answers a *different* question: the holds *still* past the cutoff and
+  *still* funded, with a frozen deadline and live balances (§4.5's own verified example).
+- The list the verdict was computed from is the evidence, and it is stale **by design**: an auditor
+  or a controller needs what the evaluation saw.
+- The evaluation already holds every matched account in memory, bounded by `maxHoldsScanned`
+  (≤ 50k), so writing them costs no extra read.
+
+Proposal:
+
+- write `holds.ndjson.gz` (address, balance, asset, deadline, age, and the rule's label metadata)
+  under `{bucketID}/reconciliation/{ruleId}/{YYYY-MM-DD}/{runId}/`, next to a manifest whose
+  SHA-256 goes into the capture;
+- keep `effectiveQuery` as the *live* view, since the artifact is the *as-evaluated* view;
+- add the artifact link and the top-K holds by amount to the alert evidence.
+
+**2. Continuous cadence means writing on change, not every tick.** `periodType: continuous` fires
+every interval, and an artifact per tick would multiply objects for no information. Write one when
+the flagged set or its amounts differ from the previous artifact, plus one daily snapshot. An
+unchanged tick's capture references the last artifact. Ageing (`new` / `persisting` / `cleared` per
+hold) then comes from the previous artifact, exactly as in ADR-005.
+
+**3. Page size.** The read goes through `Reader.ListAccounts`, which pages at 200
+(`queryPageSize`, [client.go](../../internal/ledger/client.go)). ADR-005 measured a ×4.7 slowdown
+against `MaxPageSize` = 1000 on a full scan: 5.3 s against 1.1 s for 100k accounts. This is a
+one-line change, and it benefits every per-account read.
+
+**4. A multi-page live read tears.** Above 1,000 holds, a `stale_holds` read spans several
+`ListAccounts` pages, and each page is its own snapshot. ADR-005 measured the effect on 1M accounts
+under concurrent writes: 2,233 rows differed from any single instant.
+
+- For a continuous monitor this is tolerable, because the next tick self-corrects.
+- The artifact should still record the read horizon, the log head before and after the listing.
+- If an exact as-of view is ever required, ADR-005's rewind (R4,
+  [EN-2319](https://formance-team.atlassian.net/browse/EN-2319)) applies unchanged: this is the
+  same prefix listing, corrected through the log window.
+
+**Not changing:**
+
+- the aggregate-per-asset outcome and its fingerprints (ADR-004 amendment);
+- `maxHoldsScanned` and the service-level new-alert cap (§4.6);
+- the EN-2036 follow-up in §8. Its implementation is ready in draft PR formancehq/ledger#2058:
+  purged holds stop matching, so `holdsReleased` falls to zero, and the artifact then shrinks with
+  it.
+
+**Convergence.** `stale_holds` is ADR-005's `stuck` stock class on a single ledger, run
+continuously. The two templates should share the ageing and artifact code, while staying separate
+templates, since their cadence and alert identity differ.
+
