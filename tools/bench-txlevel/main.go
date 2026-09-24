@@ -426,7 +426,10 @@ func diff(ctx context.Context, args []string) {
 	_ = gz.Close()
 	_ = f.Close()
 	tJoin := time.Since(t1)
-	st, _ := os.Stat(*out)
+	st, err := os.Stat(*out)
+	if err != nil {
+		log.Fatalf("stat %s: %v", *out, err)
+	}
 	fmt.Printf("diff cp=%d page=%d: A=%d rows (%s, sorted=%v) B=%d rows (%s, sorted=%v)\n", *cp, *page, len(ra), ta.Round(time.Millisecond), sa, len(rb), tb.Round(time.Millisecond), sb)
 	fmt.Printf("  matched=%d mismatch=%d missing_in_b=%d missing_in_a=%d | ΣA=%s ΣB=%s net=%s |abs|=%s\n", matched, mismatch, onlyA, onlyB, totA, totB, new(big.Int).Sub(totA, totB), absDrift)
 	fmt.Printf("  scan(parallel)=%s join+write=%s total=%s result=%s (%d bytes)\n", tScan.Round(time.Millisecond), tJoin.Round(time.Millisecond), time.Since(t0).Round(time.Millisecond), *out, st.Size())
@@ -640,6 +643,9 @@ func rewind(ctx context.Context, args []string) {
 		if c := l.GetPayload().GetCreatedQueryCheckpoint(); c != nil {
 			cp = c.GetCheckpointId()
 		}
+	}
+	if cp == 0 {
+		log.Fatal("no checkpoint log in the response: without an oracle the proof is meaningless")
 	}
 	if lastLogID(ctx, *ledger) != S {
 		log.Fatal("a write slipped in between S and the checkpoint")
@@ -983,24 +989,23 @@ func txsCmd(ctx context.Context, args []string) {
 				Field: commonpb.TransactionBuiltinIndex_TX_BUILTIN_INDEX_ID,
 				Cond:  &commonpb.UintCondition{Min: &lo, MinExclusive: true, Max: &hi},
 			}}}
-			filter := idRange
+			// -exists and -kind are conjunctive: each adds a condition to the id range.
+			conds := []*commonpb.QueryFilter{idRange}
 			if *exists != "" {
-				filter = &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_And{And: &commonpb.AndFilter{Filters: []*commonpb.QueryFilter{
-					idRange,
-					{Filter: &commonpb.QueryFilter_Field{Field: &commonpb.FieldCondition{
-						Field:     &commonpb.FieldRef{Metadata: *exists},
-						Condition: &commonpb.FieldCondition_ExistsCond{ExistsCond: &commonpb.ExistsCondition{}},
-					}}},
-				}}}}
+				conds = append(conds, &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_Field{Field: &commonpb.FieldCondition{
+					Field:     &commonpb.FieldRef{Metadata: *exists},
+					Condition: &commonpb.FieldCondition_ExistsCond{ExistsCond: &commonpb.ExistsCondition{}},
+				}}})
 			}
 			if *kind != "" {
-				filter = &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_And{And: &commonpb.AndFilter{Filters: []*commonpb.QueryFilter{
-					idRange,
-					{Filter: &commonpb.QueryFilter_Field{Field: &commonpb.FieldCondition{
-						Field:     &commonpb.FieldRef{Metadata: "kind"},
-						Condition: &commonpb.FieldCondition_StringCond{StringCond: &commonpb.StringCondition{Value: &commonpb.StringCondition_Hardcoded{Hardcoded: *kind}}},
-					}}},
-				}}}}
+				conds = append(conds, &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_Field{Field: &commonpb.FieldCondition{
+					Field:     &commonpb.FieldRef{Metadata: "kind"},
+					Condition: &commonpb.FieldCondition_StringCond{StringCond: &commonpb.StringCondition{Value: &commonpb.StringCondition_Hardcoded{Hardcoded: *kind}}},
+				}}})
+			}
+			filter := idRange
+			if len(conds) > 1 {
+				filter = &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_And{And: &commonpb.AndFilter{Filters: conds}}}
 			}
 			var cursor string
 			for {
@@ -1008,9 +1013,16 @@ func txsCmd(ctx context.Context, args []string) {
 				if err != nil {
 					log.Fatalf("list transactions: %v", err)
 				}
+				retry := false
 				for {
 					tx, rerr := stream.Recv()
 					if errors.Is(rerr, io.EOF) {
+						break
+					}
+					if status.Code(rerr) == codes.Unavailable && cursor == "" && total.Load() == 0 {
+						// A freshly created index is still building ("index is
+						// still building"): retry the first page until it serves.
+						retry = true
 						break
 					}
 					if rerr != nil {
@@ -1020,6 +1032,10 @@ func txsCmd(ctx context.Context, args []string) {
 					if len(tx.GetPostCommitVolumes().GetVolumesByAccount()) > 0 {
 						withPCV.Add(1)
 					}
+				}
+				if retry {
+					time.Sleep(500 * time.Millisecond)
+					continue
 				}
 				cursor = ""
 				if vals := stream.Trailer().Get("x-next-cursor"); len(vals) > 0 {
@@ -1043,9 +1059,27 @@ func txsCmd(ctx context.Context, args []string) {
 func retag(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("retag", flag.ExitOnError)
 	ledger := fs.String("ledger", "mixed", "")
-	txID := fs.Uint64("tx", 10, "")
+	txID := fs.Uint64("tx", 0, "transaction to retag (0 = the first transaction with kind=payment)")
 	kind := fs.String("kind", "internal", "")
 	_ = fs.Parse(args)
+	if *txID == 0 {
+		// Workers apply batches concurrently, so no fixed id is known to be a
+		// payment: look one up instead of guessing.
+		stream, err := svc.ListTransactions(ctx, &servicepb.ListTransactionsRequest{Ledger: *ledger, Options: &commonpb.ListOptions{PageSize: 1, Filter: &commonpb.QueryFilter{
+			Filter: &commonpb.QueryFilter_Field{Field: &commonpb.FieldCondition{
+				Field:     &commonpb.FieldRef{Metadata: "kind"},
+				Condition: &commonpb.FieldCondition_StringCond{StringCond: &commonpb.StringCondition{Value: &commonpb.StringCondition_Hardcoded{Hardcoded: "payment"}}},
+			}},
+		}}})
+		if err != nil {
+			log.Fatalf("find a payment: %v", err)
+		}
+		tx, err := stream.Recv()
+		if err != nil {
+			log.Fatalf("find a payment: %v", err)
+		}
+		*txID = tx.GetId()
+	}
 	_, err := svc.Apply(ctx, &servicepb.ApplyRequest{Variant: &servicepb.ApplyRequest_Unsigned{Unsigned: &servicepb.ApplyBatch{Requests: []*servicepb.Request{{Type: &servicepb.Request_Apply{Apply: &servicepb.LedgerApplyRequest{
 		Ledger: *ledger,
 		Action: &servicepb.LedgerAction{Data: &servicepb.LedgerAction_AddMetadata{AddMetadata: &commonpb.SaveMetadataCommand{

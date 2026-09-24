@@ -16,7 +16,7 @@ Use its own ports and a throwaway data directory, never the daily-driver ledger 
 it from the ledger checkout you want to measure:
 
 ```bash
-cd ~/Documents/GitHub/ledger && GOROOT= go build -o /tmp/bench-ledger/ledger-server . && GOROOT= go build -o /tmp/bench-ledger/ledgerctl ./cmd/ledgerctl
+cd <your ledger checkout> && go build -o /tmp/bench-ledger/ledger-server . && go build -o /tmp/bench-ledger/ledgerctl ./cmd/ledgerctl
 ```
 
 ```bash
@@ -45,6 +45,10 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 
 ## 3. Reproduce the ADR-005 figures
 
+Every figure below comes from `docs/technical/transaction-level-reconciliation.md` §7.
+
+**Keyed scopes, live and at a checkpoint** (§7.1):
+
 ```bash
 go build -o /tmp/bench-ledger/bench ./tools/bench-txlevel
 ```
@@ -54,23 +58,42 @@ B=/tmp/bench-ledger/bench; $B load -ledger psp -prefix psp:tx: -n 1000000 -batch
 ```
 
 ```bash
-B=/tmp/bench-ledger/bench; $B diff -a psp -pa psp:tx: -b bank -pb bank:tx: && $B cp-create
+B=/tmp/bench-ledger/bench; $B agg -ledger psp -prefix psp:tx: && $B scan -ledger psp -prefix psp:tx: && $B scan -ledger psp -prefix psp:tx: -page 200 && $B diff -a psp -pa psp:tx: -b bank -pb bank:tx:
 ```
 
-Pass the id printed by `cp-create`, then the ledger's head log id:
+`cp-create` prints the checkpoint id. Substitute it for `ID`:
 
 ```bash
-B=/tmp/bench-ledger/bench; $B diff -a psp -pa psp:tx: -b bank -pb bank:tx: -cp 1 && $B logs -ledger psp -prefix psp:tx: && $B rewind
+B=/tmp/bench-ledger/bench; $B cp-create && $B agg -ledger psp -prefix psp:tx: -cp ID && $B diff -a psp -pa psp:tx: -b bank -pb bank:tx: -cp ID
 ```
 
-The log-versus-transaction comparison (ADR-005 §5):
+Add `-seq` to that `diff` on a ledger older than EN-2108 (`7492e7304`): two concurrent reads of one
+checkpoint fail there. That is how the "10 min 25 s, sequential" figure was produced.
+
+**Log reads and the rewind proof** (§7.2, §7.4). `logs` reads up to the head when `-to` is omitted.
+For parallel ranges, start several `logs` processes on disjoint `-from/-to` windows:
 
 ```bash
-B=/tmp/bench-ledger/bench; $B load-mixed -n 1000000 -every 10 && $B txs -from 0 -to 1000000 -ranges 8 && $B txs -from 0 -to 1000000 -kind payment -ranges 8 && $B txs -from 0 -to 1000000 -exists payment_ref -index -ranges 8
+B=/tmp/bench-ledger/bench; $B logs -ledger psp -prefix psp:tx: && $B rewind -ledger psp -prefix psp:tx:
+```
+
+**Logs versus transactions, and metadata mutability** (§7.2). `retag` picks a real payment by
+default:
+
+```bash
+B=/tmp/bench-ledger/bench; $B load-mixed -n 1000000 -every 10 && $B logs -ledger mixed -prefix psp:payment: && $B txs -from 0 -to 1000000 -ranges 8 && $B txs -from 0 -to 1000000 -kind payment -ranges 8 && $B txs -from 0 -to 1000000 -exists payment_ref -index -ranges 8
+```
+
+```bash
+B=/tmp/bench-ledger/bench; $B retag && $B txs -from 0 -to 1000000 -kind payment -ranges 8 && $B txs -from 0 -to 1000000 -exists payment_ref -ranges 8
+```
+
+**Purged holds and the cut** (ADR-005 §2.2, §5):
+
+```bash
+B=/tmp/bench-ledger/bench; $B probe && $B cutprobe
 ```
 
 Stop the server and delete `/tmp/bench-ledger` when you are done. At 1M accounts per scope the
-store takes about 3 GB.
-
-The server log also grows by about 1 GB, because the ledger writes one INFO line per listed account
-(ADR-005 ask L2).
+store takes about 3 GB. The server log also grows by about 1 GB, because the ledger writes one INFO
+line per listed account (ADR-005 ask L2).
