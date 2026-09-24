@@ -11,7 +11,7 @@ L6 EN-2328, L7 EN-2329, L8 EN-2326, L5 EN-2331.
 **Upstream facts verified at:**
 
 - ledger `release/v3.0` @ `0b4676d97` (local checkout) and @ `a08f99bc3` (`origin/release/v3.0` tip, 2026-09-24);
-- ledger branch `codex/en-2036-purge-ephemeral-accounts` @ `92b378e4b`;
+- ledger branch `codex/en-2036-purge-ephemeral-accounts` @ `92b378e4b`, then @ `20a5595d6`;
 - Pebble `v2.1.4`;
 - Connectivity: `ledger-connect` @ `e7ca3e29` and `ledger-connect-plugins-poc` @ `89f4eb72`.
 
@@ -111,7 +111,18 @@ account's **current** existence before it reads them:
 
 The same gate exists on `0b4676d97` and on the `release/v3.0` tip `a08f99bc3`. It is what made the
 opening transaction disappear there too: the purged volume was the account's only attribute. So the
-conclusion stands whatever EN-2036 becomes. Ask **L5** keeps only what this design needs: the
+conclusion stands whatever EN-2036 becomes.
+
+**Fixed later in the same PR** (head `20a5595d6`, still open, not merged): address filters on
+transactions now read the mappings (`MappedAccountPrefixIterator`), and the probe returns both
+transactions of a purged hold by address. But the **prefix** path now enumerates every hold ever
+created, purged ones included, and materializes their transactions on every page. On real EPHEMERAL
+holds, a 2k-transaction window costs 5.7 s at a 100k-payment history and 50.7 s at 1M, against
+56–65 ms for `payment_ref EXISTS`. That is reported on the PR
+([comment](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700)), with options.
+None of it changes this design, which never reads by address.
+
+Ask **L5** keeps only what this design needs: the
 metadata and `reference` paths stay a tested contract for purged accounts. Reaching them by address
 is a Ledger matter, and an address prefix must not be extended to purged accounts (§6, and
 [design doc §7.6](../technical/transaction-level-reconciliation.md#76-where-the-key-comes-from-transaction-metadata-not-the-hold-address)).
