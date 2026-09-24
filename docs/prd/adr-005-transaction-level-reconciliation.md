@@ -492,13 +492,25 @@ The rules that the engine's efficiency depends on:
 
 | Ask | Why | Size |
 |---|---|---|
-| **L1**: keep a query checkpoint's read-only open alive for the checkpoint's lifetime, and size its cache | Checkpoint reads are 20× slower than live; this matters for option A and every other checkpoint user | S |
 | **L2**: drop the per-account INFO line `scanAccount complete` on list paths (`internal/application/ctrl/store.go:189-195`) | A listing of 1M accounts writes 1M log lines (this bench: 3.86M lines, 970 MB) | XS |
 | **L5**: decide whether an address filter on transactions reaches a purged EPHEMERAL account's history. EN-2036 keeps the mappings, but the query gates on the account's current existence (`internal/query/compile.go:1069-1110`), so they are unreachable. Either resolve the address from the mapping itself, or document that only `reference` and indexed metadata reach it. Either way, add a test that queries a purged account's transactions, which EN-2036's tests do not do | The recommended booking relies on `reference` and indexed metadata staying reachable. Reaching the history by address would also let an investigation start from a hold's address | S |
 | **L6**: `ListLogs` throughput. On the same 1M transactions it is 5–7× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream) | Only the rewind window and exact re-derivations still read logs; the gap deserves an explanation | S–M |
 | **L8**: **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L7**: return the snapshot horizon (the per-ledger log id the read saw) on `AggregateVolumes` and `ListAccounts` | Makes the phase-1 aggregate exact at `S` (`agg(S) = agg − Σ net(S, horizon]`) and lets the rewind skip the untouched part of the window; it is already part of EN-1480's scope (`log_sequence`) | S |
-| L3 / L4: consistent export; checkpoint owner and TTL | Option B/A only; not blocking | M / S |
+
+Only these five are asked, because only these serve this design.
+
+**Findings passed on for information, not asked.** Reconciliation takes no query checkpoint in an
+evaluation, so it does not ask for any of the following. The measurements stay in the design doc
+([§8](../technical/transaction-level-reconciliation.md#8-ledger-findings-and-asks), F-b, F-g, F-h)
+for the Ledger team to weigh against its own users:
+
+- **Checkpoint reads are about ×20 slower than live reads.** Every page reopens both databases with
+  the backup profile. To be passed on as a comment on [EN-2108](https://formance-team.atlassian.net/browse/EN-2108),
+  which already shares that open between concurrent readers. The two remaining checkpoint uses here
+  are the rewind's test oracle and ADR-003's optional proof run, and both can afford the slowdown.
+- **No consistent export**, meaning no single-snapshot multi-page listing, and **checkpoints have
+  no owner and no TTL**. These served options A and B only.
 
 ## 10. Decisions taken and what remains open
 

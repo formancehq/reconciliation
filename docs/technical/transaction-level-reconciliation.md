@@ -350,7 +350,7 @@ We checked this against the Pebble v2.1.4 sources and the ledger's call sites. T
 
 | Primitive | What it would give | Why not |
 |---|---|---|
-| `DB.NewSnapshot()` (`db.go:1629`) | A consistent view that costs one mutex and a sequence number: no files, no Raft order, no slot | It can only live server-side. It keeps overwritten versions alive while it is open, is lost on restart, and the ledger's `NewReadHandle` holds `dbMu.RLock` for the handle's lifetime (`internal/storage/dal/reader.go:80-96`). It is the right basis for a ledger-side *consistent export* (ask L3), which this use case no longer needs. |
+| `DB.NewSnapshot()` (`db.go:1629`) | A consistent view that costs one mutex and a sequence number: no files, no Raft order, no slot | It can only live server-side. It keeps overwritten versions alive while it is open, is lost on restart, and the ledger's `NewReadHandle` holds `dbMu.RLock` for the handle's lifetime (`internal/storage/dal/reader.go:80-96`). It is the right basis for a ledger-side *consistent export* (F-g), which this use case no longer needs. |
 | `NewEventuallyFileOnlySnapshot(ranges)` (`db.go:1652`) | Scoped to key ranges, and ledger keys are ledger-contiguous (`internal/domain/keys.go:105-131`) | Once file-only it pins **the whole Version** (`snapshot.go:280`) and hides unflushed keys outside the ranges |
 | `Checkpoint(WithRestrictToSpans)` (`checkpoint.go:57`) | Hard-links only the SSTs that overlap the spans | It still copies every WAL and the MANIFEST (`:394-413`, `:477-557`), can surface stale keys outside the spans (`:50-56`), and keeps the slot and the lifecycle |
 | `Options.Experimental.RemoteStorage` / `IngestExternalFiles` | SSTs read from object storage | Pebble ships no S3 or Azure driver, only an interface and test implementations. It is designed for shared L5/L6 beside a local MANIFEST and WAL, not for a database read out of a bucket |
@@ -427,7 +427,7 @@ appears as a new `SavedMetadata` log at the head. This is why the flow filters o
    the backup profile (`internal/adapter/grpc/server_bucket.go:336-398`,
    `internal/storage/dal/store_readonly.go`). On the tip, two concurrent readers are *faster* than
    one: 100k × 2 in 8.3 s, against 26 s for one scope. The shared open survives while any reader
-   holds it, which shows the reopen is the cost. → ask **L1**.
+   holds it, which shows the reopen is the cost. Not asked: evaluations take no checkpoint (§8, F-b).
 3. **Page size costs ×4.7.** Bulk reads must use `MaxPageSize` = 1000.
 4. **Every listed account emits an INFO log line** (`internal/application/ctrl/store.go:189-195`):
    3.86M lines, a 970 MB log. → ask **L2**.
@@ -486,14 +486,14 @@ still only see the run instant, not the cut-off.
 | # | Finding | Evidence | Ask |
 |---|---|---|---|
 | F-a | Concurrent reads of one checkpoint fail (`lock held by current process`, surfacing as a non-retryable `Unknown`) | Reproduced at `0b4676d97`; fixed by [EN-2108](https://formance-team.atlassian.net/browse/EN-2108) (`7492e7304`) | none |
-| F-b | Checkpoint reads are ×20 slower: every page reopens both databases with the backup profile | §7.3.2 | **L1** |
+| F-b | Checkpoint reads are ×20 slower: every page reopens both databases with the backup profile | §7.3.2 | For information only: evaluations take no checkpoint, and the test oracle and optional proof run can afford the slowdown. To be passed on as a comment on [EN-2108](https://formance-team.atlassian.net/browse/EN-2108) |
 | F-c | One INFO log line per listed account | `store.go:189-195` | **L2** |
 | F-d | A purged EPHEMERAL account's transactions are no longer returned by an address filter. That includes the **opening** transaction, which was returned before the purge. Unchanged on EN-2036's head (formancehq/ledger#2058 @ `92b378e4b`): the mappings are kept, but the query checks that the account currently exists before reading them (`internal/query/compile.go:1069-1110`) | §2 probe, re-run on the PR head | **L5**: resolve the address from the mapping, or document that only reference and metadata reach a purged account; add a test that queries a purged account's transactions |
 | F-e | `ListLogs` runs at 7.3k–13.8k logs/s on one stream, 5–7× slower than `ListTransactions` over the same data | §7.2 | **L6** |
 | F-e2 | Transaction metadata is mutable (`SavedMetadata` on a transaction id), so a filtered `ListTransactions` re-read of a past window can change; logs do not. Ledger v3 has no immutable alternative today: no label concept in the protos at `a08f99bc3`, and `reference` is exact-match only | §7.2 `retag` | **L8**: immutable transaction labels, add-only indexed, filterable on `ListTransactions` and `ListLogs`. Until then: write-once convention, monitored through the rewind window (`key_metadata_mutated`) |
 | F-f | Reads do not say which log id their snapshot saw | `AggregateVolumes` / `ListAccounts` responses | **L7**: return the horizon (in EN-1480's scope) |
-| F-g | No point-in-time read, and no single-snapshot multi-page listing | `common.proto:1844-1849`; `controller_default.go:436-438` | L3 (consistent export), not needed here |
-| F-h | Checkpoints carry no owner and no TTL | `bucket.proto:326` | L4, not needed here |
+| F-g | No point-in-time read, and no single-snapshot multi-page listing | `common.proto:1844-1849`; `controller_default.go:436-438` | For information only (consistent export): not needed here |
+| F-h | Checkpoints carry no owner and no TTL | `bucket.proto:326` | For information only: not needed here |
 
 ## Cross-links
 

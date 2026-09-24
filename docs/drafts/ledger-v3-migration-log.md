@@ -118,7 +118,7 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 - **New dependency:** object storage for the results.
 - **This branch carries** the design ([transaction-level-reconciliation.md](../technical/transaction-level-reconciliation.md))
   and its bench (`tools/bench-txlevel`) only.
-- **Not filed yet:** the Ledger asks L1, L2 and L5–L8.
+- **Not filed yet:** the Ledger asks L2 and L5–L8. The checkpoint findings (read ×20 slower, no consistent export, no owner or TTL) are passed on for information only, since evaluations take no checkpoint.
 
 ### Open findings
 
