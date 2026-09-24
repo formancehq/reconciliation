@@ -17,8 +17,9 @@ against the *product ledger* that pilots the business.
 - Both ledgers book as **lettering**. EPHEMERAL holds drain to zero at finality and then purge
   themselves.
 
-A daily run covers **100 to 1,000,000 payments**. The control reads **logs**, plus live listings
-corrected by logs, and takes **no query checkpoint**.
+A daily run covers **100 to 1,000,000 payments**. The control reads the flow with filtered
+`ListTransactions`, and the stock with live listings corrected by the short log window since the
+cut-off. It takes **no query checkpoint**.
 
 | It is | It is not |
 |---|---|
@@ -78,11 +79,11 @@ This design is tuned for the read paths measured in §7:
 | **In-flight hold** (EPHEMERAL) | `psp:{conn}:payment:pending:{payment_ref}` (and `psp:{conn}:refund:pending:{refund_ref}`), a single prefix per kind | `product:hold:invoice:{business_ref}` (and `product:hold:refund:{refund_no}`): **one hold per business object**, not one per state |
 | **Final accounts** (NORMAL) | `psp:{conn}:account:{acct}:main`, and **`psp:{conn}:fees`**: with no tolerance, every fee is an explicit posting | **`product:clearing:{conn}`**: the application transaction credits the invoice hold from the clearing account, so the clearing balance is the product's view of cash at the PSP (an aggregate control total) |
 | **One transaction =** | one event of one payment: pending, succeeded, failed, refunded… | one application of one payment to one business object. A payment split across two invoices is two transactions with the same `payment_ref` |
-| **Transaction metadata** (declared, typed) | `payment_ref`, **`merchant_ref`** (the business id the merchant passed when it created the payment: Stripe `metadata`, Adyen `merchantReference`…), `state` (the rule maps its values to pending, final and failed), `kind` (payment, refund, chargeback) | `payment_ref`, `business_ref`, `kind` |
+| **Transaction metadata** (declared, typed) | `payment_ref`, **`merchant_ref`** (the business id the merchant passed when it created the payment: Stripe `metadata`, Adyen `merchantReference`…), `state` (the rule maps its values to pending, final and failed), `kind` (payment, refund, chargeback) | `payment_ref` on applications; `business_ref` on **every** transaction touching a business hold, including its opening; `kind` |
 | **`reference`** | `{payment_ref}:{state}`: idempotent on re-delivery | `{payment_ref}:{business_ref}` |
 | **`timestamp`** | the PSP event time | the business event time |
 | **Postings** | exact amounts, with fees split out | application **strict on the amount** (`send [$asset $amount]`, never `*`): an over-application shows as a negative hold, and a partial payment leaves an honest residual |
-| **Indexes** | **`payment_ref` (mandatory: it drives the flow read)**; `inserted_at` or log date (to resolve the cut); `merchant_ref` (investigation) | **`payment_ref` (mandatory)**; `inserted_at` or log date; `business_ref` (investigation) |
+| **Indexes** | **`payment_ref` (mandatory: it drives the flow read)**; `inserted_at` and log date (to resolve the cut; bisection otherwise); `merchant_ref` (investigation) | **`payment_ref` and `business_ref` (mandatory: together they drive the flow read)**; `inserted_at` and log date |
 | **Mutability** | key and state metadata are **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one. Recon flags any violation it sees in the rewind window (`key_metadata_mutated`). **Labels** (ask L8) would make this structural | same |
 
 **Why `merchant_ref` matters.** Without it, a payment the PSP finalised that the product never
@@ -116,7 +117,7 @@ sequenceDiagram
     Note over J,C: Phase 1 — synchronous, seconds
     J->>P: AggregateVolumes(hold prefix)  (live exposure)
     J->>Q: AggregateVolumes(hold prefix)
-    J->>C: capture(phase=aggregate, S_P, S_Q, live exposure)
+    J->>C: capture(phase=aggregate, S_P, S_Q, T_P, T_Q, live exposure)
     Note over J,O: Phase 2 — async, resumable
     par flow window, 8 transaction-id ranges each
         J->>P: ListTransactions(id ∈ (T_P_prev, T_P] ∧ payment_ref EXISTS)
@@ -128,7 +129,7 @@ sequenceDiagram
     J->>O: previous run's pending set (unapplied payments) and breaks (ageing)
     J->>J: join flow on the PSP reference (+ carried pending) · age both stock books · continuity check
     J->>O: {bucketID}/reconciliation/{rule}/{day}/{run}/ manifest + flow / stock / pending / breaks
-    J->>C: capture(phase=detail, counts, drifts, S_P, S_Q, artifact sha256) — Ed25519
+    J->>C: capture(phase=detail, counts, drifts, S and T per ledger, artifact sha256) — Ed25519
     J->>C: open / update / resolve the aggregate alert (top-K breaks)
 ```
 
@@ -160,7 +161,7 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Head of a ledger's log | `GetLedgerStats` → `log_count` (per-ledger log ids are contiguous from 1) | none |
 | Resolve `S` from the cut-off | `ListLogs`, filter `log_builtin_uint(DATE) > cut-off`, page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`). Without it, fall back to bisecting on log id: page-1 `ListLogs` calls filtered on `log_id`, reading each log's date, about 20 calls for 1M logs (not benched) |
 | Resolve `T` (transaction-id cut) | `ListTransactions`, filter `builtin_uint(INSERTED_AT) > cut-off`, page 1 → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`), or bisection on id |
-| **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], metadata[payment_ref] EXISTS)`, page 1000 | **metadata index on `payment_ref`: mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
+| **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], membership)`, page 1000. Membership is `metadata[payment_ref] EXISTS` on the PSP ledger, and `Or(payment_ref EXISTS, business_ref EXISTS)` on the product ledger, so that hold openings are returned for continuity | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
 | Rewind window `(S, head]`, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
 | Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch, but it is the only lookup left once a hold is purged, since the address index forgets it (§2) |
@@ -181,7 +182,7 @@ flow and of log ids for the rewind. K concurrent streams each page their own ran
   Ranges read at different instants therefore return what one frozen read would have returned. An
   account listing does not have this property: its pages see moving balances.
 - **Merging the ranges.** For the flow, each range keeps its per-reference facts, and the facts are
-  combined in log-id order. For the rewind, each account keeps its *first* touch after `S`, taken
+  combined in transaction-id order. For the rewind, each account keeps its *first* touch after `S`, taken
   from the lowest range that touched it.
 - Measured on one node (§7.2):
   - logs: 7.3k/s to 13.8k/s on one stream, 41k/s to 66k/s over 8 streams;
@@ -299,8 +300,8 @@ and the gross amount first, and the net second.
 
 ```text
 {backup bucket}/{bucketID}/reconciliation/{ruleId}/{YYYY-MM-DD}/{runId}/
-  manifest.json       {cuts:[{ledger, S, logHash, cutoff}], files:[{name, sha256, rows}], counts, drifts, continuity, expiresAt}
-  flow.ndjson.gz      {"ref":"PAY-42","class":"matched","psp":{"log":981,"amount":"1000"},"product":[{"log":1204,"invoice":"INV-7","amount":"1000"}]}
+  manifest.json       {cuts:[{ledger, S, T, logHash, cutoff}], files:[{name, sha256, rows}], counts, drifts, continuity, expiresAt}
+  flow.ndjson.gz      {"ref":"PAY-42","class":"matched","psp":{"tx":981,"amount":"1000"},"product":[{"tx":1204,"invoice":"INV-7","amount":"1000"}]}
   pending.ndjson.gz   the unapplied payments carried to the next day, each with the day it was first seen
   stock.ndjson.gz     {"side":"product","hold":"main:hold:invoice:open:INV-9","balance":"-500","ageDays":12,"bucket":"8-30d"}
   breaks.ndjson.gz    every non-matched row of both legs
@@ -442,7 +443,8 @@ appears as a new `SavedMetadata` log at the head. This is why the flow filters o
 The bench command `rewind` ([tools/bench-txlevel](../../tools/bench-txlevel/README.md)):
 
 1. Record `S` (the `psp` log head) and create an **oracle checkpoint** with no write in between.
-2. Start 8 writers doing top-ups, **full drains to zero** and new-account creations on `psp:tx:*`.
+2. Start 8 writers doing top-ups, drains of each account's original amount (to zero the first time
+   an untouched account is drained), and new-account creations on `psp:tx:*`.
 3. List the 1M scope **live** while they run.
 4. Stop the writers, read the logs `(S, head]` and rewind.
 5. Compare row for row with the checkpoint's listing.
@@ -470,7 +472,7 @@ The projection assumes 1M lettering events per day per side, with an open book o
 | Step | Cost |
 |---|---|
 | Resolve `S` and `T` (one date-filtered page per ledger and per read path) | ms |
-| Flow: 1M payments per side, filtered `ListTransactions` over 8 ranges, both sides in parallel | ~6–8 s (125k–177k payments/s measured), **whatever the ledger's other traffic** |
+| Flow: 1M payments per side, filtered `ListTransactions` over 8 ranges, both sides in parallel | ~8 s (125k payments/s measured with `payment_ref EXISTS`; the unadopted `kind =` filter read 177k/s), **whatever the ledger's other traffic** |
 | Stock rewind: live listing of `N_open` + logs `(S, head]` | `N_open / 47k` s + (logs written since the cut-off) / 41k s |
 | Joins + artifacts | < 1 s |
 | **Total** | **≈ 10–30 s, with no checkpoint** |

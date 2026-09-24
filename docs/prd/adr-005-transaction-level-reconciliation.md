@@ -119,7 +119,7 @@ Two legs:
 |---|---|---|---|
 | **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **still-unapplied payments carried from earlier days** | `ListTransactions` over the window's id range, filtered on the reference's presence (logs remain the immutable re-derivation path), plus the previous run's pending set |
 | **Stock** (per hold, on each side) | What is still open at `S`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to `S` with the log window `(S, now]` (§5) |
-| **Continuity** (self-check) | `open(S) = open(S_prev) + opened(W) − lettered(W)`, per side and per asset | Aggregates | Both of the above |
+| **Continuity** (self-check) | `open(S) = open(S_prev) + opened(W) − lettered(W)`, per side and per asset | Aggregates | `open(S)` and `open(S_prev)` from the rewind; `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
 
 The two stock books do not join to each other: an unpaid invoice has no PSP counterpart by design.
 The cross-ledger signal is in the flow leg, and in particular in its carry-over, the **unapplied
@@ -184,7 +184,7 @@ provide point-in-time queries" (ledger backup README).
 
 | # | Option | Verdict |
 |---|---|---|
-| **C** | **Log-window cut + rewind** — cut `S` = the last log id with `date ≤ cut-off`, on each ledger. Flow comes from logs `(S_prev, S]`; stock from a live listing rewound with logs `(S, now]` | **Adopted.** No checkpoint, no ledger change, exact at the business cut-off on each side, reproducible (logs are permanent), cost ∝ the day's activity plus the open items. |
+| **C** | **A cut at the business cut-off, plus a rewind.** The cut is `S` (the last log id with `date ≤ cut-off`) and `T` (the last transaction id with `inserted_at ≤ cut-off`), on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the logs `(S, now]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible, because logs are permanent. Cost ∝ the day's payments plus the open items. |
 | A | Shared, short-lived query checkpoint per (cluster, run): extract, then delete | **Fallback and oracle only.** Used to validate the rewind (§5) and possibly for a periodic or on-demand full proof. Too slow and too scarce as the steady-state path (§3). |
 | B | Ledger-side consistent export (Pebble `NewSnapshot()` at a Raft-ordered trigger, streamed or written through `backup.Storage`) | **Not needed for this use case.** Still the right primitive for a frozen listing of a large *non-lettered* universe (EN-1480 generalised). Filed as an ask, not a dependency (§9). |
 | D | Store the checkpoint in S3/Azure through backup | **Rejected** (§3). |
@@ -203,8 +203,10 @@ is at or before the cut-off.
 - **Resolving `S`.** Per-ledger log ids are contiguous from 1, so the head is
   `GetLedgerStats.log_count` (checked on the bench). `ListLogs` rejects `reverse`
   ("options.reverse is not supported on this endpoint"), so `S` is **(the first log with
-  `date > cut-off`) − 1**: one ascending page of size 1, which needs the per-ledger log-date index
-  (`LOG_BUILTIN_INDEX_DATE`, "lldt"). That index goes on the provisioning checklist for both ledgers.
+  `date > cut-off`) − 1**: one ascending page of size 1 on the per-ledger log-date index
+  (`LOG_BUILTIN_INDEX_DATE`, "lldt"). That index is recommended on both ledgers. Without it, `S` is
+  found by bisecting on log id, about 20 calls for 1M logs (§8.8). `T` is resolved the same way on
+  the `inserted_at` index.
 
 **Why the log date, not the transaction `timestamp`.**
 
@@ -231,10 +233,15 @@ node, over **1M transactions of which 10 % are payments** ([design doc §7.2](..
 | `ListTransactions`, everything | 10.6 s (94.5k/s) | 2.85 s |
 | `ListTransactions`, `payment_ref EXISTS` → the 100k payments | 2.9 s | **0.8 s** |
 
-So the flow is read with `ListTransactions`, filtered on
-`And(id ∈ (S_tx_prev, S_tx], payment_ref EXISTS)` and split into parallel id ranges.
+So the flow is read with `ListTransactions`, filtered on `And(id ∈ (T_prev, T], <membership>)` and
+split into parallel id ranges.
 
-- `S_tx` is the transaction-id image of the cut: the last transaction with `inserted_at ≤ cut-off`.
+- On the PSP ledger, membership is `payment_ref EXISTS`.
+- On the product ledger it is **`Or(payment_ref EXISTS, business_ref EXISTS)`**. A business hold's
+  opening (an invoice issued) carries no payment reference yet, but continuity needs `opened(W)`,
+  so every product transaction that touches a business hold carries its `business_ref` (§8.3).
+
+- `T` is the transaction-id image of the cut: the last transaction with `inserted_at ≤ cut-off`.
   It is resolved with the `inserted_at` index in one page, or by bisecting on id. Per-ledger
   transaction ids are contiguous: an unfiltered `(0, 1M]` returned exactly 1M rows.
 - Every returned transaction carries its postings, its metadata and its `post_commit_volumes`.
@@ -245,9 +252,10 @@ So the flow is read with `ListTransactions`, filtered on
 Three caveats come with this choice, and each has a counter-measure:
 
 1. **Transaction metadata is mutable, and logs are not.** A `SavedMetadata` can target a
-   transaction id. The bench retagged one payment's `kind` after the fact, and the same filtered
-   re-read of the same past window returned 99,999 payments instead of 100,000. The original log
-   was untouched.
+   transaction id. The bench retagged one payment's `kind` after the fact, and the same
+   `kind = payment` re-read of the same past window returned 99,999 payments instead of 100,000.
+   The adopted `payment_ref EXISTS` filter still returned 100,000, because the key itself was not
+   touched; a rewrite of the key would break it in the same way. The original log was untouched.
    - Convention: **the key and state metadata are never rewritten.** A correction is a new
      transaction.
    - **The convention is monitored, not just trusted.** The rewind already reads every log in
@@ -381,8 +389,8 @@ checkpoint's listing.
    1. Flow window read and join, including the carried pending set.
    2. Stock rewind and ageing.
    3. Write the artifacts.
-   4. Write the **detail capture**: counts, drifts, `S` per ledger, and the artifact URI and SHA-256,
-      signed with Ed25519 (EN-1930).
+   4. Write the **detail capture**: counts, drifts, `S` and `T` per ledger, and the artifact URI and
+      SHA-256, signed with Ed25519 (EN-1930).
    5. Update the alert.
 3. **Where the files go: the backup object storage, under a recon prefix.** Owner decision,
    2026-09-24.
@@ -441,12 +449,14 @@ The rules that the engine's efficiency depends on:
 1. **EPHEMERAL holds, one prefix per kind.** One hold per external payment on the PSP ledger. One
    hold per **business object** on the product ledger, not one per state. The open book is then a
    prefix listing, with no index.
-2. **One transaction = one event of one payment reference.** The flow is then extracted log by log,
-   without splitting multi-reference transactions.
+2. **One transaction = one event of one payment reference.** The flow is then extracted
+   transaction by transaction, without splitting multi-reference transactions.
 3. **Declared transaction metadata**:
    - PSP ledger: `payment_ref`, `merchant_ref` (the business id passed when the payment was
      created), `state`, `kind`;
-   - product ledger: `payment_ref`, `business_ref`, `kind`.
+   - product ledger: `payment_ref`, `business_ref`, `kind`. **Every** product transaction that
+     touches a business hold carries its `business_ref`, including the one that opens it, so the
+     flow read returns hold openings too and continuity can be computed.
 
    **`payment_ref` must be declared and indexed on both ledgers**, because the flow is read by
    filtering on its presence (§5). Index `merchant_ref` and `business_ref` too, for investigation:
@@ -509,4 +519,5 @@ new `periodType` without changing this design.
 - **A new template kind, with its own async execution path** and resumable jobs. The scheduler's
   10 s drain grace does not apply to it ([scheduler.md](../technical/scheduler.md)).
 - **Recon starts reading `ListTransactions` in bulk, and `ListLogs`.** For the logs, it has to handle
-  every payload that moves a balance (created and reverted transactions) and ignore the others.
+  every payload that moves a balance (created and reverted transactions), and `SavedMetadata` and
+  `DeletedMetadata` on transactions for the `key_metadata_mutated` monitoring. It ignores the rest.

@@ -663,7 +663,7 @@ The following templates are part of the spec roadmap but require kernel work tha
 | `posting_rate`                  | `postings(source).count` builtin |
 | `metadata_invariant`            | `accounts(source).all(a, has(a.metadata.X))` |
 | `cross_account_ratio`           | Per-account iteration + multi-source comparison |
-| `lettering_match` ⏳ *(working name)* | Not a kernel change: a cut per ledger at the business cut-off, a flow join on an indexed transaction key read with filtered `ListTransactions`, a stock join on open holds rewound to the cut, an async job, and object storage for the detail — see [transaction-level-reconciliation.md](./transaction-level-reconciliation.md) and [ADR-005](../prd/adr-005-transaction-level-reconciliation.md). Supplies the alignment key and missing-row semantics whose absence retired per-account fan-out. |
+| `lettering_match` ⏳ *(working name)* | Not a kernel change: a cut per ledger at the business cut-off, a flow join on an indexed transaction key read with filtered `ListTransactions`, stock ageing of open holds rewound to the cut, an async job, and object storage for the detail — see [transaction-level-reconciliation.md](./transaction-level-reconciliation.md) and [ADR-005](../prd/adr-005-transaction-level-reconciliation.md). Supplies the alignment key and missing-row semantics whose absence retired per-account fan-out. |
 
 See [PRD §6.2](../prd/README.md#62-v11-fast-follow-catalog) for the V1.1 catalog plan.
 
