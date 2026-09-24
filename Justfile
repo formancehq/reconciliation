@@ -67,7 +67,9 @@ generate-ledger-proto:
 # ~96% of the statements in this module and ~1.6% covered, so including them
 # reports 4.5% where the hand-written figure is ~74%. grpcprotocol lives under
 # the same tree but is hand-written, so the filter matches only the `*pb`
-# package names. codecov.yml applies the equivalent exclusion server-side.
+# package names. tools/ holds standalone benchmarks with no tests
+# (tools/bench-txlevel), excluded for the same reason cmd/ is in codecov.yml.
+# codecov.yml applies the equivalent exclusions server-side.
 #
 # -count=1 defeats the test cache. A cached package is replayed without
 # re-emitting its full coverage profile, so a warm-cache run silently understates
@@ -78,7 +80,7 @@ generate-ledger-proto:
 # for a fast inner loop.
 tests:
     go test -count=1 -race -covermode atomic -coverprofile=coverage.out \
-        -coverpkg=$(go list ./... | grep -vE '/internal/ledgerpb/[a-z]+pb$' | paste -sd, -) ./...
+        -coverpkg=$(go list ./... | grep -vE '/internal/ledgerpb/[a-z]+pb$|/tools/' | paste -sd, -) ./...
 
 # Run the serial integration suite against a live Ledger v3 on localhost:8888
 tests-integration:

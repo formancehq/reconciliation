@@ -24,4 +24,5 @@ ignore:
   - "internal/ledgerpb/**/*.pb.go"
   - "**/*_generated.go"
   - "cmd/**"
+  - "tools/**"
   - "main.go"
