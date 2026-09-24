@@ -239,6 +239,9 @@ is at or before the cut-off.
   found by bisecting on log id, about 20 calls for 1M logs (§8.8). `T` is resolved the same way on
   the `inserted_at` index.
 
+A worked example, and why the id range is what makes the metadata-filtered read cheap, are in the
+[design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges).
+
 **Why the log date, not the transaction `timestamp`.**
 
 - The log date is the insertion time, assigned by the ledger's HLC. It never moves, and it only

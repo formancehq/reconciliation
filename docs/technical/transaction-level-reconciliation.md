@@ -161,8 +161,8 @@ sequenceDiagram
     participant O as Object storage
     participant C as _recon
 
-    J->>P: S_P = last log id with date ≤ cut-off
-    J->>Q: S_Q = last log id with date ≤ cut-off
+    J->>P: S_P, T_P = last log id / tx id inserted ≤ cut-off
+    J->>Q: S_Q, T_Q = last log id / tx id inserted ≤ cut-off
     Note over J,C: Phase 1 — synchronous, seconds
     J->>P: AggregateVolumes(hold prefix)  (live exposure)
     J->>Q: AggregateVolumes(hold prefix)
@@ -182,24 +182,94 @@ sequenceDiagram
     J->>C: open / update / resolve the aggregate alert (top-K breaks)
 ```
 
-- **The cut.** `S` = the last log with `date ≤ cut-off` on each ledger. Log dates come from the
-  ledger's HLC and are strictly monotonic
-  (`docs/technical/architecture/subsystems/consensus/hybrid-logical-clock.md`). Both sides are
-  therefore cut at the **same business time**, whatever the cluster and whenever the job runs. The
-  capture records `S` and the log hash at `S`, so the cut can be re-derived.
-  - *Resolving `S`:* per-ledger log ids are contiguous from 1, so the head is
-    `GetLedgerStats.log_count`.
-  - `ListLogs` has no reverse order, so `S` = (the first log with `date > cut-off`) − 1, found with
-    one ascending page of size 1. That needs the per-ledger log-date index
-    (`LOG_BUILTIN_INDEX_DATE`).
-- **The flow leg** reads the window's transactions by id range, filtered server-side on the key's
-  presence (ADR-005 §5).
-  - `T` is the transaction-id image of the cut: the last transaction with `inserted_at ≤ cut-off`.
-  - The logs remain the immutable, permanent path for re-deriving a past day exactly ("Log and
-    audit history is permanent", ledger backup README), because transaction metadata is mutable.
+- **The cut** turns the business cut-off into one log id `S` and one transaction id `T` per ledger
+  ([below](#the-cut-from-a-business-time-to-id-ranges)).
+- **The flow leg** reads the day's transactions as the id range `(T_prev, T]`, filtered server-side
+  on the key's presence (ADR-005 §5). The logs remain the immutable, permanent path for re-deriving
+  a past day exactly ("Log and audit history is permanent", ledger backup README), because
+  transaction metadata is mutable.
 - **The stock leg** is a live listing *rewound* to `S` (§4).
 - **Continuity.** Per side and per asset: `open(S) = open(S_prev) + opened(W) − lettered(W)`. A lost
   window event breaks the identity, which makes the read's completeness checkable.
+
+### The cut: from a business time to id ranges
+
+The daily run has to answer "what happened on each ledger during day D", with bounds that give the
+same answer if the run is replayed next week. The cut provides them: it converts the business
+cut-off (say 24 September, 23:59:59 Europe/Paris) into **numbers the ledger already orders by**.
+
+**What the ledger provides.**
+
+- Every transaction gets an id from the ledger, per ledger, contiguous from 1, never reused, and
+  increasing in insertion order. A transaction inserted later always has a larger id. (An
+  unfiltered `(0, 1M]` returned exactly 1M rows.) Logs are numbered the same way.
+- Every transaction carries two dates. **`timestamp`** is set by the writer and can be backdated.
+  The **insertion date** (`inserted_at` for a transaction, the log date for a log) is set by the
+  ledger's HLC when it writes. It cannot be backdated and it follows id order
+  (`docs/technical/architecture/subsystems/consensus/hybrid-logical-clock.md` in the ledger).
+
+**The cut.** `T` is the id of the last transaction inserted at or before the cut-off, and `S` the id
+of the last log written at or before it. The previous day's `T_prev` and `S_prev` are already in
+yesterday's capture.
+
+```text
+                    cut-off D−1                          cut-off D
+                    23:59:59 on the 23rd                 23:59:59 on the 24th
+                          │                                    │
+  … tx 1 203 999  tx 1 204 000 │ tx 1 204 001  …  tx 1 318 500 │ tx 1 318 501 …
+                          │                                    │
+                   T_prev = 1 204 000                   T = 1 318 500
+
+  Day D on this ledger = transaction ids (1 204 000, 1 318 500]
+```
+
+- **Resolving it** costs one read per ledger and per day. With the index, ask for the first
+  transaction with `inserted_at > cut-off`, page size 1: id 1 318 501, so `T = 1 318 500`. `S` works
+  the same way on the log-date index. Without the index, bisect on id, reading one row's insertion
+  date per step: about 20 reads for 1M rows. On Connectivity-fed ledgers that is the common case,
+  since `formancepayments` creates neither index (checklist row 10).
+- **Why the insertion date and not `timestamp`.** A transaction inserted today always gets an id
+  above yesterday's `T`, so it lands in today's window even if its `timestamp` says yesterday. A past
+  day is therefore **frozen**: nothing can be added to it after its cut. A cut on `timestamp` would
+  let a backdated write silently change a day that was already reconciled.
+
+**Why this makes the metadata-filtered read cheap.** The flow read is one query per range:
+
+```text
+ListTransactions  And( id ∈ (1 204 000, 1 318 500] ,  metadata[payment_ref] EXISTS )
+```
+
+The metadata existence index (`eidx`) holds **only** the transactions that carry the key, **ordered
+by transaction id** ("Entities are stored in entity ID order", `internal/query/compile.go:943-945`
+at ledger `f390ea683`). The ledger's `AndIterator` intersects its sorted inputs by seeking
+(`internal/storage/readstore/combinator_and.go:86-153`). So the engine jumps straight to the first
+key-bearing transaction above `T_prev`, reads in order, and stops after `T`. It never touches the
+history before the day, nor the day's transactions that carry no payment.
+
+The same question asked of the three orderings the ledger offers:
+
+| Read | How the data is ordered | What the day costs | Measured |
+|---|---|---|---|
+| **Metadata index + id range** | by transaction id, key-bearing rows only | O(payments in the window) | 2k-tx window: 36 ms at a 100k-payment history, **48 ms at 1M**. 100k payments among 1M transactions: **0.8 s** |
+| `ListLogs` over the window | by log id, every log; no metadata filter allowed | O(all traffic in the window) | 15 s for the same 1M-transaction window |
+| Address prefix on the holds | by account, then transaction id | O(every hold ever created), on every page | 2k-tx window: 4.75 s at 100k, **47.8 s at 1M** (§7.6) |
+
+**`S` serves the stock.** Open holds are listed live, then rewound by replaying the logs
+`(S, head]` (§4). Logs are needed there, not transactions, because they carry every event,
+including the metadata changes that the rewind window monitors (`key_metadata_mutated`).
+
+**What the id ranges give for free.**
+
+- **Parallelism.** `(T_prev, T]` splits into K sub-ranges (8 by default), read concurrently and
+  merged in id order.
+- **Completeness.** Ids are contiguous, so an unfiltered range `(lo, hi]` must return exactly
+  `hi − lo` rows. A short count makes the run `INCOMPLETE` instead of silently shrinking the window.
+- **Replay.** `S`, `T` and the log hash at `S` are written in the signed capture, so a later
+  re-read covers the same window. Both ledgers are cut at the same business time, whenever the job
+  runs.
+- **No checkpoint.** Everything at or below `T` is immutable, except transaction metadata. Hence the
+  write-once convention, and later immutable labels
+  ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)).
 
 ### Reads and indexes
 
