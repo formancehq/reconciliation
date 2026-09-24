@@ -553,7 +553,7 @@ appears as a new `SavedMetadata` log at the head. This is why the flow filters o
    the backup profile (`internal/adapter/grpc/server_bucket.go:336-398`,
    `internal/storage/dal/store_readonly.go`). On the tip, two concurrent readers are *faster* than
    one: 100k × 2 in 8.3 s, against 26 s for one scope. The shared open survives while any reader
-   holds it, which shows the reopen is the cost. Not asked: evaluations take no checkpoint (§8, F-b).
+   holds it, which shows the reopen is the cost. Not needed by recon (§8, F-b); filed for the Ledger team as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336).
 3. **Page size costs ×4.7.** Bulk reads must use `MaxPageSize` = 1000.
 4. **Every listed account emits an INFO log line** (`internal/application/ctrl/store.go:189-195`):
    3.86M lines, a 970 MB log. → ask **L2**.
@@ -665,7 +665,7 @@ one transaction per payment reference (ADR-005 §8, rule 2).
 | # | Finding | Evidence | Ask |
 |---|---|---|---|
 | F-a | Concurrent reads of one checkpoint fail (`lock held by current process`, surfacing as a non-retryable `Unknown`) | Reproduced at `0b4676d97`; fixed by [EN-2108](https://formance-team.atlassian.net/browse/EN-2108) (`7492e7304`) | none |
-| F-b | Checkpoint reads are ×20 slower: every page reopens both databases with the backup profile | §7.3.2 | For information only: evaluations take no checkpoint, and the test oracle and optional proof run can afford the slowdown. Passed on as a [comment on EN-2108](https://formance-team.atlassian.net/browse/EN-2108?focusedCommentId=25936) |
+| F-b | Checkpoint reads are ×20 slower: every page reopens both databases with the backup profile | §7.3.2 | For information: evaluations take no checkpoint, and the test oracle and optional proof run can afford the slowdown. Filed at the Ledger team's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1), related to EN-2108 |
 | F-c | One INFO log line per listed account | `store.go:189-195` | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)) |
 | F-d | A purged EPHEMERAL account's transactions are no longer returned by an address filter. That includes the **opening** transaction, which was returned before the purge. Unchanged on EN-2036's head `92b378e4b`: the mappings are kept, but the query checks that the account currently exists before reading them (`internal/query/compile.go:1069-1110`). **Fixed at `20a5595d6`** (PR open, not merged): addresses are read from the mappings. The prefix path then costs O(every hold ever created) per page: 50.7 s for a 2k window at 1M purged holds, [reported on the PR](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700) | §2 probe, re-run on both PR heads; §7.6 bench with EPHEMERAL holds | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract for the metadata and `reference` paths, which is all this design needs. Ledger side: resolve an exact address from the mappings; keep the prefix limited to current accounts, since extending it costs O(history) on every page (§7.6) |
 | F-e | `ListLogs` runs at 7.3k–13.8k logs/s on one stream, 5–7× slower than `ListTransactions` over the same data | §7.2 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) |

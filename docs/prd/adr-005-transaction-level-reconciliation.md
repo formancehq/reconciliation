@@ -547,8 +547,9 @@ evaluation, so it does not ask for any of the following. The measurements stay i
 for the Ledger team to weigh against its own users:
 
 - **Checkpoint reads are about ×20 slower than live reads.** Every page reopens both databases with
-  the backup profile. Passed on as a [comment on EN-2108](https://formance-team.atlassian.net/browse/EN-2108?focusedCommentId=25936),
-  which already shares that open between concurrent readers. The two remaining checkpoint uses here
+  the backup profile. First posted as a [comment on EN-2108](https://formance-team.atlassian.net/browse/EN-2108?focusedCommentId=25936),
+  which already shares that open between concurrent readers. The Ledger team (gfyrag) then asked for
+  a ticket: [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1). It is theirs to prioritise. The two remaining checkpoint uses here
   are the rewind's test oracle and ADR-003's optional proof run, and both can afford the slowdown.
 - **No consistent export**, meaning no single-snapshot multi-page listing, and **checkpoints have
   no owner and no TTL**. These served options A and B only.
