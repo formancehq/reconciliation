@@ -969,9 +969,14 @@ func loadLettering(ctx context.Context, args []string) {
 	workers := fs.Int("workers", 16, "")
 	_ = fs.Parse(args)
 
-	pers := commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL
-	if *persistence == "EPHEMERAL" {
+	var pers commonpb.AccountTypePersistence
+	switch *persistence {
+	case "NORMAL":
+		pers = commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL
+	case "EPHEMERAL":
 		pers = commonpb.AccountTypePersistence_ACCOUNT_TYPE_EPHEMERAL
+	default:
+		log.Fatalf("load-lettering: -persistence must be NORMAL or EPHEMERAL, got %q", *persistence)
 	}
 	_, err := svc.Apply(ctx, &servicepb.ApplyRequest{Variant: &servicepb.ApplyRequest_Unsigned{Unsigned: &servicepb.ApplyBatch{
 		Requests: []*servicepb.Request{{Type: &servicepb.Request_CreateLedger{CreateLedger: &servicepb.CreateLedgerRequest{
@@ -1045,8 +1050,8 @@ func loadLettering(ctx context.Context, args []string) {
 	}
 	close(jobs)
 	wg.Wait()
-	fmt.Printf("loaded %d payments (%d tx, %s holds, %d noise tx per payment) on %s in %s; head tx id %d\n",
-		*n, done.Load(), *persistence, *noise, *ledger, time.Since(t0).Round(time.Millisecond), done.Load())
+	fmt.Printf("loaded %d payments (%d tx, %s holds, %d noise tx per payment) on %s in %s\n",
+		*n, done.Load(), *persistence, *noise, *ledger, time.Since(t0).Round(time.Millisecond))
 }
 
 // txsCmd reads the transactions with id in (from, to], optionally restricted
