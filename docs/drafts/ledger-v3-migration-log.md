@@ -119,6 +119,7 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 - **This branch carries** the design ([transaction-level-reconciliation.md](../technical/transaction-level-reconciliation.md))
   and its bench (`tools/bench-txlevel`) only.
 - **Ledger asks filed:** L2 [EN-2327](https://formance-team.atlassian.net/browse/EN-2327), L6 [EN-2328](https://formance-team.atlassian.net/browse/EN-2328), L7 [EN-2329](https://formance-team.atlassian.net/browse/EN-2329) (relates to EN-1480), L8 [EN-2326](https://formance-team.atlassian.net/browse/EN-2326), L5 [EN-2331](https://formance-team.atlassian.net/browse/EN-2331) (relates to EN-2036; review comment on [ledger#2058](https://github.com/formancehq/ledger/pull/2058#issuecomment-5813203857)).
+- **Checkpoint findings, information only** (read ×20 slower, no consistent export, no owner or TTL): evaluations take no checkpoint, so nothing is asked. The read penalty is passed on as a [comment on EN-2108](https://formance-team.atlassian.net/browse/EN-2108?focusedCommentId=25936).
 
 ### Open findings
 
