@@ -52,7 +52,7 @@ func main() {
 	svc = servicepb.NewBucketServiceClient(conn)
 
 	if len(os.Args) < 2 {
-		log.Fatal("usage: bench-txlevel load|load-mixed|retag|cp-create|cp-delete|agg|scan|diff|logs|txs|probe|cutprobe|lastlog|rewind ...")
+		log.Fatal("usage: bench-txlevel load|load-mixed|load-lettering|retag|cp-create|cp-delete|agg|scan|diff|logs|txs|probe|cutprobe|lastlog|rewind ...")
 	}
 	cmd, args := os.Args[1], os.Args[2:]
 	ctx := context.Background()
@@ -78,6 +78,8 @@ func main() {
 		probe(ctx)
 	case "load-mixed":
 		loadMixed(ctx, args)
+	case "load-lettering":
+		loadLettering(ctx, args)
 	case "txs":
 		txsCmd(ctx, args)
 	case "retag":
@@ -947,6 +949,106 @@ func loadMixed(ctx context.Context, args []string) {
 	fmt.Printf("loaded %d tx on %s (1 payment every %d) in %s\n", done.Load(), *ledger, *every, time.Since(t0).Round(time.Millisecond))
 }
 
+// loadLettering books n PSP payments as lettering, with a hold per payment:
+// an opening transaction world → {prefix}{id} and a lettering transaction
+// {prefix}{id} → psp:main, both carrying payment_ref = id. -noise adds that
+// many unrelated transactions per payment. With -persistence NORMAL the
+// lettered holds stay listed at zero, which is how an address-prefix filter
+// behaves once purged accounts are resolved from the account→tx mappings
+// (EN-2331); EPHEMERAL purges them as in production today. It creates the
+// payment_ref metadata index and the address index, so both ways of finding
+// the flow (metadata presence, hold address prefix) can be read.
+func loadLettering(ctx context.Context, args []string) {
+	fs := flag.NewFlagSet("load-lettering", flag.ExitOnError)
+	ledger := fs.String("ledger", "lett", "")
+	prefix := fs.String("prefix", "psp:hold:", "hold address prefix")
+	persistence := fs.String("persistence", "NORMAL", "hold account persistence: NORMAL or EPHEMERAL")
+	n := fs.Uint64("n", 1_000_000, "payments")
+	noise := fs.Uint64("noise", 0, "unrelated transactions per payment")
+	batch := fs.Int("batch", 500, "payments per Apply batch")
+	workers := fs.Int("workers", 16, "")
+	_ = fs.Parse(args)
+
+	pers := commonpb.AccountTypePersistence_ACCOUNT_TYPE_NORMAL
+	if *persistence == "EPHEMERAL" {
+		pers = commonpb.AccountTypePersistence_ACCOUNT_TYPE_EPHEMERAL
+	}
+	_, err := svc.Apply(ctx, &servicepb.ApplyRequest{Variant: &servicepb.ApplyRequest_Unsigned{Unsigned: &servicepb.ApplyBatch{
+		Requests: []*servicepb.Request{{Type: &servicepb.Request_CreateLedger{CreateLedger: &servicepb.CreateLedgerRequest{
+			Name: *ledger, DefaultEnforcementMode: commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT,
+			AccountTypes: map[string]*commonpb.AccountType{"hold": {Name: "hold", Pattern: *prefix + "{id}", Persistence: pers}},
+			InitialSchema: []*commonpb.SetMetadataFieldTypeCommand{
+				{TargetType: commonpb.TargetType_TARGET_TYPE_TRANSACTION, Key: "payment_ref", Type: commonpb.MetadataType_METADATA_TYPE_STRING},
+			},
+		}}}},
+	}}})
+	if err != nil && status.Code(err) != codes.AlreadyExists {
+		log.Fatalf("create ledger: %v", err)
+	}
+	for _, ix := range []*commonpb.IndexID{
+		{Kind: &commonpb.IndexID_Metadata{Metadata: &commonpb.MetadataIndexID{Target: commonpb.TargetType_TARGET_TYPE_TRANSACTION, Key: "payment_ref"}}},
+		{Kind: &commonpb.IndexID_TxBuiltin{TxBuiltin: commonpb.TransactionBuiltinIndex_TX_BUILTIN_INDEX_ADDRESS}},
+	} {
+		_, err := svc.Apply(ctx, &servicepb.ApplyRequest{Variant: &servicepb.ApplyRequest_Unsigned{Unsigned: &servicepb.ApplyBatch{Requests: []*servicepb.Request{{Type: &servicepb.Request_CreateIndex{CreateIndex: &servicepb.CreateIndexRequest{Ledger: *ledger, Id: ix}}}}}}})
+		if err != nil && status.Code(err) != codes.AlreadyExists {
+			log.Fatalf("create index: %v", err)
+		}
+	}
+
+	tx := func(src, dst string, amt uint64, md map[string]string) *servicepb.Request {
+		return &servicepb.Request{Type: &servicepb.Request_Apply{Apply: &servicepb.LedgerApplyRequest{
+			Ledger: *ledger,
+			Action: &servicepb.LedgerAction{Data: &servicepb.LedgerAction_CreateTransaction{CreateTransaction: &servicepb.CreateTransactionPayload{
+				Postings: []*commonpb.Posting{{Source: src, Destination: dst, Amount: commonpb.NewUint256FromUint64(amt), Asset: "USD/2"}},
+				Force:    true, Metadata: commonpb.MetadataFromMap(md),
+			}}},
+		}}}
+	}
+	// Batches are applied in order, one at a time per worker, and a batch
+	// keeps its requests in order, so a hold is always opened before it is
+	// lettered.
+	jobs := make(chan []uint64, *workers*2)
+	var done atomic.Uint64
+	var wg sync.WaitGroup
+	t0 := time.Now()
+	for w := 0; w < *workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ids := range jobs {
+				reqs := make([]*servicepb.Request, 0, len(ids)*int(2+*noise))
+				for _, i := range ids {
+					hold := *prefix + id(i)
+					md := map[string]string{"payment_ref": id(i)}
+					reqs = append(reqs, tx("world", hold, amount(i), md), tx(hold, "psp:main", amount(i), md))
+					for k := uint64(0); k < *noise; k++ {
+						reqs = append(reqs, tx("world", fmt.Sprintf("internal:%d", (i+k)%1000), 1, nil))
+					}
+				}
+				if _, err := svc.Apply(ctx, &servicepb.ApplyRequest{Variant: &servicepb.ApplyRequest_Unsigned{Unsigned: &servicepb.ApplyBatch{Requests: reqs}}}); err != nil {
+					log.Fatalf("apply: %v", err)
+				}
+				done.Add(uint64(len(reqs)))
+			}
+		}()
+	}
+	cur := make([]uint64, 0, *batch)
+	for i := uint64(1); i <= *n; i++ {
+		cur = append(cur, i)
+		if len(cur) >= *batch {
+			jobs <- cur
+			cur = make([]uint64, 0, *batch)
+		}
+	}
+	if len(cur) > 0 {
+		jobs <- cur
+	}
+	close(jobs)
+	wg.Wait()
+	fmt.Printf("loaded %d payments (%d tx, %s holds, %d noise tx per payment) on %s in %s; head tx id %d\n",
+		*n, done.Load(), *persistence, *noise, *ledger, time.Since(t0).Round(time.Millisecond), done.Load())
+}
+
 // txsCmd reads the transactions with id in (from, to], optionally restricted
 // server-side to metadata kind == -kind, split into -ranges disjoint id ranges
 // read concurrently. It is the ListTransactions counterpart of `logs`.
@@ -958,6 +1060,7 @@ func txsCmd(ctx context.Context, args []string) {
 	kind := fs.String("kind", "", "metadata kind to filter on server-side (empty = no filter)")
 	exists := fs.String("exists", "", "metadata key that must be present, filtered server-side (e.g. payment_ref)")
 	index := fs.Bool("index", false, "create the metadata index for -exists first")
+	prefix := fs.String("prefix", "", "address prefix any posting must match, filtered server-side (e.g. psp:hold:)")
 	ranges := fs.Uint64("ranges", 1, "")
 	page := fs.Uint("page", 1000, "")
 	_ = fs.Parse(args)
@@ -995,6 +1098,11 @@ func txsCmd(ctx context.Context, args []string) {
 				conds = append(conds, &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_Field{Field: &commonpb.FieldCondition{
 					Field:     &commonpb.FieldRef{Metadata: *exists},
 					Condition: &commonpb.FieldCondition_ExistsCond{ExistsCond: &commonpb.ExistsCondition{}},
+				}}})
+			}
+			if *prefix != "" {
+				conds = append(conds, &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_Address{Address: &commonpb.AddressMatch{
+					Match: &commonpb.AddressMatch_HardcodedPrefix{HardcodedPrefix: *prefix}, Role: commonpb.AddressRole_ADDRESS_ROLE_ANY,
 				}}})
 			}
 			if *kind != "" {
@@ -1049,8 +1157,8 @@ func txsCmd(ctx context.Context, args []string) {
 	}
 	wg.Wait()
 	el := time.Since(t0)
-	fmt.Printf("txs %s ids (%d,%d] kind=%q exists=%q ranges=%d: %d transactions (%d with post_commit_volumes) in %s (%.0f tx/s returned, %.0f ids/s covered)\n",
-		*ledger, *from, *to, *kind, *exists, *ranges, total.Load(), withPCV.Load(), el.Round(time.Millisecond), float64(total.Load())/el.Seconds(), float64(*to-*from)/el.Seconds())
+	fmt.Printf("txs %s ids (%d,%d] kind=%q exists=%q prefix=%q ranges=%d: %d transactions (%d with post_commit_volumes) in %s (%.0f tx/s returned, %.0f ids/s covered)\n",
+		*ledger, *from, *to, *kind, *exists, *prefix, *ranges, total.Load(), withPCV.Load(), el.Round(time.Millisecond), float64(total.Load())/el.Seconds(), float64(*to-*from)/el.Seconds())
 }
 
 // retag overwrites the `kind` metadata of one existing transaction: transaction

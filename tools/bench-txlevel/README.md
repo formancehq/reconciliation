@@ -36,7 +36,8 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 | `cp-create` / `cp-delete -id ID` | Creates or deletes a query checkpoint through `Apply` |
 | `logs -ledger L -prefix P [-from X] [-to Y]` | Streams `ListLogs` over the log-id window `(X, Y]` and folds each account's last `post_commit_volumes`. Run several at once on disjoint ranges to measure parallel reads. |
 | `load-mixed [-ledger mixed] [-n 1000000] [-every 10]` | Mixed traffic: one payment (`kind=payment`, `payment_ref`) every N transactions, the rest `kind=internal`. `kind` is declared and indexed |
-| `txs -ledger L -from X -to Y [-kind K] [-exists F [-index]] [-ranges 8]` | `ListTransactions` over the transaction-id window `(X, Y]`, optionally filtered server-side on `kind == K` or on metadata `F` being present (`-index` creates `F`'s index first), split into parallel ranges |
+| `load-lettering [-ledger lett] [-prefix psp:hold:] [-persistence NORMAL] [-n 1000000] [-noise 0]` | Books each payment as lettering: `world → {prefix}{id}`, then `{prefix}{id} → psp:main`, both with `payment_ref = id`. Creates the `payment_ref` metadata index and the address index. NORMAL keeps lettered holds listed at zero, as if purged holds were reachable by address (EN-2331) |
+| `txs -ledger L -from X -to Y [-kind K] [-exists F [-index]] [-prefix P] [-ranges 8]` | `ListTransactions` over the transaction-id window `(X, Y]`, optionally filtered server-side on `kind == K`, on metadata `F` being present (`-index` creates `F`'s index first), or on a posting address under prefix `P`, split into parallel ranges |
 | `retag -ledger L -tx ID -kind K` | Rewrites one transaction's `kind`, to show that a filtered re-read of a past window changes (transaction metadata is mutable; logs are not) |
 | `lastlog L` | The ledger's head log id (`GetLedgerStats.log_count`) |
 | `rewind [-ledger psp] [-prefix psp:tx:] [-writers 8]` | Proves the rewind: takes an oracle checkpoint at `S`, lists the scope live while writers mutate it, rewinds the listing with the logs `(S, head]`, then compares every row with the checkpoint |
@@ -86,6 +87,16 @@ B=/tmp/bench-ledger/bench; $B load-mixed -n 1000000 -every 10 && $B logs -ledger
 
 ```bash
 B=/tmp/bench-ledger/bench; $B retag && $B txs -from 0 -to 1000000 -kind payment -ranges 8 && $B txs -from 0 -to 1000000 -exists payment_ref -ranges 8
+```
+
+**Key source: metadata against the hold address** (§7.6). The last command takes about 8 minutes:
+
+```bash
+B=/tmp/bench-ledger/bench; $B load-lettering -ledger h100k -n 100000 && $B load-lettering -ledger h1m -n 1000000 && $B txs -ledger h100k -from 198000 -to 200000 -exists payment_ref && $B txs -ledger h100k -from 198000 -to 200000 -prefix psp:hold: && $B txs -ledger h1m -from 1998000 -to 2000000 -exists payment_ref && $B txs -ledger h1m -from 1998000 -to 2000000 -prefix psp:hold:
+```
+
+```bash
+B=/tmp/bench-ledger/bench; $B txs -ledger h100k -from 180000 -to 200000 -exists payment_ref && $B txs -ledger h100k -from 180000 -to 200000 -prefix psp:hold: && $B txs -ledger h1m -from 1980000 -to 2000000 -exists payment_ref -ranges 8 && $B txs -ledger h1m -from 1980000 -to 2000000 -prefix psp:hold:
 ```
 
 **Purged holds and the cut** (ADR-005 §2.2, §5):

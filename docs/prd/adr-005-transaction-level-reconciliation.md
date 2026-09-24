@@ -319,6 +319,12 @@ checkpoint's listing.
   field that carries it, for example `payment_id` on the PSP ledger and `psp_payment_ref` on the
   product ledger. The product side also names the field that carries the **business id** of the hold
   it letters (`invoice_no`…), which gives the payment → invoice link.
+  The key is **never taken from the hold address**, even on the PSP ledger where holds are named
+  after the reference. Measured with purged holds made reachable (as EN-2331 would), an address
+  prefix costs O(history) per page: 47.8 s for a 2k-transaction window on a 1M-payment history,
+  against 48 ms for `payment_ref EXISTS`, which stays O(window)
+  ([design doc §7.6](../technical/transaction-level-reconciliation.md#76-where-the-key-comes-from-transaction-metadata-not-the-hold-address)).
+  The hold address keys the stock only.
 - **States are parameters, not a fixed vocabulary** (owner, 2026-09-24). How external payment states
   are modelled on the PSP ledger is a per-deployment choice. The rule therefore declares, **for each
   side**, the metadata field or fields and the value sets that mean `pending`, `final` and `failed`:

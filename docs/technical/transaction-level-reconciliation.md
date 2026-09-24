@@ -481,6 +481,54 @@ The same run on query checkpoints would take **2 min 38 s** on the tip (10 min o
 just to extract two 1M scopes. It would hold a cluster checkpoint slot for that long, and it could
 still only see the run instant, not the cut-off.
 
+### 7.6 Where the key comes from: transaction metadata, not the hold address
+
+On the PSP ledger, the hold is named after the payment reference (`…:hold:{ref}`). So the flow could
+in principle be found by an **address prefix** on the holds, with the reference taken from the
+posting, instead of by the `payment_ref` metadata. That would bring two real advantages: an address in
+a posting never changes (unlike metadata, §7.2 `retag`), and a transaction that letters many holds at
+once would split naturally, posting by posting. Today that path cannot work at all, because a
+purged hold is unreachable by address ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)).
+The question measured here is whether it would be viable **once EN-2331 is fixed**.
+
+**Setup.** Same isolated single-node ledger, built from the tip `a08f99bc3` (port 38888).
+`load-lettering` books each payment as two transactions: `world → psp:hold:{id}`, then
+`psp:hold:{id} → psp:main`, both with `payment_ref = id`. The holds are **NORMAL**, so the lettered
+holds stay listed at zero. That is how an address-prefix filter behaves once purged accounts are
+resolved from the account→tx mappings, as EN-2331 proposes. The window is the **last** N transaction
+ids, and the history is everything before it.
+
+| History | Window | `payment_ref EXISTS` | Address prefix `psp:hold:` |
+|---|---|---|---|
+| 100k payments (200k tx) | 2k tx | 36 ms | 4.75 s |
+| 100k payments | 20k tx | 473 ms | 23.0 s |
+| 1M payments (2M tx) | 2k tx | 48 ms | **47.8 s** |
+| 1M payments | 20k tx | 637 ms (98 ms over 8 ranges) | **8 min 8 s** (server at 5.6 GB RSS) |
+
+**Reading.**
+
+- **The metadata filter costs O(window).** Multiplying the history by 10 barely moves it (+35 %),
+  because the existence index is ordered by transaction id, so the id range is a seek.
+- **The address prefix costs O(history) per page.** It is exactly ×10 when the history is ×10, for
+  the same window. `AddressTxIterator` first collects the transaction ids of **every** account under
+  the prefix into memory, sorts them, and only then seeks the window
+  (`internal/storage/readstore/iterator_address.go:76-132` at `a08f99bc3`). That happens again for
+  each 1,000-row page: about 24 s per page on a 1M-payment history.
+- **At production scale the address path is unusable.** A day of 100k payments is 200 pages. On
+  90 days of 100k payments per day, one page would scan 9M holds, so a single run would take hours.
+- **Fixing EN-2331 does not change this.** Its preferred fix resolves addresses from the mapping
+  keyspace, which is ordered by account, then transaction id (`[atxm][ledger][account][txID]`). Even
+  with the id range pushed into that walk, each account under the prefix still costs a seek: O(holds
+  ever created), not O(window). Only an address index ordered by transaction id would make this path
+  O(window), and nothing asks for one.
+
+**Conclusion.** The flow key stays a **declared, indexed transaction metadata field on both
+ledgers** (ADR-005 §6). The hold address remains the key of the **stock** only, where a prefix
+listing sees just the open holds. The two advantages of the address are obtained otherwise:
+immutability by the write-once convention and, later, immutable labels (L8,
+[EN-2326](https://formance-team.atlassian.net/browse/EN-2326)); and batched letterings by booking
+one transaction per payment reference (ADR-005 §8, rule 2).
+
 ## 8. Ledger findings and asks
 
 | # | Finding | Evidence | Ask |
