@@ -99,7 +99,7 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 
 | Ticket | State | Bearing on this branch |
 |---|---|---|
-| [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) | draft PR [ledger#2058](https://github.com/formancehq/ledger/pull/2058), design confirmed | Purges `EPHEMERAL` accounts fully at zero. When it lands, **version-gate** — do not delete — the released-hold post-filter at `stale_holds.go:289` and the `holdsReleased` evidence key: older ledgers still return released holds, and existing captures carry the key. |
+| [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) | PR [ledger#2058](https://github.com/formancehq/ledger/pull/2058) open, awaiting review (head `92b378e4b`), design confirmed | Purges `EPHEMERAL` accounts fully at zero. When it lands, **version-gate** — do not delete — the released-hold post-filter at `stale_holds.go:289` and the `holdsReleased` evidence key: older ledgers still return released holds, and existing captures carry the key. |
 | [EN-1480](https://formance-team.atlassian.net/browse/EN-1480) | backlog, v3.1 | Batched multi-ledger aggregate on one snapshot. **Not blocking** — ADR-003 is per-source reads + tolerance. |
 | [EN-1873](https://formance-team.atlassian.net/browse/EN-1873) | backlog, gated on EN-1480 | Ledger-signed attestation of a read result. The value of a completeness proof is gated with it. |
 | [EN-1932](https://formance-team.atlassian.net/browse/EN-1932) | backlog, gated on Ledger 3.1 | K/V store for mutable control state. Until it ships, the marker/EPHEMERAL/Numscript model is the correct V3-native approach. Worth re-checking the epic's premise against EN-1941's bare-source CAS before estimating. |
@@ -1450,7 +1450,7 @@ severities. With this, **per-account fan-out is absent from the whole catalogue*
 **EN-2036 dependency.** A released hold keeps its account row and its deadline metadata — Ledger v3
 evicts only the zeroed volume — so it still matches the deadline filter and must be discarded
 client-side (`stale_holds.go:289`), counted as `holdsReleased`. [EN-2036](https://formance-team.atlassian.net/browse/EN-2036)
-fixes this at the source (draft PR [ledger#2058](https://github.com/formancehq/ledger/pull/2058)),
+fixes this at the source (PR [ledger#2058](https://github.com/formancehq/ledger/pull/2058)),
 superseding EN-1972's proposed live-volume query predicate (`0127f22`). When it lands the counter
 should be **version-gated, not deleted**: older ledgers still return released holds, and captures
 already written carry the key in a `schemaVersion: 2` evidence document.

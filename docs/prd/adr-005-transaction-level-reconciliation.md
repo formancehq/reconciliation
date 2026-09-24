@@ -94,11 +94,22 @@ EPHEMERAL, and the address, source, destination and reference indexes were creat
 So a lettered item is **reachable only through its transactions**, and only through an **indexed
 reference or indexed transaction metadata**. The address alone cannot find it.
 
-EN-2036 (implementation ready in draft PR formancehq/ledger#2058) goes further: it purges the
-account row and its metadata. Its documentation
-describes transaction mappings as immutable history that stays queryable "at older pins". That does
-not promise address lookups at the head, so the conclusion stands; re-check it when EN-2036 merges
-(ask **L5**).
+**Re-checked on EN-2036's head** (formancehq/ledger#2058 @ `92b378e4b`, open, awaiting review), with
+the same probe (`tools/bench-txlevel probe`) on an isolated ledger: **the observed behaviour is
+unchanged.** The PR purges the account row and its metadata too. Its documentation says the
+account-to-transaction mappings are immutable history that survives the purge, and its indexer now
+excludes only TRANSIENT volumes from those mappings, so the lettering transaction gets one too. The
+mappings are nevertheless unreachable, because the query layer gates an address filter on the
+account's **current** existence before it reads them:
+
+- an exact address first checks `pebbleAccountExists` in the primary attributes store and returns
+  nothing when the account is gone (`internal/query/compile.go:1100-1110`);
+- an address prefix enumerates the matching accounts from the same store, which only holds current
+  accounts (`internal/query/compile.go:1069-1071`).
+
+The same gate exists on `0b4676d97` and on the `release/v3.0` tip `a08f99bc3`. It is what made the
+opening transaction disappear there too: the purged volume was the account's only attribute. So the
+conclusion stands whatever EN-2036 becomes, and ask **L5** now names the gate.
 
 **Consequence for the recommended booking.** Every lettering transaction, on both ledgers, must carry
 the **PSP payment reference** as declared, indexed transaction metadata. On the product ledger, it
@@ -483,7 +494,7 @@ The rules that the engine's efficiency depends on:
 |---|---|---|
 | **L1**: keep a query checkpoint's read-only open alive for the checkpoint's lifetime, and size its cache | Checkpoint reads are 20× slower than live; this matters for option A and every other checkpoint user | S |
 | **L2**: drop the per-account INFO line `scanAccount complete` on list paths (`internal/application/ctrl/store.go:189-195`) | A listing of 1M accounts writes 1M log lines (this bench: 3.86M lines, 970 MB) | XS |
-| **L5**: a documented contract that **a purged EPHEMERAL account's transactions stay reachable** through `reference` and indexed metadata, plus a test. The current behaviour, where the address mapping stops returning the *opening* transaction too, should be decided explicitly, together with EN-2036 | The recommended booking relies on it | S |
+| **L5**: decide whether an address filter on transactions reaches a purged EPHEMERAL account's history. EN-2036 keeps the mappings, but the query gates on the account's current existence (`internal/query/compile.go:1069-1110`), so they are unreachable. Either resolve the address from the mapping itself, or document that only `reference` and indexed metadata reach it. Either way, add a test that queries a purged account's transactions, which EN-2036's tests do not do | The recommended booking relies on `reference` and indexed metadata staying reachable. Reaching the history by address would also let an investigation start from a hold's address | S |
 | **L6**: `ListLogs` throughput. On the same 1M transactions it is 5–7× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream) | Only the rewind window and exact re-derivations still read logs; the gap deserves an explanation | S–M |
 | **L8**: **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L7**: return the snapshot horizon (the per-ledger log id the read saw) on `AggregateVolumes` and `ListAccounts` | Makes the phase-1 aggregate exact at `S` (`agg(S) = agg − Σ net(S, horizon]`) and lets the rewind skip the untouched part of the window; it is already part of EN-1480's scope (`log_sequence`) | S |

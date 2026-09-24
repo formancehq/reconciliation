@@ -633,7 +633,7 @@ under concurrent writes: 2,233 rows differed from any single instant.
 
 - the aggregate-per-asset outcome and its fingerprints (ADR-004 amendment);
 - `maxHoldsScanned` and the service-level new-alert cap (§4.6);
-- the EN-2036 follow-up in §8. Its implementation is ready in draft PR formancehq/ledger#2058:
+- the EN-2036 follow-up in §8. Its implementation is ready in PR formancehq/ledger#2058, open and awaiting review:
   purged holds stop matching, so `holdsReleased` falls to zero, and the artifact then shrinks with
   it.
 
