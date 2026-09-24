@@ -222,6 +222,33 @@ provide point-in-time queries" (ledger backup README).
 | E | Pebble primitives: EFOS, `Checkpoint(WithRestrictToSpans)`, `RemoteStorage` | **Rejected**, evidence in the [design doc §6](../technical/transaction-level-reconciliation.md#6-could-pebble-do-better). Pebble is not the bottleneck; the ledger read API is. |
 | F | Paginate live without correction | **Rejected.** A 1M listing spans about 1,000 snapshots and tears under writes (measured, §5). |
 
+### If checkpoint reads became as fast as live reads
+
+[EN-2336](https://formance-team.atlassian.net/browse/EN-2336) asks the Ledger to remove the ~20×
+read penalty at a checkpoint. **Option A would stay rejected even then.** The slow read was only
+one of the reasons, and the others don't depend on read speed:
+
+- **The cap.** Live checkpoints are capped at 10 per cluster, shared by every ledger, every tenant
+  and the ledger's own checkpoint scheduler. Rules cluster on round instants, so eleven daily rules
+  at midnight already exceed it (ADR-003).
+- **The write path.** Creating a checkpoint is a Raft order that pauses the applier while the whole
+  bucket store is checkpointed, and deleting it is a second order. Every evaluation would load
+  everyone's writes.
+- **The wrong instant.** A checkpoint captures the run instant, not the business cut-off. The job
+  runs after the cut-off, so the stock would still need rewinding to `S`.
+- **Past days.** The first-run backfill and the replay of an old day need a cut where no checkpoint
+  exists. Keeping checkpoints for 90 days is impossible under the cap, and would pin SSTs.
+- **The flow needs no snapshot.** Every transaction at or below `T` is immutable except for its
+  metadata, so a live read of `(T_prev, T]` already returns what a snapshot would.
+
+What a fast checkpoint read would improve is the rewind's oracle test (R10) and the optional proof
+run, which could then run more often. At most, it would enable an optimisation of the stock leg:
+read the open holds at the ledger's own **daily** checkpoint when one exists near the cut-off (one
+for all rules, not one per evaluation), then rewind only the few logs between that checkpoint and
+`S`. That is worth doing only if runs start long after the cut-off, which makes the `(S, head]`
+window large. The bench measured 8,208 logs in 267 ms. The rewind would stay the general mechanism
+for backfill, replay, and any missing checkpoint.
+
 ## 5. Decision A — the cut is a log id, and the stock is rewound to it
 
 **Choosing the cut.** On each ledger, `S` is the last log whose `date` (HLC, strictly monotonic)
