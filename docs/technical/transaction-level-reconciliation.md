@@ -19,7 +19,7 @@ against the *product ledger* that pilots the business.
 
 A daily run covers **100 to 1,000,000 payments**. The control reads the flow with filtered
 `ListTransactions`, and the stock with live listings corrected by the short log window since the
-cut-off. It takes **no query checkpoint**.
+cut-off ([in plain terms](#flow-and-stock-in-plain-terms)). It takes **no query checkpoint**.
 
 | It is | It is not |
 |---|---|
@@ -212,6 +212,47 @@ sequenceDiagram
   `open(S) = open(S_prev) + opened(W) − lettered(W)`. A lost window event breaks the identity, which
   makes the read's completeness checkable.
 
+### Flow and stock in plain terms
+
+Take a day cut at midnight, and a run that starts at 02:00.
+
+**The flow is what happened during the day.** It is the day's transactions that carry a PSP payment
+reference: `payin.succeeded PAY-42, 1000` on the PSP ledger, the application `PAY-42 → INV-7, 1000`
+on the product ledger. It answers one question: was every payment the PSP finalised today applied by
+the product, for the same amount? It is read with `ListTransactions` over the day's id range
+`(T_prev, T]` ([the cut](#the-cut-from-a-business-time-to-id-ranges)), filtered on the key's
+presence so that only payments come back. The day is over, so this read gives the same answer at
+02:00 or at 10:00.
+
+**The stock is what is still open at midnight.** It is the holds that have not been lettered: unpaid
+invoices on the product ledger, pending payments on the PSP ledger. It answers another question: what
+is outstanding, and for how long? Lettered holds purge, so listing the accounts under the hold
+prefixes gives the open book, and it stays small whatever the history.
+
+**The listing is taken at 02:00, not at midnight.** The ledger kept writing in between:
+
+```text
+midnight (cut-off, log S)                          02:00 (run)
+   |--------------- short log window ---------------|
+   |  01:00  PAY-50 letters INV-9   → hold purged    |
+   |  01:30  INV-12 is issued       → hold opened    |
+```
+
+So the 02:00 listing is wrong in two ways. **INV-9 is missing**: it was open at midnight, then
+lettered and purged at 01:00. **INV-12 is extra**: it was opened after the cut-off. There is no cheap
+way to ask the ledger for "the balances at midnight" without a query checkpoint, and the control
+takes none ([ADR-005 §3](../prd/adr-005-transaction-level-reconciliation.md#3-why-not-query-checkpoints-measured)).
+
+**The correction reads the logs from midnight to now**, the *short log window since the cut-off*:
+`(S, head]`. It holds two hours of writes, not a day and not the history, which is why it is short.
+For each hold touched in it, the rewind recovers the hold's balance just before that first touch,
+and that is its balance at midnight (§4). Holds nobody touched since midnight had the same balance at
+midnight as at 02:00, so the listing is already right for them.
+
+In short: the flow is the day's keyed transactions, read by id range, and settled once the day is
+over. The stock is the open holds listed at run time, set back to midnight with the few hours of logs
+written since.
+
 ### The cut: from a business time to id ranges
 
 The daily run has to answer "what happened on each ledger during day D", with bounds that give the
@@ -355,6 +396,22 @@ pre = post_commit_volumes[account] − Σ(this transaction's postings on account
 The method needs no baseline and no stored state, and it applies to NORMAL accounts as well as to
 EPHEMERAL holds. Only created and reverted transactions move balances, and both carry
 `post_commit_volumes` (`misc/proto/common.proto:133-136`, `823-831`).
+
+**Worked example**, the day of [Flow and stock in plain terms](#flow-and-stock-in-plain-terms)
+(invoice holds open negative):
+
+| Hold | First touch after `S` | `post_commit_volumes` | Its own posting on the hold | `pre`, the balance at `S` | Effect |
+|---|---|---|---|---|---|
+| INV-9 | 01:00, payment applied | 0 | +500 | **−500** | missing from the listing (purged): added back |
+| INV-12 | 01:30, invoice issued | −300 | −300 | **0** | created after `S`: drops out |
+| INV-3 | none | — | — | listed value | untouched: the listing is right |
+
+**Why the logs, and not a filtered `ListTransactions`**, for this window:
+
+- The window is short, so reading every log costs little: 8,208 logs in 267 ms in the proof run.
+- It is **complete**: log ids are contiguous, so the count `hi − lo` proves no log was missed.
+- It depends on **no metadata convention**: a transaction that touched a hold without carrying the
+  key is still corrected.
 
 **Proof run** (§7.4): against a checkpoint taken at `S`, under concurrent writes, the rewound listing
 matched on every one of 1,002,408 rows. The raw live listing differed on 2,233.
