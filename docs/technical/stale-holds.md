@@ -621,7 +621,7 @@ one-line change, and it benefits every per-account read.
 
 **4. A multi-page live read tears.** Above 1,000 holds, a `stale_holds` read spans several
 `ListAccounts` pages, and each page is its own snapshot. ADR-005 measured the effect on 1M accounts
-under concurrent writes: 2,233 rows differed from any single instant.
+under concurrent writes: 2,233 rows differed from the exact state at the cut.
 
 - For a continuous monitor this is tolerable, because the next tick self-corrects.
 - The artifact should still record the read horizon, the log head before and after the listing.

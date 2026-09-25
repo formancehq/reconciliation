@@ -61,8 +61,8 @@ On the product ledger, the invoice is booked in three transactions:
    2. `user:revenue:A:pending` → `user:revenue:A`, X. This is the **revenue recognition**. It does
       not touch the hold and takes no part in reconciliation.
 
-**The amount of an application is its net posting on the accounts under the side's hold
-prefixes**, each counted in the direction that settles it (§5). The revenue recognition therefore counts for
+**The amount of an application is its net posting on the accounts under the side's hold prefixes**,
+each counted in the direction that settles it (§5). The revenue recognition therefore counts for
 nothing, even if it carried the payment reference. It is still best kept without one.
 
 **The amount of a PSP payment is its net posting on the rule's `psp.paymentAccount`**, the account
@@ -98,8 +98,9 @@ continuity holds in every row above.
   - Connectivity's `formancepayments` profile already does this: `payments.formance.com/payment-id`
     and `formance.com/observation.event-type` are indexed (`formancehq/connectivity-plugins-poc`,
     `plugins/formancepayments/profiles/formancepayments.yaml:1143-1147` @ `9df05c5b`).
-  - The shipped Stripe plugin does not model holds at all. It books Stripe balance transactions
-    with `stripe_txn_id` indexed (`formancehq/connectivity`, `plugins/stripe/internal/adapter/grpc/server.go:227-236` @ `e7ca3e29`).
+  - The shipped Stripe plugin does not model holds at all. It books Stripe balance transactions with
+    `stripe_txn_id` indexed (`formancehq/connectivity`,
+    `plugins/stripe/internal/adapter/grpc/server.go:227-236` @ `e7ca3e29`).
 
 ### Recommended booking design (ADR-005 §8)
 
@@ -122,7 +123,7 @@ This design is tuned for the read paths measured in §7:
 | **`timestamp`** | the PSP event time | the business event time |
 | **Postings** | exact amounts, with fees split out | application **strict on the amount** (`send [$asset $amount]`, never `*`): an over-application takes the hold past zero, to the sign opposite its opening (`negative_hold`), and a partial payment leaves an honest residual |
 | **Indexes** | **`payment_ref` (mandatory: it drives the flow read)**; **`inserted_at` and log date (mandatory: they resolve the cut)**; `merchant_ref` (investigation) | **`payment_ref` and `business_ref` (mandatory: together they drive the flow read)**; **`inserted_at` and log date (mandatory)** |
-| **Mutability** | key and state metadata are **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one. Recon flags any violation it sees in the rewind window (`key_metadata_mutated`). **Labels** (ask L8) would make this structural | same |
+| **Mutability** | key and state metadata are **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one. Recon reads every log since its previous run and flags any violation (`key_metadata_mutated`). **Labels** (ask L8) would make this structural | same |
 
 **Why `merchant_ref` matters.** Without it, a payment the PSP finalised that the product never
 applied is known only by its `payment_ref`: the controller learns "money arrived, 1,000 €, PAY-42"
@@ -154,7 +155,7 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
 | 2 | book **one transaction per event of one payment reference**. A batched payout that settles many payments is split into one transaction per payment | The control cannot split a multi-reference transaction: it reads the key from the transaction, not from the postings' addresses |
 | 3 | carry the **state** of the event (pending, succeeded, failed…) as transaction metadata | The rule maps its values to `pending`, `final` and `failed` per deployment |
 | 4 | carry **`merchant_ref`**, the business id the merchant passed when creating the payment (Stripe `metadata`, Adyen `merchantReference`…) | It turns an `unapplied_payment` into "invoice X is paid: apply it" |
-| 5 | keep key and state metadata **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one | A filtered re-read of a past day must not change. Recon flags violations in the rewind window (`key_metadata_mutated`) |
+| 5 | keep key and state metadata **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one | A filtered re-read of a past day must not change. Recon reads every log since its previous run and flags violations (`key_metadata_mutated`) |
 | 6 | book **refunds and chargebacks as their own payment references**, not as a reversal of the original payment | Each is its own 1-to-1 pair (ADR-005 decision 7) |
 | 7 | book **fees and FX as explicit postings** to their own accounts | The comparison is exact, with no tolerance |
 | 8 | use **EPHEMERAL holds, one per payment, under one prefix per kind**, and note the sign each kind opens with | The open book is then a prefix listing, and lettered holds leave it. The rule declares each prefix with its sign (`holds[].openSign`) |
@@ -164,7 +165,8 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
 
 **Where two existing mappings stand**, as a starting point:
 
-- `formancepayments`, in [`formancehq/connectivity-plugins-poc`](https://github.com/formancehq/connectivity-plugins-poc)
+- `formancepayments`, in
+  [`formancehq/connectivity-plugins-poc`](https://github.com/formancehq/connectivity-plugins-poc)
   (`plugins/formancepayments/profiles/formancepayments.yaml` @ `9df05c5b`):
   - **covered:** row 1, with `payments.formance.com/payment-id` on every payment transaction and
     indexed (`:1143-1147`); row 3, with `formance.com/observation.event-type` indexed and
@@ -175,10 +177,11 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
   - **to configure:** row 4, as there is no merchant reference on transactions
     (`payments.formance.com/reference` is account metadata); row 6, as refunds are mapped
     (`PAYIN_REFUNDED` and five siblings, `:430-704`) but as deltas **on the original payment id**,
-    not as their own payment reference; row 7, as a `fees` account is declared (`:82`) but no mapping
-    posts to it; row 10, as the profile indexes `timestamp` but neither `inserted_at` nor the log
-    date.
-- The Stripe plugin, in [`formancehq/connectivity`](https://github.com/formancehq/connectivity) (`plugins/stripe` @ `e7ca3e29`), does not model holds. It books balance transactions keyed by
+    not as their own payment reference; row 7, as a `fees` account is declared (`:82`) but no
+    mapping posts to it; row 10, as the profile indexes `timestamp` but neither `inserted_at` nor
+    the log date.
+- The Stripe plugin, in [`formancehq/connectivity`](https://github.com/formancehq/connectivity)
+  (`plugins/stripe` @ `e7ca3e29`), does not model holds. It books balance transactions keyed by
   `stripe_txn_id`, so rows 1–3 and 8 need a lettering mapping first.
 
 The product side is the customer's own Numscript. Its conventions are in the booking table above,
@@ -191,8 +194,8 @@ sides into a customer-facing document.
 sequenceDiagram
     autonumber
     participant J as Recon job (rule, day D)
-    participant P as Product ledger
-    participant Q as PSP ledger
+    participant P as PSP ledger
+    participant Q as Product ledger
     participant O as Object storage
     participant C as _recon
 
@@ -207,11 +210,12 @@ sequenceDiagram
         J->>P: ListTransactions(id ∈ (T_P_prev, T_P] ∧ payment_ref EXISTS)
         J->>Q: ListTransactions(id ∈ (T_Q_prev, T_Q] ∧ (payment_ref EXISTS ∨ business_ref EXISTS))
     and stock rewind
-        J->>P: ListAccounts(each hold prefix, live) then ListLogs((S_P, head])
-        J->>Q: ListAccounts(each hold prefix, live) then ListLogs((S_Q, head])
+        J->>P: ListAccounts(each hold prefix, live) then ListLogs((head_prev, head]) (rewind from S)
+        J->>Q: ListAccounts(each hold prefix, live) then ListLogs((head_prev, head]) (rewind from S)
     end
-    J->>O: previous run's carried items (drift ≠ 0) and breaks (ageing)
+    J->>O: previous run's stock (open(S_prev), cleared), carried items (drift ≠ 0) and breaks
     J->>P: ListTransactions(key = ref, id ≤ T_P) · applied refs in neither window nor carried
+    J->>Q: ListTransactions(key = ref, id ≤ T_Q) · history of refs found final, window refs failed
     J->>J: join on the PSP reference (+ carried, + lookups) · age both stock books · continuity
     J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ manifest + flow / carried / stock / breaks / unclassified
     J->>C: capture(phase=detail, counts, drifts, S and T per ledger, artifact sha256) — Ed25519
@@ -242,8 +246,8 @@ presence so that only payments come back. The day is over, so this read gives th
 02:00 or at 10:00.
 
 **The stock is what is still open at midnight.** It is the holds that have not been lettered: unpaid
-invoices on the product ledger, pending payments on the PSP ledger. It answers another question: what
-is outstanding, and for how long? Lettered holds purge, so listing the accounts under the hold
+invoices on the product ledger, pending payments on the PSP ledger. It answers another question:
+what is outstanding, and for how long? Lettered holds purge, so listing the accounts under the hold
 prefixes gives the open book, and it stays small whatever the history.
 
 **The listing is taken at 02:00, not at midnight.** The ledger kept writing in between:
@@ -252,23 +256,24 @@ prefixes gives the open book, and it stays small whatever the history.
 midnight (cut-off, log S)                          02:00 (run)
    |--------------- short log window ---------------|
    |  01:00  PAY-50 letters INV-9   → hold purged    |
-   |  01:30  INV-12 is issued       → hold opened    |
+   |  01:30  INV-15 is issued       → hold opened    |
 ```
 
 So the 02:00 listing is wrong in two ways. **INV-9 is missing**: it was open at midnight, then
-lettered and purged at 01:00. **INV-12 is extra**: it was opened after the cut-off. There is no cheap
-way to ask the ledger for "the balances at midnight" without a query checkpoint, and the control
-takes none ([ADR-005 §3](../prd/adr-005-transaction-level-reconciliation.md#3-why-not-query-checkpoints-measured)).
+lettered and purged at 01:00. **INV-15 is extra**: it was opened after the cut-off. There is no
+cheap way to ask the ledger for "the balances at midnight" without a query checkpoint, and the
+control takes none ([ADR-005
+§3](../prd/adr-005-transaction-level-reconciliation.md#3-why-not-query-checkpoints-measured)).
 
 **The correction reads the logs from midnight to now**, the *short log window since the cut-off*:
 `(S, head]`. It holds two hours of writes, not a day and not the history, which is why it is short.
 For each hold touched in it, the rewind recovers the hold's balance just before that first touch,
-and that is its balance at midnight (§4). Holds nobody touched since midnight had the same balance at
-midnight as at 02:00, so the listing is already right for them.
+and that is its balance at midnight (§4). Holds nobody touched since midnight had the same balance
+at midnight as at 02:00, so the listing is already right for them.
 
 In short: the flow is the day's keyed transactions, read by id range, and settled once the day is
-over. The stock is the open holds listed at run time, set back to midnight with the few hours of logs
-written since.
+over. The stock is the open holds listed at run time, set back to midnight with the few hours of
+logs written since.
 
 ### The cut: from a business time to id ranges
 
@@ -314,9 +319,9 @@ yesterday's capture.
   be a second, rarely exercised code path. The rule requires an index on its key anyway, so two more
   indexes do not change what onboarding asks for (ADR-005 §5).
 - **Why the insertion date and not `timestamp`.** A transaction inserted today always gets an id
-  above yesterday's `T`, so it lands in today's window even if its `timestamp` says yesterday. A past
-  day is therefore **frozen**: nothing can be added to it after its cut. A cut on `timestamp` would
-  let a backdated write silently change a day that was already reconciled.
+  above yesterday's `T`, so it lands in today's window even if its `timestamp` says yesterday. A
+  past day is therefore **frozen**: nothing can be added to it after its cut. A cut on `timestamp`
+  would let a backdated write silently change a day that was already reconciled.
 
 **Why this makes the metadata-filtered read cheap.** The flow read is one query per range:
 
@@ -341,7 +346,9 @@ The same question asked of the three orderings the ledger offers:
 
 **`S` serves the stock.** Open holds are listed live, then rewound by replaying the logs
 `(S, head]` (§4). Logs are needed there, not transactions, because they carry every event,
-including the metadata changes that the rewind window monitors (`key_metadata_mutated`).
+including the metadata changes recon monitors (`key_metadata_mutated`). For that check alone, the
+run also reads `(head_prev, S]`, the logs since the previous run's head, so no log goes unwatched:
+about a day of logs, ~25 s at 1M a day on 8 ranges.
 
 **What the id ranges give for free.**
 
@@ -372,7 +379,7 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Head of a ledger's log | `GetLedgerStats` → `log_count` (per-ledger log ids are contiguous from 1) | none |
 | Resolve `S` from the cut-off | `ListLogs`, filter `log_builtin_uint(DATE) > cut-off`, page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`): **mandatory**. Connectivity's `formancepayments` profile does not create it today, so the implementer adds it (checklist row 10) |
 | Resolve `T` (transaction-id cut) | `ListTransactions`, filter `builtin_uint(INSERTED_AT) > cut-off`, page 1 → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
-| **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], membership)`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, and `Or(<product.key> EXISTS, <product.businessId> EXISTS)` on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
+| **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], membership)`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
 | Rewind window `(S, head]`, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
 | Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch. Until EN-2036 merges, it is the only lookup left once a hold is purged, since address filters miss it (§2). After that, an exact address reaches it too |
@@ -393,8 +400,8 @@ flow and of log ids for the rewind. K concurrent streams each page their own ran
   Ranges read at different instants therefore return what one frozen read would have returned. An
   account listing does not have this property: its pages see moving balances.
 - **Merging the ranges.** For the flow, each range keeps its per-reference facts, and the facts are
-  combined in transaction-id order. For the rewind, each account keeps its *first* touch after `S`, taken
-  from the lowest range that touched it.
+  combined in transaction-id order. For the rewind, each account keeps its *first* touch after `S`,
+  taken from the lowest range that touched it.
 - Measured on one node (§7.2):
   - logs: 7.3k/s to 13.8k/s on one stream, 41k/s to 66k/s over 8 streams;
   - transactions: 94.5k/s on one stream, 351k/s over 8.
@@ -434,7 +441,7 @@ EPHEMERAL holds. Only created and reverted transactions move balances, and both 
 | Hold | First touch after `S` | `post_commit_volumes` | Its own posting on the hold | `pre`, the balance at `S` | Effect |
 |---|---|---|---|---|---|
 | INV-9 | 01:00, payment applied | 0 | +500 | **−500** | missing from the listing (purged): added back |
-| INV-12 | 01:30, invoice issued | −300 | −300 | **0** | created after `S`: drops out |
+| INV-15 | 01:30, invoice issued | −300 | −300 | **0** | created after `S`: drops out |
 | INV-3 | none | — | — | listed value | untouched: the listing is right |
 
 **Why the logs, and not a filtered `ListTransactions`**, for this window:
@@ -444,8 +451,8 @@ EPHEMERAL holds. Only created and reverted transactions move balances, and both 
 - It depends on **no metadata convention**: a transaction that touched a hold without carrying the
   key is still corrected.
 
-**Proof run** (§7.4): against a checkpoint taken at `S`, under concurrent writes, the rewound listing
-matched on every one of 1,002,408 rows. The raw live listing differed on 2,233.
+**Proof run** (§7.4): against a checkpoint taken at `S`, under concurrent writes, the rewound
+listing matched on every one of 1,002,408 rows. The raw live listing differed on 2,233.
 
 ### Replaying an old day
 
@@ -464,13 +471,13 @@ with the fold of `post_commit_volumes` over 8 ranges (§7.2, 24.2 s per 1M logs)
 
 | Replay | Logs in `(S, head]` | Read time |
 |---|---|---|
-| The next day (the normal run) | ~1M | ~25 s |
+| A replay the next day | ~1M | ~25 s |
 | A week later | ~7M | ~3 min |
 | A month later | ~30M | ~12 min |
 | A year later | ~365M | **~2 h 30**, with close to a year of holds to track |
 
-**So a replay starts from the nearest stored stock, not from head.** Each run stores its stock at its
-cut (`stock.ndjson.gz`), and the stock is additive over time:
+**So a replay starts from the nearest stored stock, not from head.** Each run stores its stock at
+its cut (`stock.ndjson.gz`), and the stock is additive over time:
 
 ```text
 stock(S_D) = stock(S_A) + hold movements in (S_A, S_D]
@@ -495,10 +502,10 @@ are recomputed at a fixed cost.
 
 ## 5. Matching semantics
 
-**States are declared by the rule, per side** (ADR-005 §6). Each side names its key field, its
-state field and the value sets meaning `pending`, `final` and `failed`, and the product side names
-its business-id field. How PSP states are modelled is a per-deployment choice, so recon hard-codes no
-vocabulary.
+**States are declared by the rule, per side** (ADR-005 §6). Each side names its key field, its state
+field and the value sets meaning `pending`, `final` and `failed`, and each product hold kind names
+its business-id field. How PSP states are modelled is a per-deployment choice, so recon hard-codes
+no vocabulary.
 
 | Leg | Class | Meaning |
 |---|---|---|
@@ -506,6 +513,7 @@ vocabulary.
 | Flow | `under_applied` / `over_applied` | Product applications for the reference sum to less or more than the PSP amount. A payment split across invoices is summed first. **No tolerance**: a fee or FX difference is a break |
 | Flow | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `product.grace`** (proposed default 3 days), then a break. Carried from day to day in `carried.ndjson.gz`, like every reference whose drift is not 0 |
 | Flow | `in_progress` | PSP `pending` only, no application: not a break. Its hold is in the PSP stock |
+| Flow | `failed` | PSP `failed` and never applied: nothing to letter, not a break. Listed so that every reference of the window has a row |
 | Flow | `applied_before_final` | A product application points at a reference the PSP has not finalised yet: `pending`, or not seen at all. **Pending while within `psp.grace`** (proposed default 7 days), then `orphan_application`. Applying at `pending` is a legitimate booking choice, common with debits that settle in days (SEPA, ACH) |
 | Flow | `orphan_application` | A product application whose reference is still not final past `psp.grace`, or that the PSP had already reported `failed`: a break of **priority 1** |
 | Flow | `reversed_after_application` | The PSP reports `failed` on a reference after the product applied it, within `psp.grace` or not: a break of **priority 1** |
@@ -533,9 +541,12 @@ vocabulary.
   and over-applied after a final state, `applied_before_final` while pending. When the PSP lookup
   finds a final state, the reference's earlier applications are read the same way on the product
   ledger, so that a second application on a payment matched days ago sums with the first and shows
-  as `over_applied`. On the first run only, every PSP reference of the window that is missing from
-  the product window is looked up on the product ledger, whatever its state; later, an earlier
-  application with a drift is always carried. The manifest counts the lookups.
+  as `over_applied`. On every run, each PSP reference of the window with a `failed` event that is
+  neither in the product window nor carried is looked up on the product ledger too, so that a
+  payment matched on an earlier day and failed today shows as `reversed_after_application`. On
+  the first run only, every PSP reference of the window that is missing from the product window is
+  looked up on the product ledger, whatever its state; later, an earlier application with a drift
+  is always carried. The manifest counts the lookups.
 - **Which side came first.** Between two days the window decides; within a day, `insertedAt`,
   although it compares the clocks of two ledgers. Each flow row records it as `firstSide`: `psp`
   when the PSP's first terminal state (`final` or `failed`) came before the first application,
@@ -545,11 +556,11 @@ vocabulary.
 - **Refunds and chargebacks are ordinary 1-to-1 pairs.** On the PSP ledger they are a payment with
   its own reference; on the product ledger, a refund hold lettered by a transaction carrying that
   reference. They go through the same classes and are never a reversal of the original payment.
-- **A transaction whose state is in no set is never dropped silently.** It takes no part in matching,
-  but it is counted per side, per state value and per asset as `unclassified`, with a warning, and
-  listed in `unclassified.ndjson.gz`. This catches a connector mapping that doesn't follow the
-  conventions. For example, `formancepayments` books refunds on the original payment id as
-  `payin.refunded` (checklist row 6).
+- **A transaction whose state is in no set is never dropped silently.** It takes no part in
+  matching, but it is counted per side, per state value and per asset as `unclassified`, with a
+  warning, and listed in `unclassified.ndjson.gz`. This catches a connector mapping that doesn't
+  follow the conventions. For example, `formancepayments` books refunds on the original payment id
+  as `payin.refunded` (checklist row 6).
 - The two stock books are **aged, not joined**: an unpaid invoice has no PSP counterpart by design.
 - Ageing comes from the previous day's artifact: `new` / `persisting` / `cleared` for holds, and
   `new` / `persisting` / `resolved` for breaks, matched by their `breakId`.
@@ -566,7 +577,7 @@ from the two control totals down to the explained items, with an explicit verdic
 
 | Verdict | Condition | What it tells the controller |
 |---|---|---|
-| `INCOMPLETE` | A required index is missing, a window range returned fewer logs than `hi − lo`, a continuity identity fails, or the bridge below has a non-zero **unexplained residual** | "No conclusion can be drawn": the engine failed, not the books. It opens an engine-error alert, never a green one |
+| `INCOMPLETE` | A required index is missing, a window range returned fewer logs than `hi − lo`, a continuity identity fails, or the bridge below has a non-zero **unexplained residual** | "No conclusion can be drawn": the read is incomplete, or a hold moved without the key (a booking fault the continuity check names). It opens an engine-error alert, never a green one |
 | `BREAKS` | at least one open break | the count and gross amount of breaks, split by class |
 | `RECONCILED_WITH_PENDING` | no break, but unapplied payments within `product.grace` or applications within `psp.grace` | "OK for now". The pending items, their amount and the date each one becomes a break |
 | `RECONCILED` | none of the above | the only green state |
@@ -616,10 +627,11 @@ Around the bridge, the statement shows:
   3. then unapplied payments past `product.grace`;
   4. then stuck holds and negative holds.
 
-  Each class shows its top-K by amount, **new versus persisting** from the previous day, and the
-  detail's path and filter (`breaks.ndjson.gz`, `class = …`).
-- **when `merchant_ref` exists**, every unapplied payment is paired with the open business hold it
-  names;
+  The statement lists the top-K open breaks in this order, then by amount, each **new or
+  persisting** from the previous day, with the detail's path and filter (`breaks.ndjson.gz`,
+  `class = …`).
+- **when the rule names `psp.merchantRef`**, every unapplied payment is paired with the open
+  business hold it names;
 - **`unclassified` transactions**, per side and state value, with a warning. They do not change the
   verdict, but they say the rule's state sets or the connector mapping need attention.
 
@@ -656,13 +668,13 @@ can evolve behind `schemaVersion`:
 - days are `YYYY-MM-DD` in the rule's timezone. Instants are RFC 3339 in UTC, except the period's
   `cutoff`, which keeps the rule's offset;
 - an identifier has the same name in every file: `ref` (the PSP reference), `businessId` (the
-  rule's business-id field), `hold` (the address), `holdId` (the address after its prefix; with the
-  recommended booking it equals the business id) and `merchantRef`. Finding everything about INV-12
-  is a filter on `businessId`, `holdId` or `merchantRef`;
+  business-id field of the hold's kind), `hold` (the address), `holdId` (the address after its
+  prefix; with the recommended booking it equals the business id) and `merchantRef`. Finding
+  everything about INV-12 is a filter on `businessId`, `holdId` or `merchantRef`;
 - every row has `asset` and an `outcome`: `ok` (nothing to do), `pending` (not a break yet),
-  `break`, or `warning` (an unclassified transaction). It says whether the row needs action; a break's
-  urgency is its `priority`. It is unrelated to the rule's `severity` (`low` to `critical`), which
-  grades the alert;
+  `break`, or `warning` (an unclassified transaction). It says whether the row needs action; a
+  break's urgency is its `priority`. It is unrelated to the rule's `severity` (`low` to `critical`),
+  which grades the alert;
 - stock and unclassified rows have a `side`; flow rows carry both sides. A count or a figure that
   is split per side is keyed by the side (`psp`, `product`), never by the ledger's name;
 - ledger ids (`tx`, log ids) are JSON numbers, so that query engines read them as integers. They
@@ -810,10 +822,11 @@ closed period is never rewritten: a day replayed later changes its own files, no
 `daily` rule writes no `period.json`, since its manifest already is the summary.
 
 **What opens the alert:** at least one open break. A resolved break does not, and the net alone
-never does: pending items move it without being breaks, and offsetting breaks net to zero. A
-non-zero unexplained residual is `INCOMPLETE` and opens the engine-error alert instead.
+never does: pending items move it without being breaks, and offsetting breaks net to zero. An
+`INCOMPLETE` run opens the engine-error alert instead.
 
-Measured size: **about 15 bytes per break**, gzipped (3,499 breaks = 54 KB).
+Measured size: **about 15 bytes per break**, gzipped (3,499 breaks = 54 KB), on the earlier narrow
+break rows. The self-contained rows of this format are larger and are to be re-measured.
 
 ### Worked example: one day of output
 
@@ -849,31 +862,37 @@ and was lettered on the same day.
   "rule": {
     "id": "psp-vs-billing", "version": 7, "sha256": "4c1d…",
     "buckets": ["1d", "7d", "30d"], "retention": "90d", "anchorRetention": "13mo",
+    "backfillFrom": "2026-08-01",
     "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id",
+                "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
+                          "final": ["payin.succeeded"], "failed": ["payin.compensate"]},
                 "grace": "7d", "maxAge": "10d", "paymentAccount": "fpay:stripe:account:*:main",
+                "merchantRef": "merchant_ref",
                 "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}]},
-    "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no",
+    "product": {"ledger": "main", "key": "psp_payment_ref",
+                "state": {"field": "transition_kind", "final": ["to_final"]},
                 "grace": "3d", "maxAge": "30d",
-                "holds": [{"prefix": "main:hold:invoice:", "openSign": "negative"},
-                          {"prefix": "main:hold:refund:",  "openSign": "positive"}]}
+                "holds": [{"prefix": "main:hold:invoice:", "openSign": "negative", "businessId": "invoice_no"},
+                          {"prefix": "main:hold:refund:",  "openSign": "positive", "businessId": "refund_no"}]}
   },
   "runId": "r-20260925-0200",
   "previousRun": {"runId": "r-20260924-0200", "manifestSha256": "a3e0…"},
   "period": {"type": "daily", "day": "2026-09-24", "cutoff": "2026-09-24T23:59:59+02:00", "tz": "Europe/Paris"},
   "startedAt": "2026-09-25T00:00:04Z",
   "finishedAt": "2026-09-25T00:00:31Z",
-  "timingsMs": {"cut": 420, "flow": 11240, "lookup": 0, "stock": 6810, "join": 5930, "write": 1080},
+  "timingsMs": {"cut": 420, "flow": 11240, "lookup": 0, "stock": 6810, "watch": 6500, "join": 900, "write": 1080},
   "cuts": [
-    {"side": "psp",     "ledger": "psp",  "logFrom": 2411902, "logTo": 2640118, "txFrom": 1204000, "txTo": 1318500, "logSha256": "3f9a…"},
-    {"side": "product", "ledger": "main", "logFrom": 1530010, "logTo": 1574300, "txFrom": 880400,  "txTo": 902750,  "logSha256": "b07c…"}
+    {"side": "psp",     "ledger": "psp",  "logFrom": 2411902, "logTo": 2640118, "txFrom": 1204000, "txTo": 1318500, "logHead": 2644328, "logSha256": "3f9a…"},
+    {"side": "product", "ledger": "main", "logFrom": 1530010, "logTo": 1574300, "txFrom": 880400,  "txTo": 902750,  "logHead": 1576173, "logSha256": "b07c…"}
   ],
   "execution": {"readRanges": 8, "maxConcurrentReads": 16, "stockFrom": "live",
-                "rewindLogs": {"psp": 4210, "product": 1873}, "lookups": {"psp": 0, "product": 0}},
+                "rewindLogs": {"psp": 4210, "product": 1873}, "lookups": {"psp": 0, "product": 0},
+                "watchLogs": {"psp": 224111, "product": 42500}},
   "verdict": "breaks",
   "counts": {
     "flow": {"matched": 3, "under_applied": 1, "over_applied": 0, "unapplied_payment": 2,
              "applied_before_final": 1, "orphan_application": 0, "reversed_after_application": 0,
-             "in_progress": 1},
+             "in_progress": 1, "failed": 0},
     "flowOutcome": {"ok": 4, "pending": 2, "break": 2},
     "stock": {"psp":     {"open": 2, "negative_hold": 0, "stuck": 0, "cleared": 0},
               "product": {"open": 4, "negative_hold": 1, "stuck": 1, "cleared": 1}},
@@ -915,17 +934,17 @@ and was lettered on the same day.
   "triage": {
     "topK": 10,
     "breaks": [
-      {"breakId": "a93d02e6b7f1c448", "priority": 2, "class": "under_applied",     "lifecycle": "new",        "key": "PAY-44", "asset": "EUR/2", "amount": "5000",    "holds": ["INV-11"]},
-      {"breakId": "1c7f3a90d2e84b55", "priority": 3, "class": "unapplied_payment", "lifecycle": "persisting", "key": "PAY-39", "asset": "EUR/2", "amount": "50000",   "firstSeen": "2026-09-20"},
-      {"breakId": "d4f8a1c3e5b70926", "priority": 4, "class": "stuck",             "lifecycle": "persisting", "key": "INV-3",  "asset": "EUR/2", "amount": "-120000", "ageDays": 41},
-      {"breakId": "7b24e1f09c3d6a12", "priority": 4, "class": "negative_hold",     "lifecycle": "persisting", "key": "INV-14", "asset": "EUR/2", "amount": "10000",   "ageDays": 6}
+      {"breakId": "a93d02e6b7f1c448", "priority": 2, "class": "under_applied",     "lifecycle": "new",        "ref": "PAY-44", "asset": "EUR/2", "amount": "5000",    "holdIds": ["INV-11"]},
+      {"breakId": "1c7f3a90d2e84b55", "priority": 3, "class": "unapplied_payment", "lifecycle": "persisting", "ref": "PAY-39", "asset": "EUR/2", "amount": "50000",   "firstSeen": "2026-09-20"},
+      {"breakId": "d4f8a1c3e5b70926", "priority": 4, "class": "stuck",             "lifecycle": "persisting", "side": "product", "hold": "main:hold:invoice:INV-3",  "asset": "EUR/2", "amount": "-120000", "ageDays": 41},
+      {"breakId": "7b24e1f09c3d6a12", "priority": 4, "class": "negative_hold",     "lifecycle": "persisting", "side": "product", "hold": "main:hold:invoice:INV-14", "asset": "EUR/2", "amount": "10000",   "ageDays": 6}
     ],
     "pending": [
       {"ref": "PAY-45", "class": "unapplied_payment",    "asset": "EUR/2", "amount": "80000", "breakOn": "2026-09-27", "pairedHold": "main:hold:invoice:INV-12"},
-      {"ref": "PAY-99", "class": "applied_before_final", "asset": "EUR/2", "amount": "-30000", "breakOn": "2026-10-01", "holds": ["INV-13"]}
+      {"ref": "PAY-99", "class": "applied_before_final", "asset": "EUR/2", "amount": "-30000", "breakOn": "2026-10-01", "holdIds": ["INV-13"]}
     ],
     "resolved": [
-      {"breakId": "3a6e9d0b2c8f4171", "class": "stuck", "key": "INV-5", "asset": "EUR/2", "amount": "-70000", "clearedBy": "PAY-40"}
+      {"breakId": "3a6e9d0b2c8f4171", "class": "stuck", "side": "product", "hold": "main:hold:invoice:INV-5", "asset": "EUR/2", "amount": "-70000", "clearedBy": "PAY-40"}
     ]
   },
   "files": [
@@ -940,22 +959,25 @@ and was lettered on the same day.
 }
 ```
 
-- `rule` is the rule as it was evaluated. A replay uses the same version, and a reader sees the
-  thresholds behind each class. `buckets` are upper bounds; the stock's bucket labels are derived
-  from them (`0-1d`, `2-7d`, `8-30d`, `>30d`).
+- `rule` is the whole rule as it was evaluated (EN-2316). A replay uses the same version, and a
+  reader sees the thresholds behind each class. `buckets` are upper bounds; the stock's bucket
+  labels are derived from them (`0-1d`, `2-7d`, `8-30d`, `>30d`).
 - `cuts` gives each ledger's windows, `(logFrom, logTo]` for logs and `(txFrom, txTo]` for
   transactions: `logTo` is the cut `S`, `txTo` is `T`, and `logSha256` identifies the log at `S`.
 - `previousRun` links the days; its manifest hash chains them.
 - `lookups` counts the references read by key because they were missing from the window and the
-  carried items (`timingsMs.lookup` is their time).
-- `anomalies.key_metadata_mutated` counts the transactions whose key or state metadata was changed
-  or deleted after insertion, seen in the rewind window; each one is also named in a warning.
+  carried items (`timingsMs.lookup` is their time; `timingsMs.watch` is the time of the `watchLogs`
+  read).
+- `anomalies.key_metadata_mutated` counts the transactions whose key, state, business-id or
+  merchant-reference metadata was changed or deleted after insertion, seen in `(head_prev, head]`;
+  each one is also named in a warning. `logHead` is the head a run read up to, and `watchLogs` the
+  logs it read in `(head_prev, S]` for this check only.
 - `stockFrom` is `live` for a daily run. A replay says `daily`, `anchor` or `head`, with the stored
   stock it started from ([§4](#replaying-an-old-day)). `anchor` is `true` on the month's last run.
 - `counts.flow` is keyed by the same class values as the flow file, and adds up to its row count.
 - `statement` holds the bridge per asset, so a dashboard or a period summary needs no other file:
-  its lines with their `top` references, `carriedOutside` (`SUM(drift)`), `flowGross` (the absolute
-  drift of every open flow break), `offsetting` and the unclassified transactions per state.
+  its lines with their `top` references, `carriedOutside` (`SUM(drift)`), `flowGross` (the gross of
+  every open flow break), `offsetting` and the unclassified transactions per state.
 - `triage` holds what the statement lists by name: the top-K open breaks in priority order, the
   pending items with the day each becomes a break, and the breaks resolved since the previous run.
   The statement is rendered from the manifest alone.
@@ -1039,7 +1061,7 @@ INV-5 had been `stuck` since 21 September; its clearing resolves that break.
 
 ```text
 psp-vs-billing — 24 Sep 2026 (cut-off 23:59:59 Europe/Paris) — BREAKS
-4 open breaks (2 flow, 2 stock), 1 resolved · open flow breaks 550.00 EUR gross, net −150.00 EUR
+4 open breaks (2 flow, 2 stock), 0 at P1, 1 resolved · open flow breaks 550.00 EUR gross, net −150.00 EUR
 
 EUR
   PSP — finalised payments in the window                           4,000.00  (4)
@@ -1124,8 +1146,9 @@ laptop.
   plus 0.05 % extra ids.
 - There is no replication and no network. Read the absolute numbers as a lower bound and the ratios
   as the finding.
-- The bench is [`tools/bench-txlevel`](../../tools/bench-txlevel/README.md), a Go client over recon's
-  vendored `internal/ledgerpb`. Its README gives the exact commands to reproduce every figure below.
+- The bench is [`tools/bench-txlevel`](../../tools/bench-txlevel/README.md), a Go client over
+  recon's vendored `internal/ledgerpb`. Its README gives the exact commands to reproduce every
+  figure below.
 
 ### 7.1 Account reads
 
@@ -1179,7 +1202,8 @@ appears as a new `SavedMetadata` log at the head. This is why the flow filters o
    the backup profile (`internal/adapter/grpc/server_bucket.go:336-398`,
    `internal/storage/dal/store_readonly.go`). On the tip, two concurrent readers are *faster* than
    one: 100k × 2 in 8.3 s, against 26 s for one scope. The shared open survives while any reader
-   holds it, which shows the reopen is the cost. Not needed by recon (§8, F-b); filed for the Ledger team as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336).
+   holds it, which shows the reopen is the cost. Not needed by recon (§8, F-b); filed for the Ledger
+   team as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336).
 3. **Page size costs ×4.7.** Bulk reads must use `MaxPageSize` = 1000.
 4. **Every listed account emits an INFO log line** (`internal/application/ctrl/store.go:189-195`):
    3.86M lines, a 970 MB log. → ask **L2**.
@@ -1237,13 +1261,13 @@ still only see the run instant, not the cut-off.
 
 On the PSP ledger, the hold is named after the payment reference (`…:hold:{ref}`). So the flow could
 in principle be found by an **address prefix** on the holds, with the reference taken from the
-posting, instead of by the `payment_ref` metadata. That would bring two real advantages: an address in
-a posting never changes (unlike metadata, §7.2 `retag`), and a transaction that letters many holds at
-once would split naturally, posting by posting. Today that path cannot work at all, because a
-purged hold is unreachable by address ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)).
-The question measured here is whether it would be viable **if purged holds were reachable by
-address prefix**, as EN-2036's head `20a5595d6` makes them (EN-2331 itself only asks for exact
-addresses).
+posting, instead of by the `payment_ref` metadata. That would bring two real advantages: an address
+in a posting never changes (unlike metadata, §7.2 `retag`), and a transaction that letters many
+holds at once would split naturally, posting by posting. Today that path cannot work at all, because
+a purged hold is unreachable by address
+([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)). The question measured here is
+whether it would be viable **if purged holds were reachable by address prefix**, as EN-2036's head
+`20a5595d6` makes them (EN-2331 itself only asks for exact addresses).
 
 **Setup.** Same isolated single-node ledger, built from the tip `a08f99bc3` (port 38888).
 `load-lettering` books each payment as two transactions: `world → psp:hold:{id}`, then
@@ -1290,12 +1314,11 @@ one transaction per payment reference (ADR-005 §8, rule 2).
 
 ### 7.7 Concurrent readers: choosing K
 
-**Setup.** A fresh single-node ledger at `release/v3.0` `f390ea683` (the last commit on gRPC protocol
-10, which recon's vendored protos spoke at the time; they have since been re-synced to protocol 11
-at `fe668e01a`, whose changes — a revert-only field and error reason — are additive and off the
-read path). Ledger `mixed`: 1M
-transactions, 100k of them payments (`load-mixed`). Client and server share one Apple M4 Pro
-(12 cores). Median of three runs.
+**Setup.** A fresh single-node ledger at `release/v3.0` `f390ea683` (the last commit on gRPC
+protocol 10, which recon's vendored protos spoke at the time; they have since been re-synced to
+protocol 11 at `fe668e01a`, whose changes — a revert-only field and error reason — are additive and
+off the read path). Ledger `mixed`: 1M transactions, 100k of them payments (`load-mixed`). Client
+and server share one Apple M4 Pro (12 cores). Median of three runs.
 
 **Read time of the whole 1M-transaction window, by number of concurrent ranges K:**
 
@@ -1332,9 +1355,9 @@ while K readers loop over the unfiltered window, two series:
   cores, and there was no network latency; in production each page pays a round trip, which
   favours more readers, and a three-node cluster behaves differently. **Re-measure in staging**
   before changing the default.
-- This is why K is an operator setting (`--lettering-read-ranges`, `--lettering-max-concurrent-reads`,
-  ADR-005 §7) that the team running the deployment can tune without a rule change, and why it is
-  not exposed to customers.
+- This is why K is an operator setting (`--lettering-read-ranges`,
+  `--lettering-max-concurrent-reads`, ADR-005 §7) that the team running the deployment can tune
+  without a rule change, and why it is not exposed to customers.
 
 ## 8. Ledger findings and asks
 
@@ -1353,6 +1376,9 @@ while K readers loop over the unfiltered window, two series:
 ## Cross-links
 
 - [ADR-005 — transaction-level reconciliation](../prd/adr-005-transaction-level-reconciliation.md)
-- [ADR-003 — live reads, checkpoints removed](../prd/adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004 — named sources](../prd/adr-004-multi-source-comparisons.md)
-- [stale-holds.md](./stale-holds.md) (the open-hold ageing this generalises) · [templates.md](./templates.md) · [workflows.md](./workflows.md) · [scheduler.md](./scheduler.md)
-- Ledger: `docs/technical/architecture/subsystems/read-path/query-checkpoints.md`, `.../backup/README.md`, `.../consensus/hybrid-logical-clock.md`
+- [ADR-003 — live reads, checkpoints removed](../prd/adr-003-checkpoint-anchor-and-crosscheck.md) ·
+  [ADR-004 — named sources](../prd/adr-004-multi-source-comparisons.md)
+- [stale-holds.md](./stale-holds.md) (the open-hold ageing this generalises) ·
+  [templates.md](./templates.md) · [workflows.md](./workflows.md) · [scheduler.md](./scheduler.md)
+- Ledger: `docs/technical/architecture/subsystems/read-path/query-checkpoints.md`,
+  `.../backup/README.md`, `.../consensus/hybrid-logical-clock.md`
