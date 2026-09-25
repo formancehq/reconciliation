@@ -799,7 +799,9 @@ one transaction per payment reference (ADR-005 §8, rule 2).
 ### 7.7 Concurrent readers: choosing K
 
 **Setup.** A fresh single-node ledger at `release/v3.0` `f390ea683` (the last commit on gRPC protocol
-10, which recon's vendored protos speak; the tip `fe668e01a` requires 11). Ledger `mixed`: 1M
+10, which recon's vendored protos spoke at the time; they have since been re-synced to protocol 11
+at `fe668e01a`, whose changes — a revert-only field and error reason — are additive and off the
+read path). Ledger `mixed`: 1M
 transactions, 100k of them payments (`load-mixed`). Client and server share one Apple M4 Pro
 (12 cores). Median of three runs.
 

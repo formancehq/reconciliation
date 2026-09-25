@@ -7,8 +7,8 @@ hand-edit them: any local change is silently overwritten by the next sync.
 | | |
 |---|---|
 | Source | `github.com/formancehq/ledger`, branch `release/v3.0` |
-| Synced at | `8ee5f797e` (2026-09-17) |
-| Protocol revision | `10` — see [internal/ledgerpb/grpcprotocol](../../internal/ledgerpb/grpcprotocol/protocol.go) |
+| Synced at | `fe668e01a` (2026-09-25) |
+| Protocol revision | `11` — see [internal/ledgerpb/grpcprotocol](../../internal/ledgerpb/grpcprotocol/protocol.go) |
 
 ## Re-syncing
 

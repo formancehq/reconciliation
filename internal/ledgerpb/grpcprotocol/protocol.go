@@ -24,10 +24,10 @@ import (
 
 const (
 	// Version is the ledger service protocol revision this build speaks. It
-	// tracks pkg/grpcprotocol.Version in the ledger repo — currently "10" at
-	// release/v3.0 8ee5f797e — and is independent of the ledger's release
+	// tracks pkg/grpcprotocol.Version in the ledger repo — currently "11" at
+	// release/v3.0 fe668e01a — and is independent of the ledger's release
 	// SemVer, its git SHA and reconciliation's own version.
-	Version = "10"
+	Version = "11"
 
 	// MetadataKey carries the revision. It is public metadata, not a credential.
 	MetadataKey = "ledger-protocol-version"
