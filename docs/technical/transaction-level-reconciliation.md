@@ -187,9 +187,9 @@ sequenceDiagram
     J->>Q: AggregateVolumes(each hold prefix)
     J->>C: capture(phase=aggregate, S_P, S_Q, T_P, T_Q, live exposure)
     Note over J,O: Phase 2 — async, resumable
-    par flow window, 8 transaction-id ranges each
+    par flow window, K transaction-id ranges each (default 8)
         J->>P: ListTransactions(id ∈ (T_P_prev, T_P] ∧ payment_ref EXISTS)
-        J->>Q: ListTransactions(id ∈ (T_Q_prev, T_Q] ∧ payment_ref EXISTS)
+        J->>Q: ListTransactions(id ∈ (T_Q_prev, T_Q] ∧ (payment_ref EXISTS ∨ business_ref EXISTS))
     and stock rewind
         J->>P: ListAccounts(each hold prefix, live) then ListLogs((S_P, head])
         J->>Q: ListAccounts(each hold prefix, live) then ListLogs((S_Q, head])
@@ -286,8 +286,9 @@ yesterday's capture.
 
 - **Resolving it** costs one read per ledger and per day: ask for the first transaction with
   `inserted_at > cut-off`, page size 1. It is id 1 318 501, so `T = 1 318 500`. `S` works the same
-  way on the log-date index. **Both indexes are mandatory**: the rule is rejected without them, and
-  a run waits while they build, as for the key's index. `formancepayments` creates neither today,
+  way on the log-date index. **Both indexes are mandatory**: the rule is rejected without them, a
+  run waits while they build, as for the key's index, and an index missing at run time is an engine
+  error (`INCOMPLETE`), never a silent fallback. `formancepayments` creates neither today,
   so a Connectivity-fed ledger needs them added at implementation (checklist row 10).
 - **Bisection was considered and dropped.** Because ids are contiguous and the insertion date grows
   with them, the cut could be found without the indexes by halving the id range from
@@ -331,10 +332,13 @@ including the metadata changes that the rewind window monitors (`key_metadata_mu
   The rewind window `(S, head]` is split the same way. K is an **operator setting**, not a rule
   parameter: `--lettering-read-ranges` (default 8), capped process-wide by
   `--lettering-max-concurrent-reads` (default 16), so that several rules running at once do not
-  multiply the readers on one ledger. Beyond 8 the read gains little and the ledger's writes pay
-  more (§7.7).
-- **Completeness.** Ids are contiguous, so an unfiltered range `(lo, hi]` must return exactly
-  `hi − lo` rows. A short count makes the run `INCOMPLETE` instead of silently shrinking the window.
+  multiply the readers on one ledger. Eight readers read about 4× faster than one; up to 16 the
+  read still gains about 20 % while the ledger's writes pay more, and beyond 16 it barely improves
+  (§7.7).
+- **Completeness.** Ids are contiguous, so the unfiltered log window `(lo, hi]` of the rewind must
+  return exactly `hi − lo` logs. A short count makes the run `INCOMPLETE` instead of silently
+  shrinking the window. The flow read is filtered, so its completeness comes from the continuity
+  check instead.
 - **Replay.** `S`, `T` and the log hash at `S` are written in the signed capture, so a later
   re-read covers the same window. Both ledgers are cut at the same business time, whenever the job
   runs.
@@ -438,15 +442,15 @@ state metadata stayed write-once. The exact variant reads that day's logs `(S_pr
 slower but still one day's worth.
 
 **The rewind from head grows with the day's age.** It reads every log since `S`, and it keeps the
-first touch of every hold touched since. With 1M logs written a day, at the measured 15.1 s per 1M
-logs over 8 ranges (§7.2):
+first touch of every hold touched since. With 1M logs written a day, at the measured 41k logs/s
+with the fold of `post_commit_volumes` over 8 ranges (§7.2, 24.2 s per 1M logs):
 
 | Replay | Logs in `(S, head]` | Read time |
 |---|---|---|
-| The next day (the normal run) | ~1M | ~15 s |
-| A week later | ~7M | ~2 min |
-| A month later | ~30M | ~8 min |
-| A year later | ~365M | **~1 h 30**, with close to a year of holds to track |
+| The next day (the normal run) | ~1M | ~25 s |
+| A week later | ~7M | ~3 min |
+| A month later | ~30M | ~12 min |
+| A year later | ~365M | **~2 h 30**, with close to a year of holds to track |
 
 **So a replay starts from the nearest stored stock, not from head.** Each run stores its stock at its
 cut (`stock.ndjson.gz`), and the stock is additive over time:
@@ -516,7 +520,7 @@ from the two control totals down to the explained items, with an explicit verdic
 
 | Verdict | Condition | What it tells the controller |
 |---|---|---|
-| `INCOMPLETE` | A window range returned fewer logs than `hi − lo`, a continuity identity fails, or the bridge below has a non-zero **unexplained residual** | "No conclusion can be drawn": the engine failed, not the books. It opens an engine-error alert, never a green one |
+| `INCOMPLETE` | A required index is missing, a window range returned fewer logs than `hi − lo`, a continuity identity fails, or the bridge below has a non-zero **unexplained residual** | "No conclusion can be drawn": the engine failed, not the books. It opens an engine-error alert, never a green one |
 | `BREAKS` | at least one break row | the count and gross amount of breaks, split by class |
 | `RECONCILED_WITH_PENDING` | no break, but unapplied payments still within `grace` | "OK for now". The pending items, their amount and the date each one becomes a break |
 | `RECONCILED` | none of the above | the only green state |
@@ -533,9 +537,11 @@ from the two control totals down to the explained items, with an explicit verdic
     ± under / over applications                                 P2    …     (n)
     − applications of payments finalised on an earlier day            …     (n)   carried from D−k
   = unexplained residual                                  must be 0, else INCOMPLETE
-Carried from earlier days, outside the window's net:
+Carried from earlier days, outside the window's net (one line per class still open):
     unapplied payments still within grace                             …     (n)
     unapplied payments past grace                               P3    …     (n)
+    under / over applications                                   P2    …     (n)
+    orphan applications                                         P1    …     (n)
 Gross breaks: Σ|drift| = …    Offsetting: yes/no (net ≈ 0 while gross > 0)
 ```
 
@@ -685,7 +691,9 @@ covers every file transitively.
 - The primary mechanism is the storage lifecycle rule on the prefix, with recon's `expiresAt` sweep
   as the fallback.
 - An expired day can be recomputed from the permanent logs with the same cut.
-- **Monthly stock anchors** outlive the 90 days: the last run of each month keeps its
+- **Monthly stock anchors** outlive the 90 days, in place, flagged by an object tag the lifecycle
+  rule filters on (S3 object tags, Azure blob index tags), so they stay under `rule=/day=/run=`
+  where replays and globs expect them: the last run of each month keeps its
   `manifest.json` and `stock.ndjson.gz` for `anchorRetention` (proposed 13 months). They keep the
   replay of an old day cheap ([§4](#replaying-an-old-day)).
 
@@ -696,7 +704,7 @@ ledgers. For each day it gives:
 
 - the counts per class;
 - the net and absolute drift;
-- the breaks opened and cleared;
+- the breaks opened and resolved, and the holds cleared (the manifest's `counts`);
 - the link to that day's files.
 
 Breaks still open at period end keep the day they first appeared. A break that clears after its
@@ -740,6 +748,7 @@ and was lettered on the same day.
   "rule": {
     "id": "psp-vs-billing", "version": 7, "sha256": "4c1d…",
     "grace": "3d", "maxAge": "30d", "buckets": ["0-1d", "2-7d", "8-30d", ">30d"],
+    "retention": "90d", "anchorRetention": "13mo",
     "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id",
                 "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}]},
     "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no",
@@ -1093,14 +1102,16 @@ posting, instead of by the `payment_ref` metadata. That would bring two real adv
 a posting never changes (unlike metadata, §7.2 `retag`), and a transaction that letters many holds at
 once would split naturally, posting by posting. Today that path cannot work at all, because a
 purged hold is unreachable by address ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)).
-The question measured here is whether it would be viable **once EN-2331 is fixed**.
+The question measured here is whether it would be viable **if purged holds were reachable by
+address prefix**, as EN-2036's head `20a5595d6` makes them (EN-2331 itself only asks for exact
+addresses).
 
 **Setup.** Same isolated single-node ledger, built from the tip `a08f99bc3` (port 38888).
 `load-lettering` books each payment as two transactions: `world → psp:hold:{id}`, then
 `psp:hold:{id} → psp:main`, both with `payment_ref = id`. The holds are **NORMAL**, so the lettered
 holds stay listed at zero. That is how an address-prefix filter behaves once purged accounts are
-resolved from the account→tx mappings, as EN-2331 proposes. The window is the **last** N transaction
-ids, and the history is everything before it.
+resolved from the account→tx mappings, as `20a5595d6` does. The window is the **last** N
+transaction ids, and the history is everything before it.
 
 | History | Window | `payment_ref EXISTS` | Address prefix `psp:hold:` |
 |---|---|---|---|
@@ -1125,11 +1136,11 @@ With a 2k-transaction window: 56 ms against 5.7 s at 100k payments, and 65 ms ag
   each 1,000-row page: about 24 s per page on a 1M-payment history.
 - **At production scale the address path is unusable.** A day of 100k payments is 200 pages. On
   90 days of 100k payments per day, one page would scan 9M holds, so a single run would take hours.
-- **Fixing EN-2331 does not change this.** Its preferred fix resolves addresses from the mapping
-  keyspace, which is ordered by account, then transaction id (`[atxm][ledger][account][txID]`). Even
-  with the id range pushed into that walk, each account under the prefix still costs a seek: O(holds
-  ever created), not O(window). Only an address index ordered by transaction id would make this path
-  O(window), and nothing asks for one.
+- **Reaching purged holds by prefix does not change this.** `20a5595d6` resolves addresses from
+  the mapping keyspace, which is ordered by account, then transaction id
+  (`[atxm][ledger][account][txID]`). Even with the id range pushed into that walk, each account
+  under the prefix still costs a seek: O(holds ever created), not O(window). Only an address index
+  ordered by transaction id would make this path O(window), and nothing asks for one.
 
 **Conclusion.** The flow key stays a **declared, indexed transaction metadata field on both
 ledgers** (ADR-005 §6). The hold address remains the key of the **stock** only, where a prefix

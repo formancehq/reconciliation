@@ -53,7 +53,7 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | 7 | End-to-end demo UI ([poc-reconciliation-demo](../../poc-reconciliation-demo)) — replaces the planned dockertest harness | ✅ shipped |
 | 8 | V1 GA additions — event delivery via the ledger events sink ✅ · in-process cron scheduler ✅ (single-instance) · email digest / fctl / EE gating / metering 🚧 | 🚧 in progress |
 | 9 | V2 additive API — `balance_equation`, `exchange_rate_bounds`, `source_consensus`, and `coverage_ratio_bounds`, isolated from V1 persisted contracts | ✅ implemented |
-| 10 | Transaction-level (lettering) reconciliation — PSP ledger ↔ product ledger per PSP payment reference: flow read with `ListTransactions` filtered on the reference, open holds rewound to the cut through the log window, no query checkpoint; async detail in object storage ([ADR-005](./prd/adr-005-transaction-level-reconciliation.md)) | ⏳ proposed — evaluation done, tickets pending |
+| 10 | Transaction-level (lettering) reconciliation — PSP ledger ↔ product ledger per PSP payment reference: flow read with `ListTransactions` filtered on the reference, open holds rewound to the cut through the log window, no query checkpoint; async detail in object storage ([ADR-005](./prd/adr-005-transaction-level-reconciliation.md)) | ⏳ proposed — evaluation done, tickets filed (epic EN-2315) |
 
 ## V2 compatibility boundary
 

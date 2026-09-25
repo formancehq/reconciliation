@@ -1,12 +1,14 @@
 # ADR-005 — Transaction-level (lettering) reconciliation: a log-window cut instead of query checkpoints
 
 **Status:** Proposed. The design is under evaluation and nothing is implemented. The owner's answers
-of 2026-09-24 settle the questions of the first draft (§10).
+of 2026-09-24 settle the questions of the first draft, and those of 2026-09-25 refine the rule
+contract, the cut and the result files (§10).
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316 to
 EN-2323 (R1–R8). Wave 2 is EN-2333 (R9 period summary), EN-2334 (R10 rewind oracle test) and
 EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9): L2 EN-2327,
-L6 EN-2328, L7 EN-2329, L8 EN-2326, L5 EN-2331.
-**Date:** 2026-09-24
+L6 EN-2328, L7 EN-2329, L8 EN-2326, L5 EN-2331; EN-2336 tracks the checkpoint read penalty, which
+this design does not depend on.
+**Date:** 2026-09-24, updated 2026-09-25
 **Decision owners:** Reconciliation maintainers
 **Related:** [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [design, measurements and evidence](../technical/transaction-level-reconciliation.md)
 **Upstream facts verified at:**
@@ -25,7 +27,8 @@ A transaction-level control reconciles a **PSP ledger** against a **product ledg
 payment reference**. The payment is first seen on the PSP ledger. The product ledger later books a
 transaction carrying the same reference, which letters a *business* hold (an invoice, an order…).
 
-The control defines its cut as **one log id per ledger, taken at the business cut-off**. It
+The control defines its cut as **one log id `S` and one transaction id `T` per ledger, taken at
+the business cut-off**. It
 reconciles two legs:
 
 - the **flow**: what each ledger booked during the window, read with `ListTransactions` filtered
@@ -382,9 +385,9 @@ checkpoint's listing.
   product ledger. The product side also names the field that carries the **business id** of the hold
   it letters (`invoice_no`…), which gives the payment → invoice link.
   The key is **never taken from the hold address**, even on the PSP ledger where holds are named
-  after the reference. Measured with purged holds made reachable (as EN-2331 would), an address
-  prefix costs O(history) per page: 47.8 s for a 2k-transaction window on a 1M-payment history,
-  against 48 ms for `payment_ref EXISTS`, which stays O(window)
+  after the reference. Measured with purged holds made reachable by prefix (as EN-2036's head
+  `20a5595d6` does), an address prefix costs O(history) per page: 47.8 s for a 2k-transaction window
+  on a 1M-payment history, against 48 ms for `payment_ref EXISTS`, which stays O(window)
   ([design doc §7.6](../technical/transaction-level-reconciliation.md#76-where-the-key-comes-from-transaction-metadata-not-the-hold-address)).
   The hold address keys the stock only.
 - **States are parameters, not a fixed vocabulary** (owner, 2026-09-24). How external payment states
@@ -450,7 +453,8 @@ checkpoint's listing.
 
 - **Stock classes**, per hold and per side: `open` with its age bucket, `negative_hold` (the balance
   has the sign opposite its prefix's `openSign`: an over-application or a skipped state,
-  "investigate id"), and `stuck` (open past the side's `maxAge`, the `stale_holds` signal per key).
+  "investigate id"), `stuck` (open past the side's `maxAge`, the `stale_holds` signal per key) and
+  `cleared` (open at the previous run's `S`, lettered since: listed once, not a break).
   `negative_hold` and `stuck` are breaks of priority 4.
   PSP holds are pending payments; product holds are unpaid business objects. The two books are aged,
   never joined to each other.
@@ -491,7 +495,7 @@ checkpoint's listing.
 ## 7. Decision C — two-phase workflow, detail kept 90 days in the backup storage
 
 1. **Phase 1: synchronous, seconds.**
-   - Resolve `S` on each ledger.
+   - Resolve `S` and `T` on each ledger.
    - Take one live `AggregateVolumes` per hold prefix, each signed by its `openSign` so that holds
      of opposite signs do not cancel. This is the open exposure *now*, labelled with the run instant,
      because the call does not say which log id its snapshot saw.
@@ -536,7 +540,8 @@ checkpoint's listing.
    - Expiry loses nothing irrecoverable. The logs are permanent, so any past day can be recomputed
      from the ledgers with the same cut.
    - **Stock anchors are kept longer.** The last run of each month keeps its `manifest.json` and
-     `stock.ndjson.gz` for `anchorRetention`, a rule parameter (proposed default 13 months, to
+     `stock.ndjson.gz` in place, flagged by an object tag the lifecycle rule filters on, for
+     `anchorRetention`, a rule parameter (proposed default 13 months, to
      calibrate with the design partner). An anchor holds only the open book, which is small by
      construction, so keeping it costs little. It is what keeps the replay of an old day cheap
      (item 7).
@@ -547,7 +552,7 @@ checkpoint's listing.
      than from the ledgers, list each day with:
      - its counts per class;
      - its net and absolute drift;
-     - the breaks it opened and cleared;
+     - the breaks it opened and resolved, and the holds it cleared;
      - the link to its files.
    - A break still open at the end of the period keeps the day it first appeared. A break that clears
      after its period has closed shows up in the next period; the closed period is never rewritten.
@@ -557,8 +562,8 @@ checkpoint's listing.
    applied, would never be seen. On the PSP side its hold is already lettered, and it is in no later
    window.
    - The first run therefore reads the flow from **`backfillFrom`**, a rule parameter that defaults
-     to **cut-off − `grace` − 1 day**, instead of from the previous day's cut. That seeds the pending
-     set.
+     to **cut-off − `grace` − 1 day**, instead of from the previous day's cut. That seeds the
+     carried items.
    - Everything older than `backfillFrom` is out of scope. The first statement says so explicitly
      ("backfilled since …"), so it cannot be misread as covering all history.
    - The stock books need no backfill. They come from the listing, so an invoice unpaid for 60 days
@@ -570,12 +575,13 @@ checkpoint's listing.
 7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
    (`S`, `T`, log hash) is in the signed capture.
    - **The flow costs the same at any age.** Resolving the cut takes one index page per ledger, and
-     the day is the id range `(T_prev, T]`, so the read stays O(payments of that day). It matches the original run as long as the write-once convention held. The exact variant
-     reads that day's logs `(S_prev, S]`: slower, but still one day's worth, whatever its age.
+     the day is the id range `(T_prev, T]`, so the read stays O(payments of that day). It matches
+     the original run as long as the write-once convention held. The exact variant reads that day's
+     logs `(S_prev, S]`: slower, but still one day's worth, whatever its age.
    - **The rewind from head does not.** It reads every log written since the day's cut, and keeps the
-     first touch of every hold touched since. With 1M logs a day and the measured 15 s per 1M logs
-     (8 ranges), that is ~15 s the next day, ~2 min a week later, ~8 min a month later and **~1 h 30
-     a year later**, with close to a year of holds to track.
+     first touch of every hold touched since. With 1M logs a day and the measured 41k logs/s with
+     the fold (8 ranges), that is ~25 s the next day, ~3 min a week later, ~12 min a month later
+     and **~2 h 30 a year later**, with close to a year of holds to track.
    - **So a replay starts from the nearest stored stock instead of from head.** The stock is
      additive over time: `stock(S_D) = stock(S_A) + hold movements in (S_A, S_D]`.
      - Forward from an earlier stock `A`: read the logs `(S_A, S_D]`. Each touched hold takes its
@@ -622,8 +628,10 @@ The rules that the engine's efficiency depends on:
      flow read returns hold openings too and continuity can be computed.
 
    **`payment_ref` must be declared and indexed on both ledgers**, because the flow is read by
-   filtering on its presence (§5). Index `merchant_ref` and `business_ref` too, for investigation:
-   address filters miss purged holds today, and an address prefix scales with history (§2.2).
+   filtering on its presence (§5). **`business_ref` must be indexed on the product ledger** too,
+   because the product-side flow read filters on it to return hold openings. Index `merchant_ref`
+   for investigation: address filters miss purged holds today, and an address prefix scales with
+   history (§2.2).
    **These fields are write-once.** A correction is a new transaction, never a `SavedMetadata` on an
    existing one, because a filtered re-read would otherwise change a past day (§5, caveat 1).
    **`merchant_ref` is what turns an `unapplied_payment` into "invoice X is paid: apply it".**
@@ -686,7 +694,17 @@ for the Ledger team to weigh against its own users:
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**: a refund hold on the product ledger and a payment with its own reference on the PSP ledger. They are never a reversal of the original payment (§6). |
 | 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType` (`daily`, `weekly`, `monthly`); no accounting-period model. The alert carries the aggregate comparison, and the per-payment detail sits in the backup storage (§6, §7). |
 | 9 | First run | A bounded **backfill** from `backfillFrom` (default: cut-off − grace − 1 day), announced explicitly in the first statement (§7). |
-| 10 | Read path of the flow | **`ListTransactions` filtered on `payment_ref EXISTS`**, over parallel id ranges: 5–7× faster than logs and O(payments). Logs stay for the rewind window and for exact re-derivation (§5). |
+| 10 | Read path of the flow | **`ListTransactions` filtered on `payment_ref EXISTS`** (product side: `payment_ref` or `business_ref`), over parallel id ranges: 5–7× faster than logs and O(payments). Logs stay for the rewind window and for exact re-derivation (§5). |
+
+**Refined by the owner on 2026-09-25:**
+
+| # | Question | Decision |
+|---|---|---|
+| 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**: the sign depends on the integration and cannot be inferred. An application's amount is its net posting on those prefixes; `negative_hold` is the sign opposite `openSign`; continuity runs per prefix (§5, §6). |
+| 12 | The cut's indexes | The **`inserted_at` and log-date indexes are mandatory** on both ledgers; bisection is dropped, and an index missing at run time is an engine error (§5). |
+| 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
+| 14 | Replaying an old day | From the **nearest stored stock**: daily within `retention`, monthly anchors for `anchorRetention`; the rewind from head is the fallback (§7). |
+| 15 | Result files | For the customer first: simple gzipped NDJSON under `rule=/day=/run=`, one name per identifier, an `outcome` on every row and a `priority` on breaks, a self-contained breaks file with a stable `breakId`, every reference with a drift carried to the next run, byte-identical files for a given cut (§7, design doc). |
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
