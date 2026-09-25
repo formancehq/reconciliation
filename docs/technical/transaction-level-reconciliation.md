@@ -607,8 +607,8 @@ can evolve behind `schemaVersion`:
 
 **Rules a reader can rely on.**
 
-- **Every daily file is written on every run**, even with no row, so a glob or a script never breaks on a
-  quiet day. The manifest gives each file's row count.
+- **Every daily file is written on every run**, even with no row, so a glob or a script never
+  breaks on a quiet day. The manifest gives each file's row count.
 - **A file may come in parts.** Past a row threshold, `flow.ndjson.gz` becomes
   `flow-00000.ndjson.gz`, `flow-00001.ndjson.gz` and so on, in the file's order, each listed in
   the manifest's `files` with its `part`, rows and SHA-256. Today every file fits in one part. A
