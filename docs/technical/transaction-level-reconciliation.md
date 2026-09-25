@@ -65,6 +65,20 @@ On the product ledger, the invoice is booked in three transactions:
 prefixes**, each counted in the direction that settles it (§5). The revenue recognition therefore counts for
 nothing, even if it carried the payment reference. It is still best kept without one.
 
+**The amount of a PSP payment is its net posting on the rule's `psp.paymentAccount`**, the account
+its final event credits (`fpay:{conn}:account:*:main` for `formancepayments`), never its movement on
+the hold. The hold is right only when the `pending` and the final amount agree:
+
+| Case, `formancepayments` | `payin.succeeded` posts | Net on the hold | Paid | On `paymentAccount` |
+|---|---|---|---|---|
+| `pending` X, then final X | X hold → `main` | −X | X | X |
+| final Y, no `pending` before | Y mirror → `main` (the hold is empty) | 0 | Y | Y |
+| `pending` X, then final Y < X | Y hold → `main`, then X − Y hold → mirror | −X | Y | Y |
+| `pending` X, then final Y > X | X hold + Y − X mirror → `main` | −X | Y | Y |
+
+The hold keeps its role for the PSP stock: `opened` and `lettered` are hold movements, so
+continuity holds in every row above.
+
 - **Open items are a query.** At any instant, the open book is simply the set of non-zero holds.
   Lettered holds purge, so the open book stays small whatever the history.
 - **A lettered item exists only in its transactions.** This was verified on a live ledger at
@@ -146,6 +160,7 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
 | 8 | use **EPHEMERAL holds, one per payment, under one prefix per kind**, and note the sign each kind opens with | The open book is then a prefix listing, and lettered holds leave it. The rule declares each prefix with its sign (`holds[].openSign`) |
 | 9 | set `reference = {payment_ref}:{state}` | Re-delivery of an event is idempotent |
 | 10 | have the **`inserted_at` and log-date indexes** created on the ledger | Each resolves the cut-off in one read. The rule is rejected without them (EN-2316) |
+| 11 | credit the **payment amount of a final event to one account per payment kind**, which the rule names as `psp.paymentAccount` (an address pattern) | The PSP amount is read there; the hold alone misses a final event with no `pending` before it, or one whose amount differs |
 
 **Where two existing mappings stand**, as a starting point:
 
@@ -155,7 +170,8 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
     indexed (`:1143-1147`); row 3, with `formance.com/observation.event-type` indexed and
     `payments.formance.com/payment-status`; row 8, with an EPHEMERAL
     `fpay:{conn}:payment:hold:pending:{payment_id}` hold (`:64-73`); row 9 in intent, since
-    `reference = {conn}:padj:{adjustment_id}` is idempotent per event;
+    `reference = {conn}:padj:{adjustment_id}` is idempotent per event; row 11, as
+    `payin.succeeded` credits `fpay:{conn}:account:{acct}:main` with the payment amount;
   - **to configure:** row 4, as there is no merchant reference on transactions
     (`payments.formance.com/reference` is account metadata); row 6, as refunds are mapped
     (`PAYIN_REFUNDED` and five siblings, `:430-704`) but as deltas **on the original payment id**,
@@ -702,11 +718,9 @@ can evolve behind `schemaVersion`:
   - A product `amount` is the application's net posting on the hold prefixes, in the settling
     direction (§5). An application transaction that moves two holds (one payment split across two
     invoices in a single transaction) is listed once per hold, each item with its hold's amount.
-  - A PSP `amount` is what the event contributes: the payment amount of a `final` event, which
-    `pspAmount` sums, and the hold movement of a `pending` or `failed` one. Reading a final event's
-    amount from its postings is EN-2320's to specify: `formancepayments`' `payin.succeeded` sends
-    the payment amount from the hold and draws any shortfall on the provider mirror, so the net on
-    the hold alone would miss a final event that no `pending` preceded.
+  - A PSP `amount` is what the event contributes: for a `final` event, its net posting on
+    `psp.paymentAccount` in absolute value, which `pspAmount` sums; for a `pending` or `failed`
+    one, its hold movement ([§2](#2-the-booking-this-control-relies-on)).
 
 **Carried rows** are the flow rows whose `drift` is not 0: unapplied payments, under- and
 over-applications, applications awaiting a final PSP state, orphan and reversed applications. They
@@ -836,7 +850,7 @@ and was lettered on the same day.
     "id": "psp-vs-billing", "version": 7, "sha256": "4c1d…",
     "buckets": ["1d", "7d", "30d"], "retention": "90d", "anchorRetention": "13mo",
     "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id",
-                "grace": "7d", "maxAge": "10d",
+                "grace": "7d", "maxAge": "10d", "paymentAccount": "fpay:stripe:account:*:main",
                 "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}]},
     "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no",
                 "grace": "3d", "maxAge": "30d",

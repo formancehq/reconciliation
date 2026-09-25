@@ -398,7 +398,8 @@ checkpoint's listing.
   ```json
   "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
           "state": {"field": "formance.com/observation.event-type", "final": ["payin.succeeded"], "failed": ["payin.compensate"], "pending": ["payin.pending"]},
-          "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}], "grace": "7d"},
+          "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}], "grace": "7d",
+          "paymentAccount": "fpay:stripe:account:*:main"},
   "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no", "grace": "3d",
           "state": {"field": "transition_kind", "final": ["to_final"]},
           "holds": [{"prefix": "main:hold:invoice:", "openSign": "negative"},
@@ -429,6 +430,18 @@ checkpoint's listing.
   each counted in the direction that settles it: an invoice hold that opens at −X is settled by +X.
   A transaction that carries the key but moves no hold, such as a revenue recognition booked in the
   same batch as the application, therefore counts for nothing.
+- **A PSP payment's amount is its net posting on the side's `paymentAccount`**, the account a final
+  event credits with the payment (owner, 2026-09-25). It is an address pattern where `*` matches one
+  segment (`fpay:stripe:account:*:main` for `formancepayments`), matched in memory on the postings
+  the flow read already returns, and counted in absolute value.
+  - The hold cannot give it. `formancepayments`' `payin.succeeded` sends the payment amount to
+    `account:{acct}:main`, taking it from the hold first and from the provider mirror
+    `account:{acct}` for any shortfall, then returns what is left in the hold to the mirror. The
+    net on the hold is therefore 0 for a final event that no `pending` preceded, and the `pending`
+    amount, not the paid one, when the two differ.
+  - The hold still gives the PSP stock and its continuity: `opened` and `lettered` are hold
+    movements by definition. A `pending` or `failed` event's amount is its hold movement.
+  - The postings are immutable, so this needs no connector change and no amount metadata.
 - **No tolerance.** Owner decision, 2026-09-24. The comparison is exact: a fee or FX difference on a
   payment is a break, never an accepted gap. Fees and FX must be booked explicitly on the side that
   bears them.
@@ -749,6 +762,7 @@ for the Ledger team to weigh against its own users:
 | 14 | Replaying an old day | From the **nearest stored stock**: daily within `retention`, monthly anchors for `anchorRetention`; the rewind from head is the fallback (§7). |
 | 15 | Result files | For the customer first: simple gzipped NDJSON under `rule=/day=/run=`, one name per identifier, an `outcome` on every row and a `priority` on breaks, a self-contained breaks file with a stable `breakId`, every reference with a drift carried to the next run, byte-identical files for a given cut (§7, design doc). |
 | 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break. **`grace` is per side**, the time that side may lag behind the other: `product.grace` (3 days) for `unapplied_payment`, `psp.grace` (7 days) for `applied_before_final`, unknown references included, which then becomes `orphan_application` (P1); 0 forbids any lag. References missing from the window are looked up by key; every flow row records its `firstSide`; `breakId` leaves out the class; the alert opens on a break, never on the net alone (§6). |
+| 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern, `fpay:stripe:account:*:main` for `formancepayments`), not on the hold: a final event with no `pending` before it, or with another amount than its `pending`, moves the hold by 0 or by the wrong amount (§6). |
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
