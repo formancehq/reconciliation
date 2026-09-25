@@ -439,18 +439,19 @@ checkpoint's listing.
   stock-side fact (the business hold only letters to zero once), not a flow break.
 - **Flow classes**, per payment reference:
 
-  | Class | Meaning | Severity |
+  | Class | Meaning | Outcome (priority) |
   |---|---|---|
-  | `matched` | PSP `final`, and product applications summing to the same amount | — |
-  | `under_applied` / `over_applied` | PSP `final`, but the product applications sum to less or to more. There is no tolerance | break |
-  | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `grace`**, a break after it | pending, then break |
-  | `in_progress` | PSP `pending` only, no application yet. Its hold is in the PSP stock | — |
-  | `orphan_application` | A product application points at a reference the PSP never finalised (unknown, `pending` or `failed`) | **critical** |
-  | `reversed_after_application` | The PSP reports `failed` on a reference **after** the product applied it. A refund or chargeback is *not* this: it has its own reference | **critical** |
+  | `matched` | PSP `final`, and product applications summing to the same amount | ok |
+  | `under_applied` / `over_applied` | PSP `final`, but the product applications sum to less or to more. There is no tolerance | break (2) |
+  | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `grace`**, a break after it | pending, then break (3) |
+  | `in_progress` | PSP `pending` only, no application yet. Its hold is in the PSP stock | ok |
+  | `orphan_application` | A product application points at a reference the PSP never finalised (unknown, `pending` or `failed`) | break (**1**) |
+  | `reversed_after_application` | The PSP reports `failed` on a reference **after** the product applied it. A refund or chargeback is *not* this: it has its own reference | break (**1**) |
 
 - **Stock classes**, per hold and per side: `open` with its age bucket, `negative_hold` (the balance
   has the sign opposite its prefix's `openSign`: an over-application or a skipped state,
   "investigate id"), and `stuck` (open past the side's `maxAge`, the `stale_holds` signal per key).
+  `negative_hold` and `stuck` are breaks of priority 4.
   PSP holds are pending payments; product holds are unpaid business objects. The two books are aged,
   never joined to each other.
 - **Grace and ageing: proposed defaults, to calibrate with the design partner** (the owner has no
@@ -480,7 +481,7 @@ checkpoint's listing.
       difference class by class, and its **unexplained residual must be 0**; otherwise the verdict
       is `INCOMPLETE`, an engine failure and never a green run.
     - The **gross** Σ|drift| next to the net, with an explicit *offsetting* flag.
-    - The breaks in **severity order**, each with new versus persisting.
+    - The breaks in **priority order**, each with new versus persisting.
   - **What opens the alert:** any break, whether a non-zero net drift *or* at least one break row.
     An aggregate alone can net to zero over offsetting breaks (+x on one payment, −x on another), so
     the aggregate is what the alert *shows*, never the sole trigger. Unapplied payments still within
@@ -514,7 +515,8 @@ checkpoint's listing.
      DuckDB, pandas, a spreadsheet import); recon's API and UI read them too. So the format stays
      simple: gzipped NDJSON, a JSON Schema per file, and a `schemaVersion` in the manifest to evolve
      it. The `key=value` path segments let query engines read rule, day and run as columns.
-     Identifiers keep one name across files, breaks carry a `breakId` stable from day to day and
+     Identifiers keep one name across files, every row has an `outcome` (`ok`, `pending`, `break`,
+     `warning`), breaks carry a `priority` (1 to 4) and a `breakId` stable from day to day and
      are self-contained, and the manifest carries the statement, so a dashboard needs no other file
      ([design doc](../technical/transaction-level-reconciliation.md#result-artifacts-retention-and-the-period-view)).
    - The prefix **must stay outside `{bucketID}/backups/`**. The ledger's post-manifest orphan prune
