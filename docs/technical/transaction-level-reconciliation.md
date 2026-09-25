@@ -140,6 +140,59 @@ best avoided: each one is a log in the rewind window.
 **Refunds and chargebacks** are their own pair: a refund hold, a refund reference, and a payment
 with its own `payment_ref` on the PSP side (ADR-005 decision 7).
 
+### When application is deferred or manual: a payment-to-apply hold
+
+The booking above assumes the product applies a payment as soon as the PSP finalises it: the
+`payin.succeeded` webhook triggers the application, and the only delay is that mechanism's.
+Some businesses cannot do that. A B2B bank transfer often arrives before anyone knows which
+invoice it settles, and an accountant letters it by hand days later.
+
+**With the default booking, this already works.** The payment sits in the carried items as an
+`unapplied_payment` until it is applied, and becomes a P3 break past `product.grace`. Raise
+`product.grace` to the team's usual lettering delay (a few business days, for example) so the
+statement does not flag work in progress.
+
+**The option: book the received payment on the product ledger.** The product keeps one hold per
+payment received and not yet applied, the classic "unapplied cash":
+
+```text
+1. received:  main:clearing:{conn}     → main:hold:payment:PAY-45   X   (hold at +X; psp_payment_ref, state received)
+2. invoice:   main:hold:invoice:INV-12 → user:revenue:A:pending     X   (unchanged)
+3. applied:   main:hold:payment:PAY-45 → main:hold:invoice:INV-12   X   (letters both holds; psp_payment_ref, invoice_no)
+```
+
+- Step 1 is booked by the product when it receives the PSP's webhook, before anyone chooses an
+  invoice. `main:clearing:{conn}` becomes the counterpart of receipts, and its aggregate still
+  lines up with the PSP's `:main`.
+- A payment split across invoices is several step-3 transactions from the same payment hold. A
+  partial application leaves a remainder on it; an over-application takes it past zero.
+- Both holds are EPHEMERAL and purge once lettered.
+
+What it changes for the control:
+
+| Situation | Default booking | With the payment-to-apply hold |
+|---|---|---|
+| Payment received, not applied | only in the carried items | **stock**: an open `main:hold:payment:` hold, aged like an invoice, `stuck` past `maxAge` |
+| Partial application | `under_applied`, carried | stock: the remainder on the payment hold |
+| Over-application | `over_applied`, carried | stock: `negative_hold` on the payment hold |
+| PSP final, nothing booked on the product ledger | `unapplied_payment` | a missing receipt, short-lived (the webhook's delay) |
+
+The join across ledgers shrinks to *PSP final ↔ product receipt*, one to one and usually the same
+day. Lettering a payment to invoices becomes a stock fact inside the product ledger, which is where
+a manual team works anyway.
+
+**Not in the V1 rule contract.** The V1 rule would misread this booking: step 3 moves two holds, so
+it would count the application twice, and step 1 carries the payment reference without being an
+application. Supporting it needs two rule additions:
+
+- a `role` per `holds` entry (`business`, the default, or `suspense` for the payment hold), so that
+  an application is measured on the business hold only;
+- a product-side state value for the receipt (`state.received`), and a flow class for a PSP final
+  with no receipt.
+
+Until then, a customer with deferred or manual application keeps the default booking and a longer
+`product.grace`. The booking guide (EN-2335) describes both.
+
 ### Mapping a connector for reconciliation
 
 The PSP ledger is fed by a Connectivity connector, and the mapping from PSP events to ledger
@@ -511,7 +564,7 @@ no vocabulary.
 |---|---|---|
 | Flow | `matched` | PSP `final`, and product applications summing to the same amount. An application's amount is its net posting on the accounts under the side's hold prefixes, each in its settling direction |
 | Flow | `under_applied` / `over_applied` | Product applications for the reference sum to less or more than the PSP amount. A payment split across invoices is summed first. **No tolerance**: a fee or FX difference is a break |
-| Flow | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `product.grace`** (proposed default 3 days), then a break. Carried from day to day in `carried.ndjson.gz`, like every reference whose drift is not 0 |
+| Flow | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `product.grace`** (proposed default 1 day), then a break. Carried from day to day in `carried.ndjson.gz`, like every reference whose drift is not 0 |
 | Flow | `in_progress` | PSP `pending` only, no application: not a break. Its hold is in the PSP stock |
 | Flow | `failed` | PSP `failed` and never applied: nothing to letter, not a break. Listed so that every reference of the window has a row |
 | Flow | `applied_before_final` | A product application points at a reference the PSP has not finalised yet: `pending`, or not seen at all. **Pending while within `psp.grace`** (proposed default 7 days), then `orphan_application`. Applying at `pending` is a legitimate booking choice, common with debits that settle in days (SEPA, ACH) |
@@ -829,8 +882,8 @@ break rows. The self-contained rows of this format are larger and are to be re-m
 ### Worked example: one day of output
 
 A rule `psp-vs-billing` reconciles the PSP ledger `psp` (Connectivity's `formancepayments`) with the
-product ledger `main`, for **24 September 2026**, cut-off 23:59:59 Europe/Paris, `product.grace` 3
-days, `psp.grace` 7 days, `maxAge` 30 days on the product side and 10 on the PSP side. It runs at
+product ledger `main`, for **24 September 2026**, cut-off 23:59:59 Europe/Paris, `product.grace` 1
+day, `psp.grace` 7 days, `maxAge` 30 days on the product side and 10 on the PSP side. It runs at
 02:00. All figures are EUR, one asset `EUR/2`; the files carry minor units as strings (`"100000"` =
 1,000.00), the statement shows major units. Ids and hashes are illustrative; the figures agree with
 each other across the files.
@@ -843,7 +896,7 @@ each other across the files.
 | PAY-43 | `payin.succeeded` 1,000.00 | split: INV-8 600.00 + INV-10 400.00 | `matched` |
 | PAY-40 | finalised on 22 Sep, carried in | applied to INV-5 today, 700.00 | `matched`, earlier day |
 | PAY-44 | `payin.succeeded` 1,200.00 | applied to INV-11, 1,150.00 (a 50.00 fee never booked) | `under_applied`, break |
-| PAY-45 | `payin.succeeded` 800.00 | not applied yet; its `merchant_ref` names INV-12 | `unapplied_payment`, pending until 27 Sep |
+| PAY-45 | `payin.succeeded` 800.00 | not applied yet; its `merchant_ref` names INV-12 | `unapplied_payment`, pending until 25 Sep |
 | PAY-39 | finalised on 20 Sep, still unapplied | — | `unapplied_payment`, past `product.grace`: break |
 | PAY-46 | `payin.pending` 250.00 | — | `in_progress`: not a break, its hold is in the stock |
 | PAY-99 | `payin.pending` only, a debit final in a few days | applied to INV-13, 300.00, before the PSP's event | `applied_before_final`, pending until 1 Oct |
@@ -869,7 +922,7 @@ and was lettered on the same day.
                 "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}]},
     "product": {"ledger": "main", "key": "psp_payment_ref",
                 "state": {"field": "transition_kind", "final": ["to_final"]},
-                "grace": "3d", "maxAge": "30d",
+                "grace": "1d", "maxAge": "30d",
                 "holds": [{"prefix": "main:hold:invoice:", "openSign": "negative", "businessId": "invoice_no"},
                           {"prefix": "main:hold:refund:",  "openSign": "positive", "businessId": "refund_no"}]}
   },
@@ -938,7 +991,7 @@ and was lettered on the same day.
       {"breakId": "7b24e1f09c3d6a12", "priority": 4, "class": "negative_hold",     "lifecycle": "persisting", "side": "product", "hold": "main:hold:invoice:INV-14", "asset": "EUR/2", "amount": "10000",   "ageDays": 6}
     ],
     "pending": [
-      {"ref": "PAY-45", "class": "unapplied_payment",    "asset": "EUR/2", "amount": "80000", "breakOn": "2026-09-27", "pairedHold": "main:hold:invoice:INV-12"},
+      {"ref": "PAY-45", "class": "unapplied_payment",    "asset": "EUR/2", "amount": "80000", "breakOn": "2026-09-25", "pairedHold": "main:hold:invoice:INV-12"},
       {"ref": "PAY-99", "class": "applied_before_final", "asset": "EUR/2", "amount": "-30000", "breakOn": "2026-10-01", "holdIds": ["INV-13"]}
     ],
     "resolved": [
@@ -989,12 +1042,12 @@ and was lettered on the same day.
 **`flow.ndjson.gz`**, 8 rows:
 
 ```text
-{"ref":"PAY-39","asset":"EUR/2","class":"unapplied_payment","outcome":"break","pspAmount":"50000","productAmount":"0","drift":"50000","impact":"0","firstSeen":"2026-09-20","firstSide":"psp","breakOn":"2026-09-23","psp":[{"tx":1071229,"state":"payin.succeeded","amount":"50000","insertedAt":"2026-09-20T09:14:55Z"}],"product":[]}
+{"ref":"PAY-39","asset":"EUR/2","class":"unapplied_payment","outcome":"break","pspAmount":"50000","productAmount":"0","drift":"50000","impact":"0","firstSeen":"2026-09-20","firstSide":"psp","breakOn":"2026-09-21","psp":[{"tx":1071229,"state":"payin.succeeded","amount":"50000","insertedAt":"2026-09-20T09:14:55Z"}],"product":[]}
 {"ref":"PAY-40","asset":"EUR/2","class":"matched","outcome":"ok","pspAmount":"70000","productAmount":"70000","drift":"0","impact":"-70000","firstSeen":"2026-09-22","firstSide":"psp","psp":[{"tx":1160874,"state":"payin.succeeded","amount":"70000","insertedAt":"2026-09-22T15:03:12Z"}],"product":[{"tx":884517,"businessId":"INV-5","holdId":"INV-5","amount":"70000","insertedAt":"2026-09-24T06:12:44Z"}]}
 {"ref":"PAY-42","asset":"EUR/2","class":"matched","outcome":"ok","pspAmount":"100000","productAmount":"100000","drift":"0","impact":"0","firstSeen":"2026-09-24","firstSide":"psp","psp":[{"tx":1249870,"state":"payin.pending","amount":"100000","insertedAt":"2026-09-24T07:58:40Z"},{"tx":1250981,"state":"payin.succeeded","amount":"100000","insertedAt":"2026-09-24T08:01:17Z"}],"product":[{"tx":891204,"businessId":"INV-7","holdId":"INV-7","amount":"100000","insertedAt":"2026-09-24T08:05:10Z"}]}
 {"ref":"PAY-43","asset":"EUR/2","class":"matched","outcome":"ok","pspAmount":"100000","productAmount":"100000","drift":"0","impact":"0","firstSeen":"2026-09-24","firstSide":"psp","psp":[{"tx":1261022,"state":"payin.pending","amount":"100000","insertedAt":"2026-09-24T09:20:05Z"},{"tx":1262410,"state":"payin.succeeded","amount":"100000","insertedAt":"2026-09-24T09:22:48Z"}],"product":[{"tx":893118,"businessId":"INV-8","holdId":"INV-8","amount":"60000","insertedAt":"2026-09-24T09:25:31Z"},{"tx":893119,"businessId":"INV-10","holdId":"INV-10","amount":"40000","insertedAt":"2026-09-24T09:25:31Z"}]}
 {"ref":"PAY-44","asset":"EUR/2","class":"under_applied","outcome":"break","pspAmount":"120000","productAmount":"115000","drift":"5000","impact":"5000","firstSeen":"2026-09-24","firstSide":"psp","psp":[{"tx":1287004,"state":"payin.pending","amount":"120000","insertedAt":"2026-09-24T11:47:31Z"},{"tx":1288115,"state":"payin.succeeded","amount":"120000","insertedAt":"2026-09-24T11:50:02Z"}],"product":[{"tx":895660,"businessId":"INV-11","holdId":"INV-11","amount":"115000","insertedAt":"2026-09-24T11:55:48Z"}]}
-{"ref":"PAY-45","asset":"EUR/2","class":"unapplied_payment","outcome":"pending","pspAmount":"80000","productAmount":"0","drift":"80000","impact":"80000","firstSeen":"2026-09-24","firstSide":"psp","breakOn":"2026-09-27","merchantRef":"INV-12","pairedHold":"main:hold:invoice:INV-12","psp":[{"tx":1300312,"state":"payin.pending","amount":"80000","insertedAt":"2026-09-24T13:10:26Z"},{"tx":1301876,"state":"payin.succeeded","amount":"80000","insertedAt":"2026-09-24T13:12:59Z"}],"product":[]}
+{"ref":"PAY-45","asset":"EUR/2","class":"unapplied_payment","outcome":"pending","pspAmount":"80000","productAmount":"0","drift":"80000","impact":"80000","firstSeen":"2026-09-24","firstSide":"psp","breakOn":"2026-09-25","merchantRef":"INV-12","pairedHold":"main:hold:invoice:INV-12","psp":[{"tx":1300312,"state":"payin.pending","amount":"80000","insertedAt":"2026-09-24T13:10:26Z"},{"tx":1301876,"state":"payin.succeeded","amount":"80000","insertedAt":"2026-09-24T13:12:59Z"}],"product":[]}
 {"ref":"PAY-46","asset":"EUR/2","class":"in_progress","outcome":"ok","pspAmount":"0","productAmount":"0","drift":"0","impact":"0","psp":[{"tx":1312455,"state":"payin.pending","amount":"25000","insertedAt":"2026-09-24T20:41:09Z"}],"product":[]}
 {"ref":"PAY-99","asset":"EUR/2","class":"applied_before_final","outcome":"pending","pspAmount":"0","productAmount":"30000","drift":"-30000","impact":"-30000","firstSeen":"2026-09-24","firstSide":"product","breakOn":"2026-10-01","psp":[{"tx":1309640,"state":"payin.pending","amount":"30000","insertedAt":"2026-09-24T19:55:37Z"}],"product":[{"tx":899031,"businessId":"INV-13","holdId":"INV-13","amount":"30000","insertedAt":"2026-09-24T17:02:20Z"}]}
 ```
@@ -1008,9 +1061,9 @@ today.
 `impact`:
 
 ```text
-{"ref":"PAY-39","asset":"EUR/2","class":"unapplied_payment","outcome":"break","pspAmount":"50000","productAmount":"0","drift":"50000","firstSeen":"2026-09-20","firstSide":"psp","breakOn":"2026-09-23","psp":[{"tx":1071229,"state":"payin.succeeded","amount":"50000","insertedAt":"2026-09-20T09:14:55Z"}],"product":[]}
+{"ref":"PAY-39","asset":"EUR/2","class":"unapplied_payment","outcome":"break","pspAmount":"50000","productAmount":"0","drift":"50000","firstSeen":"2026-09-20","firstSide":"psp","breakOn":"2026-09-21","psp":[{"tx":1071229,"state":"payin.succeeded","amount":"50000","insertedAt":"2026-09-20T09:14:55Z"}],"product":[]}
 {"ref":"PAY-44","asset":"EUR/2","class":"under_applied","outcome":"break","pspAmount":"120000","productAmount":"115000","drift":"5000","firstSeen":"2026-09-24","firstSide":"psp","psp":[{"tx":1287004,"state":"payin.pending","amount":"120000","insertedAt":"2026-09-24T11:47:31Z"},{"tx":1288115,"state":"payin.succeeded","amount":"120000","insertedAt":"2026-09-24T11:50:02Z"}],"product":[{"tx":895660,"businessId":"INV-11","holdId":"INV-11","amount":"115000","insertedAt":"2026-09-24T11:55:48Z"}]}
-{"ref":"PAY-45","asset":"EUR/2","class":"unapplied_payment","outcome":"pending","pspAmount":"80000","productAmount":"0","drift":"80000","firstSeen":"2026-09-24","firstSide":"psp","breakOn":"2026-09-27","merchantRef":"INV-12","pairedHold":"main:hold:invoice:INV-12","psp":[{"tx":1300312,"state":"payin.pending","amount":"80000","insertedAt":"2026-09-24T13:10:26Z"},{"tx":1301876,"state":"payin.succeeded","amount":"80000","insertedAt":"2026-09-24T13:12:59Z"}],"product":[]}
+{"ref":"PAY-45","asset":"EUR/2","class":"unapplied_payment","outcome":"pending","pspAmount":"80000","productAmount":"0","drift":"80000","firstSeen":"2026-09-24","firstSide":"psp","breakOn":"2026-09-25","merchantRef":"INV-12","pairedHold":"main:hold:invoice:INV-12","psp":[{"tx":1300312,"state":"payin.pending","amount":"80000","insertedAt":"2026-09-24T13:10:26Z"},{"tx":1301876,"state":"payin.succeeded","amount":"80000","insertedAt":"2026-09-24T13:12:59Z"}],"product":[]}
 {"ref":"PAY-99","asset":"EUR/2","class":"applied_before_final","outcome":"pending","pspAmount":"0","productAmount":"30000","drift":"-30000","firstSeen":"2026-09-24","firstSide":"product","breakOn":"2026-10-01","psp":[{"tx":1309640,"state":"payin.pending","amount":"30000","insertedAt":"2026-09-24T19:55:37Z"}],"product":[{"tx":899031,"businessId":"INV-13","holdId":"INV-13","amount":"30000","insertedAt":"2026-09-24T17:02:20Z"}]}
 ```
 
@@ -1041,7 +1094,7 @@ at −700.00, was lettered by PAY-40 today: it stays in the file as `cleared`.
 
 ```text
 {"breakId":"a93d02e6b7f1c448","leg":"flow","priority":2,"lifecycle":"new","openedOn":"2026-09-24","amount":"5000","ref":"PAY-44","asset":"EUR/2","class":"under_applied","outcome":"break","pspAmount":"120000","productAmount":"115000","drift":"5000","impact":"5000","firstSeen":"2026-09-24","firstSide":"psp","psp":[{"tx":1287004,"state":"payin.pending","amount":"120000","insertedAt":"2026-09-24T11:47:31Z"},{"tx":1288115,"state":"payin.succeeded","amount":"120000","insertedAt":"2026-09-24T11:50:02Z"}],"product":[{"tx":895660,"businessId":"INV-11","holdId":"INV-11","amount":"115000","insertedAt":"2026-09-24T11:55:48Z"}]}
-{"breakId":"1c7f3a90d2e84b55","leg":"flow","priority":3,"lifecycle":"persisting","openedOn":"2026-09-23","amount":"50000","ref":"PAY-39","asset":"EUR/2","class":"unapplied_payment","outcome":"break","pspAmount":"50000","productAmount":"0","drift":"50000","impact":"0","firstSeen":"2026-09-20","firstSide":"psp","breakOn":"2026-09-23","psp":[{"tx":1071229,"state":"payin.succeeded","amount":"50000","insertedAt":"2026-09-20T09:14:55Z"}],"product":[]}
+{"breakId":"1c7f3a90d2e84b55","leg":"flow","priority":3,"lifecycle":"persisting","openedOn":"2026-09-21","amount":"50000","ref":"PAY-39","asset":"EUR/2","class":"unapplied_payment","outcome":"break","pspAmount":"50000","productAmount":"0","drift":"50000","impact":"0","firstSeen":"2026-09-20","firstSide":"psp","breakOn":"2026-09-21","psp":[{"tx":1071229,"state":"payin.succeeded","amount":"50000","insertedAt":"2026-09-20T09:14:55Z"}],"product":[]}
 {"breakId":"d4f8a1c3e5b70926","leg":"stock","priority":4,"lifecycle":"persisting","openedOn":"2026-09-14","amount":"-120000","side":"product","hold":"main:hold:invoice:INV-3","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-3","openSign":"negative","balance":"-120000","class":"stuck","outcome":"break","openedAt":"2026-08-14T10:02:00Z","ageDays":41,"bucket":">30d"}
 {"breakId":"7b24e1f09c3d6a12","leg":"stock","priority":4,"lifecycle":"persisting","openedOn":"2026-09-21","amount":"10000","side":"product","hold":"main:hold:invoice:INV-14","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-14","openSign":"negative","balance":"10000","class":"negative_hold","outcome":"break","openedAt":"2026-09-18T16:20:00Z","ageDays":6,"bucket":"2-7d"}
 {"breakId":"3a6e9d0b2c8f4171","leg":"stock","priority":4,"lifecycle":"resolved","openedOn":"2026-09-21","resolvedOn":"2026-09-24","amount":"-70000","side":"product","hold":"main:hold:invoice:INV-5","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-5","openSign":"negative","balance":"0","class":"stuck","outcome":"ok","openedAt":"2026-08-21T09:40:00Z","ageDays":34,"bucket":">30d","previousBalance":"-70000","clearedAt":"2026-09-24T06:12:44Z","clearedBy":"PAY-40"}
@@ -1066,7 +1119,7 @@ EUR
 − Product — applications in the window                             4,150.00  (6)
 = Net difference                                                     −150.00
   explained by:
-    + unapplied payments of the window (until 27 Sep)                +800.00  (1)  PAY-45 → INV-12
+    + unapplied payments of the window (until 25 Sep)                +800.00  (1)  PAY-45 → INV-12
     − applications awaiting a final PSP state (until 1 Oct)          −300.00  (1)  PAY-99 → INV-13
     ± under / over applications                             P2        +50.00  (1)  PAY-44
     ± matched, entered the join on an earlier day                    −700.00  (1)  PAY-40
@@ -1086,7 +1139,7 @@ Triage
   P4  stuck               INV-3, −1,200.00, 41 days         persisting
   P4  negative_hold       INV-14, +100.00                   persisting
 Resolved: stuck INV-5, lettered by PAY-40.
-Pending (not breaks): PAY-45, 800.00, a break on 27 Sep — its merchant reference names INV-12: apply it.
+Pending (not breaks): PAY-45, 800.00, a break on 25 Sep — its merchant reference names INV-12: apply it.
                       PAY-99 → INV-13, 300.00, applied before the PSP finalised it — an orphan
                       application (P1) on 1 Oct unless the PSP finalises it.
 ⚠ Unclassified: 1 PSP transaction with state "payin.refunded", 200.00 — the rule's state sets or the

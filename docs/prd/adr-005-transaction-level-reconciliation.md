@@ -411,7 +411,7 @@ checkpoint's listing.
           "state": {"field": "formance.com/observation.event-type", "final": ["payin.succeeded"], "failed": ["payin.compensate"], "pending": ["payin.pending"]},
           "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}], "grace": "7d",
           "paymentAccount": "fpay:stripe:account:*:main", "merchantRef": "merchant_ref"},
-  "product": {"ledger": "main", "key": "psp_payment_ref", "grace": "3d",
+  "product": {"ledger": "main", "key": "psp_payment_ref", "grace": "1d",
           "state": {"field": "transition_kind", "final": ["to_final"]},
           "holds": [{"prefix": "main:hold:invoice:", "openSign": "negative", "businessId": "invoice_no"},
                     {"prefix": "main:hold:refund:",  "openSign": "positive", "businessId": "refund_no"}]}
@@ -519,7 +519,9 @@ checkpoint's listing.
   never joined to each other.
 - **Grace and ageing: proposed defaults, to calibrate with the design partner** (the owner has no
   prior on them).
-  - `product.grace` = **3 calendar days**.
+  - `product.grace` = **1 calendar day** (owner, 2026-09-25): the product applies a payment as
+    soon as the PSP finalises it, so the day of grace only absorbs a payment finalised before
+    midnight and applied after it. A team that letters by hand raises it to its usual delay.
   - `psp.grace` = **7 calendar days**: a debit final at D+5 business days spans a weekend.
   - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`.
   - `maxAge` has no default: without one, no hold is ever `stuck`.
@@ -769,7 +771,7 @@ for the Ledger team to weigh against its own users:
 |---|---|---|
 | 1 | The shared key | The **PSP payment reference**. The payment is seen on the PSP ledger first, and the product ledger later books a transaction carrying the same reference, which letters a business hold (an invoice…). Authorization/capture, where both sides share the authorization number, is a special case (§2.1, §6). |
 | 2 | The state vocabulary | **Parameterised per side** in the rule (§6), because it depends on how external payment states are modelled on the PSP ledger. |
-| 3 | Grace and ageing | No prior: the proposed defaults are 3 days of grace and buckets of 0–1, 2–7, 8–30 and > 30 days, all per rule and to be calibrated (§6). Refined by decision 16: `product.grace` 3 days, `psp.grace` 7 days. |
+| 3 | Grace and ageing | No prior: the proposed defaults are 3 days of grace and buckets of 0–1, 2–7, 8–30 and > 30 days, all per rule and to be calibrated (§6). Refined by decisions 16 and 20: `product.grace` 1 day, `psp.grace` 7 days. |
 | 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`. **90 days** of retention by default, and **monthly stock anchors** kept longer (`anchorRetention`, proposed 13 months) so that replaying an old day stays cheap. The monthly reconciliation points at each day's diffs (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
@@ -787,10 +789,11 @@ for the Ledger team to weigh against its own users:
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
 | 14 | Replaying an old day | From the **nearest stored stock**: daily within `retention`, monthly anchors for `anchorRetention`; the rewind from head is the fallback (§7). |
 | 15 | Result files | For the customer first: simple gzipped NDJSON under `rule=/day=/run=`, one name per identifier, an `outcome` on every row and a `priority` on breaks, a self-contained breaks file with a stable `breakId`, every reference with a drift carried to the next run, byte-identical files for a given cut (§7, design doc). |
-| 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break. **`grace` is per side**, the time that side may lag behind the other: `product.grace` (3 days) for `unapplied_payment`, `psp.grace` (7 days) for `applied_before_final`, unknown references included, which then becomes `orphan_application` (P1); 0 forbids any lag. References missing from the window are looked up by key; every flow row records its `firstSide`; `breakId` leaves out the class; the alert opens on a break, never on the net alone (§6). |
+| 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break. **`grace` is per side**, the time that side may lag behind the other: `product.grace` (1 day since decision 20) for `unapplied_payment`, `psp.grace` (7 days) for `applied_before_final`, unknown references included, which then becomes `orphan_application` (P1); 0 forbids any lag. References missing from the window are looked up by key; every flow row records its `firstSide`; `breakId` leaves out the class; the alert opens on a break, never on the net alone (§6). |
 | 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern, `fpay:stripe:account:*:main` for `formancepayments`), not on the hold: a final event with no `pending` before it, or with another amount than its `pending`, moves the hold by 0 or by the wrong amount (§6). |
 | 18 | Review of 2026-09-25 | A PSP `failed` never applied gets the class `failed` (ok); window PSP references with a `failed` event are looked up on the product ledger every run, so `reversed_after_application` is caught in steady state; the product `businessId` is per `holds` entry; `psp.merchantRef` names the merchant-reference field; `open(S_prev)` and `cleared` come from the previous run's stored stock; the metadata check reads every log since the previous run's head (§5, §6). |
 | 19 | Simplifications, 2026-09-25 | The bridge no longer groups by `firstSide`, which stays on flow rows for analysis only: one earlier-day line for `matched`, whose sign says which side caught up. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` instead (§6, §7). |
+| 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**: the application follows the PSP's final state automatically, and the day covers a payment finalised before midnight and applied after it. A business that applies later or by hand (B2B transfers) raises it; a payment-to-apply hold on the product ledger is described as an option, outside the V1 rule contract (design doc §2). |
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
