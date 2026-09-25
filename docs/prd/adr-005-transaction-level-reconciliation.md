@@ -514,7 +514,7 @@ checkpoint's listing.
    - Recon writes to the same S3 or Azure destination the ledger backs up to, under
      `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. The files are
      `manifest.json`, `flow.ndjson.gz`, `carried.ndjson.gz`, `stock.ndjson.gz`, `breaks.ndjson.gz`
-     and `unclassified.ndjson.gz`.
+     and `unclassified.ndjson.gz`, plus `period.json` on the last run of a weekly or monthly period.
    - **The customer is the first reader.** They analyse the files with their own tools (jq,
      DuckDB, pandas, a spreadsheet import); recon's API and UI read them too. So the format stays
      simple: gzipped NDJSON, a JSON Schema per file, and a `schemaVersion` in the manifest to evolve
@@ -523,7 +523,7 @@ checkpoint's listing.
      `warning`), breaks carry a `priority` (1 to 4) and a `breakId` stable from day to day and
      are self-contained, and the manifest carries the statement, so a dashboard needs no other file
      ([design doc](../technical/transaction-level-reconciliation.md#result-artifacts-retention-and-the-period-view)).
-   - **Rules a reader can rely on:** every file is written on every run, even empty; a file may
+   - **Rules a reader can rely on:** every daily file is written on every run, even empty; a file may
      come in parts, listed in the manifest, once it passes a row threshold; and the same cut gives
      byte-identical data files, so a replay proves itself by reproducing their SHA-256.
    - The prefix **must stay outside `{bucketID}/backups/`**. The ledger's post-manifest orphan prune
@@ -554,8 +554,12 @@ checkpoint's listing.
      - its net and absolute drift;
      - the breaks it opened and resolved, and the holds it cleared;
      - the link to its files.
-   - A break still open at the end of the period keeps the day it first appeared. A break that clears
-     after its period has closed shows up in the next period; the closed period is never rewritten.
+   - A break still open at the end of the period keeps the day it first appeared. A break that is
+     resolved after its period has closed shows up in the next period; the closed period is never
+     rewritten.
+   - **The summary is a file of the period's last run**, `period.json`, listed in its manifest and
+     kept like a monthly stock anchor (same object tag, `anchorRetention`). It outlives the daily
+     files; its links to expired days are marked as expired. A `daily` rule writes none.
    - The 90-day default retention covers a monthly period plus a review margin.
 6. **First run: bounded backfill.** A rule's first run has no previous day, so no carried
    items. Left alone, a payment the PSP finalised before the rule existed, and that the product never

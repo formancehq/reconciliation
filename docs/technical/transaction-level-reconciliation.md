@@ -576,6 +576,7 @@ and the gross amount first, and the net second.
   stock.ndjson.gz         one row per open hold at S, plus the holds cleared since the previous run
   breaks.ndjson.gz        every break of both legs, open or resolved since the previous run
   unclassified.ndjson.gz  the transactions whose state is in none of the rule's sets
+  period.json             weekly and monthly rules only, on the period's last run: the period summary
 ```
 
 The path segments are `key=value`, so DuckDB, Spark or Athena read `rule`, `day` and `run` as
@@ -606,7 +607,7 @@ can evolve behind `schemaVersion`:
 
 **Rules a reader can rely on.**
 
-- **Every file is written on every run**, even with no row, so a glob or a script never breaks on a
+- **Every daily file is written on every run**, even with no row, so a glob or a script never breaks on a
   quiet day. The manifest gives each file's row count.
 - **A file may come in parts.** Past a row threshold, `flow.ndjson.gz` becomes
   `flow-00000.ndjson.gz`, `flow-00001.ndjson.gz` and so on, in the file's order, each listed in
@@ -702,13 +703,20 @@ or `monthly`, calendar-based in the rule's timezone). The period's alert carries
 comparison, and the period summary is built from the daily **manifests** rather than from the
 ledgers. For each day it gives:
 
-- the counts per class;
-- the net and absolute drift;
-- the breaks opened and resolved, and the holds cleared (the manifest's `counts`);
-- the link to that day's files.
+- the verdict and the counts per class (`counts.flow`, `counts.flowOutcome`, `counts.stock`);
+- the net and gross drift per asset (`statement.{asset}.net`, `flowGross`);
+- the breaks opened and resolved, and the holds cleared (`counts.breaks`, `counts.stock.*.cleared`);
+- the link to that day's files, or a gap when a day has no run or a failed one.
 
-Breaks still open at period end keep the day they first appeared. A break that clears after its
-period has closed shows up in the next period.
+Breaks still open at period end keep the day they first appeared. A break that is resolved after
+its period has closed shows up in the next period.
+
+**Where the summary lives.** The period's last run writes it once, as `period.json` next to its
+own manifest, which lists it with its SHA-256 like any other file. It is small (one entry per day)
+and kept like a monthly stock anchor: in place, under the same object tag, for `anchorRetention`.
+So the summary outlives the 90 days of the daily files; its links to expired days say so instead of
+breaking. A closed period is never rewritten: a day replayed later changes its own files, not the
+summary. A `daily` rule writes no `period.json`, since its manifest already is the summary.
 
 **What opens the alert:** a non-zero net drift *or* at least one break row. Offsetting breaks net
 to zero, so the aggregate alone is never the trigger.
