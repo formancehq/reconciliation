@@ -327,8 +327,12 @@ including the metadata changes that the rewind window monitors (`key_metadata_mu
 
 **What the id ranges give for free.**
 
-- **Parallelism.** `(T_prev, T]` splits into K sub-ranges (8 by default), read concurrently and
-  merged in id order.
+- **Parallelism.** `(T_prev, T]` splits into K sub-ranges, read concurrently and merged in id order.
+  The rewind window `(S, head]` is split the same way. K is an **operator setting**, not a rule
+  parameter: `--lettering-read-ranges` (default 8), capped process-wide by
+  `--lettering-max-concurrent-reads` (default 16), so that several rules running at once do not
+  multiply the readers on one ledger. Beyond 8 the read gains little and the ledger's writes pay
+  more (§7.7).
 - **Completeness.** Ids are contiguous, so an unfiltered range `(lo, hi]` must return exactly
   `hi − lo` rows. A short count makes the run `INCOMPLETE` instead of silently shrinking the window.
 - **Replay.** `S`, `T` and the log hash at `S` are written in the signed capture, so a later
@@ -791,6 +795,52 @@ listing sees just the open holds. The two advantages of the address are obtained
 immutability by the write-once convention and, later, immutable labels (L8,
 [EN-2326](https://formance-team.atlassian.net/browse/EN-2326)); and batched letterings by booking
 one transaction per payment reference (ADR-005 §8, rule 2).
+
+### 7.7 Concurrent readers: choosing K
+
+**Setup.** A fresh single-node ledger at `release/v3.0` `f390ea683` (the last commit on gRPC protocol
+10, which recon's vendored protos speak; the tip `fe668e01a` requires 11). Ledger `mixed`: 1M
+transactions, 100k of them payments (`load-mixed`). Client and server share one Apple M4 Pro
+(12 cores). Median of three runs.
+
+**Read time of the whole 1M-transaction window, by number of concurrent ranges K:**
+
+| K | `payment_ref EXISTS` (100k rows) | Speed-up | Unfiltered (1M rows) | Speed-up |
+|---|---|---|---|---|
+| 1 | 3.10 s | ×1 | 10.5 s | ×1 |
+| 2 | 1.56 s | ×2.0 | 6.2 s | ×1.7 |
+| 4 | 0.97 s | ×3.2 | 4.85 s | ×2.2 |
+| **8** | **0.76 s** | **×4.1** | **2.85 s** | **×3.7** |
+| 12 | 0.68 s | ×4.6 | 2.57 s | ×4.1 |
+| 16 | 0.60 s | ×5.2 | 2.10 s | ×5.0 |
+| 24 | 0.58 s | ×5.3 | 1.92 s | ×5.5 |
+| 32 | 0.57 s | ×5.4 | 2.01 s | ×5.2 |
+| 64 | 0.42 s (noisy: 0.40–0.50 s) | ×7.4 | 1.90 s | ×5.5 |
+
+**What the readers cost the ledger's writes.** 300k transactions written (`load-mixed`, 16 writers)
+while K readers loop over the unfiltered window, two series:
+
+| K | Write time | Writes slowed by |
+|---|---|---|
+| 0 (no reader) | 2.35 s | — |
+| 1 | 2.41 s | ~2 % |
+| **8** | 2.6–3.0 s | **~10–20 %** |
+| 16 | 3.3–3.9 s | ~30–40 % |
+| 32 | 3.6–3.7 s | ~35 % |
+| 64 | 5.0 s | ~50 % |
+
+**Reading.**
+
+- The gain is almost linear up to 4 readers, bends between 8 and 16, and flattens after 16.
+- **8 is the default**: about ×4 on the read, for writes slowed by 10–20 % while the read lasts,
+  which is seconds at this volume. 16 buys about 20 % more read speed for 30–40 % slower writes.
+- The optimum depends on the deployment. Here the client competed with the server for the same
+  cores, and there was no network latency; in production each page pays a round trip, which
+  favours more readers, and a three-node cluster behaves differently. **Re-measure in staging**
+  before changing the default.
+- This is why K is an operator setting (`--lettering-read-ranges`, `--lettering-max-concurrent-reads`,
+  ADR-005 §7) that the team running the deployment can tune without a rule change, and why it is
+  not exposed to customers.
 
 ## 8. Ledger findings and asks
 

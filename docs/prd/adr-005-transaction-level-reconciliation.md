@@ -571,7 +571,19 @@ checkpoint's listing.
      - The replay checks the stored stock's SHA-256 against its signed capture before using it.
      - With no stored stock at all (anchors expired, or a rule created later), the rewind from head
        remains the fallback, at the cost above.
-8. **Reads.** The run's status comes from the capture. Breaks are paged from the artifact by the
+8. **Execution settings are operator settings, not rule parameters.** The number of id ranges read
+   concurrently, for the flow and for the rewind window, is `--lettering-read-ranges` (default 8).
+   `--lettering-max-concurrent-reads` (default 16) caps the readers across every run of the process,
+   so that several rules running at once cannot multiply the load on one ledger; a run that would
+   exceed it waits for a slot.
+   - They are `serve` flags (with the matching environment variables), like `scheduler-interval`.
+     The team running the deployment tunes them through Helm or the Operator; they are absent from
+     the rule contract and the API.
+   - Measured on one node: 8 readers read about ×4 faster than one and slow the ledger's writes by
+     10–20 % while they run; beyond 16 the read barely improves while writes keep slowing
+     ([design doc §7.7](../technical/transaction-level-reconciliation.md#77-concurrent-readers-choosing-k)).
+   - The manifest records the K a run used, so run durations stay comparable.
+9. **Reads.** The run's status comes from the capture. Breaks are paged from the artifact by the
    API, or downloaded through a pre-signed URL.
 
 ## 8. Booking conventions we recommend

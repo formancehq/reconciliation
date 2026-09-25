@@ -89,6 +89,17 @@ B=/tmp/bench-ledger/bench; $B load-mixed -n 1000000 -every 10 && $B logs -ledger
 B=/tmp/bench-ledger/bench; $B retag && $B txs -from 0 -to 1000000 -kind payment -ranges 8 && $B txs -from 0 -to 1000000 -exists payment_ref -ranges 8
 ```
 
+**Concurrent readers: choosing K** (§7.7). On a fresh `load-mixed` ledger, sweep the number of
+ranges, then measure what the readers cost the writes:
+
+```bash
+B=/tmp/bench-ledger/bench; for K in 1 2 4 8 12 16 24 32 64; do for r in 1 2 3; do $B txs -from 0 -to 1000000 -exists payment_ref -ranges $K; $B txs -from 0 -to 1000000 -ranges $K; done; done
+```
+
+```bash
+B=/tmp/bench-ledger/bench; for K in 0 1 8 16 32 64; do if [ $K -gt 0 ]; then (while [ ! -f /tmp/bench-ledger/stop ]; do $B txs -from 0 -to 1000000 -ranges $K >/dev/null; done) & fi; sleep 1; $B load-mixed -ledger w$K -n 300000; touch /tmp/bench-ledger/stop; wait; rm -f /tmp/bench-ledger/stop; done
+```
+
 **Key source: metadata against the hold address** (§7.6). The last command takes about 8 minutes:
 
 ```bash
