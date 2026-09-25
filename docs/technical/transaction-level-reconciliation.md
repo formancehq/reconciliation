@@ -416,6 +416,52 @@ EPHEMERAL holds. Only created and reverted transactions move balances, and both 
 **Proof run** (§7.4): against a checkpoint taken at `S`, under concurrent writes, the rewound listing
 matched on every one of 1,002,408 rows. The raw live listing differed on 2,233.
 
+### Replaying an old day
+
+Any past day can be replayed: the logs are permanent, and the day's cut (`S`, `T`, log hash) is in
+the signed capture (ADR-005 §7, item 7).
+
+**The flow costs the same at any age.** The cut of an old day resolves in one index page or about
+twenty bisection reads, and the day is its id range `(T_prev, T]`, read filtered on the key:
+O(payments of that day), a day or a year later. It matches the original run as long as key and
+state metadata stayed write-once. The exact variant reads that day's logs `(S_prev, S]`, which is
+slower but still one day's worth.
+
+**The rewind from head grows with the day's age.** It reads every log since `S`, and it keeps the
+first touch of every hold touched since. With 1M logs written a day, at the measured 15.1 s per 1M
+logs over 8 ranges (§7.2):
+
+| Replay | Logs in `(S, head]` | Read time |
+|---|---|---|
+| The next day (the normal run) | ~1M | ~15 s |
+| A week later | ~7M | ~2 min |
+| A month later | ~30M | ~8 min |
+| A year later | ~365M | **~1 h 30**, with close to a year of holds to track |
+
+**So a replay starts from the nearest stored stock, not from head.** Each run stores its stock at its
+cut (`stock.ndjson.gz`), and the stock is additive over time:
+
+```text
+stock(S_D) = stock(S_A) + hold movements in (S_A, S_D]
+```
+
+- **Forward** from an earlier stock `A`: read the logs `(S_A, S_D]`. Each touched hold takes its
+  balance after its last touch at or before `S_D` (`post_commit_volumes`), and a hold at zero drops
+  out. Untouched holds keep their stored balance.
+- **Backward** from a later stock `A`: the rewind above, with that stored stock in place of the live
+  listing, over `(S_D, S_A]`.
+- The stored stock is verified against the SHA-256 in its signed capture before it is used.
+
+| Age of the replayed day | Starting point | Cost |
+|---|---|---|
+| Within the 90-day retention | the previous day's stored stock | one day of logs, whatever the age |
+| Beyond it | the nearest monthly anchor (`anchorRetention`) | at most about half a month of logs |
+| No stored stock at all (anchors expired, rule created later) | the live listing, rewound from head | O(logs since the day), as in the table above |
+
+A monthly anchor holds only the open book, which lettering keeps small, so keeping one per month
+for a year costs a few files per rule. The flow and break files can still expire at 90 days: they
+are recomputed at a fixed cost.
+
 ## 5. Matching semantics
 
 **States are declared by the rule, per side** (ADR-005 §6). Each side names its key field, its
@@ -526,6 +572,9 @@ covers every file transitively.
 - The primary mechanism is the storage lifecycle rule on the prefix, with recon's `expiresAt` sweep
   as the fallback.
 - An expired day can be recomputed from the permanent logs with the same cut.
+- **Monthly stock anchors** outlive the 90 days: the last run of each month keeps its
+  `manifest.json` and `stock.ndjson.gz` for `anchorRetention` (proposed 13 months). They keep the
+  replay of an old day cheap ([§4](#replaying-an-old-day)).
 
 **Period view.** The rule runs daily by default, with the existing `periodType` (`daily`, `weekly`
 or `monthly`, calendar-based in the rule's timezone). The period's alert carries the aggregate

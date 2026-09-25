@@ -512,6 +512,11 @@ checkpoint's listing.
      fallback.
    - Expiry loses nothing irrecoverable. The logs are permanent, so any past day can be recomputed
      from the ledgers with the same cut.
+   - **Stock anchors are kept longer.** The last run of each month keeps its `manifest.json` and
+     `stock.ndjson.gz` for `anchorRetention`, a rule parameter (proposed default 13 months, to
+     calibrate with the design partner). An anchor holds only the open book, which is small by
+     construction, so keeping it costs little. It is what keeps the replay of an old day cheap
+     (item 7).
 5. **A period points at each day's diffs.**
    - The period is the rule's `periodType`, calendar-based in the rule's timezone. There is no
      separate accounting-period model.
@@ -539,7 +544,28 @@ checkpoint's listing.
      any past cut, from the live listing and the logs `(S_prev, head]`.
    - Re-running with an earlier `backfillFrom` is idempotent per (rule, period, cut). It only costs
      a longer window read.
-7. **Reads.** The run's status comes from the capture. Breaks are paged from the artifact by the
+7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
+   (`S`, `T`, log hash) is in the signed capture.
+   - **The flow costs the same at any age.** Resolving the cut takes one index page or about twenty
+     bisection reads, and the day is the id range `(T_prev, T]`, so the read stays O(payments of that
+     day). It matches the original run as long as the write-once convention held. The exact variant
+     reads that day's logs `(S_prev, S]`: slower, but still one day's worth, whatever its age.
+   - **The rewind from head does not.** It reads every log written since the day's cut, and keeps the
+     first touch of every hold touched since. With 1M logs a day and the measured 15 s per 1M logs
+     (8 ranges), that is ~15 s the next day, ~2 min a week later, ~8 min a month later and **~1 h 30
+     a year later**, with close to a year of holds to track.
+   - **So a replay starts from the nearest stored stock instead of from head.** The stock is
+     additive over time: `stock(S_D) = stock(S_A) + hold movements in (S_A, S_D]`.
+     - Forward from an earlier stock `A`: read the logs `(S_A, S_D]`. Each touched hold takes its
+       balance after its last touch at or before `S_D`, and a hold at zero drops out.
+     - Backward from a later stock `A`: the rewind of §5, with that stored stock in place of the
+       live listing, over `(S_D, S_A]`.
+     - Within the 90 days, the previous day's stock is stored, so a replay costs one day of logs.
+       Beyond, the nearest monthly anchor bounds it to about half a month of logs.
+     - The replay checks the stored stock's SHA-256 against its signed capture before using it.
+     - With no stored stock at all (anchors expired, or a rule created later), the rewind from head
+       remains the fallback, at the cost above.
+8. **Reads.** The run's status comes from the capture. Breaks are paged from the artifact by the
    API, or downloaded through a pre-signed URL.
 
 ## 8. Booking conventions we recommend
@@ -619,7 +645,7 @@ for the Ledger team to weigh against its own users:
 | 1 | The shared key | The **PSP payment reference**. The payment is seen on the PSP ledger first, and the product ledger later books a transaction carrying the same reference, which letters a business hold (an invoice…). Authorization/capture, where both sides share the authorization number, is a special case (§2.1, §6). |
 | 2 | The state vocabulary | **Parameterised per side** in the rule (§6), because it depends on how external payment states are modelled on the PSP ledger. |
 | 3 | Grace and ageing | No prior: the proposed defaults are 3 days of grace and buckets of 0–1, 2–7, 8–30 and > 30 days, all per rule and to be calibrated (§6). |
-| 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`. **90 days** of retention by default. The monthly reconciliation points at each day's diffs (§7). |
+| 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`. **90 days** of retention by default, and **monthly stock anchors** kept longer (`anchorRetention`, proposed 13 months) so that replaying an old day stays cheap. The monthly reconciliation points at each day's diffs (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**: a refund hold on the product ledger and a payment with its own reference on the PSP ledger. They are never a reversal of the original payment (§6). |
