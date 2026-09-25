@@ -653,7 +653,7 @@ illustrative; the figures agree with each other across the files.
   },
   "drifts": {"EUR/2": {"net": "-15000", "gross": "85000", "offsetting": false}},
   "continuity": [
-    {"side": "psp",     "prefix": "fpay:stripe:payment:hold:pending:", "asset": "EUR/2", "openPrev": "0",       "opened": "255000",  "lettered": "200000",  "open": "55000",   "ok": true},
+    {"side": "psp",     "prefix": "fpay:stripe:payment:hold:pending:", "asset": "EUR/2", "openPrev": "0",       "opened": "455000",  "lettered": "400000",  "open": "55000",   "ok": true},
     {"side": "product", "prefix": "main:hold:invoice:",                "asset": "EUR/2", "openPrev": "-430000", "opened": "-230000", "lettered": "-415000", "open": "-245000", "ok": true},
     {"side": "product", "prefix": "main:hold:refund:",                 "asset": "EUR/2", "openPrev": "0",       "opened": "20000",   "lettered": "0",       "open": "20000",   "ok": true}
   ],
