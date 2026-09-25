@@ -29,22 +29,40 @@ cut-off. It takes **no query checkpoint**.
 
 ## 2. The booking this control relies on
 
+Each arrow is a posting, from source to destination.
+
 ```mermaid
 flowchart LR
     subgraph Q["PSP ledger (Connectivity) — seen first"]
-      Q1["payin.pending<br/>payment-id=PAY-42"] -->|opens| QH["fpay:{conn}:payment:hold:pending:PAY-42<br/>EPHEMERAL"]
-      QH -->|"payin.succeeded<br/>payment-id=PAY-42"| QF["fpay:{conn}:account:{acct}:main"]
+      QA["fpay:{conn}:account:{acct}"] -->|"payin.pending, X<br/>payment-id=PAY-42"| QH["fpay:{conn}:payment:hold:pending:PAY-42<br/>EPHEMERAL, +X while pending"]
+      QH -->|"payin.succeeded, X<br/>payment-id=PAY-42"| QF["fpay:{conn}:account:{acct}:main"]
     end
     subgraph P["Product ledger — later"]
-      P1["invoice issued<br/>invoice_no=INV-7"] -->|opens| PH["main:hold:invoice:open:INV-7<br/>EPHEMERAL, ≠ 0 = unpaid"]
-      PH -->|"payment applied<br/>psp_payment_ref=PAY-42 · invoice_no=INV-7"| PF["final accounts"]
+      PH["main:hold:invoice:INV-7<br/>EPHEMERAL, −X = unpaid"] -->|"1 · invoice issued, X<br/>invoice_no=INV-7"| PR["user:revenue:A:pending"]
+      PC["main:clearing:{conn}"] -->|"2a · payment applied, X<br/>psp_payment_ref=PAY-42 · invoice_no=INV-7"| PH
+      PR -->|"2b · revenue recognised, X<br/>same atomic batch as 2a, no payment ref"| PF["user:revenue:A"]
     end
-    QF -. "join on the PSP payment reference (transactions)" .- PF
+    QF -. "join on the PSP payment reference (transactions payin.succeeded ↔ 2a)" .- PC
 ```
 
 The two holds are keyed differently: the PSP ledger by payment, the product ledger by invoice. The
 join therefore sits on **transactions**, through the PSP reference. The payment → invoice link lives
 only in the product transaction.
+
+On the product ledger, the invoice is booked in three transactions:
+
+1. **Invoice issued.** `main:hold:invoice:INV-7` → `user:revenue:A:pending`, X. The hold opens at
+   −X: a product hold opens **negative**, while the PSP hold above opens positive. The rule declares
+   each side's sign (`openSign`, ADR-005 §6).
+2. **Payment applied, as one atomic batch of two transactions:**
+   1. `main:clearing:{conn}` → `main:hold:invoice:INV-7`, X. This is the **application**. It
+      carries `psp_payment_ref` and `invoice_no`, brings the hold back to 0, and the hold is purged.
+   2. `user:revenue:A:pending` → `user:revenue:A`, X. This is the **revenue recognition**. It does
+      not touch the hold and takes no part in reconciliation.
+
+**The amount of an application is its net posting on the accounts under the side's `holdPrefix`**,
+counted in the direction that settles the hold (§5). The revenue recognition therefore counts for
+nothing, even if it carried the payment reference. It is still best kept without one.
 
 - **Open items are a query.** At any instant, the open book is simply the set of non-zero holds.
   Lettered holds purge, so the open book stays small whatever the history.
@@ -81,13 +99,13 @@ This design is tuned for the read paths measured in §7:
 
 | | PSP ledger (Connectivity) | Product ledger |
 |---|---|---|
-| **In-flight hold** (EPHEMERAL) | `psp:{conn}:payment:pending:{payment_ref}` (and `psp:{conn}:refund:pending:{refund_ref}`), a single prefix per kind | `product:hold:invoice:{business_ref}` (and `product:hold:refund:{refund_no}`): **one hold per business object**, not one per state |
-| **Final accounts** (NORMAL) | `psp:{conn}:account:{acct}:main`, and **`psp:{conn}:fees`**: with no tolerance, every fee is an explicit posting | **`product:clearing:{conn}`**: the application transaction credits the invoice hold from the clearing account, so the clearing balance is the product's view of cash at the PSP (an aggregate control total) |
+| **In-flight hold** (EPHEMERAL) | `psp:{conn}:payment:pending:{payment_ref}` (and `psp:{conn}:refund:pending:{refund_ref}`), a single prefix per kind | `main:hold:invoice:{business_ref}` (and `main:hold:refund:{refund_no}`): **one hold per business object**, not one per state. It opens negative, against pending revenue |
+| **Final accounts** (NORMAL) | `psp:{conn}:account:{acct}:main`, and **`psp:{conn}:fees`**: with no tolerance, every fee is an explicit posting | **`main:clearing:{conn}`**: the application transaction credits the invoice hold from the clearing account, so the clearing balance is the product's view of cash at the PSP (an aggregate control total). Revenue recognition, if any, is a separate transaction in the same atomic batch that does not touch the hold |
 | **One transaction =** | one event of one payment: pending, succeeded, failed… A refund or a chargeback is **its own payment reference**, not an event of the original payment (decision 7) | one application of one payment to one business object. A payment split across two invoices is two transactions with the same `payment_ref` |
-| **Transaction metadata** (declared, typed) | `payment_ref`, **`merchant_ref`** (the business id the merchant passed when it created the payment: Stripe `metadata`, Adyen `merchantReference`…), `state` (the rule maps its values to pending, final and failed), `kind` (payment, refund, chargeback) | `payment_ref` on applications; `business_ref` on **every** transaction touching a business hold, including its opening; `kind` |
+| **Transaction metadata** (declared, typed) | `payment_ref`, **`merchant_ref`** (the business id the merchant passed when it created the payment: Stripe `metadata`, Adyen `merchantReference`…), `state` (the rule maps its values to pending, final and failed), `kind` (payment, refund, chargeback) | `payment_ref` on applications only, not on the revenue recognition; `business_ref` on **every** transaction touching a business hold, including its opening; `kind` |
 | **`reference`** | `{payment_ref}:{state}`: idempotent on re-delivery | `{payment_ref}:{business_ref}` |
 | **`timestamp`** | the PSP event time | the business event time |
-| **Postings** | exact amounts, with fees split out | application **strict on the amount** (`send [$asset $amount]`, never `*`): an over-application shows as a negative hold, and a partial payment leaves an honest residual |
+| **Postings** | exact amounts, with fees split out | application **strict on the amount** (`send [$asset $amount]`, never `*`): an over-application takes the hold past zero, to the sign opposite its opening (`negative_hold`), and a partial payment leaves an honest residual |
 | **Indexes** | **`payment_ref` (mandatory: it drives the flow read)**; `inserted_at` and log date (to resolve the cut; bisection otherwise); `merchant_ref` (investigation) | **`payment_ref` and `business_ref` (mandatory: together they drive the flow read)**; `inserted_at` and log date |
 | **Mutability** | key and state metadata are **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one. Recon flags any violation it sees in the rewind window (`key_metadata_mutated`). **Labels** (ask L8) would make this structural | same |
 
@@ -348,13 +366,13 @@ vocabulary.
 
 | Leg | Class | Meaning |
 |---|---|---|
-| Flow | `matched` | PSP `final`, and product applications summing to the same amount |
+| Flow | `matched` | PSP `final`, and product applications summing to the same amount. An application's amount is its net posting on the accounts under `holdPrefix`, in the settling direction |
 | Flow | `under_applied` / `over_applied` | Product applications for the reference sum to less or more than the PSP amount. A payment split across invoices is summed first. **No tolerance**: a fee or FX difference is a break |
 | Flow | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `grace`** (proposed default 3 days), then a break. Carried from day to day in `pending.ndjson.gz` |
 | Flow | `orphan_application` | A product application points at a reference the PSP never finalised: **critical** |
 | Flow | `reversed_after_application` | The PSP reports `failed` on a reference after the product applied it: **critical** |
 | Stock (each side) | `open` + age bucket | Pending payment (PSP side) or unpaid business object (product side). Proposed buckets: 0–1, 2–7, 8–30, > 30 days |
-| Stock (each side) | `negative_hold` | A required state was skipped ("investigate id") |
+| Stock (each side) | `negative_hold` | The hold's balance has the sign opposite an open hold on that side (`openSign`): a positive invoice hold, for example. An over-application or a skipped state ("investigate id") |
 | Stock (each side) | `stuck` | Open past the side's `maxAge`, the `stale_holds` signal per key |
 
 - **Refunds and chargebacks are ordinary 1-to-1 pairs.** On the PSP ledger they are a payment with
@@ -429,7 +447,7 @@ and the gross amount first, and the net second.
   manifest.json       {cuts:[{ledger, S, T, logHash, cutoff}], files:[{name, sha256, rows}], counts, drifts, continuity, expiresAt}
   flow.ndjson.gz      {"ref":"PAY-42","class":"matched","psp":{"tx":981,"amount":"1000"},"product":[{"tx":1204,"invoice":"INV-7","amount":"1000"}]}
   pending.ndjson.gz   the unapplied payments carried to the next day, each with the day it was first seen
-  stock.ndjson.gz     {"side":"product","hold":"main:hold:invoice:open:INV-9","balance":"-500","ageDays":12,"bucket":"8-30d"}
+  stock.ndjson.gz     {"side":"product","hold":"main:hold:invoice:INV-9","balance":"-500","ageDays":12,"bucket":"8-30d"}
   breaks.ndjson.gz    every non-matched row of both legs
 ```
 

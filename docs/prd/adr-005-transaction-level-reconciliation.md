@@ -65,9 +65,15 @@ account, named after the id **of the thing it tracks on that ledger**:
 - On the **PSP ledger**, the hold tracks the *external payment* and is keyed by the **PSP payment
   reference**. The payment is seen here first.
 - On the **product ledger**, the hold tracks a *business object*: an invoice, an order, a
-  subscription period. It is keyed by that object's id, for example `…:hold:invoice:open:{invoice_no}`.
+  subscription period. It is keyed by that object's id, for example `main:hold:invoice:{invoice_no}`.
   When the payment arrives, the product books a transaction that **carries the PSP payment
   reference** and letters that business hold.
+  - In the owner's model, the invoice opens the hold at −X against `user:revenue:{acct}:pending`,
+    so a product hold opens **negative** where a PSP hold opens positive.
+  - The payment is then booked as **one atomic batch of two transactions**. The application
+    `main:clearing:{conn}` → hold carries the PSP reference and brings the hold to 0. The revenue
+    recognition `…:pending` → `user:revenue:{acct}` does not touch the hold and takes no part in
+    reconciliation ([design doc §2](../technical/transaction-level-reconciliation.md#2-the-booking-this-control-relies-on)).
 - Authorization/capture, where both sides know the authorization number from the start, is the
   special case in which the two ids coincide.
 
@@ -379,7 +385,7 @@ checkpoint's listing.
 
   ```json
   "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id", "state": {"field": "formance.com/observation.event-type", "final": ["payin.succeeded"], "failed": ["payin.compensate"], "pending": ["payin.pending"]}, "holdPrefix": "fpay:stripe:payment:hold:pending:"},
-  "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no", "state": {"field": "transition_kind", "final": ["to_final"]}, "holdPrefix": "main:hold:invoice:"}
+  "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no", "state": {"field": "transition_kind", "final": ["to_final"]}, "holdPrefix": "main:hold:invoice:", "openSign": "negative"}
   ```
 
   A transaction whose state value is in no set takes no part in matching, but it is **never dropped
@@ -391,6 +397,11 @@ checkpoint's listing.
   ([design doc §2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation))
   tells the implementer to give refunds their own reference. The rule's validation rejects overlapping
   sets.
+- **An application's amount is its net posting on the accounts under the side's `holdPrefix`**,
+  counted in the direction that settles the hold. `openSign` (`positive` by default) gives the sign
+  of an open hold on that side: a product invoice hold that opens at −X is settled by +X. A
+  transaction that carries the key but moves no hold, such as a revenue recognition booked in the
+  same batch as the application, therefore counts for nothing.
 - **No tolerance.** Owner decision, 2026-09-24. The comparison is exact: a fee or FX difference on a
   payment is a break, never an accepted gap. Fees and FX must be booked explicitly on the side that
   bears them.
@@ -413,9 +424,9 @@ checkpoint's listing.
   | `orphan_application` | A product application points at a reference the PSP never finalised (unknown, `pending` or `failed`) | **critical** |
   | `reversed_after_application` | The PSP reports `failed` on a reference **after** the product applied it. A refund or chargeback is *not* this: it has its own reference | **critical** |
 
-- **Stock classes**, per hold and per side: `open` with its age bucket, `negative_hold` (a required
-  state was skipped: "investigate id"), and `stuck` (open past the side's `maxAge`, the `stale_holds`
-  signal per key). PSP holds are pending payments; product holds are unpaid business objects. The two
+- **Stock classes**, per hold and per side: `open` with its age bucket, `negative_hold` (the balance
+  has the sign opposite `openSign`: an over-application or a skipped state, "investigate id"), and
+  `stuck` (open past the side's `maxAge`, the `stale_holds` signal per key). PSP holds are pending payments; product holds are unpaid business objects. The two
   books are aged, never joined to each other.
 - **Grace and ageing: proposed defaults, to calibrate with the design partner** (the owner has no
   prior on them).
@@ -540,7 +551,7 @@ The rules that the engine's efficiency depends on:
    **`merchant_ref` is what turns an `unapplied_payment` into "invoice X is paid: apply it".**
 4. **Strict amounts, explicit fees and FX** (decision 6). Product applications are
    `send [$asset $amount]`, never `*`. PSP fees are their own posting to `psp:{conn}:fees`.
-5. **Clearing account.** A `product:clearing:{conn}` account on the product side gives an aggregate
+5. **Clearing account.** A `main:clearing:{conn}` account on the product side gives an aggregate
    control total that lines up with the PSP's `:main`.
 6. **`reference = {payment_ref}:{state}`** on the PSP side and `{payment_ref}:{business_ref}` on the
    product side: idempotent on re-delivery.
