@@ -268,9 +268,16 @@ is at or before the cut-off.
   `GetLedgerStats.log_count` (checked on the bench). `ListLogs` rejects `reverse`
   ("options.reverse is not supported on this endpoint"), so `S` is **(the first log with
   `date > cut-off`) − 1**: one ascending page of size 1 on the per-ledger log-date index
-  (`LOG_BUILTIN_INDEX_DATE`, "lldt"). That index is recommended on both ledgers. Without it, `S` is
-  found by bisecting on log id, about 20 calls for 1M logs (§8.8). `T` is resolved the same way on
-  the `inserted_at` index.
+  (`LOG_BUILTIN_INDEX_DATE`, "lldt"). `T` is resolved the same way on the `inserted_at` index
+  (`TX_BUILTIN_INDEX_INSERTED_AT`).
+- **Both indexes are mandatory on both ledgers** (owner decision, 2026-09-25; §8.8). The rule's
+  validation rejects a ledger without them, and a run waits while they build, exactly as for the
+  key's metadata index.
+- **Bisection was considered and dropped.** Ids are contiguous and the insertion date grows with
+  them, so the cut could be found without the indexes by halving the id range, about 20 reads for
+  1M rows. It is no faster than the indexes, it was never benched, and it would be a second code
+  path that the index path makes rarely exercised. Since the rule already requires an index on its
+  key, two more indexes do not change what onboarding asks for.
 
 A worked example, and why the id range is what makes the metadata-filtered read cheap, are in the
 [design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges).
@@ -309,7 +316,7 @@ split into parallel id ranges.
   so every product transaction that touches a business hold carries its `business_ref` (§8.3).
 
 - `T` is the transaction-id image of the cut: the last transaction with `inserted_at ≤ cut-off`.
-  It is resolved with the `inserted_at` index in one page, or by bisecting on id. Per-ledger
+  It is resolved with the `inserted_at` index in one page. Per-ledger
   transaction ids are contiguous: an unfiltered `(0, 1M]` returned exactly 1M rows.
 - Every returned transaction carries its postings, its metadata and its `post_commit_volumes`.
 - **Membership is the key's presence, not a `kind` tag.** Any transaction that carries the payment
@@ -546,9 +553,8 @@ checkpoint's listing.
      a longer window read.
 7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
    (`S`, `T`, log hash) is in the signed capture.
-   - **The flow costs the same at any age.** Resolving the cut takes one index page or about twenty
-     bisection reads, and the day is the id range `(T_prev, T]`, so the read stays O(payments of that
-     day). It matches the original run as long as the write-once convention held. The exact variant
+   - **The flow costs the same at any age.** Resolving the cut takes one index page per ledger, and
+     the day is the id range `(T_prev, T]`, so the read stays O(payments of that day). It matches the original run as long as the write-once convention held. The exact variant
      reads that day's logs `(S_prev, S]`: slower, but still one day's worth, whatever its age.
    - **The rewind from head does not.** It reads every log written since the day's cut, and keeps the
      first touch of every hold touched since. With 1M logs a day and the measured 15 s per 1M logs
@@ -600,7 +606,8 @@ The rules that the engine's efficiency depends on:
 6. **`reference = {payment_ref}:{state}`** on the PSP side and `{payment_ref}:{business_ref}` on the
    product side: idempotent on re-delivery.
 7. **`timestamp` = event time; the log date is the cut.**
-8. **Log-date index on both ledgers.** It is optional: there is a bisection fallback.
+8. **Log-date and `inserted_at` indexes on both ledgers: mandatory.** Each resolves the cut in one
+   read. The rule is rejected without them, as it is without the key's index (§5).
 9. **Traffic unrelated to payments costs nothing on the flow leg.** The filtered transaction read
    costs O(payments). Only the short rewind window reads every log, so a dedicated receivables
    ledger is no longer needed for performance. Metadata-only writes on holds are still best avoided:

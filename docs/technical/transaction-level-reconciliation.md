@@ -107,7 +107,7 @@ This design is tuned for the read paths measured in §7:
 | **`reference`** | `{payment_ref}:{state}`: idempotent on re-delivery | `{payment_ref}:{business_ref}` |
 | **`timestamp`** | the PSP event time | the business event time |
 | **Postings** | exact amounts, with fees split out | application **strict on the amount** (`send [$asset $amount]`, never `*`): an over-application takes the hold past zero, to the sign opposite its opening (`negative_hold`), and a partial payment leaves an honest residual |
-| **Indexes** | **`payment_ref` (mandatory: it drives the flow read)**; `inserted_at` and log date (to resolve the cut; bisection otherwise); `merchant_ref` (investigation) | **`payment_ref` and `business_ref` (mandatory: together they drive the flow read)**; `inserted_at` and log date |
+| **Indexes** | **`payment_ref` (mandatory: it drives the flow read)**; **`inserted_at` and log date (mandatory: they resolve the cut)**; `merchant_ref` (investigation) | **`payment_ref` and `business_ref` (mandatory: together they drive the flow read)**; **`inserted_at` and log date (mandatory)** |
 | **Mutability** | key and state metadata are **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one. Recon flags any violation it sees in the rewind window (`key_metadata_mutated`). **Labels** (ask L8) would make this structural | same |
 
 **Why `merchant_ref` matters.** Without it, a payment the PSP finalised that the product never
@@ -145,7 +145,7 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
 | 7 | book **fees and FX as explicit postings** to their own accounts | The comparison is exact, with no tolerance |
 | 8 | use **EPHEMERAL holds, one per payment, under one prefix per kind**, and note the sign each kind opens with | The open book is then a prefix listing, and lettered holds leave it. The rule declares each prefix with its sign (`holds[].openSign`) |
 | 9 | set `reference = {payment_ref}:{state}` | Re-delivery of an event is idempotent |
-| 10 | have the **`inserted_at` or log-date index** created on the ledger | It resolves the cut-off in one read, instead of by bisection |
+| 10 | have the **`inserted_at` and log-date indexes** created on the ledger | Each resolves the cut-off in one read. The rule is rejected without them (EN-2316) |
 
 **Where two existing mappings stand**, as a starting point:
 
@@ -284,11 +284,17 @@ yesterday's capture.
   Day D on this ledger = transaction ids (1 204 000, 1 318 500]
 ```
 
-- **Resolving it** costs one read per ledger and per day. With the index, ask for the first
-  transaction with `inserted_at > cut-off`, page size 1: id 1 318 501, so `T = 1 318 500`. `S` works
-  the same way on the log-date index. Without the index, bisect on id, reading one row's insertion
-  date per step: about 20 reads for 1M rows. On Connectivity-fed ledgers that is the common case,
-  since `formancepayments` creates neither index (checklist row 10).
+- **Resolving it** costs one read per ledger and per day: ask for the first transaction with
+  `inserted_at > cut-off`, page size 1. It is id 1 318 501, so `T = 1 318 500`. `S` works the same
+  way on the log-date index. **Both indexes are mandatory**: the rule is rejected without them, and
+  a run waits while they build, as for the key's index. `formancepayments` creates neither today,
+  so a Connectivity-fed ledger needs them added at implementation (checklist row 10).
+- **Bisection was considered and dropped.** Because ids are contiguous and the insertion date grows
+  with them, the cut could be found without the indexes by halving the id range from
+  `(T_prev, head]`, reading one row's insertion date per step: about 18 reads for a day of 200k
+  transactions, 30 for a billion. It is no faster than the index, it was never benched, and it would
+  be a second, rarely exercised code path. The rule requires an index on its key anyway, so two more
+  indexes do not change what onboarding asks for (ADR-005 §5).
 - **Why the insertion date and not `timestamp`.** A transaction inserted today always gets an id
   above yesterday's `T`, so it lands in today's window even if its `timestamp` says yesterday. A past
   day is therefore **frozen**: nothing can be added to it after its cut. A cut on `timestamp` would
@@ -339,8 +345,8 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Read | RPC | Index needed |
 |---|---|---|
 | Head of a ledger's log | `GetLedgerStats` → `log_count` (per-ledger log ids are contiguous from 1) | none |
-| Resolve `S` from the cut-off | `ListLogs`, filter `log_builtin_uint(DATE) > cut-off`, page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`). Without it, fall back to bisecting on log id: page-1 `ListLogs` calls filtered on `log_id`, reading each log's date, about 20 calls for 1M logs (not benched). **A main path, not an edge case**: Connectivity's `formancepayments` profile creates neither this index nor `inserted_at` (checklist row 10), so the run records which path resolved the cut and the statement names the index to add |
-| Resolve `T` (transaction-id cut) | `ListTransactions`, filter `builtin_uint(INSERTED_AT) > cut-off`, page 1 → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`), or bisection on id |
+| Resolve `S` from the cut-off | `ListLogs`, filter `log_builtin_uint(DATE) > cut-off`, page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`): **mandatory**. Connectivity's `formancepayments` profile does not create it today, so the implementer adds it (checklist row 10) |
+| Resolve `T` (transaction-id cut) | `ListTransactions`, filter `builtin_uint(INSERTED_AT) > cut-off`, page 1 → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
 | **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], membership)`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, and `Or(<product.key> EXISTS, <product.businessId> EXISTS)` on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
 | Rewind window `(S, head]`, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
@@ -421,8 +427,8 @@ matched on every one of 1,002,408 rows. The raw live listing differed on 2,233.
 Any past day can be replayed: the logs are permanent, and the day's cut (`S`, `T`, log hash) is in
 the signed capture (ADR-005 §7, item 7).
 
-**The flow costs the same at any age.** The cut of an old day resolves in one index page or about
-twenty bisection reads, and the day is its id range `(T_prev, T]`, read filtered on the key:
+**The flow costs the same at any age.** The cut of an old day resolves in one index page per
+ledger, and the day is its id range `(T_prev, T]`, read filtered on the key:
 O(payments of that day), a day or a year later. It matches the original run as long as key and
 state metadata stayed write-once. The exact variant reads that day's logs `(S_prev, S]`, which is
 slower but still one day's worth.
