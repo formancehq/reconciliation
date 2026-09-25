@@ -519,6 +519,9 @@ checkpoint's listing.
      `warning`), breaks carry a `priority` (1 to 4) and a `breakId` stable from day to day and
      are self-contained, and the manifest carries the statement, so a dashboard needs no other file
      ([design doc](../technical/transaction-level-reconciliation.md#result-artifacts-retention-and-the-period-view)).
+   - **Rules a reader can rely on:** every file is written on every run, even empty; a file may
+     come in parts, listed in the manifest, once it passes a row threshold; and the same cut gives
+     byte-identical data files, so a replay proves itself by reproducing their SHA-256.
    - The prefix **must stay outside `{bucketID}/backups/`**. The ledger's post-manifest orphan prune
      lists and deletes every unreferenced object under `{bucketID}/backups/data/` and
      `{bucketID}/backups/exports/` (`internal/infra/backup/manager.go:229-235`, prefixes at

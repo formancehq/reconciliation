@@ -598,6 +598,20 @@ can evolve behind `schemaVersion`:
   grades the alert;
 - stock and unclassified rows have a `side`; flow rows carry both sides.
 
+**Rules a reader can rely on.**
+
+- **Every file is written on every run**, even with no row, so a glob or a script never breaks on a
+  quiet day. The manifest gives each file's row count.
+- **A file may come in parts.** Past a row threshold, `flow.ndjson.gz` becomes
+  `flow-00000.ndjson.gz`, `flow-00001.ndjson.gz` and so on, in the file's order, each listed in
+  the manifest's `files` with its `part`, rows and SHA-256. Today every file fits in one part. A
+  reader that follows the manifest, or globs `flow*.ndjson.gz`, needs no change when a file splits.
+- **The same cut gives the same bytes.** Keys are written in the order of the file's JSON Schema,
+  rows in the documented order, and gzip at a fixed level with no name and no timestamp in its
+  header. A replay of a day therefore reproduces every data file's SHA-256, which proves the
+  recomputed day identical to the original. Only the manifest differs, through its run instants
+  and timings.
+
 | File | Unique key | Order |
 |---|---|---|
 | `flow` | `ref`, `asset` | `ref`, `asset` |
@@ -623,10 +637,10 @@ can evolve behind `schemaVersion`:
   `state` on the PSP side and `businessId` and `holdId` on the product side. A reference carried
   in keeps the transactions of its earlier days.
 
-**Carried rows** are the flow rows whose `drift` is not 0, copied as they are: unapplied payments,
-under- and over-applications, orphan applications. The next run joins them with its own window, and
-their transactions are what its carried-in rows show. They are a separate file so that it reads a
-small file, not the whole flow.
+**Carried rows** are the flow rows whose `drift` is not 0: unapplied payments, under- and
+over-applications, orphan applications. They leave out `impact`, which describes only the window of
+their own day. The next run joins them with its own window, and their transactions are what its
+carried-in rows show. They are a separate file so that it reads a small file, not the whole flow.
 
 **Stock rows.** `prefix`, `openSign`, `balance` (signed), `class` (`open`, `negative_hold`,
 `stuck`, `cleared`), `lifecycle` against the previous run (`new`, `persisting`, `cleared`),
@@ -825,13 +839,14 @@ so INV-7's application counts 1,000.00 even though the same batch recognised rev
 carried in: its `impact` is 0, because it was finalised on an earlier day and nothing was applied
 today.
 
-**`carried.ndjson.gz`**, handed to 25 September, the 4 flow rows whose drift is not 0:
+**`carried.ndjson.gz`**, handed to 25 September, the 4 flow rows whose drift is not 0, without
+`impact`:
 
 ```text
-{"ref":"PAY-39","asset":"EUR/2","class":"unapplied_payment","outcome":"break","pspAmount":"50000","productAmount":"0","drift":"50000","impact":"0","firstSeen":"2026-09-20","breakOn":"2026-09-23","psp":[{"tx":1071229,"state":"payin.succeeded","amount":"50000","insertedAt":"2026-09-20T09:14:55Z"}],"product":[]}
-{"ref":"PAY-44","asset":"EUR/2","class":"under_applied","outcome":"break","pspAmount":"120000","productAmount":"115000","drift":"5000","impact":"5000","firstSeen":"2026-09-24","psp":[{"tx":1287004,"state":"payin.pending","amount":"120000","insertedAt":"2026-09-24T11:47:31Z"},{"tx":1288115,"state":"payin.succeeded","amount":"120000","insertedAt":"2026-09-24T11:50:02Z"}],"product":[{"tx":895660,"businessId":"INV-11","holdId":"INV-11","amount":"115000","insertedAt":"2026-09-24T11:55:48Z"}]}
-{"ref":"PAY-45","asset":"EUR/2","class":"unapplied_payment","outcome":"pending","pspAmount":"80000","productAmount":"0","drift":"80000","impact":"80000","firstSeen":"2026-09-24","breakOn":"2026-09-27","merchantRef":"INV-12","pairedHold":"main:hold:invoice:INV-12","psp":[{"tx":1300312,"state":"payin.pending","amount":"80000","insertedAt":"2026-09-24T13:10:26Z"},{"tx":1301876,"state":"payin.succeeded","amount":"80000","insertedAt":"2026-09-24T13:12:59Z"}],"product":[]}
-{"ref":"PAY-99","asset":"EUR/2","class":"orphan_application","outcome":"break","pspAmount":"0","productAmount":"30000","drift":"-30000","impact":"-30000","firstSeen":"2026-09-24","psp":[{"tx":1309640,"state":"payin.pending","amount":"30000","insertedAt":"2026-09-24T19:55:37Z"}],"product":[{"tx":899031,"businessId":"INV-13","holdId":"INV-13","amount":"30000","insertedAt":"2026-09-24T17:02:20Z"}]}
+{"ref":"PAY-39","asset":"EUR/2","class":"unapplied_payment","outcome":"break","pspAmount":"50000","productAmount":"0","drift":"50000","firstSeen":"2026-09-20","breakOn":"2026-09-23","psp":[{"tx":1071229,"state":"payin.succeeded","amount":"50000","insertedAt":"2026-09-20T09:14:55Z"}],"product":[]}
+{"ref":"PAY-44","asset":"EUR/2","class":"under_applied","outcome":"break","pspAmount":"120000","productAmount":"115000","drift":"5000","firstSeen":"2026-09-24","psp":[{"tx":1287004,"state":"payin.pending","amount":"120000","insertedAt":"2026-09-24T11:47:31Z"},{"tx":1288115,"state":"payin.succeeded","amount":"120000","insertedAt":"2026-09-24T11:50:02Z"}],"product":[{"tx":895660,"businessId":"INV-11","holdId":"INV-11","amount":"115000","insertedAt":"2026-09-24T11:55:48Z"}]}
+{"ref":"PAY-45","asset":"EUR/2","class":"unapplied_payment","outcome":"pending","pspAmount":"80000","productAmount":"0","drift":"80000","firstSeen":"2026-09-24","breakOn":"2026-09-27","merchantRef":"INV-12","pairedHold":"main:hold:invoice:INV-12","psp":[{"tx":1300312,"state":"payin.pending","amount":"80000","insertedAt":"2026-09-24T13:10:26Z"},{"tx":1301876,"state":"payin.succeeded","amount":"80000","insertedAt":"2026-09-24T13:12:59Z"}],"product":[]}
+{"ref":"PAY-99","asset":"EUR/2","class":"orphan_application","outcome":"break","pspAmount":"0","productAmount":"30000","drift":"-30000","firstSeen":"2026-09-24","psp":[{"tx":1309640,"state":"payin.pending","amount":"30000","insertedAt":"2026-09-24T19:55:37Z"}],"product":[{"tx":899031,"businessId":"INV-13","holdId":"INV-13","amount":"30000","insertedAt":"2026-09-24T17:02:20Z"}]}
 ```
 
 If PAY-44's missing 50.00 is booked tomorrow with the reference, tomorrow's run finds PAY-44 here
