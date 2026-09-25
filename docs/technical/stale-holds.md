@@ -603,8 +603,8 @@ time would be stale by the time anyone opened it anyway". ADR-005 reverses that 
 Proposal:
 
 - write `holds.ndjson.gz` (address, balance, asset, deadline, age, and the rule's label metadata)
-  under `{bucketID}/reconciliation/{ruleId}/{YYYY-MM-DD}/{runId}/`, next to a manifest whose
-  SHA-256 goes into the capture;
+  under `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`, next to a
+  manifest whose SHA-256 goes into the capture;
 - keep `effectiveQuery` as the *live* view, since the artifact is the *as-evaluated* view;
 - add the artifact link and the top-K holds by amount to the alert evidence.
 

@@ -328,9 +328,9 @@ flowchart LR
     Cut["Cut per ledger at the business cut-off<br/>log id S · transaction id T"] --> Agg["Phase 1 — AggregateVolumes on hold prefixes<br/>(live exposure) → capture"]
     Cut --> Flow["Phase 2 — flow: ListTransactions (T_prev, T]<br/>∧ key present (product: payment_ref or business_ref)<br/>8 id ranges per side · first run from backfillFrom"]
     Cut --> Stock["Phase 2 — stock: live ListAccounts of open holds<br/>rewound with ListLogs (S, head]"]
-    Flow --> Join["Join on the PSP payment reference<br/>(+ unapplied payments carried from earlier days, grace)<br/>+ continuity: open(S) = open(S_prev) + opened − lettered"]
+    Flow --> Join["Join on the PSP payment reference<br/>(+ references carried from earlier days: drift ≠ 0, grace)<br/>+ continuity: open(S) = open(S_prev) + opened − lettered"]
     Stock --> Join
-    Join --> Art["flow / stock / pending / breaks .ndjson.gz + manifest (sha256)<br/>→ backup storage, recon prefix, 90 days"]
+    Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ backup storage, recon prefix, 90 days"]
     Art --> Cap["Detail capture on _recon<br/>(counts, drifts, S and T per ledger, artifact hash) — Ed25519"]
     Cap --> Alert["Alert per (rule, fingerprint, period)<br/>reconciliation statement: verdict + bridge<br/>opens on net ≠ 0 or any break row<br/>top-K breaks + artifact link"]
 ```

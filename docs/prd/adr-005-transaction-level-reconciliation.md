@@ -154,15 +154,16 @@ Two legs:
 
 | Leg | Question | Universe | Source of truth |
 |---|---|---|---|
-| **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **still-unapplied payments carried from earlier days** | `ListTransactions` over the window's id range, filtered on the reference's presence (logs remain the immutable re-derivation path), plus the previous run's pending set |
+| **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (logs remain the immutable re-derivation path), plus the previous run's carried items |
 | **Stock** (per hold, on each side) | What is still open at `S`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to `S` with the log window `(S, now]` (§5) |
 | **Continuity** (self-check) | `open(S) = open(S_prev) + opened(W) − lettered(W)`, per side, per hold prefix and per asset | Aggregates | `open(S)` and `open(S_prev)` from the rewind; `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
 
 The two stock books do not join to each other: an unpaid invoice has no PSP counterpart by design.
-The cross-ledger signal is in the flow leg, and in particular in its carry-over, the **unapplied
-payments**: payments the PSP finalised that no product transaction references yet. That set is
-reconciliation's own open-items book. It is carried from day to day in the run artifacts, and it can
-always be recomputed from the permanent logs.
+The cross-ledger signal is in the flow leg, and in particular in its carry-over: every reference
+whose drift is not 0 yet. Mostly **unapplied payments**, payments the PSP finalised that no product
+transaction references yet, but also under- and over-applications and orphan applications, which a
+later booking can still settle. That set is reconciliation's own open-items book. It is carried
+from day to day in the run artifacts, and it can always be recomputed from the permanent logs.
 
 The continuity identity is what makes the control **complete**. A window read that dropped an
 event breaks the identity, so the loss is detected instead of silently shrinking the universe.
@@ -402,8 +403,8 @@ checkpoint's listing.
 
   A transaction whose state value is in no set takes no part in matching, but it is **never dropped
   silently**. It is counted per side, per state value and per asset as `unclassified` in the
-  statement, with a warning, and listed in the flow file. Connectivity's `formancepayments` profile
-  books refunds on the original payment id with the state `payin.refunded`
+  statement, with a warning, and listed in the unclassified file. Connectivity's
+  `formancepayments` profile books refunds on the original payment id with the state `payin.refunded`
   (`formancehq/connectivity-plugins-poc` @ `9df05c5b`), so a default mapping shows up there instead
   of vanishing. The connector mapping checklist
   ([design doc §2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation))
@@ -443,6 +444,7 @@ checkpoint's listing.
   | `matched` | PSP `final`, and product applications summing to the same amount | — |
   | `under_applied` / `over_applied` | PSP `final`, but the product applications sum to less or to more. There is no tolerance | break |
   | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `grace`**, a break after it | pending, then break |
+  | `in_progress` | PSP `pending` only, no application yet. Its hold is in the PSP stock | — |
   | `orphan_application` | A product application points at a reference the PSP never finalised (unknown, `pending` or `failed`) | **critical** |
   | `reversed_after_application` | The PSP reports `failed` on a reference **after** the product applied it. A refund or chargeback is *not* this: it has its own reference | **critical** |
 
@@ -456,8 +458,9 @@ checkpoint's listing.
   - `grace` for `unapplied_payment` = **3 calendar days**.
   - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`.
   - `maxAge` has no default: without one, no hold is ever `stuck`.
-  - All three are per-rule parameters. **Ageing** (`new` / `persisting` / `cleared`) comes from
-    comparing with the previous run's artifact.
+  - All three are per-rule parameters. **Ageing** comes from comparing with the previous run's
+    artifact: `new` / `persisting` / `cleared` for holds, `new` / `persisting` / `resolved` for
+    breaks, matched by a `breakId` that stays the same from day to day.
 - **Arithmetic.** Exact integer minor units, colors collapsed per asset, and multi-asset through
   `asset: "*"` as in ADR-004.
 - **Schedule and alerts reuse the existing model.** Owner decision, 2026-09-24.
@@ -495,7 +498,7 @@ checkpoint's listing.
      phase 2, as sums over the rewound rows. That is cheap, because the open book is small by
      construction. Ask **L7** would make phase 1 exact too.
 2. **Phase 2: an asynchronous job**, idempotent per (rule, period, cut) and resumable.
-   1. Flow window read and join, including the carried pending set.
+   1. Flow window read and join, including the previous run's carried items.
    2. Stock rewind and ageing.
    3. Write the artifacts.
    4. Write the **detail capture**: counts, drifts, `S` and `T` per ledger, and the artifact URI and
@@ -504,8 +507,16 @@ checkpoint's listing.
 3. **Where the files go: the backup object storage, under a recon prefix.** Owner decision,
    2026-09-24.
    - Recon writes to the same S3 or Azure destination the ledger backs up to, under
-     `{bucketID}/reconciliation/{ruleId}/{YYYY-MM-DD}/{runId}/`. The files are `manifest.json`,
-     `flow.ndjson.gz`, `stock.ndjson.gz`, `pending.ndjson.gz` and `breaks.ndjson.gz`.
+     `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. The files are
+     `manifest.json`, `flow.ndjson.gz`, `carried.ndjson.gz`, `stock.ndjson.gz`, `breaks.ndjson.gz`
+     and `unclassified.ndjson.gz`.
+   - **The customer is the first reader.** They analyse the files with their own tools (jq,
+     DuckDB, pandas, a spreadsheet import); recon's API and UI read them too. So the format stays
+     simple: gzipped NDJSON, a JSON Schema per file, and a `schemaVersion` in the manifest to evolve
+     it. The `key=value` path segments let query engines read rule, day and run as columns.
+     Identifiers keep one name across files, breaks carry a `breakId` stable from day to day and
+     are self-contained, and the manifest carries the statement, so a dashboard needs no other file
+     ([design doc](../technical/transaction-level-reconciliation.md#result-artifacts-retention-and-the-period-view)).
    - The prefix **must stay outside `{bucketID}/backups/`**. The ledger's post-manifest orphan prune
      lists and deletes every unreferenced object under `{bucketID}/backups/data/` and
      `{bucketID}/backups/exports/` (`internal/infra/backup/manager.go:229-235`, prefixes at
@@ -536,8 +547,8 @@ checkpoint's listing.
    - A break still open at the end of the period keeps the day it first appeared. A break that clears
      after its period has closed shows up in the next period; the closed period is never rewritten.
    - The 90-day default retention covers a monthly period plus a review margin.
-6. **First run: bounded backfill.** A rule's first run has no previous day, so no carried pending
-   set. Left alone, a payment the PSP finalised before the rule existed, and that the product never
+6. **First run: bounded backfill.** A rule's first run has no previous day, so no carried
+   items. Left alone, a payment the PSP finalised before the rule existed, and that the product never
    applied, would never be seen. On the PSP side its hold is already lettered, and it is in no later
    window.
    - The first run therefore reads the flow from **`backfillFrom`**, a rule parameter that defaults
@@ -679,7 +690,7 @@ new `periodType` without changing this design.
 
 - **Recon gains object storage** (the backup destination, under its own prefix) as its first durable
   dependency outside the ledger. It stays stateless in process. The artifacts are outputs, plus the
-  previous run's pending set and ageing. Every one of them can be recomputed from the permanent logs.
+  previous run's carried items and ageing. Every one of them can be recomputed from the permanent logs.
 - **The result store is shared, not ADR-005-specific.** Its first other consumer is `stale_holds`,
   which should keep its flagged holds as an artifact instead of only a query to re-run
   ([stale-holds.md §9](../technical/stale-holds.md#9-revisit-after-adr-005--keep-the-flagged-holds-as-a-result-artifact-),
