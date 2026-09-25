@@ -156,7 +156,7 @@ Two legs:
 |---|---|---|---|
 | **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **still-unapplied payments carried from earlier days** | `ListTransactions` over the window's id range, filtered on the reference's presence (logs remain the immutable re-derivation path), plus the previous run's pending set |
 | **Stock** (per hold, on each side) | What is still open at `S`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to `S` with the log window `(S, now]` (§5) |
-| **Continuity** (self-check) | `open(S) = open(S_prev) + opened(W) − lettered(W)`, per side and per asset | Aggregates | `open(S)` and `open(S_prev)` from the rewind; `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
+| **Continuity** (self-check) | `open(S) = open(S_prev) + opened(W) − lettered(W)`, per side, per hold prefix and per asset | Aggregates | `open(S)` and `open(S_prev)` from the rewind; `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
 
 The two stock books do not join to each other: an unpaid invoice has no PSP counterpart by design.
 The cross-ledger signal is in the flow leg, and in particular in its carry-over, the **unapplied
@@ -340,7 +340,7 @@ Three caveats come with this choice, and each has a counter-measure:
 
 **Stock leg (rewind).** The steps:
 
-1. List the open holds by prefix, live. The listing may tear.
+1. List the open holds under each of the side's hold prefixes (§6), live. The listing may tear.
 2. When the listing ends, read the logs `(S, head]`. This window runs from the cut-off to the run,
    so it is short, and `ListLogs` is kept for it on purpose: it is **complete** (the count check
    `hi − lo` holds), immutable, and independent of any metadata convention. A hold touched by a
@@ -384,8 +384,13 @@ checkpoint's listing.
   side**, the metadata field or fields and the value sets that mean `pending`, `final` and `failed`:
 
   ```json
-  "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id", "state": {"field": "formance.com/observation.event-type", "final": ["payin.succeeded"], "failed": ["payin.compensate"], "pending": ["payin.pending"]}, "holdPrefix": "fpay:stripe:payment:hold:pending:"},
-  "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no", "state": {"field": "transition_kind", "final": ["to_final"]}, "holdPrefix": "main:hold:invoice:", "openSign": "negative"}
+  "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
+          "state": {"field": "formance.com/observation.event-type", "final": ["payin.succeeded"], "failed": ["payin.compensate"], "pending": ["payin.pending"]},
+          "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}]},
+  "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no",
+          "state": {"field": "transition_kind", "final": ["to_final"]},
+          "holds": [{"prefix": "main:hold:invoice:", "openSign": "negative"},
+                    {"prefix": "main:hold:refund:",  "openSign": "positive"}]}
   ```
 
   A transaction whose state value is in no set takes no part in matching, but it is **never dropped
@@ -397,10 +402,20 @@ checkpoint's listing.
   ([design doc §2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation))
   tells the implementer to give refunds their own reference. The rule's validation rejects overlapping
   sets.
-- **An application's amount is its net posting on the accounts under the side's `holdPrefix`**,
-  counted in the direction that settles the hold. `openSign` (`positive` by default) gives the sign
-  of an open hold on that side: a product invoice hold that opens at −X is settled by +X. A
-  transaction that carries the key but moves no hold, such as a revenue recognition booked in the
+- **Hold prefixes and their signs are parameters too.** Each side lists its hold kinds in `holds`,
+  one entry per prefix, each with the sign of an **open** hold under it (`openSign`, `positive` by
+  default).
+  - The sign depends on the integration, not on the side. A hold that is the destination of its
+    opening posting opens positive (the `formancepayments` PSP hold); a hold that is its source opens
+    negative (the owner's invoice hold, opened against pending revenue).
+  - One side can mix signs. A refund hold (money owed to the customer) often opens with the sign
+    opposite the invoice hold, so each kind gets its own entry.
+  - The sign cannot be inferred: a hold may have been opened before the window, and the stock sees
+    only its balance, where −500 could be an open invoice or an over-application.
+  - Validation rejects overlapping prefixes on one side, so every hold has exactly one sign.
+- **An application's amount is its net posting on the accounts under the side's hold prefixes**,
+  each counted in the direction that settles it: an invoice hold that opens at −X is settled by +X.
+  A transaction that carries the key but moves no hold, such as a revenue recognition booked in the
   same batch as the application, therefore counts for nothing.
 - **No tolerance.** Owner decision, 2026-09-24. The comparison is exact: a fee or FX difference on a
   payment is a break, never an accepted gap. Fees and FX must be booked explicitly on the side that
@@ -425,9 +440,10 @@ checkpoint's listing.
   | `reversed_after_application` | The PSP reports `failed` on a reference **after** the product applied it. A refund or chargeback is *not* this: it has its own reference | **critical** |
 
 - **Stock classes**, per hold and per side: `open` with its age bucket, `negative_hold` (the balance
-  has the sign opposite `openSign`: an over-application or a skipped state, "investigate id"), and
-  `stuck` (open past the side's `maxAge`, the `stale_holds` signal per key). PSP holds are pending payments; product holds are unpaid business objects. The two
-  books are aged, never joined to each other.
+  has the sign opposite its prefix's `openSign`: an over-application or a skipped state,
+  "investigate id"), and `stuck` (open past the side's `maxAge`, the `stale_holds` signal per key).
+  PSP holds are pending payments; product holds are unpaid business objects. The two books are aged,
+  never joined to each other.
 - **Grace and ageing: proposed defaults, to calibrate with the design partner** (the owner has no
   prior on them).
   - `grace` for `unapplied_payment` = **3 calendar days**.
@@ -465,8 +481,9 @@ checkpoint's listing.
 
 1. **Phase 1: synchronous, seconds.**
    - Resolve `S` on each ledger.
-   - Take one live `AggregateVolumes` per hold prefix. This is the open exposure *now*, labelled with
-     the run instant, because the call does not say which log id its snapshot saw.
+   - Take one live `AggregateVolumes` per hold prefix, each signed by its `openSign` so that holds
+     of opposite signs do not cancel. This is the open exposure *now*, labelled with the run instant,
+     because the call does not say which log id its snapshot saw.
    - Write an aggregate capture. The exact aggregates at `S` and the continuity check come with
      phase 2, as sums over the rewound rows. That is cheap, because the open book is small by
      construction. Ask **L7** would make phase 1 exact too.
@@ -533,7 +550,8 @@ The rules that the engine's efficiency depends on:
 
 1. **EPHEMERAL holds, one prefix per kind.** One hold per external payment on the PSP ledger. One
    hold per **business object** on the product ledger, not one per state. The open book is then a
-   prefix listing, with no index.
+   prefix listing, with no index. Each prefix is declared in the rule's `holds` with the sign its
+   holds open with (§6).
 2. **One transaction = one event of one payment reference.** The flow is then extracted
    transaction by transaction, without splitting multi-reference transactions.
 3. **Declared transaction metadata**:
