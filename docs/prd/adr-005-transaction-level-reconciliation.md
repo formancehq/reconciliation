@@ -2,7 +2,7 @@
 
 **Status:** Proposed. The design is under evaluation and nothing is implemented. The owner's answers
 of 2026-09-24 settle the questions of the first draft, and those of 2026-09-25 refine the rule
-contract, the cut and the result files (§10).
+contract, the cut, the matching and the result files (§10).
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316 to
 EN-2323 (R1–R8). Wave 2 is EN-2333 (R9 period summary), EN-2334 (R10 rewind oracle test) and
 EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9): L2 EN-2327,
@@ -164,9 +164,10 @@ Two legs:
 The two stock books do not join to each other: an unpaid invoice has no PSP counterpart by design.
 The cross-ledger signal is in the flow leg, and in particular in its carry-over: every reference
 whose drift is not 0 yet. Mostly **unapplied payments**, payments the PSP finalised that no product
-transaction references yet, but also under- and over-applications and orphan applications, which a
-later booking can still settle. That set is reconciliation's own open-items book. It is carried
-from day to day in the run artifacts, and it can always be recomputed from the permanent logs.
+transaction references yet, but also under- and over-applications and applications the PSP has not
+finalised yet, which a later booking or PSP event can still settle. That set is reconciliation's own
+open-items book. It is carried from day to day in the run artifacts, and it can always be recomputed
+from the permanent logs.
 
 The continuity identity is what makes the control **complete**. A window read that dropped an
 event breaks the identity, so the loss is detected instead of silently shrinking the universe.
@@ -397,8 +398,8 @@ checkpoint's listing.
   ```json
   "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
           "state": {"field": "formance.com/observation.event-type", "final": ["payin.succeeded"], "failed": ["payin.compensate"], "pending": ["payin.pending"]},
-          "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}]},
-  "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no",
+          "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}], "grace": "7d"},
+  "product": {"ledger": "main", "key": "psp_payment_ref", "businessId": "invoice_no", "grace": "3d",
           "state": {"field": "transition_kind", "final": ["to_final"]},
           "holds": [{"prefix": "main:hold:invoice:", "openSign": "negative"},
                     {"prefix": "main:hold:refund:",  "openSign": "positive"}]}
@@ -440,16 +441,45 @@ checkpoint's listing.
   several product transactions: split across invoices, or applied in parts. Their amounts are
   **summed per reference** before comparison. One invoice settled by several payments is a
   stock-side fact (the business hold only letters to zero once), not a flow break.
+- **References missing from the window are looked up by key.** A product application whose
+  reference is neither in the PSP window nor carried in may belong to a payment the PSP settled or
+  failed earlier: a `failed` never applied (drift 0, so not carried), an `in_progress` of an earlier
+  day, or a payment finalised before `backfillFrom`. The run reads that reference's PSP transactions
+  up to `T` with one `ListTransactions` filtered on the indexed key, and classes it on its real
+  history. When that finds a final state, the reference's earlier applications are read on the
+  product ledger too, so a second application on a payment matched days ago shows as
+  `over_applied`. On the first run only, every PSP reference of the window missing from the product
+  window is looked up on the product ledger, whatever its state: in steady state an earlier
+  application with a drift is always carried. The cost is O(looked-up references), counted in the
+  manifest.
+- **Which came first.** Between two days, the window decides; within a day, `insertedAt`, although
+  it compares the clocks of two ledgers. Every flow row records it as `firstSide`: `psp` when the
+  PSP's first terminal state (`final` or `failed`) came before the first application, `product`
+  otherwise; a `failed` after a `final` does not change it. It is informative and never changes a
+  priority.
 - **Flow classes**, per payment reference:
 
   | Class | Meaning | Outcome (priority) |
   |---|---|---|
   | `matched` | PSP `final`, and product applications summing to the same amount | ok |
   | `under_applied` / `over_applied` | PSP `final`, but the product applications sum to less or to more. There is no tolerance | break (2) |
-  | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `grace`**, a break after it | pending, then break (3) |
+  | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `product.grace`**, a break after it | pending, then break (3) |
   | `in_progress` | PSP `pending` only, no application yet. Its hold is in the PSP stock | ok |
-  | `orphan_application` | A product application points at a reference the PSP never finalised (unknown, `pending` or `failed`) | break (**1**) |
-  | `reversed_after_application` | The PSP reports `failed` on a reference **after** the product applied it. A refund or chargeback is *not* this: it has its own reference | break (**1**) |
+  | `applied_before_final` | A product application points at a reference the PSP has not finalised yet: `pending`, or not seen at all. Legitimate when the product applies at `pending`, as with debits that settle in days (SEPA, ACH). **Pending while within `psp.grace`**, then `orphan_application` | pending, then `orphan_application` (**1**) |
+  | `orphan_application` | A product application whose reference is still not final past `psp.grace`, or that the PSP had already reported `failed` | break (**1**) |
+  | `reversed_after_application` | The PSP reports `failed` on a reference **after** the product applied it, within `psp.grace` or not. A refund or chargeback is *not* this: it has its own reference | break (**1**) |
+
+  `applied_before_final` becomes `orphan_application` on its `breakOn` day, the way an `open` hold
+  becomes `stuck` at `maxAge`: the class says what is known. An unknown reference gets the same
+  delay, because the PSP's `pending` event can land after the cut (product at 23:58, PSP at 00:02).
+
+- **Each side has its own `grace`: how long it may lag behind the other.** `product.grace` is how
+  long the product has to apply a payment the PSP finalised (`unapplied_payment`); `psp.grace` is
+  how long the PSP has to finalise a reference the product already applied
+  (`applied_before_final`). A `breakOn` is `firstSeen` plus the lagging side's `grace`. At 0, the
+  side may not lag at all: `psp.grace: 0` is the integration where the product applies only on the
+  PSP's final state, and an early application is a priority-1 break at once, including the
+  cross-cut race above, which then resolves the next day.
 
 - **Stock classes**, per hold and per side: `open` with its age bucket, `negative_hold` (the balance
   has the sign opposite its prefix's `openSign`: an over-application or a skipped state,
@@ -460,12 +490,18 @@ checkpoint's listing.
   never joined to each other.
 - **Grace and ageing: proposed defaults, to calibrate with the design partner** (the owner has no
   prior on them).
-  - `grace` for `unapplied_payment` = **3 calendar days**.
+  - `product.grace` = **3 calendar days**.
+  - `psp.grace` = **7 calendar days**: a debit final at D+5 business days spans a weekend.
   - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`.
   - `maxAge` has no default: without one, no hold is ever `stuck`.
-  - All three are per-rule parameters. **Ageing** comes from comparing with the previous run's
+  - All four are rule parameters. **Ageing** comes from comparing with the previous run's
     artifact: `new` / `persisting` / `cleared` for holds, `new` / `persisting` / `resolved` for
-    breaks, matched by a `breakId` that stays the same from day to day.
+    breaks, matched by a `breakId` that stays the same from day to day. The `breakId` hashes the
+    rule, leg, key (`ref`, or `side` + `hold`) and asset, not the class: an orphan the PSP later
+    reports `failed`, or an unapplied payment later applied short, stays the same break, with its
+    comments, and records its `previousClass` on the day of the change. An acceptance records the
+    class and amount it accepted and lapses when either changes. A resolved break that opens again
+    keeps its `breakId` and history, and is `new` again.
 - **Arithmetic.** Exact integer minor units, colors collapsed per asset, and multi-asset through
   `asset: "*"` as in ADR-004.
 - **Schedule and alerts reuse the existing model.** Owner decision, 2026-09-24.
@@ -484,12 +520,13 @@ checkpoint's listing.
     - A **bridge** from the PSP control total to the product control total. It explains the net
       difference class by class, and its **unexplained residual must be 0**; otherwise the verdict
       is `INCOMPLETE`, an engine failure and never a green run.
-    - The **gross** Σ|drift| next to the net, with an explicit *offsetting* flag.
+    - The **gross** Σ|drift| of the open flow breaks next to the net, with an explicit
+      *offsetting* flag: open flow breaks of both signs exist.
     - The breaks in **priority order**, each with new versus persisting.
-  - **What opens the alert:** any break, whether a non-zero net drift *or* at least one break row.
-    An aggregate alone can net to zero over offsetting breaks (+x on one payment, −x on another), so
-    the aggregate is what the alert *shows*, never the sole trigger. Unapplied payments still within
-    `grace` are pending and open nothing.
+  - **What opens the alert:** at least one open break; a resolved one does not. The net alone never
+    opens it: pending items move the net without being breaks, and offsetting breaks (+x on one
+    payment, −x on another) net to zero. The aggregate is what the alert *shows*, never the trigger.
+    A non-zero unexplained residual is `INCOMPLETE` and opens the engine-error alert instead.
   - There is never one alert per payment (the reasoning of the ADR-004 2026-09-08 amendment).
 
 ## 7. Decision C — two-phase workflow, detail kept 90 days in the backup storage
@@ -503,7 +540,8 @@ checkpoint's listing.
      phase 2, as sums over the rewound rows. That is cheap, because the open book is small by
      construction. Ask **L7** would make phase 1 exact too.
 2. **Phase 2: an asynchronous job**, idempotent per (rule, period, cut) and resumable.
-   1. Flow window read and join, including the previous run's carried items.
+   1. Flow window read and join, including the previous run's carried items and a key lookup of
+      the references missing from both.
    2. Stock rewind and ageing.
    3. Write the artifacts.
    4. Write the **detail capture**: counts, drifts, `S` and `T` per ledger, and the artifact URI and
@@ -521,7 +559,8 @@ checkpoint's listing.
      it. The `key=value` path segments let query engines read rule, day and run as columns.
      Identifiers keep one name across files, every row has an `outcome` (`ok`, `pending`, `break`,
      `warning`), breaks carry a `priority` (1 to 4) and a `breakId` stable from day to day and
-     are self-contained, and the manifest carries the statement, so a dashboard needs no other file
+     are self-contained, and the manifest carries the statement and the triage (top-K breaks and
+     pending items), so the alert and a dashboard need no other file
      ([design doc](../technical/transaction-level-reconciliation.md#result-artifacts-retention-and-the-period-view)).
    - **Rules a reader can rely on:** every daily file is written on every run, even empty; a file may
      come in parts, listed in the manifest, once it passes a row threshold; and the same cut gives
@@ -565,9 +604,9 @@ checkpoint's listing.
    items. Left alone, a payment the PSP finalised before the rule existed, and that the product never
    applied, would never be seen. On the PSP side its hold is already lettered, and it is in no later
    window.
-   - The first run therefore reads the flow from **`backfillFrom`**, a rule parameter that defaults
-     to **cut-off − `grace` − 1 day**, instead of from the previous day's cut. That seeds the
-     carried items.
+   - The first run therefore reads the flow from **`backfillFrom`**, a rule parameter that
+     defaults to **cut-off − max(`psp.grace`, `product.grace`) − 1 day**, instead of from the
+     previous day's cut. That seeds the carried items.
    - Everything older than `backfillFrom` is out of scope. The first statement says so explicitly
      ("backfilled since …"), so it cannot be misread as covering all history.
    - The stock books need no backfill. They come from the listing, so an invoice unpaid for 60 days
@@ -691,13 +730,13 @@ for the Ledger team to weigh against its own users:
 |---|---|---|
 | 1 | The shared key | The **PSP payment reference**. The payment is seen on the PSP ledger first, and the product ledger later books a transaction carrying the same reference, which letters a business hold (an invoice…). Authorization/capture, where both sides share the authorization number, is a special case (§2.1, §6). |
 | 2 | The state vocabulary | **Parameterised per side** in the rule (§6), because it depends on how external payment states are modelled on the PSP ledger. |
-| 3 | Grace and ageing | No prior: the proposed defaults are 3 days of grace and buckets of 0–1, 2–7, 8–30 and > 30 days, all per rule and to be calibrated (§6). |
+| 3 | Grace and ageing | No prior: the proposed defaults are 3 days of grace and buckets of 0–1, 2–7, 8–30 and > 30 days, all per rule and to be calibrated (§6). Refined by decision 16: `product.grace` 3 days, `psp.grace` 7 days. |
 | 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`. **90 days** of retention by default, and **monthly stock anchors** kept longer (`anchorRetention`, proposed 13 months) so that replaying an old day stays cheap. The monthly reconciliation points at each day's diffs (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**: a refund hold on the product ledger and a payment with its own reference on the PSP ledger. They are never a reversal of the original payment (§6). |
 | 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType` (`daily`, `weekly`, `monthly`); no accounting-period model. The alert carries the aggregate comparison, and the per-payment detail sits in the backup storage (§6, §7). |
-| 9 | First run | A bounded **backfill** from `backfillFrom` (default: cut-off − grace − 1 day), announced explicitly in the first statement (§7). |
+| 9 | First run | A bounded **backfill** from `backfillFrom` (default: cut-off − the longer `grace` − 1 day), announced explicitly in the first statement (§7). |
 | 10 | Read path of the flow | **`ListTransactions` filtered on `payment_ref EXISTS`** (product side: `payment_ref` or `business_ref`), over parallel id ranges: 5–7× faster than logs and O(payments). Logs stay for the rewind window and for exact re-derivation (§5). |
 
 **Refined by the owner on 2026-09-25:**
@@ -709,6 +748,7 @@ for the Ledger team to weigh against its own users:
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
 | 14 | Replaying an old day | From the **nearest stored stock**: daily within `retention`, monthly anchors for `anchorRetention`; the rewind from head is the fallback (§7). |
 | 15 | Result files | For the customer first: simple gzipped NDJSON under `rule=/day=/run=`, one name per identifier, an `outcome` on every row and a `priority` on breaks, a self-contained breaks file with a stable `breakId`, every reference with a drift carried to the next run, byte-identical files for a given cut (§7, design doc). |
+| 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break. **`grace` is per side**, the time that side may lag behind the other: `product.grace` (3 days) for `unapplied_payment`, `psp.grace` (7 days) for `applied_before_final`, unknown references included, which then becomes `orphan_application` (P1); 0 forbids any lag. References missing from the window are looked up by key; every flow row records its `firstSide`; `breakId` leaves out the class; the alert opens on a break, never on the net alone (§6). |
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
