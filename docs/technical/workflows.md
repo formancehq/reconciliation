@@ -326,7 +326,7 @@ Ledger transaction-address index and expose one ordered feed.
 ```mermaid
 flowchart LR
     Cut["Cut per ledger at the business cut-off<br/>log id S · transaction id T"] --> Agg["Phase 1 — AggregateVolumes on hold prefixes<br/>(live exposure) → capture"]
-    Cut --> Flow["Phase 2 — flow: ListTransactions (T_prev, T]<br/>∧ key present (product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · first run from backfillFrom"]
+    Cut --> Flow["Phase 2 — flow: ListTransactions (T_prev, T]<br/>∧ key present (product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · first run from backfillFrom (product side psp.grace earlier)"]
     Cut --> Stock["Phase 2 — stock: live ListAccounts of open holds<br/>rewound with ListLogs (S, head]"]
     Flow --> Join["Join on the PSP payment reference<br/>(+ references carried from earlier days: drift ≠ 0, grace per side;<br/>references missing from both looked up by key)<br/>+ continuity per side, hold prefix and asset: open(S) = open(S_prev) + opened − lettered"]
     Stock --> Join

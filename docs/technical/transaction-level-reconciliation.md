@@ -543,16 +543,15 @@ no vocabulary.
   ledger, so that a second application on a payment matched days ago sums with the first and shows
   as `over_applied`. On every run, each PSP reference of the window with a `failed` event that is
   neither in the product window nor carried is looked up on the product ledger too, so that a
-  payment matched on an earlier day and failed today shows as `reversed_after_application`. On
-  the first run only, every PSP reference of the window that is missing from the product window is
-  looked up on the product ledger, whatever its state; later, an earlier application with a drift
-  is always carried. The manifest counts the lookups.
+  payment matched on an earlier day and failed today shows as `reversed_after_application`. The
+  manifest counts the lookups. The first run adds none: its product window starts `psp.grace`
+  before `backfillFrom`, which finds the applications that preceded their payment (ADR-005 §7).
 - **Which side came first.** Between two days the window decides; within a day, `insertedAt`,
   although it compares the clocks of two ledgers. Each flow row records it as `firstSide`: `psp`
   when the PSP's first terminal state (`final` or `failed`) came before the first application,
   `product` otherwise; a `failed` after a `final` does not change it. It is informative, for
-  example to measure how often a customer applies before the final state, and never changes a
-  priority.
+  example to measure how often a customer applies before the final state: it changes no priority
+  and no bridge line.
 - **Refunds and chargebacks are ordinary 1-to-1 pairs.** On the PSP ledger they are a payment with
   its own reference; on the product ledger, a refund hold lettered by a transaction carrying that
   reference. They go through the same classes and are never a reversal of the original payment.
@@ -594,8 +593,7 @@ from the two control totals down to the explained items, with an explicit verdic
     − orphan applications (failed at the PSP, or psp.grace 0)   P1    …     (n)
     − reversed after application                                P1    …     (n)
     ± under / over applications                                 P2    …     (n)
-    − applications of payments finalised on an earlier day            …     (n)   firstSide psp
-    + finalisations of applications booked on an earlier day          …     (n)   firstSide product
+    ± matched today, entered the join on an earlier day               …     (n)   carried from D−k
   = unexplained residual                                  must be 0, else INCOMPLETE
 Carried from earlier days, outside the window's net (one line per class still open):
     unapplied payments still within product.grace                     …     (n)
@@ -607,10 +605,12 @@ Carried from earlier days, outside the window's net (one line per class still op
 Gross open flow breaks: Σ|drift| = …    Offsetting: yes/no (open flow breaks of both signs)
 ```
 
-- Each window line is `SUM(impact)` over the flow rows of one `class`, `outcome`, `firstSeen < day`
-  and `firstSide`. With `product.grace: 0`, an unapplied payment of the window is a break, not a
-  pending item, and gets its own line with P3. The two earlier-day lines hold `matched` rows only;
-  an earlier-day under- or over-application goes on the under / over line.
+- Each window line is `SUM(impact)` over the flow rows of one `class`, `outcome` and
+  `firstSeen < day`. With `product.grace: 0`, an unapplied payment of the window is a break, not a
+  pending item, and gets its own line with P3. The earlier-day line holds `matched` rows only, and
+  its sign says which side caught up: negative for applications of earlier payments, positive for
+  finalisations of earlier applications. An earlier-day under- or over-application goes on the
+  under / over line.
 - The carried lines are `SUM(drift)` of the rows still open from earlier days, whose `impact` is 0.
 - The gross covers every open flow break, from the window or carried in, so it is not on the same
   scope as the net. `offsetting` therefore says only that open flow breaks of both signs exist,
@@ -713,15 +713,13 @@ can evolve behind `schemaVersion`:
   the sum of its applications. `drift = pspAmount − productAmount`.
 - `impact` is the row's share of the window's net difference: its finalised amount if it was
   finalised in the window, minus its applications booked in the window. The statement's bridge is
-  `SUM(impact)` grouped by `class`, `outcome`, `firstSeen < day` and `firstSide`, and it adds up to
-  the net.
+  `SUM(impact)` grouped by `class`, `outcome` and `firstSeen < day`, and it adds up to the net.
 - `firstSeen` is the day the reference entered the join: its first final PSP state or its first
   product application. An `in_progress` row has none. `breakOn` is the day a pending row counts
   as a break: `firstSeen` plus `product.grace` on an unapplied payment, plus `psp.grace` on an
   application awaiting a final PSP state.
 - `firstSide`, `psp` or `product`: whether the PSP's terminal state or the first application came
-  first. An `in_progress` row has none. The bridge groups by it too, which splits the earlier-day
-  rows into applications of earlier payments and finalisations of earlier applications.
+  first. An `in_progress` row has none. It is for analysis only; the bridge does not group by it.
 - `merchantRef` and `pairedHold`, when the connector gives a merchant reference and it names an
   open hold. The stock row points back with `pairedRef`.
 - `psp` and `product` list the reference's transactions: `tx`, `insertedAt`, `amount`, plus
@@ -908,10 +906,10 @@ and was lettered on the same day.
       "product": {"amount": "415000", "count": 6},
       "net": "-15000",
       "lines": [
-        {"class": "unapplied_payment",    "outcome": "pending", "earlierDay": false, "firstSide": "psp",     "amount": "80000",  "count": 1, "top": ["PAY-45"]},
-        {"class": "applied_before_final", "outcome": "pending", "earlierDay": false, "firstSide": "product", "amount": "-30000", "count": 1, "top": ["PAY-99"]},
-        {"class": "under_applied",        "outcome": "break",   "earlierDay": false, "firstSide": "psp",     "amount": "5000",   "count": 1, "top": ["PAY-44"]},
-        {"class": "matched",              "outcome": "ok",      "earlierDay": true,  "firstSide": "psp",     "amount": "-70000", "count": 1, "top": ["PAY-40"]}
+        {"class": "unapplied_payment",    "outcome": "pending", "earlierDay": false, "amount": "80000",  "count": 1, "top": ["PAY-45"]},
+        {"class": "applied_before_final", "outcome": "pending", "earlierDay": false, "amount": "-30000", "count": 1, "top": ["PAY-99"]},
+        {"class": "under_applied",        "outcome": "break",   "earlierDay": false, "amount": "5000",   "count": 1, "top": ["PAY-44"]},
+        {"class": "matched",              "outcome": "ok",      "earlierDay": true,  "amount": "-70000", "count": 1, "top": ["PAY-40"]}
       ],
       "residual": "0",
       "carriedOutside": [{"class": "unapplied_payment", "outcome": "break", "amount": "50000", "count": 1, "top": ["PAY-39"]}],
@@ -1071,7 +1069,7 @@ EUR
     + unapplied payments of the window (until 27 Sep)                +800.00  (1)  PAY-45 → INV-12
     − applications awaiting a final PSP state (until 1 Oct)          −300.00  (1)  PAY-99 → INV-13
     ± under / over applications                             P2        +50.00  (1)  PAY-44
-    − applications of payments finalised on an earlier day           −700.00  (1)  PAY-40
+    ± matched, entered the join on an earlier day                    −700.00  (1)  PAY-40
   = unexplained residual                                                0.00  ✓
 Carried from earlier days, outside the window's net:
     unapplied payments past product.grace                   P3        500.00  (1)  PAY-39
@@ -1105,7 +1103,7 @@ explained, so the residual is zero and the verdict is `BREAKS`, not `INCOMPLETE`
 alone, with DuckDB for example:
 
 ```sql
-SELECT class, outcome, firstSeen < '2026-09-24' AS earlierDay, firstSide,
+SELECT class, outcome, firstSeen < '2026-09-24' AS earlierDay,
        sum(CAST(impact AS BIGINT)) AS amount, count(*) AS n
 FROM read_json_auto('reconciliation/rule=psp-vs-billing/day=2026-09-24/*/flow.ndjson.gz',
                     hive_partitioning = true)
@@ -1114,7 +1112,7 @@ GROUP BY ALL;
 ```
 
 It returns `unapplied_payment` +80000, `applied_before_final` −30000, `under_applied` +5000 and
-`matched` (earlier day, `firstSide` psp) −70000, which add up to the net of −15000.
+`matched` (earlier day) −70000, which add up to the net of −15000.
 
 ## 6. Could Pebble do better?
 

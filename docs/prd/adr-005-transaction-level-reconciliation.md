@@ -478,15 +478,13 @@ checkpoint's listing.
   product ledger too, so a second application on a payment matched days ago shows as `over_applied`.
   On every run, each PSP reference of the window with a `failed` event that is neither in the
   product window nor carried is looked up on the product ledger as well, so a payment matched on an
-  earlier day and failed today shows as `reversed_after_application`. On the first run only, every
-  PSP reference of the window missing from the product window is looked up on the product ledger,
-  whatever its state: in steady state an earlier application with a drift is always carried. The
-  cost is O(looked-up references), counted in the manifest.
+  earlier day and failed today shows as `reversed_after_application`. The cost is O(looked-up
+  references), counted in the manifest.
 - **Which came first.** Between two days, the window decides; within a day, `insertedAt`, although
   it compares the clocks of two ledgers. Every flow row records it as `firstSide`: `psp` when the
   PSP's first terminal state (`final` or `failed`) came before the first application, `product`
-  otherwise; a `failed` after a `final` does not change it. It is informative and never changes a
-  priority.
+  otherwise; a `failed` after a `final` does not change it. It is informative: it changes no
+  priority and no bridge line.
 - **Flow classes**, per payment reference:
 
   | Class | Meaning | Outcome (priority) |
@@ -641,6 +639,11 @@ checkpoint's listing.
      previous day's cut. That seeds the carried items.
    - Everything older than `backfillFrom` is out of scope. The first statement says so explicitly
      ("backfilled since …"), so it cannot be misread as covering all history.
+   - On the product ledger, the first run's window starts `psp.grace` earlier than on the PSP
+     ledger. An application may precede its payment's final state by up to `psp.grace`, so a payment
+     finalised early in the backfill still finds its application, with no lookup by key. Those
+     earlier product transactions only feed the join. An application older than that waited past
+     `psp.grace` and is a break anyway; it shows as an unapplied payment.
    - The stock books need no backfill. They come from the listing, so an invoice unpaid for 60 days
      is aged correctly from day one.
    - Continuity is available from the first run as well: the rewind can rebuild `open(S_prev)` for
@@ -787,6 +790,7 @@ for the Ledger team to weigh against its own users:
 | 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break. **`grace` is per side**, the time that side may lag behind the other: `product.grace` (3 days) for `unapplied_payment`, `psp.grace` (7 days) for `applied_before_final`, unknown references included, which then becomes `orphan_application` (P1); 0 forbids any lag. References missing from the window are looked up by key; every flow row records its `firstSide`; `breakId` leaves out the class; the alert opens on a break, never on the net alone (§6). |
 | 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern, `fpay:stripe:account:*:main` for `formancepayments`), not on the hold: a final event with no `pending` before it, or with another amount than its `pending`, moves the hold by 0 or by the wrong amount (§6). |
 | 18 | Review of 2026-09-25 | A PSP `failed` never applied gets the class `failed` (ok); window PSP references with a `failed` event are looked up on the product ledger every run, so `reversed_after_application` is caught in steady state; the product `businessId` is per `holds` entry; `psp.merchantRef` names the merchant-reference field; `open(S_prev)` and `cleared` come from the previous run's stored stock; the metadata check reads every log since the previous run's head (§5, §6). |
+| 19 | Simplifications, 2026-09-25 | The bridge no longer groups by `firstSide`, which stays on flow rows for analysis only: one earlier-day line for `matched`, whose sign says which side caught up. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` instead (§6, §7). |
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
