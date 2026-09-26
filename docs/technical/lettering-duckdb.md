@@ -209,14 +209,25 @@ python3 tools/lettering-duckdb/testdata/generate.py
   doc's, byte for byte. The run of 23 September holds only what `check-chain` reads.
 - **`rule=qa-scenarios`** is seven days in two assets, one scripted story per case. It covers every
   flow and stock class, lookups on both ledgers, `fromLookups`, a split payment, a lapsed
-  acceptance, a credit note, an unclassified transaction and refunds.
+  acceptance, a credit note, an unclassified transaction and refunds. Three stories undo an
+  application with its reference, which the class must read on net amounts (results doc §6):
+
+  | Story | What happens | Rows |
+  |---|---|---|
+  | S20 | Paid and applied on 4 Oct, undone on 5 Oct | `matched`, then `unapplied_payment`: a P3 break at once, since its `firstSeen` stays 4 Oct |
+  | S21 | Paid and applied on 2 Oct; on 5 Oct the PSP fails the payment and the product undoes the application | `matched`, then `failed`, `ok`, drift 0: no break |
+  | S22 | Applied on 5 Oct while the PSP is `pending`, undone on 6 Oct, still `pending` | `applied_before_final` (pending, carried), then `in_progress`, `ok`, no `firstSeen`, with a bridge line of +19.00 in the window |
+
 - **`rule=qa-verdicts`** is one week through every verdict, with an empty day, an incomplete run
   followed by a two-day window, a retry and the week's `period.json`.
 
 The two qa rules come from a small reference engine in `generate.py` that follows the results doc.
 It also writes `expected/`, the CSV each query must return, computed in Python. The Python engine
 and the SQL are two independent readings of the doc, so a test passes only when they agree. A
-disagreement found this way is fixed in the doc first, then in the side that was wrong. Once
+disagreement found this way is fixed in the doc first, then in the side that was wrong. For
+example, S22 found that the doc did not say whether a bridge line is `earlierDay` on a row with no
+`firstSeen`: the engine wrote false, and `check.sql` computed NULL, which matched no line. The doc
+now says false, and both sides follow it. Once
 EN-2322 writes result files from the same scenarios, they are compared with this data.
 
 ### Tests (`test.sh`)
