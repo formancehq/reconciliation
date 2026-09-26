@@ -328,14 +328,15 @@ flowchart LR
     Cut["Cut per ledger at the business cut-off<br/>log id S · transaction id T"] --> Agg["Phase 1 — AggregateVolumes on hold prefixes<br/>(live exposure) → capture"]
     Cut --> Flow["Phase 2 — flow: ListTransactions (T_prev, T]<br/>∧ key present (product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · first run from backfillFrom (product side psp.grace earlier)"]
     Cut --> Stock["Phase 2 — stock: live ListAccounts of open holds<br/>rewound with ListLogs (S, head]"]
-    Flow --> Join["Join on the PSP payment reference<br/>(+ references carried from earlier days: drift ≠ 0, grace per side;<br/>references missing from both looked up by key)<br/>+ continuity per side, hold prefix and asset: open(S) = open(S_prev) + opened − lettered"]
+    Flow --> Join["Join on the PSP payment reference<br/>(+ references carried from earlier days: drift ≠ 0, grace per side;<br/>references missing from both looked up by key)<br/>+ continuity per side, hold prefix and asset: open(S) = open(S_prev) + opened − lettered<br/>+ open items: Σ carried drift(S) = Σ carried drift(S_prev) + net + drift entered by lookup"]
     Stock --> Join
-    Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ backup storage, recon prefix, 90 days"]
+    Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: manifest only)"]
     Art --> Cap["Detail capture on _recon<br/>(counts, drifts, S and T per ledger, artifact hash) — Ed25519"]
-    Cap --> Alert["Alert per (rule, fingerprint, period)<br/>reconciliation statement: verdict + bridge<br/>opens on any open break (never on the net alone)<br/>top-K breaks + artifact link"]
+    Cap --> Alert["Alert per (rule, fingerprint, period)<br/>reconciliation statement: verdict + bridge + open items<br/>opens on an open break not accepted (never on the net alone)<br/>top-K breaks + artifact link"]
 ```
 
 No query checkpoint is taken: the log is the immutable cut, and the rewind makes a live listing
 exact at `S`. Aggregate templates keep reading live (§7). Full design, booking conventions and
-measurements: [transaction-level-reconciliation.md](./transaction-level-reconciliation.md); decision
-record: [ADR-005](../prd/adr-005-transaction-level-reconciliation.md).
+measurements: [transaction-level-reconciliation.md](./transaction-level-reconciliation.md); the
+result files and how to read them: [transaction-level-results.md](./transaction-level-results.md);
+decision record: [ADR-005](../prd/adr-005-transaction-level-reconciliation.md).

@@ -468,7 +468,8 @@ checkpoint's listing.
     net on the hold is therefore 0 for a final event that no `pending` preceded, and the `pending`
     amount, not the paid one, when the two differ.
   - The hold still gives the PSP stock and its continuity: `opened` and `lettered` are hold
-    movements by definition. A `pending` or `failed` event's amount is its hold movement.
+    movements by definition. A `pending` or `failed` event shows its hold movement as
+    `holdAmount` in the flow rows, never as `amount`.
   - The postings are immutable, so this needs no connector change and no amount metadata.
 - **No tolerance.** Owner decision, 2026-09-24. The comparison is exact: a fee or FX difference on a
   payment is a break, never an accepted gap. Fees and FX must be booked explicitly on the side that
@@ -523,11 +524,11 @@ checkpoint's listing.
   PSP's final state, and an early application is a priority-1 break at once, including the
   cross-cut race above, which then resolves the next day.
 
-- **Stock classes**, per hold and per side: `open` with its age bucket, `negative_hold` (the balance
+- **Stock classes**, per hold and per side: `open` with its age bucket, `wrong_sign` (the balance
   has the sign opposite its prefix's `openSign`: an over-application or a skipped state,
   "investigate id"), `stuck` (open past the side's `maxAge`, the `stale_holds` signal per key) and
   `cleared` (open at the previous run's `S`, lettered since: listed once, not a break).
-  `negative_hold` and `stuck` are breaks of priority 4.
+  `wrong_sign` and `stuck` are breaks of priority 4.
   PSP holds are pending payments; product holds are unpaid business objects. The two books are aged,
   never joined to each other.
 - **Grace and ageing: proposed defaults, to calibrate with the design partner** (the owner has no
@@ -537,7 +538,10 @@ checkpoint's listing.
     midnight and applied after it. A team that letters by hand raises it to its usual delay.
   - `psp.grace` = **7 calendar days**: a debit final at D+5 business days spans a weekend.
   - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`.
-  - `maxAge` has no default: without one, no hold is ever `stuck`.
+  - `maxAge` has no default: without one, no hold is ever `stuck`. A rule sets it only where an
+    open hold past it is abnormal (an invoice paid by card at checkout, a pending payment). For
+    B2B receivables it stays unset: ageing them is credit management, and the buckets still show
+    it.
   - All four are rule parameters. **Ageing** comes from comparing with the previous run's
     artifact: `new` / `persisting` / `cleared` for holds, `new` / `persisting` / `resolved` for
     breaks, matched by a `breakId` that stays the same from day to day. The `breakId` hashes the
@@ -558,20 +562,28 @@ checkpoint's listing.
     day's files. When a drift shows up, the analysis continues in the detail kept in the backup
     storage.
   - **What the alert says: a reconciliation statement**, never a bare drift ([design
-    doc](../technical/transaction-level-reconciliation.md#what-the-controller-sees-a-reconciliation-statement-never-a-bare-drift)).
-    - A **verdict**, evaluated in this order: `INCOMPLETE`, `BREAKS`, `RECONCILED_WITH_PENDING`,
-      `RECONCILED`.
+    doc](../technical/transaction-level-reconciliation.md#what-the-controller-sees-a-reconciliation-statement-never-a-bare-drift);
+    every line is defined in the [results
+    reference](../technical/transaction-level-results.md#5-the-statement)).
+    - A **verdict**, evaluated in this order: `incomplete`, `breaks`, `reconciled_with_warnings`
+      (an unclassified transaction, so never green), `reconciled_with_pending`, `reconciled`.
     - A **bridge** from the PSP control total to the product control total. It explains the net
-      difference class by class, and its **unexplained residual must be 0**. The verdict is
-      `INCOMPLETE` when it is not, when a required index is missing, when a log range comes back
-      short, or when a continuity check fails: no conclusion can be drawn, never a green run.
+      difference class by class, and its **unexplained residual must be 0**. The product total is
+      taken from the product books (letterings by a transaction carrying the key), and the lines
+      from the flow rows, so the residual ties the join to the books.
+    - The **open items**: the sum of the carried drifts at the previous cut, plus the window's
+      net, gives the sum at this cut. This is the running balance of what is still unmatched.
+    - The verdict is `incomplete` when the residual is not 0, when a required index is missing,
+      when a log range comes back short, or when a continuity identity fails (books or open
+      items). No conclusion can be drawn, and the run is never green.
     - The **gross** Σ|drift| of the open flow breaks next to the net, with an explicit
       *offsetting* flag: open flow breaks of both signs exist.
     - The breaks in **priority order**, each with new versus persisting.
-  - **What opens the alert:** at least one open break; a resolved one does not. The net alone never
+  - **What opens the alert:** at least one open break that is not accepted. An accepted break
+    stays a break in the files and the verdict; a resolved one does not open it. The net alone never
     opens it: pending items move the net without being breaks, and offsetting breaks (+x on one
     payment, −x on another) net to zero. The aggregate is what the alert *shows*, never the trigger.
-    An `INCOMPLETE` run opens the engine-error alert instead.
+    An `incomplete` run opens the engine-error alert instead.
   - There is never one alert per payment (the reasoning of the ADR-004 2026-09-08 amendment).
 
 ## 7. Decision C — two-phase workflow, detail kept 90 days in the backup storage
@@ -594,22 +606,29 @@ checkpoint's listing.
    5. Update the alert.
 3. **Where the files go: the backup object storage, under a recon prefix.** Owner decision,
    2026-09-24.
-   - Recon writes to the same S3 or Azure destination the ledger backs up to, under
+   - Recon writes to the S3 or Azure destination the rule's **product ledger** backs up to, under
      `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. The files are
      `manifest.json`, `flow.ndjson.gz`, `carried.ndjson.gz`, `stock.ndjson.gz`, `breaks.ndjson.gz`
      and `unclassified.ndjson.gz`, plus `period.json` on the last run of a weekly or monthly period.
    - **The customer is the first reader.** They analyse the files with their own tools (jq, DuckDB,
-     pandas, a spreadsheet import); recon's API and UI read them too. So the format stays simple:
+     pandas); recon's API and UI read them too. So the format stays simple:
      gzipped NDJSON, a JSON Schema per file, and a `schemaVersion` in the manifest to evolve it. The
      `key=value` path segments let query engines read rule, day and run as columns. Identifiers keep
      one name across files, every row has an `outcome` (`ok`, `pending`, `break`, `warning`), breaks
      carry a `priority` (1 to 4) and a `breakId` stable from day to day and are self-contained, and
      the manifest carries the statement and the triage (top-K breaks and pending items), so the
-     alert and a dashboard need no other file ([design
-     doc](../technical/transaction-level-reconciliation.md#result-artifacts-retention-and-the-period-view)).
-   - **Rules a reader can rely on:** every daily file is written on every run, even empty; a file
-     may come in parts, listed in the manifest, once it passes a row threshold; and the same cut
-     gives byte-identical data files, so a replay proves itself by reproducing their SHA-256.
+     alert and a dashboard need no other file. The [results
+     reference](../technical/transaction-level-results.md) is the source of truth for every file
+     and field.
+   - **Rules a reader can rely on:**
+     - Every data file is written on every complete run, even empty.
+     - A file may come in parts, listed in the manifest, once it passes a row threshold.
+     - The same cut, rule version, engine version and previous run give byte-identical data files,
+       as long as no identifying metadata changed since, so a replay proves itself by reproducing
+       their SHA-256.
+     - An `incomplete` run writes its manifest only, and the next run chains on the last complete
+       one, over every day since.
+     - The latest complete run of a day is its current run.
    - The prefix **must stay outside `{bucketID}/backups/`**. The ledger's post-manifest orphan prune
      lists and deletes every unreferenced object under `{bucketID}/backups/data/` and
      `{bucketID}/backups/exports/` (`internal/infra/backup/manager.go:229-235`, prefixes at
@@ -622,13 +641,14 @@ checkpoint's listing.
      lifecycle management). Recon's own sweep, driven by the `expiresAt` in each manifest, is the
      fallback.
    - Expiry loses nothing irrecoverable. The logs are permanent, so any past day can be recomputed
-     from the ledgers with the same cut.
-   - **Stock anchors are kept longer.** The last run of each month keeps its `manifest.json` and
-     `stock.ndjson.gz` in place, flagged by an object tag the lifecycle rule filters on, for
-     `anchorRetention`, a rule parameter (proposed default 13 months, to
-     calibrate with the design partner). An anchor holds only the open book, which is small by
-     construction, so keeping it costs little. It is what keeps the replay of an old day cheap
-     (item 7).
+     from the ledgers with the same cut and engine version, which each manifest records. A
+     customer bound to a longer legal retention raises `retention`.
+   - **Stock anchors are kept longer.** The last run of each month keeps its `manifest.json`,
+     `stock.ndjson.gz` and `carried.ndjson.gz` in place, flagged by an object tag the lifecycle
+     rule filters on, for `anchorRetention`, a rule parameter (proposed default 13 months, to
+     calibrate with the design partner). An anchor holds only the open book and the carried items,
+     which are small by construction, so keeping it costs little. It is what keeps the replay of an
+     old day cheap (item 7), and the carried file lets that replay reproduce the day's bytes.
 5. **A period points at each day's diffs.**
    - The period is the rule's `periodType`, calendar-based in the rule's timezone. There is no
      separate accounting-period model.
@@ -699,7 +719,8 @@ checkpoint's listing.
      doc §7.7](../technical/transaction-level-reconciliation.md#77-concurrent-readers-choosing-k)).
    - The manifest records the K a run used, so run durations stay comparable.
 9. **Reads.** The run's status comes from the capture. Breaks are paged from the artifact by the
-   API, or downloaded through a pre-signed URL.
+   API, and the API lists every file of a run with a pre-signed URL, so a customer reads them
+   without access to the bucket.
 
 ## 8. Booking conventions we recommend
 
@@ -797,7 +818,7 @@ for the Ledger team to weigh against its own users:
 
 | # | Question | Decision |
 |---|---|---|
-| 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**: the sign depends on the integration and cannot be inferred. An application's amount is its net posting on those prefixes; `negative_hold` is the sign opposite `openSign`; continuity runs per prefix (§5, §6). |
+| 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**: the sign depends on the integration and cannot be inferred. An application's amount is its net posting on those prefixes; `wrong_sign` (named `negative_hold` until decision 21) is the sign opposite `openSign`; continuity runs per prefix (§5, §6). |
 | 12 | The cut's indexes | The **`inserted_at` and log-date indexes are mandatory** on both ledgers; bisection is dropped, and an index missing at run time is an engine error (§5). |
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
 | 14 | Replaying an old day | From the **nearest stored stock**: daily within `retention`, monthly anchors for `anchorRetention`; the rewind from head is the fallback (§7). |
@@ -807,6 +828,7 @@ for the Ledger team to weigh against its own users:
 | 18 | Review of 2026-09-25 | A PSP `failed` never applied gets the class `failed` (ok); window PSP references with a `failed` event are looked up on the product ledger every run, so `reversed_after_application` is caught in steady state; the product `businessId` is per `holds` entry; `psp.merchantRef` names the merchant-reference field; `open(S_prev)` and `cleared` come from the previous run's stored stock; the metadata check reads every log since the previous run's head (§5, §6). |
 | 19 | Simplifications, 2026-09-25 | The bridge no longer groups by `firstSide`, which stays on flow rows for analysis only: one earlier-day line for `matched`, whose sign says which side caught up. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` instead (§6, §7). |
 | 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**: the application follows the PSP's final state automatically, and the day covers a payment finalised before midnight and applied after it. A business that applies later or by hand (B2B transfers) raises it; a payment-to-apply hold on the product ledger is described as an option, outside the V1 rule contract (design doc §2). |
+| 21 | Result files, review of 2026-09-26 | Every check in the statement ties two independent computations. The bridge's product total comes from the product books, so the residual can fail. The open items (the sum of the carried drifts) close run to run. The books report `letteredOther`, the letterings outside matching (credit notes, write-offs, unclassified transactions). An `incomplete` run writes its manifest only, and the next run chains on the last complete one. The latest complete run of a day is its current run, and run ids sort by start instant. Monthly anchors keep the carried file too, so an expired day replays to the same bytes. The manifest records the `engine` version. A PSP `pending` or `failed` item shows `holdAmount`, never `amount`. The books and a stock break's `amount` read in the open direction. `negative_hold` is renamed `wrong_sign`. An acceptance is on the break row (`acceptedOn`), and the alert opens only on breaks not accepted. An unclassified transaction, or identifying metadata changed after insertion, gives `reconciled_with_warnings`, never green. The files sit in the product ledger's bucket, and every file is readable through a pre-signed URL. The [results reference](../technical/transaction-level-results.md) becomes the source of truth for the format. Deliberately left out: a write-off state, a flat transactions file and a separate alert threshold. |
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
