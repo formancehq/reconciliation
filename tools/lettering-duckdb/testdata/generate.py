@@ -859,14 +859,14 @@ class Engine:
                                         **({'pairedHold': r['pairedHold']} if r.get('pairedHold') else
                                            ({'holdIds': [hid for e in r['app_ev'] for (_, hid, _, _) in e.moves]}
                                             if r['app_ev'] else {})))
-                                   for r in pending],
+                                   for r in pending][:10],
                        "resolved": [dict({'breakId': b['breakId'], 'class': b['class']},
                                          **({'ref': b['key']} if b['leg'] == 'flow' else
                                             {'side': b['row']['side'], 'hold': b['row']['hold']}),
                                          asset=b['asset'], amount=str(b['amount']),
                                          **({'clearedBy': b['row']['clearedBy']}
                                             if b['leg'] == 'stock' and b['row'].get('clearedBy') else {}))
-                                    for b in resolved]},
+                                    for b in resolved][:10]},
             "files": files,
             "anchor": False,
             "expiresAt": day_str(day + dt.timedelta(days=90)),

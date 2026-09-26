@@ -407,7 +407,7 @@ SELECT 'break_vs_row', b.breakId, 'break ' || b.class || ' ' || b.amount || ', s
 FROM breaks b JOIN stock s USING (side, hold, asset)
 WHERE b.leg = 'stock' AND b.outcome = 'break' AND (b.class <> s.class OR b.amount <> open_dir(s.balance, s.openSign));
 
--- The triage lists the first topK open breaks, every pending row and every resolved break.
+-- The triage lists the first topK open breaks, pending rows and resolved breaks.
 INSERT INTO violations
 WITH t AS (SELECT (m->'triage'->>'topK')::INTEGER AS top_k,
                   json_array_length(m->'triage'->'breaks') AS n_breaks,
@@ -416,11 +416,11 @@ WITH t AS (SELECT (m->'triage'->>'topK')::INTEGER AS top_k,
 SELECT 'triage_count', 'breaks', 'triage ' || n_breaks || ', expected ' || least(top_k, (SELECT count(*) FROM breaks WHERE outcome = 'break'))
 FROM t WHERE n_breaks <> least(top_k, (SELECT count(*) FROM breaks WHERE outcome = 'break'))
 UNION ALL
-SELECT 'triage_count', 'pending', 'triage ' || n_pending || ', pending rows ' || (SELECT count(*) FROM flow WHERE outcome = 'pending')
-FROM t WHERE n_pending <> (SELECT count(*) FROM flow WHERE outcome = 'pending')
+SELECT 'triage_count', 'pending', 'triage ' || n_pending || ', expected ' || least(top_k, (SELECT count(*) FROM flow WHERE outcome = 'pending'))
+FROM t WHERE n_pending <> least(top_k, (SELECT count(*) FROM flow WHERE outcome = 'pending'))
 UNION ALL
-SELECT 'triage_count', 'resolved', 'triage ' || n_resolved || ', resolved breaks ' || (SELECT count(*) FROM breaks WHERE lifecycle = 'resolved')
-FROM t WHERE n_resolved <> (SELECT count(*) FROM breaks WHERE lifecycle = 'resolved');
+SELECT 'triage_count', 'resolved', 'triage ' || n_resolved || ', expected ' || least(top_k, (SELECT count(*) FROM breaks WHERE lifecycle = 'resolved'))
+FROM t WHERE n_resolved <> least(top_k, (SELECT count(*) FROM breaks WHERE lifecycle = 'resolved'));
 
 -- Keys and order (results doc §8) -----------------------------------------------------------
 

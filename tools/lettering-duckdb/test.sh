@@ -214,6 +214,10 @@ fresh "$day24"; edit "$work/run/breaks.ndjson.gz" '/"ref":"PAY-44"/s/"class":"un
 expect_violation "a break that is not its row" break_vs_row "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"topK":10/"topK":3/'
 expect_violation "a triage that lists more than topK" triage_count "$lettering" check "$work/run"
+fresh "$day24"; edit "$work/run/$m" 's/,{"ref":"PAY-99","class":"applied_before_final"[^}]*}//'
+expect_violation "a triage that drops a pending row under topK" triage_count "$lettering" check "$work/run"
+fresh "$day24"; edit "$work/run/$m" 's/"topK":10/"topK":1/; s/,{"breakId":"[0-9a-f]*","priority":[34][^}]*}//g; s/,{"ref":"PAY-99","class":"applied_before_final"[^}]*}//'
+expect_ok "a triage cut at topK, with more breaks and pending rows in the files" "$lettering" check "$work/run"
 fresh "$qa2"; edit "$work/run/$m" 's/"txFrom":\([0-9]*\),"txTo"/"txFrom":1,"txTo"/'
 expect_violation "a window that does not start at the previous cut" window_start "$lettering" check-chain "$qa1" "$work/run"
 fresh "$qa2"; edit "$work/run/flow.ndjson.gz" '/"ref":"S04"/s/"impact":"0"/"impact":"1"/'

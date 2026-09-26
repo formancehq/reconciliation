@@ -27,7 +27,7 @@
 |---|---|
 | Is the day reconciled? | `manifest.json` → `verdict` |
 | What must be done today? | `triage.breaks`, then `breaks.ndjson.gz` with `outcome = 'break'` and no `acceptedOn`, by `priority` |
-| What turns into a break soon? | `triage.pending`, with each item's `breakOn` |
+| What turns into a break soon? | `triage.pending`, with each item's `breakOn`; all of them: `flow.ndjson.gz` with `outcome = 'pending'` |
 | Why is the day's net not zero? | `statement.{asset}.lines` |
 | How much is still unmatched, all days together? | `statement.{asset}.suspense.open`, which is the sum of `drift` in `carried.ndjson.gz` |
 | What is still open on each ledger? | `books`, then `stock.ndjson.gz` |
@@ -230,7 +230,7 @@ open = openPrev + opened − lettered
 
 - **Triage**, in priority order, then by amount: each open break new or persisting, with its
   acceptance, then the pending items with their `breakOn`, then the breaks resolved since the
-  previous run.
+  previous run. Each list shows at most `topK` items, then "and N more", N taken from `counts`.
 - **A merchant reference.** When the rule names `psp.merchantRef`, every unapplied payment is
   paired with the open business hold it names.
 - **Warnings**: unclassified transactions per side and state value, and the transactions whose
@@ -262,7 +262,7 @@ open = openPrev + opened − lettered
 | `anomalies.key_metadata_mutated` | The transactions (`side`, `tx`) whose key, state, business-id or merchant-reference metadata was changed or deleted after insertion, seen since the previous run's head. Empty in a sound booking |
 | `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`, `offsetting`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
-| `triage` | What the statement names, so it is rendered from the manifest alone. `topK`; `breaks`, the top-K open breaks in priority order, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`, or `side` and `hold`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`; `acceptedOn`); `pending`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the breaks resolved since the previous run, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
+| `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`, or `side` and `hold`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`; `acceptedOn`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
 | `files` | One entry per file: `name`, `rows`, `sha256`, `expiresAt`, and `part` when the file comes in parts |
 | `anchor` | `true` on the last run of a month |
 | `expiresAt` | The manifest's own expiry |

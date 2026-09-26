@@ -132,7 +132,7 @@ variables and its output columns.
 | `row_drift`, `row_break_on` | A pending or break row has a drift and a matched, in-progress or failed one has none; `breakOn` is `firstSeen` plus the lagging side's grace |
 | `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone, it is `stuck` exactly when older than its side's `maxAge`, and its bucket, like each book's bucket counts, follows from the rule's bounds |
 | `row_amounts`, `row_impact`, `row_outcome` | A flow row's amounts follow from its transactions, a carried row has no `impact`, and each row's outcome (and a stock row's sign) follows from its class |
-| `triage_break`, `triage_pending`, `triage_count` | The manifest's triage matches the breaks and the pending flow rows, and lists the first `topK` open breaks, every pending row and every resolved break |
+| `triage_break`, `triage_pending`, `triage_count` | The manifest's triage matches the breaks and the pending flow rows, and lists the first `topK` open breaks, pending rows and resolved breaks |
 | `unique_key`, `row_order` | Each file's unique key and row order (results doc §8) |
 | `verdict_mismatch` | The verdict follows from the files |
 
