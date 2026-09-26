@@ -1375,7 +1375,9 @@ one transaction per payment reference (ADR-005 §8, rule 2).
 **Setup.** A fresh single-node ledger at `release/v3.0` `f390ea683` (the last commit on gRPC
 protocol 10, which recon's vendored protos spoke at the time; they have since been re-synced to
 protocol 11 at `fe668e01a`, whose changes — a revert-only field and error reason — are additive and
-off the read path). Ledger `mixed`: 1M transactions, 100k of them payments (`load-mixed`). Client
+off the read path, and then to protocol 13 at `7dd615dba`. That step restructures `CallerSnapshot`
+into a principal union, which recon does not read, and adds `LedgerLog.purged_accounts`, an
+additive field on the `ListLogs` path). Ledger `mixed`: 1M transactions, 100k of them payments (`load-mixed`). Client
 and server share one Apple M4 Pro (12 cores). Median of three runs.
 
 **Read time of the whole 1M-transaction window, by number of concurrent ranges K:**
