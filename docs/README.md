@@ -36,7 +36,7 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | **ADR-001 — CEL kernel choice** | [prd/adr-001-cel-kernel.md](./prd/adr-001-cel-kernel.md) |
 | **ADR-002 — PIT consistency model** | [prd/adr-002-pit-consistency.md](./prd/adr-002-pit-consistency.md) |
 | **ADR-004 — multi-source comparisons** | [prd/adr-004-multi-source-comparisons.md](./prd/adr-004-multi-source-comparisons.md) |
-| **ADR-005 — transaction-level (lettering) reconciliation** *(proposed)* | [prd/adr-005-transaction-level-reconciliation.md](./prd/adr-005-transaction-level-reconciliation.md) · design, measurements and evidence in [technical/transaction-level-reconciliation.md](./technical/transaction-level-reconciliation.md) · result files and how to read them in [technical/transaction-level-results.md](./technical/transaction-level-results.md) |
+| **ADR-005 — transaction-level (lettering) reconciliation** *(proposed)* | [prd/adr-005-transaction-level-reconciliation.md](./prd/adr-005-transaction-level-reconciliation.md) · design, measurements and evidence in [technical/transaction-level-reconciliation.md](./technical/transaction-level-reconciliation.md) · result files and how to read them in [technical/transaction-level-results.md](./technical/transaction-level-results.md) · internal checks and queries in [technical/lettering-duckdb.md](./technical/lettering-duckdb.md) |
 
 ---
 

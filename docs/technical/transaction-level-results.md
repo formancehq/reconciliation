@@ -438,7 +438,7 @@ closed summary.
 ## 9. Queries
 
 **Internal tooling.** The team validates and analyses result files with
-[`tools/lettering-duckdb`](../../tools/lettering-duckdb/README.md), an internal tool in the
+[`tools/lettering-duckdb`](./lettering-duckdb.md), an internal tool in the
 reconciliation repository. It holds ready-made queries, one file per question:
 - the daily flow and the day's reconciled payments;
 - the bridge;
@@ -453,7 +453,7 @@ reconciliation repository. It holds ready-made queries, one file per question:
 It also holds `check`, which verifies a run's files against the rules of this page that the files
 themselves can show, and `check-chain`, which verifies that one run chains onto the previous one.
 They are plain SQL run by the DuckDB CLI, usable from any DuckDB client, and tested on the worked
-example of §10. Its README lists them, with their variables.
+example of §10. [Its doc](./lettering-duckdb.md) describes them, with their variables.
 
 A few standalone examples follow, on the worked example; the paths are relative to the rule's
 prefix.
