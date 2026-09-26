@@ -290,15 +290,19 @@ from the previous run and the ones read by key.
 A reference carried in or read by key keeps the transactions of its earlier days. Any other row
 lists the window's transactions only.
 
-**Flow classes:**
+**Flow classes.** A class reads the net amounts, not which transactions exist: applications that
+sum to 0 (an application undone with its reference) count as no application. A payment applied then
+undone is `unapplied_payment`, since the cash waits to be applied again, and it keeps its
+`firstSeen`. A matched payment that the PSP fails and the product undoes is `failed`, with nothing
+left to letter. The row still lists every transaction.
 
 | `class` | Meaning | `outcome` (`priority`) |
 |---|---|---|
 | `matched` | PSP `final`, and applications summing to the same amount | `ok` |
 | `under_applied` / `over_applied` | PSP `final`, and applications summing to less or to more. There is no tolerance: an unbooked fee is a break | `break` (2) |
-| `unapplied_payment` | PSP `final`, no application yet | `pending` within `product.grace`, then `break` (3) |
-| `in_progress` | PSP `pending` only, no application. Its hold is in the PSP stock | `ok` |
-| `failed` | PSP `failed`, never applied | `ok` |
+| `unapplied_payment` | PSP `final`, nothing applied | `pending` within `product.grace`, then `break` (3) |
+| `in_progress` | No final or failed PSP state, and nothing applied. With the PSP `pending`, its hold is in the PSP stock | `ok` |
+| `failed` | PSP `failed`, nothing applied | `ok` |
 | `applied_before_final` | An application whose reference the PSP has not finalised yet (`pending`, or not seen at all) | `pending` within `psp.grace`, then becomes `orphan_application` |
 | `orphan_application` | An application whose reference is still not final past `psp.grace`, or was already `failed` | `break` (**1**) |
 | `reversed_after_application` | The PSP reports `failed` after the product applied the reference. A refund or chargeback is not this: it has its own reference | `break` (**1**) |

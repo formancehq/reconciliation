@@ -597,9 +597,9 @@ no vocabulary.
 |---|---|---|
 | Flow | `matched` | PSP `final`, and product applications summing to the same amount. An application's amount is its net posting on the accounts under the side's hold prefixes, each in its settling direction |
 | Flow | `under_applied` / `over_applied` | Product applications for the reference sum to less or more than the PSP amount. A payment split across invoices is summed first. **No tolerance**: a fee or FX difference is a break |
-| Flow | `unapplied_payment` | PSP `final`, no product application yet. **Pending while within `product.grace`** (proposed default 1 day), then a break. Carried from day to day in `carried.ndjson.gz`, like every reference whose drift is not 0 |
+| Flow | `unapplied_payment` | PSP `final`, nothing applied: no application, or applications that sum to 0 (an application undone with its reference). **Pending while within `product.grace`** (proposed default 1 day), then a break. Carried from day to day in `carried.ndjson.gz`, like every reference whose drift is not 0 |
 | Flow | `in_progress` | PSP `pending` only, no application: not a break. Its hold is in the PSP stock |
-| Flow | `failed` | PSP `failed` and never applied: nothing to letter, not a break. Listed so that every reference of the window has a row |
+| Flow | `failed` | PSP `failed` and nothing applied (never applied, or applied and undone): nothing to letter, not a break. Listed so that every reference of the window has a row |
 | Flow | `applied_before_final` | A product application points at a reference the PSP has not finalised yet: `pending`, or not seen at all. **Pending while within `psp.grace`** (proposed default 7 days), then `orphan_application`. Applying at `pending` is a legitimate booking choice, common with debits that settle in days (SEPA, ACH) |
 | Flow | `orphan_application` | A product application whose reference is still not final past `psp.grace`, or that the PSP had already reported `failed`: a break of **priority 1** |
 | Flow | `reversed_after_application` | The PSP reports `failed` on a reference after the product applied it, within `psp.grace` or not: a break of **priority 1** |

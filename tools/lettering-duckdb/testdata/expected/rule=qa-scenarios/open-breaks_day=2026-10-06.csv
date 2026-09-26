@@ -3,9 +3,9 @@ priority,class,lifecycle,asset,amount,ref,hold,opened_on,days_open,detail
 1,orphan_application,persisting,EUR/2,-2000,S08,,2026-10-04,2,INV-S08
 1,orphan_application,persisting,EUR/2,-1500,S11,,2026-10-02,4,INV-S11
 2,over_applied,persisting,EUR/2,-4000,S14,,2026-10-04,2,INV-S14
-2,under_applied,persisting,EUR/2,3000,S20,,2026-10-05,1,INV-S20
 2,over_applied,persisting,EUR/2,-1000,S06B,,2026-10-02,4,INV-S06B
 2,over_applied,persisting,EUR/2,-1000,S06,,2026-10-02,4,INV-S06
 3,unapplied_payment,persisting,USD/2,5000,U02,,2026-10-03,3,
+3,unapplied_payment,persisting,EUR/2,3000,S20,,2026-10-05,1,INV-S20
 4,wrong_sign,persisting,EUR/2,-4000,,main:hold:invoice:INV-S14,2026-10-04,2,2 days old
 4,stuck,persisting,EUR/2,2000,,fpay:stripe:payment:hold:pending:S08,2026-10-05,1,5 days old

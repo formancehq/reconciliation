@@ -204,6 +204,8 @@ fresh "$day24"; edit "$work/run/$m" 's/"verdict":"breaks"/"verdict":"reconciled"
 expect_violation "the verdict" verdict_mismatch "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-42"/s/"drift":"0"/"drift":"1"/'
 expect_violation "a matched row with a drift" row_drift "$lettering" check "$work/run"
+fresh "$day24"; edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-42"/s/"class":"matched"/"class":"failed"/'
+expect_violation "a class the net amounts do not give" row_class "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-45"/s/"breakOn":"2026-09-25"/"breakOn":"2026-09-26"/'
 expect_violation "a breakOn that is not firstSeen plus grace" row_break_on "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/stock.ndjson.gz" '/INV-9/s/"ageDays":12/"ageDays":13/'

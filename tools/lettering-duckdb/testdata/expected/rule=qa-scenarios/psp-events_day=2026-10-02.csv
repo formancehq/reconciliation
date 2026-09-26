@@ -12,5 +12,7 @@ day,ref,class,outcome,tx,state,amount,hold_amount,inserted_at
 2026-10-02,S09,failed,ok,1028,payin.pending,,2000,2026-10-02 11:00:00
 2026-10-02,S09,failed,ok,1029,payin.compensate,,2000,2026-10-02 11:30:00
 2026-10-02,S19,in_progress,ok,1031,payin.pending,,3500,2026-10-02 12:00:00
+2026-10-02,S21,matched,ok,1035,payin.pending,,2800,2026-10-02 16:00:00
+2026-10-02,S21,matched,ok,1037,payin.succeeded,2800,,2026-10-02 16:05:00
 2026-10-02,U02,unapplied_payment,pending,1034,payin.pending,,5000,2026-10-02 16:00:00
-2026-10-02,U02,unapplied_payment,pending,1035,payin.succeeded,5000,,2026-10-02 16:05:00
+2026-10-02,U02,unapplied_payment,pending,1036,payin.succeeded,5000,,2026-10-02 16:05:00

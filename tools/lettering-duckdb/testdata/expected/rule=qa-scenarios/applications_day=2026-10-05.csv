@@ -1,3 +1,4 @@
 day,ref,class,outcome,tx,business_id,hold_id,amount,inserted_at
-2026-10-05,S04,matched,ok,547,INV-S04,INV-S04,3000,2026-10-05 10:00:00
-2026-10-05,S20,under_applied,break,548,INV-S20,INV-S20,-3000,2026-10-05 13:10:00
+2026-10-05,S04,matched,ok,549,INV-S04,INV-S04,3000,2026-10-05 10:00:00
+2026-10-05,S20,unapplied_payment,break,551,INV-S20,INV-S20,-3000,2026-10-05 13:10:00
+2026-10-05,S21,failed,ok,550,INV-S21,INV-S21,-2800,2026-10-05 10:00:00

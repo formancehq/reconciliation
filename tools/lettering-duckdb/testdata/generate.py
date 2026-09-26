@@ -400,23 +400,25 @@ class Engine:
         t_fail = min((e.t for e in fails), default=None)
         t_terminal = min([t for t in (t_final, t_fail) if t], default=None)
 
+        # A class reads the net amounts: applications that sum to 0 count as none (results doc §6).
+        applied = product_amount != 0
         if fails:
-            if app_items:
+            if applied:
                 klass = 'reversed_after_application' if t_fail > t_app else 'orphan_application'
             else:
                 klass = 'failed'
         elif finals:
-            if not app_items:
+            if not applied:
                 klass = 'unapplied_payment'
             elif product_amount == psp_amount:
                 klass = 'matched'
             else:
                 klass = 'under_applied' if product_amount < psp_amount else 'over_applied'
         else:
-            klass = 'applied_before_final' if app_items else 'in_progress'
+            klass = 'applied_before_final' if applied else 'in_progress'
 
         seen = [t for t in (t_final, t_app) if t]
-        first_seen = local_day(min(seen)) if seen else None
+        first_seen = local_day(min(seen)) if seen and klass != 'in_progress' else None
         break_on = None
         outcome = 'ok'
         if klass == 'unapplied_payment':
@@ -1030,6 +1032,13 @@ def scenarios():
     pay(D[4], '13:00', 'S20', 3000, t_final='13:05')
     apply(D[4], '13:10', 'S20', [(INVOICE, 'INV-S20', 'EUR/2', 3000)])
     apply(D[5], '13:10', 'S20', [(INVOICE, 'INV-S20', 'EUR/2', -3000)])
+    # S21: matched on day 2, failed at the PSP and un-applied by the product on day 5 (nothing is
+    # left to letter: failed, no break)
+    opening(D[2], '07:14', inv('INV-S21', 2800))
+    pay(D[2], '16:00', 'S21', 2800, t_final='16:05')
+    apply(D[2], '16:10', 'S21', [(INVOICE, 'INV-S21', 'EUR/2', 2800)])
+    psp.append(Psp(at(D[5], '09:00'), 'S21', 'EUR/2', 'failed', 0, 0))
+    apply(D[5], '10:00', 'S21', [(INVOICE, 'INV-S21', 'EUR/2', -2800)])
 
     rule = Rule('qa-scenarios', psp_grace=3, product_grace=1, psp_max_age=3, product_max_age=5,
                 backfill_from=dt.date(2026, 10, 1))

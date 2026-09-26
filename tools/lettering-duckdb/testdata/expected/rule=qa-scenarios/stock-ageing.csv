@@ -18,13 +18,13 @@ day,side,prefix,asset,bucket,holds,amount,stuck,wrong_sign
 2026-10-04,psp,fpay:stripe:payment:hold:pending:,EUR/2,2-7d,1,2000,0,0
 2026-10-04,psp,fpay:stripe:payment:hold:pending:,EUR/2,0-1d,1,2200,0,0
 2026-10-05,product,main:hold:invoice:,EUR/2,2-7d,2,6500,0,0
-2026-10-05,product,main:hold:invoice:,EUR/2,0-1d,2,-1000,0,1
+2026-10-05,product,main:hold:invoice:,EUR/2,0-1d,3,1800,0,1
 2026-10-05,product,main:hold:invoice:,USD/2,2-7d,1,5000,0,0
 2026-10-05,psp,fpay:stripe:payment:hold:pending:,EUR/2,2-7d,2,4200,1,0
 2026-10-06,product,main:hold:invoice:,EUR/2,2-7d,3,2500,0,1
-2026-10-06,product,main:hold:invoice:,EUR/2,0-1d,1,3000,0,0
+2026-10-06,product,main:hold:invoice:,EUR/2,0-1d,2,5800,0,0
 2026-10-06,product,main:hold:invoice:,USD/2,2-7d,1,5000,0,0
 2026-10-06,psp,fpay:stripe:payment:hold:pending:,EUR/2,2-7d,2,4200,1,0
-2026-10-07,product,main:hold:invoice:,EUR/2,2-7d,4,5500,1,1
+2026-10-07,product,main:hold:invoice:,EUR/2,2-7d,5,8300,1,1
 2026-10-07,product,main:hold:invoice:,USD/2,2-7d,1,5000,1,0
 2026-10-07,psp,fpay:stripe:payment:hold:pending:,EUR/2,2-7d,2,4200,2,0

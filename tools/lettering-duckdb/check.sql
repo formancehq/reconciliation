@@ -352,6 +352,17 @@ WHERE NOT CASE class
     WHEN 'cleared' THEN outcome = 'ok' AND balance = 0
     ELSE false END;
 
+-- A class reads the net amounts: applications that sum to 0 count as none.
+INSERT INTO violations
+SELECT 'row_class', 'flow ' || ref || '/' || asset, class || ' with psp ' || pspAmount || ' product ' || productAmount
+FROM flow
+WHERE NOT CASE
+    WHEN class IN ('unapplied_payment', 'in_progress', 'failed') THEN productAmount = 0
+    WHEN class = 'matched' THEN productAmount <> 0 AND productAmount = pspAmount
+    WHEN class = 'under_applied' THEN productAmount <> 0 AND productAmount < pspAmount
+    WHEN class = 'over_applied' THEN productAmount <> 0 AND productAmount > pspAmount
+    ELSE productAmount <> 0 END;
+
 -- A pending or break row has a drift; a matched, in-progress or failed one has none.
 INSERT INTO violations
 SELECT 'row_drift', 'flow ' || ref || '/' || asset, class || ' ' || outcome || ' with drift ' || drift
