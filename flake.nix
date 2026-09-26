@@ -41,6 +41,7 @@
       devShells = forEachSupportedSystem ({ pkgs, pkgs-unstable, system }:
         let
           stablePackages = with pkgs; [
+            duckdb
             ginkgo
             go_1_26
             gotools

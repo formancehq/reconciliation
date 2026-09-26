@@ -67,8 +67,9 @@ generate-ledger-proto:
 # ~96% of the statements in this module and ~1.6% covered, so including them
 # reports 4.5% where the hand-written figure is ~74%. grpcprotocol lives under
 # the same tree but is hand-written, so the filter matches only the `*pb`
-# package names. tools/ holds standalone benchmarks with no tests
-# (tools/bench-txlevel), excluded for the same reason cmd/ is in codecov.yml.
+# package names. tools/ holds standalone tools with no Go tests
+# (tools/bench-txlevel; tools/lettering-duckdb is SQL with its own
+# lettering-duckdb-tests), excluded for the same reason cmd/ is in codecov.yml.
 # codecov.yml applies the equivalent exclusions server-side.
 #
 # -count=1 defeats the test cache. A cached package is replayed without
@@ -81,6 +82,13 @@ generate-ledger-proto:
 tests:
     go test -count=1 -race -covermode atomic -coverprofile=coverage.out \
         -coverpkg=$(go list ./... | grep -vE '/internal/ledgerpb/[a-z]+pb$|/tools/' | paste -sd, -) ./...
+
+# Test the DuckDB checks and query pack for lettering result files
+# (tools/lettering-duckdb) on their golden files. SQL run by the DuckDB CLI, which
+# the Nix shell provides; deliberately not part of `tests`, so the Go suite takes
+# no DuckDB dependency.
+lettering-duckdb-tests:
+    tools/lettering-duckdb/test.sh
 
 # Run the serial integration suite against a live Ledger v3 on localhost:8888
 tests-integration:

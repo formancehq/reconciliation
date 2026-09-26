@@ -429,9 +429,29 @@ closed summary.
 
 ## 9. Queries
 
-The examples use the worked example of §10. The paths are relative to the rule's prefix.
+**The query pack.** [`tools/lettering-duckdb`](../../tools/lettering-duckdb/README.md) holds
+ready-made queries, one file per question:
+- the daily flow and the day's reconciled payments;
+- the bridge;
+- the breaks to act on;
+- the pending items;
+- everything about one invoice;
+- the open items and books day after day;
+- stock ageing;
+- letterings outside matching;
+- one row per application or PSP event.
 
-**The current run of each day.** Keep the latest run per day before anything else, with DuckDB:
+It also holds `check`, which verifies a run's files against the rules of this page that the files
+themselves can show, and `check-chain`, which verifies that one run chains onto the previous one.
+They are plain SQL run by the DuckDB CLI, usable from any DuckDB client, and tested on the worked
+example of §10. Its README lists them, with their variables.
+
+A few standalone examples follow, on the worked example; the paths are relative to the rule's
+prefix.
+
+**The current run of each day.** Keep the latest run per day before anything else, with DuckDB. An
+incomplete run has no data file, so it never shows up here; the pack decides from the manifests
+instead, which also covers a day whose latest complete run has an empty flow file.
 
 ```sql
 CREATE VIEW flow AS
@@ -453,31 +473,7 @@ ORDER BY amount DESC;
 It returns `unapplied_payment` +80000, `under_applied` +5000, `applied_before_final` −30000 and
 `matched` (earlier day) −70000. They add up to the net of −15000.
 
-**Check the open items** against the statement, on the day's current run:
-
-```sql
-SELECT sum(CAST(drift AS BIGINT)) AS open, count(*) AS n
-FROM read_json_auto('rule=psp-vs-billing/day=2026-09-24/run=r-20260925T000004Z/carried.ndjson.gz');
-```
-
-It returns 105000 over 4 rows, the manifest's `suspense.open`.
-
-**One row per application**, for a spreadsheet or a BI tool. The same `unnest` on `psp` gives the
-PSP events:
-
-```sql
-SELECT ref, class, p.tx, p.businessId, p.holdId, p.amount, p.insertedAt
-FROM (SELECT ref, class, unnest(product) AS p FROM flow WHERE day = DATE '2026-09-24');
-```
-
-**What to do today**, with jq:
-
-```sh
-gzip -dc breaks.ndjson.gz | jq -c 'select(.outcome == "break" and .acceptedOn == null)
-  | {priority, class, lifecycle, amount, ref, hold}'
-```
-
-**Everything about invoice INV-12:**
+**Everything about invoice INV-12**, with jq, on one run's files:
 
 ```sh
 gzip -dc flow.ndjson.gz stock.ndjson.gz breaks.ndjson.gz | jq -c 'select(.holdId == "INV-12"

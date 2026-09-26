@@ -1,0 +1,109 @@
+#!/bin/sh
+# lettering: check and query lettering result files with the DuckDB CLI.
+#
+#   lettering check <run-dir>
+#   lettering check-chain <earlier-run-dir> <run-dir>
+#   lettering query <name> <rule-dir> [variable=value ...]
+#   lettering queries
+#
+# Directories are local paths or s3:// URLs. Environment:
+#   DUCKDB          the DuckDB CLI to run (default: duckdb on PATH)
+#   LETTERING_INIT  a SQL file run first, such as an S3 secret
+#   LETTERING_MODE  an output mode of the CLI: csv, json, markdown… (default: the CLI's)
+set -eu
+
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+duckdb=${DUCKDB:-duckdb}
+
+usage() {
+    sed -n '4,7p' "$0" | sed 's/^# //' >&2
+    exit 2
+}
+
+# quote VALUE: a SQL string literal.
+quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+}
+
+# run_sql VARS FILE...: runs the init file, the variables and the SQL files.
+run_sql() {
+    mode=${LETTERING_MODE:+-$LETTERING_MODE}
+    vars=$1
+    shift
+    {
+        if [ -n "${LETTERING_INIT:-}" ]; then cat "$LETTERING_INIT"; fi
+        printf '%s\n' "$vars"
+        for f in "$@"; do
+            cat "$f"
+            printf '\n'
+        done
+    } | "$duckdb" -bail -cmd '.maxrows -1' $mode
+}
+
+# sql_value SQL: prints the single value a query returns.
+sql_value() {
+    {
+        if [ -n "${LETTERING_INIT:-}" ]; then cat "$LETTERING_INIT"; fi
+        printf '%s\n' "$1"
+    } | "$duckdb" -bail -list -noheader
+}
+
+[ $# -ge 1 ] || usage
+command=$1
+shift
+
+case $command in
+check)
+    [ $# -eq 1 ] || usage
+    run=$1
+    state=$(sql_value "SELECT concat_ws(' ', m->>'verdict', coalesce(m->'incomplete'->>'reason', '-'),
+        (SELECT count(*) FROM glob($(quote "$run/*.ndjson.gz"))))
+        FROM (SELECT content::JSON AS m FROM read_text($(quote "$run/manifest.json")));")
+    verdict=${state%% *}
+    if [ "$verdict" = incomplete ]; then
+        reason=${state#* }
+        files=${reason#* }
+        reason=${reason%% *}
+        if [ "$files" != 0 ]; then
+            echo "violation: incomplete run ($reason) with $files data file(s); an incomplete run writes its manifest only" >&2
+            exit 1
+        fi
+        echo "incomplete run ($reason): it writes its manifest only, so there is nothing else to check"
+        exit 0
+    fi
+    run_sql "SET VARIABLE run = $(quote "$run");" \
+        "$here/sql/schema.sql" "$here/sql/run.sql" "$here/check.sql"
+    ;;
+check-chain)
+    [ $# -eq 2 ] || usage
+    run_sql "SET VARIABLE prev = $(quote "$1"); SET VARIABLE run = $(quote "$2");" \
+        "$here/sql/schema.sql" "$here/sql/run.sql" "$here/check-chain.sql"
+    ;;
+query)
+    [ $# -ge 2 ] || usage
+    name=$1
+    rule=$2
+    shift 2
+    file=$here/queries/$name.sql
+    if [ ! -f "$file" ]; then
+        echo "no query named $name; list them with: lettering queries" >&2
+        exit 2
+    fi
+    vars="SET VARIABLE rule = $(quote "$rule");"
+    for pair in "$@"; do
+        key=${pair%%=*}
+        case $pair in *=*) ;; *) usage ;; esac
+        case $key in '' | *[!A-Za-z0-9_]*) usage ;; esac
+        vars="$vars SET VARIABLE $key = $(quote "${pair#*=}");"
+    done
+    run_sql "$vars" "$here/sql/schema.sql" "$here/sql/rule.sql" "$file"
+    ;;
+queries)
+    for f in "$here"/queries/*.sql; do
+        printf '%-16s %s\n' "$(basename "$f" .sql)" "$(sed -n '1s/^-- //p' "$f")"
+    done
+    ;;
+*)
+    usage
+    ;;
+esac
