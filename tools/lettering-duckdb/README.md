@@ -3,8 +3,13 @@
 Checks and queries for the result files of a transaction-level (lettering) rule, format
 `lettering/1`. The files and every field are specified in
 [transaction-level-results.md](../../docs/technical/transaction-level-results.md), the source of
-truth. This tool is how an implementer, support or a customer checks a run and exploits the files
-([EN-2353](https://formance-team.atlassian.net/browse/EN-2353)).
+truth.
+
+This is an internal tool ([EN-2353](https://formance-team.atlassian.net/browse/EN-2353)). The team
+uses it to validate the data of a run's files, during implementation, QA or support, and to
+analyse them to answer reconciliation questions: which payments were reconciled on a day, why a
+day's net is not zero, what is left to act on, where an invoice stands. It is not a product
+shipped to customers, who read the files with their own tools (results doc §9).
 
 It is SQL run by the [DuckDB](https://duckdb.org) CLI, plus a small shell wrapper. There is no
 compiled binary, and recon itself does not depend on it: the service, once built (EN-2322), asserts
@@ -89,6 +94,8 @@ LETTERING_MODE=csv tools/lettering-duckdb/lettering query applications ./rule=ps
 ```
 
 ## The query pack
+
+One query per reconciliation question:
 
 | Query | Question | Variables |
 |---|---|---|

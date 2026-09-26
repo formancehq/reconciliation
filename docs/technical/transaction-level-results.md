@@ -437,8 +437,9 @@ closed summary.
 
 ## 9. Queries
 
-**The query pack.** [`tools/lettering-duckdb`](../../tools/lettering-duckdb/README.md) holds
-ready-made queries, one file per question:
+**Internal tooling.** The team validates and analyses result files with
+[`tools/lettering-duckdb`](../../tools/lettering-duckdb/README.md), an internal tool in the
+reconciliation repository. It holds ready-made queries, one file per question:
 - the daily flow and the day's reconciled payments;
 - the bridge;
 - the breaks to act on;
