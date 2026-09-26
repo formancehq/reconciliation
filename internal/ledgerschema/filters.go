@@ -2,10 +2,10 @@ package ledgerschema
 
 import "github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
 
-// QueryFilter builders. CreatePreparedQuery / ExecutePreparedQuery take a
+// QueryFilter builders. The ledger's list and aggregate RPCs take a
 // commonpb.QueryFilter proto (the ledger's filterexpr text parser is server-side
-// only), so the client constructs the proto directly. Reused by the provisioner
-// (fixed prepared queries) and the filter translator (ad-hoc queries, step 4).
+// only), so the client constructs the proto directly. Every read is ad hoc: the
+// control ledger registers no prepared queries (see schema.go).
 
 // FilterAddressPrefix matches accounts whose address starts with prefix
 // (filterexpr: `address == "<prefix>*"`).

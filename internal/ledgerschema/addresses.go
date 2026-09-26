@@ -1,8 +1,8 @@
 // Package ledgerschema is the single source of truth for reconciliation's
 // control-ledger chart of accounts on Ledger v3: account-type patterns and
-// persistence, the typed metadata schema, prepared queries, assets, and the
-// address builders. The provisioner (bootstrap) applies it; the LedgerStore
-// uses the address builders. See docs/drafts/rfc-ledger-native-storage.md §4.1.2/§4.1.3.
+// persistence, the typed metadata schema, assets, and the address builders. The
+// provisioner (bootstrap) applies it; the LedgerStore uses the address builders.
+// See docs/drafts/rfc-ledger-native-storage.md §4.1.2/§4.1.3.
 package ledgerschema
 
 import (

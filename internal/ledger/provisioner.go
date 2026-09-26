@@ -46,7 +46,7 @@ func NewProvisioner(client provisionAPI, ledgerName string, enforcement commonpb
 }
 
 // Provision applies the control-ledger chart of accounts, typed metadata schema,
-// indexes, prepared queries and numscripts. Idempotent and safe on every boot.
+// indexes and numscripts. Idempotent and safe on every boot.
 //
 // On first boot CreateLedger applies the full chart + schema atomically. On a
 // re-provision it is a no-op (AlreadyExists swallowed) and the account-type /

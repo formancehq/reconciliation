@@ -42,8 +42,8 @@ func itLedgerAddr() string {
 
 // TestIntegration_RuleLifecycle exercises the provisioner + LedgerStore rule CRUD
 // against a real Ledger v3 (insecure local dev). Validates the gRPC transport,
-// CreateLedger + account types + typed metadata schema + prepared queries, and
-// the typed metadata write/read round-trip end-to-end.
+// CreateLedger + account types + typed metadata schema, and the typed metadata
+// write/read round-trip end-to-end.
 //
 //	go test -tags it -run TestIntegration_RuleLifecycle ./internal/ledgerstore/...
 func TestIntegration_RuleLifecycle(t *testing.T) {

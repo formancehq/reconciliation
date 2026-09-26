@@ -277,13 +277,15 @@ The module therefore owns two layers:
    (§4.1.3). Declare the typed metadata fields we
    query — on `alert:item:*`: `status`, `severity`, `rule_id`, `period`, `first_seen_at`,
    `last_seen_at`, `label.*`; on `rule:*`: `enabled`, `template_kind`, `period_type`, `severity`.
-   Register the standard prepared queries: `open-count` (`AGGREGATE_VOLUMES`,
+   ~~Register the standard prepared queries~~ *(superseded: none are registered — the control
+   ledger reads with ad-hoc filters and grouped aggregates only, see [No prepared queries, and
+   why](../technical/ledger-v3-storage.md#no-prepared-queries-and-why), EN-2241)*: `open-count` (`AGGREGATE_VOLUMES`,
    `address == "alert:st:open:*"`), `open-count-by-rule` (`… "alert:st:open:rule:$rule:*"`),
    `alerts-list` (`LIST`, `address == "alert:item:*" and metadata[status] == $status …`),
    `rules-enabled` (`LIST`, `address == "rule:*" and metadata[enabled] == true`). Gate
    dependent features on index readiness (handle `ErrIndexBuilding`).
 2. **Filter translator (in `LedgerStore`).** Map recon's existing `go-libs/query.Builder`
-   surface (status/severity/ruleId/labels + pagination) to a named prepared query + params or
+   surface (status/severity/ruleId/labels + pagination) to ~~a named prepared query + params or~~
    an ad-hoc `filterexpr` string. Standard users keep recon's normal query API and never see
    the account-naming scheme; advanced users can query `_recon` directly.
 
