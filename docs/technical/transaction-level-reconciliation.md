@@ -498,6 +498,31 @@ EPHEMERAL holds. Only created and reverted transactions move balances, and both 
 | INV-15 | 01:30, invoice issued | −300 | −300 | **0** | created after `S`: drops out |
 | INV-3 | none | — | — | listed value | untouched: the listing is right |
 
+**Consistency check from `purged_accounts`** (optional; the rewind is exact without it). Since
+EN-2036 (ledger `38c6eef55`, protocol 13), each log carries `LedgerLog.purged_accounts`, the
+addresses whose `EPHEMERAL` current state it removed. `ListLogs` exposes it at
+`Log.payload.apply.log.purged_accounts`, so the rewind window already reads it. It explains the one
+legitimate way an account open at `S` can be missing from the live listing:
+
+- a touched hold with `pre ≠ 0` that the listing does not contain must be named in the
+  `purged_accounts` of some log in `(S, head]`. Otherwise the listing missed a live account, which
+  the run reports as `INCOMPLETE` rather than repairing silently;
+- a `NORMAL` hold is never purged, so it can never be absent from the listing with `pre ≠ 0`.
+
+Two properties of the field bound what it can prove (`internal/infra/state/write_set.go:537-551` at
+`7dd615dba`):
+
+- the purge is decided at the batch boundary and emitted **once, on the batch's last log** for that
+  ledger, not on the log that zeroed the hold. A hold zeroed and re-funded within one batch is never
+  purged;
+- a batch that straddles `S` can therefore name a hold that no log after `S` touches: it was zeroed
+  at or before `S`, so its balance at `S` is 0 and it drops out. Being named in `purged_accounts`
+  does not imply being touched in the window.
+
+A purged hold also loses its account metadata, and re-funding the address starts a fresh account
+with none of it. So a hold the rewind adds back takes every field from its address, the logs or the
+previous stored stock, never from account metadata.
+
 **Why the logs, and not a filtered `ListTransactions`**, for this window:
 
 - The window is short, so reading every log costs little: 8,208 logs in 267 ms in the proof run.
