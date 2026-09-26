@@ -286,9 +286,11 @@ func (t *StaleHolds) Evaluate(
 	}
 	for _, account := range accounts {
 		amount := zeroIfNil(account.Balances[asset])
-		// A released hold keeps its account row and its deadline metadata — only
-		// the zeroed volume is evicted — so it still matches a deadline filter.
-		// Balances are not filterable in a query, so this is post-filtered here.
+		// A released hold keeps its account row and its deadline metadata, so it
+		// still matches a deadline filter: always for a NORMAL hold, and for an
+		// EPHEMERAL one on a ledger without the full purge (ledger EN-2036, which
+		// deletes the row and metadata once the last volume is zero). Balances
+		// are not filterable in a query, so this is post-filtered here.
 		if amount.Sign() == 0 {
 			scan.released++
 			continue

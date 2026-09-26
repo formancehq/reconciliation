@@ -156,12 +156,14 @@ scans.
 Two caveats. This is a distinct question from the client-side analysis in
 [stale-holds.md](stale-holds.md), which reaches the same conclusion about *client* hold accounts in a
 *client* ledger — that finding does not by itself clear the control ledger, and this one does not
-clear a client book. And the clearance is reasoned from the ticket's acceptance criteria and its
-confirmed design decisions, not from a running build: ledger PR
-[#2058](https://github.com/formancehq/ledger/pull/2058) was still open when this was written. It
-merged on 2026-09-25 (`38c6eef55` on `release/v3.0`). The behaviour to re-test on a build that
-carries it is **close → purge → reopen**, the only place the module relies on a purged address
-accepting a fresh mint ([EN-2345](https://formance-team.atlassian.net/browse/EN-2345)).
+clear a client book. The clearance was first reasoned from the ticket's acceptance criteria, while
+ledger PR [#2058](https://github.com/formancehq/ledger/pull/2058) was still open. It merged on
+2026-09-25 (`38c6eef55` on `release/v3.0`), and the one behaviour the module relies on — **close →
+purge → reopen**, a purged address accepting a fresh mint — is now tested on builds with and
+without the purge: `TestIntegration_AlertTransitions` asserts that the drained marker has no
+current state left before the reopen re-mints it
+([EN-2345](https://formance-team.atlassian.net/browse/EN-2345)). Note that `GetAccount` never
+answers `NotFound` for an address; a drained or purged account comes back empty.
 
 One loose end this review surfaced: `PQOpenCount` (`AGGREGATE_VOLUMES(ALERT)` over the
 `alert:st:open:` prefix) was registered at bootstrap with no non-test caller. It was removed with

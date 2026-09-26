@@ -19,8 +19,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // eventuallyConsistent retries fn until it passes: the ledger's read-side
@@ -273,7 +271,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	require.NoError(t, err, "ack")
 	require.Equal(t, models.AlertAcknowledged, acked.Status)
 	require.Equal(t, "1", balance(ctx, t, client, control, stAck, schema.AssetAlert), "marker at st:ack")
-	require.Equal(t, "0", balanceOrZero(ctx, t, client, control, stOpen, schema.AssetAlert), "st:open drained on ack")
+	requireNoCurrentState(ctx, t, client, control, stOpen, "st:open drained on ack")
 
 	// Burn-on-close: the marker is burned back to the pool and st:ack purges —
 	// no marker lingers for a closed alert (auto-resolve reads structurally, so
@@ -281,14 +279,17 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	closed, err := store.AutoResolveAlert(ctx, ruleID, "fp-lifecycle", period, uuid.New(), time.Now().UTC())
 	require.NoError(t, err, "close")
 	require.Equal(t, models.AlertResolved, closed.Status)
-	require.Equal(t, "0", balanceOrZero(ctx, t, client, control, stAck, schema.AssetAlert), "marker burned → st:ack purged")
+	requireNoCurrentState(ctx, t, client, control, stAck, "marker burned → st:ack purged")
 
 	// The item persists as the durable record; its status mirror reads RESOLVED.
 	item, err := client.GetAccount(ctx, control, schema.AlertItemAccount(ruleID.String(), period, fpHash))
 	require.NoError(t, err)
 	require.Equal(t, "RESOLVED", item.GetMetadata()[schema.MetaStatus].GetStringValue(), "status mirror on item")
 
-	// Reopen: a fresh failure re-mints the marker (nothing to move — it was burned).
+	// Reopen: a fresh failure re-mints the marker (nothing to move — it was burned)
+	// onto st:open, drained since the ack. On a ledger that purges EPHEMERAL
+	// accounts (EN-2036), this is the one place the module relies on a purged
+	// address accepting a fresh mint.
 	reopened, err := store.OpenOrUpdateAlert(ctx, recstore.OpenAlertInput{
 		RuleID: ruleID, Fingerprint: "fp-lifecycle", PeriodID: period, Severity: models.SeverityHigh,
 		EvaluationID: uuid.New(), Evidence: json.RawMessage(`{"drift":"2"}`), OccurredAt: time.Now().UTC(),
@@ -297,6 +298,7 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 	require.True(t, reopened.Reopened)
 	require.Equal(t, models.AlertOpen, reopened.Alert.Status)
 	require.Equal(t, "1", balance(ctx, t, client, control, stOpen, schema.AssetAlert), "marker re-minted at st:open")
+	requireNoCurrentState(ctx, t, client, control, stAck, "the reopen goes to st:open, st:ack stays empty")
 
 	// Close again so fp-lifecycle is not "active" for the sweep assertion below.
 	_, err = store.AutoResolveAlert(ctx, ruleID, "fp-lifecycle", period, uuid.New(), time.Now().UTC())
@@ -577,21 +579,15 @@ func balance(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, ad
 	return commonpb.BalanceByAsset(acct, asset).String()
 }
 
-// balanceOrZero reads an asset balance, treating a purged (NotFound) account or
-// an absent volume as "0" — used to assert an EPHEMERAL marker was drained.
-func balanceOrZero(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, addr, asset string) string {
+// requireNoCurrentState asserts an EPHEMERAL marker account holds nothing: no
+// volume and no metadata. That is its state once drained, whether the ledger
+// only evicts the zeroed volume or purges the whole account (ledger EN-2036).
+// GetAccount never answers NotFound for an address, so emptiness is the check.
+func requireNoCurrentState(ctx context.Context, t *testing.T, c *ledger.Client, ledgerName, addr, msg string) {
 	t.Helper()
 
 	acct, err := c.GetAccount(ctx, ledgerName, addr)
-	if status.Code(err) == codes.NotFound {
-		return "0"
-	}
-
 	require.NoError(t, err, "get account %s", addr)
-
-	if bal := commonpb.BalanceByAsset(acct, asset); bal.Sign() != 0 {
-		return bal.String()
-	}
-
-	return "0"
+	require.Empty(t, acct.GetVolumes(), "%s: no volume left on %s", msg, addr)
+	require.Empty(t, acct.GetMetadata(), "%s: no metadata on %s", msg, addr)
 }
