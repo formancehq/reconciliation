@@ -158,14 +158,15 @@ Two caveats. This is a distinct question from the client-side analysis in
 *client* ledger — that finding does not by itself clear the control ledger, and this one does not
 clear a client book. And the clearance is reasoned from the ticket's acceptance criteria and its
 confirmed design decisions, not from a running build: ledger PR
-[#2058](https://github.com/formancehq/ledger/pull/2058) was still open when this was written. The
-behaviour to re-test when it lands is **close → purge → reopen**, the only place the module relies on
-a purged address accepting a fresh mint.
+[#2058](https://github.com/formancehq/ledger/pull/2058) was still open when this was written. It
+merged on 2026-09-25 (`38c6eef55` on `release/v3.0`). The behaviour to re-test on a build that
+carries it is **close → purge → reopen**, the only place the module relies on a purged address
+accepting a fresh mint ([EN-2345](https://formance-team.atlassian.net/browse/EN-2345)).
 
 One loose end this review surfaced: `PQOpenCount` (`AGGREGATE_VOLUMES(ALERT)` over the
-`alert:st:open:` prefix) is registered at bootstrap but has no non-test caller. It stays correct
-either way — it sums zeros over ghosts today and scans nothing afterwards — but it should be wired
-up or removed.
+`alert:st:open:` prefix) was registered at bootstrap with no non-test caller. It was removed with
+the other unexecuted prepared query (EN-2241, `01965140`; see [No prepared queries, and
+why](#no-prepared-queries-and-why)).
 
 ## Current state and immutable history
 

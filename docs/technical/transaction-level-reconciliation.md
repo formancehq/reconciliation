@@ -90,9 +90,10 @@ continuity holds in every row above.
   - `reference == "{id}:done"` still finds the lettering transaction;
   - its `post_commit_volumes` still shows the hold at `100 − 100 = 0`.
 
-  EN-2036 (formancehq/ledger#2058 @ `20a5595d6`, open, not merged) makes a purged hold reachable
-  by **exact address** again. Its prefix path then scales with every hold ever created (§7.6). None
-  of this changes the design, which never reads the flow by address.
+  EN-2036 (formancehq/ledger#2058, merged 2026-09-25 as `38c6eef55` on `release/v3.0`, not yet
+  released) makes a purged hold reachable by **exact address** again. Its prefix path reads the
+  retained mappings, so it scales with every hold ever created (§7.6). None of this changes the
+  design, which never reads the flow by address.
 - **The join key must therefore be indexed transaction metadata**, and the address cannot be the
   only carrier.
   - Connectivity's `formancepayments` profile already does this: `payments.formance.com/payment-id`
@@ -1339,6 +1340,12 @@ mappings, so the same bench ran with real **EPHEMERAL** holds, all of them lette
 With a 2k-transaction window: 56 ms against 5.7 s at 100k payments, and 65 ms against **50.7 s** at
 1M. The NORMAL stand-in was faithful.
 
+**Merged version, not re-measured.** The squash that landed (`38c6eef55`) changed the prefix path
+after `20a5595d6` (commit `701d0f0bb`, "retain purged addresses in prefix filters"). It now collects
+the matching addresses by walking the `[atxm][ledger][account][txID]` keys under the prefix, one
+key per (account, transaction), before `AddressTxIterator` runs. That is still O(history) per page,
+and probably no cheaper than the figures above. The bench has not been re-run on it.
+
 **Reading.**
 
 - **The metadata filter costs O(window).** Multiplying the history by 10 barely moves it (+35 %),
@@ -1417,7 +1424,7 @@ while K readers loop over the unfiltered window, two series:
 | F-a | Concurrent reads of one checkpoint fail (`lock held by current process`, surfacing as a non-retryable `Unknown`) | Reproduced at `0b4676d97`; fixed by [EN-2108](https://formance-team.atlassian.net/browse/EN-2108) (`7492e7304`) | none |
 | F-b | Checkpoint reads are ×20 slower: every page reopens both databases with the backup profile | §7.3.2 | For information: evaluations take no checkpoint, and the test oracle and optional proof run can afford the slowdown. Filed at the Ledger team's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1), related to EN-2108 |
 | F-c | One INFO log line per listed account | `store.go:189-195` | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)) |
-| F-d | A purged EPHEMERAL account's transactions are no longer returned by an address filter. That includes the **opening** transaction, which was returned before the purge. Unchanged on EN-2036's head `92b378e4b`: the mappings are kept, but the query checks that the account currently exists before reading them (`internal/query/compile.go:1069-1110`). **Fixed at `20a5595d6`** (PR open, not merged): addresses are read from the mappings. The prefix path then costs O(every hold ever created) per page: 50.7 s for a 2k window at 1M purged holds, [reported on the PR](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700) | §2 probe, re-run on both PR heads; §7.6 bench with EPHEMERAL holds | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract for the metadata and `reference` paths, which is all this design needs. Ledger side: resolve an exact address from the mappings; keep the prefix limited to current accounts, since extending it costs O(history) on every page (§7.6) |
+| F-d | A purged EPHEMERAL account's transactions are no longer returned by an address filter. That includes the **opening** transaction, which was returned before the purge. Unchanged on EN-2036's head `92b378e4b`: the mappings are kept, but the query checks that the account currently exists before reading them (`internal/query/compile.go:1069-1110`). **Fixed at `20a5595d6`, merged as `38c6eef55`** (2026-09-25, EN-2331 closed): addresses are read from the mappings. The prefix path then costs O(every hold ever created) per page: 50.7 s for a 2k window at 1M purged holds, [reported on the PR](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700) | §2 probe, re-run on both PR heads; §7.6 bench with EPHEMERAL holds | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract for the metadata and `reference` paths, which is all this design needs. Ledger side: resolve an exact address from the mappings; keep the prefix limited to current accounts, since extending it costs O(history) on every page (§7.6) |
 | F-e | `ListLogs` runs at 7.3k–13.8k logs/s on one stream, 5–7× slower than `ListTransactions` over the same data | §7.2 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) |
 | F-e2 | Transaction metadata is mutable (`SavedMetadata` on a transaction id), so a filtered `ListTransactions` re-read of a past window can change; logs do not. Ledger v3 has no immutable alternative today: no label concept in the protos at `a08f99bc3`, and `reference` is exact-match only | §7.2 `retag` | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): immutable transaction labels, add-only indexed, filterable on `ListTransactions` and `ListLogs`. Until then: write-once convention, monitored through the rewind window (`key_metadata_mutated`) |
 | F-f | Reads do not say which log id their snapshot saw | `AggregateVolumes` / `ListAccounts` responses | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the horizon (in EN-1480's scope) |

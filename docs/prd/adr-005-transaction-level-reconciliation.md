@@ -129,6 +129,17 @@ The same gate exists on `0b4676d97` and on the `release/v3.0` tip `a08f99bc3`. I
 opening transaction disappear there too: the purged volume was the account's only attribute. So the
 conclusion stands whatever EN-2036 becomes.
 
+**Merged** (2026-09-25, squash `38c6eef55` on `release/v3.0`, checked at `7dd615dba`; no tag yet).
+On the TRANSACTIONS target, both filters now read the retained account→tx mappings instead of the
+current accounts:
+
+- an exact address wraps the address directly in `AddressTxIterator`, with no existence check;
+- an address prefix enumerates the addresses from the mapping keyspace
+  (`NewAccountTxAddressPrefixIterator`), so it includes every purged hold.
+
+A purged hold is therefore reachable by address again, and a prefix over the holds scales with every
+hold ever created (§7.6 of the design doc). EN-2331 is closed. The key stays indexed metadata.
+
 **Fixed later in the same PR** (head `20a5595d6`, still open, not merged): address filters on
 transactions now read the mappings (`MappedAccountPrefixIterator`), and the probe returns both
 transactions of a purged hold by address. But the **prefix** path now enumerates every hold ever
@@ -146,8 +157,8 @@ must not be extended to purged accounts (§6, and [design doc
 **Consequence for the recommended booking.** Every lettering transaction, on both ledgers, must
 carry the **PSP payment reference** as declared, indexed transaction metadata. On the product
 ledger, it should also carry the **business id** of the hold it letters. Its postings name that
-hold, but the address filters miss it once the hold is purged (until EN-2036 merges; whether a
-prefix then reaches it is EN-2331's question), and a metadata field makes "which payments settled
+hold, but the address filters miss it once the hold is purged on a ledger without EN-2036 (merged
+in `38c6eef55`, not yet released), and a metadata field makes "which payments settled
 invoice X" a query.
 
 ### 2.3 The need
@@ -397,7 +408,8 @@ checkpoint's listing.
   product ledger. The product side also names the field that carries the **business id** of the hold
   it letters (`invoice_no`…), which gives the payment → invoice link. The key is **never taken from
   the hold address**, even on the PSP ledger where holds are named after the reference. Measured
-  with purged holds made reachable by prefix (as EN-2036's head `20a5595d6` does), an address prefix
+  with purged holds made reachable by prefix (as EN-2036's head `20a5595d6` did, and as the merged
+  `38c6eef55` does through the mapping keyspace), an address prefix
   costs O(history) per page: 47.8 s for a 2k-transaction window on a 1M-payment history, against 48
   ms for `payment_ref EXISTS`, which stays O(window) ([design doc
   §7.6](../technical/transaction-level-reconciliation.md#76-where-the-key-comes-from-transaction-metadata-not-the-hold-address)).
