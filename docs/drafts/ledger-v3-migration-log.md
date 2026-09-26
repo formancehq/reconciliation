@@ -21,7 +21,14 @@ discharged. Dedicated PR still to open.
 > after the fact. The two sections above them — this handoff and the phase tables — are *status*
 > artifacts and are kept current. When the two disagree, the status sections win.
 
-**Last updated:** 2026-09-24 (ADR-005 design recorded; code status unchanged since `400578da`).
+**Last updated:** 2026-09-26 (Jira tracking: epic [EN-2344](https://formance-team.atlassian.net/browse/EN-2344) for this migration; EN-2036 merged upstream; code status unchanged since `400578da`).
+
+**Tracking.** This migration is epic [EN-2344](https://formance-team.atlassian.net/browse/EN-2344):
+its description carries the done table (Phase 1, W-1 to W-14, head commits), and its children are
+the open follow-ups. The audit work stays under [EN-1930](https://formance-team.atlassian.net/browse/EN-1930),
+the K/V control state under [EN-1932](https://formance-team.atlassian.net/browse/EN-1932) (blocked by
+Ledger v3.1 [EN-1426](https://formance-team.atlassian.net/browse/EN-1426)), and ADR-005 under
+[EN-2315](https://formance-team.atlassian.net/browse/EN-2315).
 
 ### State in one paragraph
 
@@ -60,13 +67,18 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 | Events | ledger-native events sink provisioned at boot (`--events-sink-url`) |
 | Alert history | `GET /alerts/{id}/events` **implemented** as a projection over the `_recon` activity stream |
 | Catalogue | 6 templates, one contract: `balance_equation`, `exchange_rate_bounds`, `source_consensus`, `coverage_ratio_bounds`, `balance_bounds`, `stale_holds` |
-| Scheduler | in-process cron, single-instance |
+| Scheduler | in-process cron, single-instance; `enabled` filtered server-side and every page drained ([EN-2239](https://formance-team.atlassian.net/browse/EN-2239), `27bf3d88`); in-flight evaluations drained on shutdown (`cc86d99f`, `41d14305`) |
+| Chart hygiene | per-rule alert tally on `GET /rules` ([EN-2240](https://formance-team.atlassian.net/browse/EN-2240), `4e0bec4f`); unexecuted prepared queries dropped ([EN-2241](https://formance-team.atlassian.net/browse/EN-2241), `01965140`); address conventions and pool split written down ([EN-2242](https://formance-team.atlassian.net/browse/EN-2242), `2f86c20e`) |
 
 ### What is NOT done
 
-- **`GET /rules/{id}/revisions`** — the remaining half of EN-1930 W6. Never built; absent from
-  `openapi.yaml`. (`/alerts/{id}/events`, the other half, shipped.)
-- **EN-1930 Phase 2 (signed closures)** — ⚠️ **the design needs re-specifying before it can be
+- **`GET /rules/{id}/revisions`** ([EN-2350](https://formance-team.atlassian.net/browse/EN-2350)) —
+  the remaining half of EN-1930 W6. Never built; absent from `openapi.yaml`. (`/alerts/{id}/events`,
+  the other half, shipped.)
+- **Signing-key rotation** ([EN-2352](https://formance-team.atlassian.net/browse/EN-2352)) — the
+  first key self-bootstraps; a second one needs the ledger's signed `RegisterSigningKey` path, which
+  is not wired. The `require_signatures` decision is open with it.
+- **EN-1930 Phase 2 (signed closures)** ([EN-2351](https://formance-team.atlassian.net/browse/EN-2351)) — ⚠️ **the design needs re-specifying before it can be
   estimated.** [`audit-chain-v3.md`](../technical/audit-chain-v3.md) §P2.1 anchors a closure on the
   ledger's *chapter* head, and cites `internal/infra/state/sealer.go` for the sealing hash. Ledger
   removed chapters and cold storage in `d095a8b0` ("remove chapters and cold storage (EN-1945)",
@@ -76,33 +88,31 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
   artefact citing the chapter boundary?* — is therefore settled by elimination in favour of the
   latter, and P2.1 needs a new anchor. `audit_sequence` plus the P1 `SignedApplyBatch` are the
   candidates already in hand.
-- **Scheduler robustness** — `listCronRules` pages at `maxRulesPerTick = 1000` over *all* rules with
-  an empty `RulesFilters{}`, then filters `Enabled && Kind == cron` in Go, so a deployment with 1000+
-  rules can starve its cron rules off the page (only an `Errorf` marks it). `tick` fans out
-  `go s.fire(...)` unbounded and `Run` returns on `ctx.Done()` without draining in-flight
-  evaluations. `Run` and `cronExpr` are at 0% coverage.
-- **`contractVersion` is a degenerate abstraction.** Nothing on this branch can write a V1 stamp
+- **Scheduler fan-out** — the page cap and the shutdown drain are fixed (see "What is done"); a tick
+  still starts one goroutine per due rule, with no concurrency bound.
+- **`contractVersion` is a degenerate abstraction** ([EN-2346](https://formance-team.atlassian.net/browse/EN-2346)). Nothing on this branch can write a V1 stamp
   (Postgres-free, no data migration), so the middleware, `internal/contractversion`,
   `requireContractVersion`, `validateTemplateContract` and the `RulesFilters.ContractVersion`
   threading all resolve to one value. The persisted field and the `models` constant must stay — they
   are written into signed metadata that cannot be rewritten — but the live plumbing need not.
-- **`internal/templates` still speaks "V2"** (`V2NamedSource`, `v2_source.go`, `validateV2Sources`,
+- **`internal/templates` still speaks "V2"** (EN-2346; `V2NamedSource`, `v2_source.go`, `validateV2Sources`,
   `resolveV2Sources`, `resolvedV2Source`, `maxV2Sources`, `v2Queries`) although the API and the UI
   dropped the suffix. `SourceSpec` and `V2NamedSource` are two types for one concept with three
   resolution paths between them (`SourceSpec.resolve`, `resolveV2Source`,
   `resolveV2SourceBalances`) and the `account_metadata` branch written twice.
-- **Frontend has no CI job.** `frontend/` is a standalone Next app (~16.8k LOC) with no typecheck,
-  lint or test step in `.github/workflows/main.yml`. Recorded as a known gap; out of scope for the
-  current review pass.
+- **Frontend has no CI job** ([EN-2347](https://formance-team.atlassian.net/browse/EN-2347), with F1
+  and the W-12 codecov wiring). `frontend/` is a standalone Next app (~16.8k LOC) with no typecheck,
+  lint or test step in `.github/workflows/main.yml`.
 
 ### Upstream dependencies
 
 | Ticket | State | Bearing on this branch |
 |---|---|---|
-| [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) | PR [ledger#2058](https://github.com/formancehq/ledger/pull/2058) open, awaiting review (head `92b378e4b`), design confirmed | Purges `EPHEMERAL` accounts fully at zero. When it lands, **version-gate** — do not delete — the released-hold post-filter at `stale_holds.go:289` and the `holdsReleased` evidence key: older ledgers still return released holds, and existing captures carry the key. |
+| [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) | merged: [ledger#2058](https://github.com/formancehq/ledger/pull/2058) (`fcd09a540`, 2026-09-25); first release to confirm | Purges `EPHEMERAL` accounts fully at zero. **Version-gate** — do not delete — the released-hold post-filter at `stale_holds.go:289` and the `holdsReleased` evidence key: older ledgers still return released holds, `NORMAL` holds are never purged, and existing captures carry the key. Tracked in [EN-2345](https://formance-team.atlassian.net/browse/EN-2345). |
 | [EN-1480](https://formance-team.atlassian.net/browse/EN-1480) | backlog, v3.1 | Batched multi-ledger aggregate on one snapshot. **Not blocking** — ADR-003 is per-source reads + tolerance. |
 | [EN-1873](https://formance-team.atlassian.net/browse/EN-1873) | backlog, gated on EN-1480 | Ledger-signed attestation of a read result. The value of a completeness proof is gated with it. |
-| [EN-1932](https://formance-team.atlassian.net/browse/EN-1932) | backlog, gated on Ledger 3.1 | K/V store for mutable control state. Until it ships, the marker/EPHEMERAL/Numscript model is the correct V3-native approach. Worth re-checking the epic's premise against EN-1941's bare-source CAS before estimating. |
+| [EN-1351](https://formance-team.atlassian.net/browse/EN-1351) | backlog, v3.1 | `order_by` on list results. Server-side ordering for F23 ([EN-2348](https://formance-team.atlassian.net/browse/EN-2348)). |
+| [EN-1932](https://formance-team.atlassian.net/browse/EN-1932) | backlog, blocked by Ledger v3.1 [EN-1426](https://formance-team.atlassian.net/browse/EN-1426) (generic K/V store) | K/V store for mutable control state. Until it ships, the marker/EPHEMERAL/Numscript model is the correct V3-native approach. Worth re-checking the epic's premise against EN-1941's bare-source CAS before estimating. |
 | [EN-1930](https://formance-team.atlassian.net/browse/EN-1930) | Phase 1 done; Phase 2 needs re-spec | See "What is NOT done". |
 
 ### Planned next (design only, nothing implemented)
@@ -124,10 +134,10 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 
 ### Open findings
 
-Still open / deferred: **F1** (CI proto regeneration + pinned gen plugins), **F17** (content-sensitive
-ledger idempotency — latent, no evaluation retry today), **F22** (CAS loser gets a raw
-`FailedPrecondition`), **F23** (`ListRules`/`ListAlerts` collect-all then sort client-side),
-**F25** (metadata read index is eventually consistent; operator path only), **F27** (noted),
+Still open / deferred: **F1** (CI proto regeneration + pinned gen plugins; EN-2347), **F17** (content-sensitive
+ledger idempotency — latent, no evaluation retry today; EN-2349), **F22** (CAS loser gets a raw
+`FailedPrecondition`; EN-2349), **F23** (`ListRules`/`ListAlerts` collect-all then sort client-side; EN-2348),
+**F25** (metadata read index is eventually consistent; operator path only; EN-2349), **F27** (noted),
 **F31** (noted), **F34** (mitigated in-recon; upstream `SetMetadataFieldType` no-op guard).
 
 Resolved: F2 @ 6a-5a · F16/F29/F30 @ 6a-5b · F33 @ metadata-type-audit · F8 @
@@ -226,9 +236,9 @@ Each has a section below. `!` marks a breaking public-surface change.
 | W-9 | **Catalogue convergence** `!` | `balance_bounds` + the `*` asset wildcard close the last V1 gaps → retire the V1 template catalogue, unmount the V1 API surface, drop the `/v2` route prefix and the V2 suffix from the spec | ✅ **done** | `e430c00` |
 | W-10 | `cadence` → `periodType` `!` | rename across API, docs and frontend | ✅ done | `a57b21e` |
 | W-11 | Upstream-fact corrections | three stale Ledger v3 facts corrected; EN-2036 recorded as superseding EN-1972; protos re-synced + service protocol revision declared | ✅ done | `5facf76` |
-| W-12 | Coverage & CI | exclude generated bindings from the coverage figure; cover `Queries()` and the signed-batch write path; codecov wiring | 🚧 codecov wiring uncommitted | `36f8f8a` |
+| W-12 | Coverage & CI | exclude generated bindings from the coverage figure; cover `Queries()` and the signed-batch write path; codecov wiring | 🚧 codecov wiring uncommitted ([EN-2347](https://formance-team.atlassian.net/browse/EN-2347)) | `36f8f8a` |
 | W-13 | Docs consolidation | one catalogue / one API surface; retire `per_account` from the reference; record the colour-segregation cost; repoint PRD §2/§9 at code that still exists | ✅ done | `3aec083` |
-| W-14 | **Scheduler correctness** | EN-2239: filter `enabled` server-side and drain every page. Plus: stop cancelling in-flight evaluations on shutdown | 🚧 uncommitted | — |
+| W-14 | **Scheduler correctness** | EN-2239: filter `enabled` server-side and drain every page. Plus: stop cancelling in-flight evaluations on shutdown | ✅ done (EN-2239 in review, unmerged) | `41d14305` |
 
 Docs baseline commit: `c54dc4d` (RFC + ADR-002 rewrite).
 
