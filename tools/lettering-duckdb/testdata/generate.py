@@ -1039,6 +1039,12 @@ def scenarios():
     apply(D[2], '16:10', 'S21', [(INVOICE, 'INV-S21', 'EUR/2', 2800)])
     psp.append(Psp(at(D[5], '09:00'), 'S21', 'EUR/2', 'failed', 0, 0))
     apply(D[5], '10:00', 'S21', [(INVOICE, 'INV-S21', 'EUR/2', -2800)])
+    # S22: applied at pending on day 5 (applied_before_final), un-applied on day 6 while the PSP is
+    # still pending: nothing is applied any more, so the row is in_progress again, with no firstSeen
+    opening(D[5], '07:15', inv('INV-S22', 1900))
+    psp.append(Psp(at(D[5], '10:00'), 'S22', 'EUR/2', 'pending', 0, 1900))
+    apply(D[5], '10:10', 'S22', [(INVOICE, 'INV-S22', 'EUR/2', 1900)])
+    apply(D[6], '10:10', 'S22', [(INVOICE, 'INV-S22', 'EUR/2', -1900)])
 
     rule = Rule('qa-scenarios', psp_grace=3, product_grace=1, psp_max_age=3, product_max_age=5,
                 backfill_from=dt.date(2026, 10, 1))
@@ -1115,7 +1121,7 @@ def expected(engine, out):
         lines = {}
         for x in st['rows']:
             if x['impact'] != 0:
-                k = (x['asset'], x['class'], x['outcome'], (x['firstSeen'] < d) if x['firstSeen'] else None)
+                k = (x['asset'], x['class'], x['outcome'], bool(x['firstSeen'] and x['firstSeen'] < d))
                 s, n = lines.get(k, (0, 0))
                 lines[k] = (s + x['impact'], n + 1)
         res[f'bridge@{tag}'] = csv_text(['asset', 'class', 'outcome', 'earlier_day', 'amount', 'payments'],

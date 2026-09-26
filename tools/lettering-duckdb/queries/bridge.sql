@@ -3,7 +3,7 @@
 -- Variables: rule, day (optional, default the latest day).
 -- Columns: asset, class, outcome, earlier_day, amount, payments. The amounts add
 -- up to the day's net difference, psp - product.
-SELECT asset, class, outcome, firstSeen < day AS earlier_day,
+SELECT asset, class, outcome, coalesce(firstSeen < day, false) AS earlier_day,
        sum(impact) AS amount, count(*) AS payments
 FROM flow_days
 WHERE day = lettering_target_day() AND impact <> 0

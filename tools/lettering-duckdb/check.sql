@@ -159,7 +159,7 @@ WHERE v_int(s.s->'product'->>'amount') <> coalesce(b.b, 0);
 
 INSERT INTO violations
 WITH found AS (
-    SELECT f.asset, f.class, f.outcome, f.firstSeen < r.day AS earlierDay, sum(f.impact) AS amount, count(*) AS n
+    SELECT f.asset, f.class, f.outcome, coalesce(f.firstSeen < r.day, false) AS earlierDay, sum(f.impact) AS amount, count(*) AS n
     FROM flow f, m_run r WHERE f.impact <> 0 GROUP BY ALL)
 SELECT 'bridge_line', concat_ws('/', coalesce(l.asset, f.asset), coalesce(l.class, f.class), coalesce(l.outcome, f.outcome),
                                 CASE WHEN coalesce(l.earlierDay, f.earlierDay) THEN 'earlier' ELSE 'window' END),

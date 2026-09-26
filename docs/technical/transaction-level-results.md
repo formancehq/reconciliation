@@ -260,7 +260,7 @@ open = openPrev + opened − lettered
 | `counts.breaks` | `new`, `persisting`, `resolved`, `accepted`, and open breaks `openByLeg` and `openByPriority` |
 | `counts.unclassified` | Unclassified transactions per side |
 | `anomalies.key_metadata_mutated` | The transactions (`side`, `tx`) whose key, state, business-id or merchant-reference metadata was changed or deleted after insertion, seen since the previous run's head. Empty in a sound booking |
-| `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`, `offsetting`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
+| `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`, `offsetting`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`, or `side` and `hold`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`; `acceptedOn`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
 | `files` | One entry per file: `name`, `rows`, `sha256`, `expiresAt`, and `part` when the file comes in parts |
@@ -475,7 +475,7 @@ QUALIFY run = max(run) OVER (PARTITION BY day);
 **Rebuild the bridge** from the flow file alone:
 
 ```sql
-SELECT class, outcome, firstSeen < day AS earlierDay,
+SELECT class, outcome, coalesce(firstSeen < day, false) AS earlierDay,
        sum(CAST(impact AS BIGINT)) AS amount, count(*) AS n
 FROM flow
 WHERE day = DATE '2026-09-24' AND impact <> '0'

@@ -1,2 +1,3 @@
 day,ref,class,outcome,tx,state,amount,hold_amount,inserted_at
 2026-10-05,S21,failed,ok,1045,payin.compensate,,0,2026-10-05 09:00:00
+2026-10-05,S22,applied_before_final,pending,1046,payin.pending,,1900,2026-10-05 10:00:00
