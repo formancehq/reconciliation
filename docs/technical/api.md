@@ -308,9 +308,9 @@ projection, RFC §4.4.2) — but each run's
 The immutable capture recorded per evaluation (ADR-003): positive assurance on a pass, evidence for
 every break, and successful evidence when a pass resolves an active alert. Evidence retention is
 planned per fingerprint, so an overall `FAIL` capture can contain both failing and successful
-resolution evidence. Unlike the alert-transition timeline
-(`/alerts/{id}/events`, sink-gated), **captures are first-class ledger transactions**, so this is
-queryable **live** today — no event sink required. Cursor-paginated, most-recent-first. Optional
+resolution evidence. **Captures are first-class ledger transactions**, queried **live**, with no
+event sink required. The alert-transition timeline (`/alerts/{id}/events`) is also served live, as
+a projection over the rule's activity stream. Cursor-paginated, most-recent-first. Optional
 `?period=` scopes to one reconciliation period.
 
 ```json
@@ -379,14 +379,29 @@ Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?periodID=2026-03`
 
 `occurrenceCount` is the count of FAIL events on this alert across its reopen cycles **within its period** (for a rule with `periodType: continuous`, that's the lifetime count, since there is one unbounded period). Finer per-episode counts can be derived from `/events`.
 
-#### `GET /alerts/{id}/events` — append-only timeline (⏳ deferred)
+#### `GET /alerts/{id}/events` — append-only timeline
 
-**Returns an empty page today.** The transition history exists — it is the control-ledger's ordered
-log, and each transition carries a self-describing `last_transition` envelope (see [Events](#events))
-— but a *paginated per-alert* read needs a downstream queryable sink (ClickHouse/Databricks): the
-ledger log has no per-account filter, so per-request replay of the whole `_recon` log is not viable
-(RFC §10). The endpoint is wired and returns the cursor shape below with `data: []` until that sink
-lands.
+The alert's lifecycle history, newest first and cursor-paginated (`pageSize`, `cursor`). It is a
+**projection** over the rule's activity stream on the control ledger: the same committed transition
+transactions `GET /rules/{id}/timeline` is built from, filtered to this alert. No external sink is
+involved.
+
+Each event has a `type` (`fail`, `pass`, `ack`, `resolve`, `accept`, `snooze`, `unsnooze`), a
+`prevStatus` / `newStatus`, the `evaluationID` that caused it when there is one, the transition
+`payload`, `at` (when the transition happened) and `createdAt` (when the ledger recorded it). A
+reopen is a `fail` whose `prevStatus` is `RESOLVED`, not a separate type.
+
+Each event also carries the `transactionId` of the control-ledger write behind it. That write is
+covered by the ledger's signed audit chain. To get its audit entry, call
+`GET /audit/entries/by-transaction/{transactionId}`: the transaction id is not the bucket-wide audit
+sequence that indexes `GET /audit/entries`.
+
+`notify` is always `true` on this read path. Write-time notification suppression is not replayed
+here (see [notification-suppression.md](notification-suppression.md)): a consumer that suppresses
+repeats decides what to publish.
+
+**Cost:** a page scans the rule's whole activity account, so it is O(rule history), like the rule
+timeline. An alert-keyed index would make it O(alert history); that is a deferred follow-up.
 
 #### `POST /alerts/{id}/ack`
 
