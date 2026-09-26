@@ -1,0 +1,7 @@
+day,asset,verdict,open_prev,net,from_lookups,open,items,open_breaks_gross
+2026-10-05,EUR/2,reconciled,0,0,0,0,0,0
+2026-10-06,EUR/2,reconciled_with_pending,0,6000,0,6000,1,0
+2026-10-07,EUR/2,reconciled_with_warnings,6000,-6000,0,0,0,0
+2026-10-08,EUR/2,reconciled,0,0,0,0,0,0
+2026-10-10,EUR/2,reconciled_with_warnings,0,4000,0,4000,1,0
+2026-10-11,EUR/2,reconciled,4000,-4000,0,0,0,0

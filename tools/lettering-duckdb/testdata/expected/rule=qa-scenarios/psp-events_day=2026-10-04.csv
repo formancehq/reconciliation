@@ -1,0 +1,4 @@
+day,ref,class,outcome,tx,state,amount,hold_amount,inserted_at
+2026-10-04,S19,matched,ok,1040,payin.succeeded,3500,,2026-10-04 12:00:00
+2026-10-04,S20,matched,ok,1041,payin.pending,,3000,2026-10-04 13:00:00
+2026-10-04,S20,matched,ok,1042,payin.succeeded,3000,,2026-10-04 13:05:00

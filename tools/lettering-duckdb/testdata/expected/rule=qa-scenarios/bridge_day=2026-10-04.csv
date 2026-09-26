@@ -1,0 +1,4 @@
+asset,class,outcome,earlier_day,amount,payments
+EUR/2,under_applied,break,true,-5000,1
+EUR/2,over_applied,break,true,-4000,1
+EUR/2,matched,ok,true,3500,1

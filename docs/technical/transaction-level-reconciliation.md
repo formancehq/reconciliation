@@ -628,8 +628,10 @@ no vocabulary.
   finds a final state, the reference's earlier applications are read the same way on the product
   ledger, so that a second application on a payment matched days ago sums with the first and shows
   as `over_applied`. On every run, each PSP reference of the window with a `failed` event that is
-  neither in the product window nor carried is looked up on the product ledger too, so that a
-  payment matched on an earlier day and failed today shows as `reversed_after_application`. The
+  not carried is looked up on both ledgers, so that a payment matched on an earlier day and failed
+  today shows as `reversed_after_application`. That holds even when the product also books on it
+  today (an application undone the same day): the window alone would miss the earlier final state
+  and application, and report a false orphan. Failures are rare, so this costs little. The
   manifest counts the lookups. The first run adds none: its product window starts `psp.grace`
   before `backfillFrom`, which finds the applications that preceded their payment (ADR-005 §7).
 - **Which side came first.** Between two days the window decides; within a day, `insertedAt`,
@@ -669,8 +671,8 @@ computations, so a statement that closes is also evidence that the reads were co
 Any failure makes the run `incomplete`: no conclusion is drawn, and the run is never green.
 Otherwise the verdict is `breaks`, `reconciled_with_warnings` (an unclassified transaction, or
 identifying metadata changed after insertion), `reconciled_with_pending` or `reconciled`. The alert
-opens on an open break that is not accepted, never on the net alone. The verdicts, every line of the statement and
-how to read them are defined in the [results
+opens on an open break that is not accepted, never on the net alone. The verdicts, every line of
+the statement and how to read them are defined in the [results
 reference](./transaction-level-results.md#4-the-verdict).
 
 ### Result artifacts, retention and the period view
@@ -958,8 +960,8 @@ protocol 10, which recon's vendored protos spoke at the time; they have since be
 protocol 11 at `fe668e01a`, whose changes — a revert-only field and error reason — are additive and
 off the read path, and then to protocol 13 at `7dd615dba`. That step restructures `CallerSnapshot`
 into a principal union, which recon does not read, and adds `LedgerLog.purged_accounts`, an
-additive field on the `ListLogs` path). Ledger `mixed`: 1M transactions, 100k of them payments (`load-mixed`). Client
-and server share one Apple M4 Pro (12 cores). Median of three runs.
+additive field on the `ListLogs` path). Ledger `mixed`: 1M transactions, 100k of them payments
+(`load-mixed`). Client and server share one Apple M4 Pro (12 cores). Median of three runs.
 
 **Read time of the whole 1M-transaction window, by number of concurrent ranges K:**
 

@@ -1,0 +1,4 @@
+break_on,days_left,class,asset,amount,ref,merchant_ref,paired_hold,applied_to
+2026-10-02,1,unapplied_payment,EUR/2,8000,S04,INV-S04,main:hold:invoice:INV-S04,[]
+2026-10-04,3,applied_before_final,EUR/2,-3000,S07,,,[INV-S07]
+2026-10-04,3,applied_before_final,EUR/2,-2000,S08,,,[INV-S08]

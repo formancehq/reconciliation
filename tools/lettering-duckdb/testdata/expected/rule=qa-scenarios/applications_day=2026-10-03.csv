@@ -1,0 +1,5 @@
+day,ref,class,outcome,tx,business_id,hold_id,amount,inserted_at
+2026-10-03,R01,matched,ok,542,RF-R01,RF-R01,2000,2026-10-03 13:10:00
+2026-10-03,S05,matched,ok,539,INV-S05,INV-S05,1000,2026-10-03 09:40:00
+2026-10-03,S12,matched,ok,540,INV-S12,INV-S12,5000,2026-10-03 10:00:00
+2026-10-03,S19,applied_before_final,pending,541,INV-S19,INV-S19,3500,2026-10-03 12:00:00

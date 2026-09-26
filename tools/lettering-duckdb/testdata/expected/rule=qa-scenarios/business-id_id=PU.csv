@@ -1,0 +1,13 @@
+day,file,class,outcome,ref,hold,amount,detail
+2026-10-02,flow,unapplied_payment,pending,PU,,4500,"psp 4500, product 0"
+2026-10-02,unclassified,manual_fix,warning,PU,,4500,tx 536
+2026-10-03,flow,unapplied_payment,break,PU,,4500,"psp 4500, product 0"
+2026-10-03,breaks,unapplied_payment,break,PU,,4500,P3 new since 2026-10-03
+2026-10-04,flow,unapplied_payment,break,PU,,4500,"psp 4500, product 0"
+2026-10-04,breaks,unapplied_payment,break,PU,,4500,"P3 persisting since 2026-10-03, accepted on 2026-10-04"
+2026-10-05,flow,unapplied_payment,break,PU,,4500,"psp 4500, product 0"
+2026-10-05,breaks,unapplied_payment,break,PU,,4500,"P3 persisting since 2026-10-03, accepted on 2026-10-04"
+2026-10-06,flow,unapplied_payment,break,PU,,4500,"psp 4500, product 0"
+2026-10-06,breaks,unapplied_payment,break,PU,,4500,"P3 persisting since 2026-10-03, accepted on 2026-10-04"
+2026-10-07,flow,unapplied_payment,break,PU,,4500,"psp 4500, product 0"
+2026-10-07,breaks,unapplied_payment,break,PU,,4500,"P3 persisting since 2026-10-03, accepted on 2026-10-04"

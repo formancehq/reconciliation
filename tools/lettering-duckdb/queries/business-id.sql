@@ -17,7 +17,10 @@ FROM stock_days
 WHERE holdId = getvariable('id') OR clearedBy = getvariable('id') OR pairedRef = getvariable('id')
 UNION ALL
 SELECT day, 'breaks', class, outcome, ref, hold, amount,
-       'P' || priority || ' ' || lifecycle || ' since ' || openedOn
+       'P' || priority
+       || CASE WHEN lifecycle = 'resolved' THEN ' resolved on ' || resolvedOn
+               ELSE ' ' || lifecycle || ' since ' || openedOn END
+       || CASE WHEN acceptedOn IS NOT NULL THEN ', accepted on ' || acceptedOn ELSE '' END
 FROM breaks_days
 WHERE ref = getvariable('id') OR holdId = getvariable('id') OR merchantRef = getvariable('id')
    OR list_contains(list_transform(product, p -> p.businessId), getvariable('id'))

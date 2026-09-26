@@ -1,0 +1,10 @@
+day,file,class,outcome,ref,hold,amount,detail
+2026-10-01,flow,matched,ok,S14,,0,"psp 4000, product 4000"
+2026-10-04,flow,over_applied,break,S14,,-4000,"psp 4000, product 8000"
+2026-10-04,breaks,over_applied,break,S14,,-4000,P2 new since 2026-10-04
+2026-10-05,flow,over_applied,break,S14,,-4000,"psp 4000, product 8000"
+2026-10-05,breaks,over_applied,break,S14,,-4000,P2 persisting since 2026-10-04
+2026-10-06,flow,over_applied,break,S14,,-4000,"psp 4000, product 8000"
+2026-10-06,breaks,over_applied,break,S14,,-4000,P2 persisting since 2026-10-04
+2026-10-07,flow,over_applied,break,S14,,-4000,"psp 4000, product 8000"
+2026-10-07,breaks,over_applied,break,S14,,-4000,P2 persisting since 2026-10-04

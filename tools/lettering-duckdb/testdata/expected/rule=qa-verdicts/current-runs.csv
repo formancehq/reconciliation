@@ -1,0 +1,9 @@
+day,run,verdict,current,reason
+2026-10-05,r-20261006T000004Z,reconciled,true,
+2026-10-06,r-20261007T000003Z,incomplete,false,short_log_range
+2026-10-06,r-20261007T001503Z,reconciled_with_pending,true,
+2026-10-07,r-20261008T000004Z,reconciled_with_warnings,true,
+2026-10-08,r-20261009T000004Z,reconciled,true,
+2026-10-09,r-20261010T000004Z,incomplete,false,short_log_range
+2026-10-10,r-20261011T000004Z,reconciled_with_warnings,true,
+2026-10-11,r-20261012T000004Z,reconciled,true,

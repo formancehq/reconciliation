@@ -1,0 +1,13 @@
+day,side,prefix,asset,open_prev,opened,lettered,lettered_other,open,holds
+2026-10-05,product,main:hold:invoice:,EUR/2,0,10000,10000,0,0,0
+2026-10-05,psp,fpay:stripe:payment:hold:pending:,EUR/2,0,10000,10000,0,0,0
+2026-10-06,product,main:hold:invoice:,EUR/2,0,6000,0,0,6000,1
+2026-10-06,psp,fpay:stripe:payment:hold:pending:,EUR/2,0,6000,6000,0,0,0
+2026-10-07,product,main:hold:invoice:,EUR/2,6000,0,6000,0,0,0
+2026-10-07,psp,fpay:stripe:payment:hold:pending:,EUR/2,0,0,0,0,0,0
+2026-10-08,product,main:hold:invoice:,EUR/2,0,0,0,0,0,0
+2026-10-08,psp,fpay:stripe:payment:hold:pending:,EUR/2,0,0,0,0,0,0
+2026-10-10,product,main:hold:invoice:,EUR/2,0,11000,7000,0,4000,1
+2026-10-10,psp,fpay:stripe:payment:hold:pending:,EUR/2,0,11000,11000,0,0,0
+2026-10-11,product,main:hold:invoice:,EUR/2,4000,0,4000,0,0,0
+2026-10-11,psp,fpay:stripe:payment:hold:pending:,EUR/2,0,0,0,0,0,0

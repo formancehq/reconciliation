@@ -11,6 +11,22 @@ CREATE OR REPLACE TEMP TABLE violations (rule VARCHAR, key VARCHAR, detail VARCH
 
 CREATE OR REPLACE TEMP MACRO v_int(x) AS coalesce(x::HUGEINT, 0);
 
+-- The rule's durations, in days ("7d" -> 7; NULL when absent), and its age buckets.
+CREATE OR REPLACE TEMP MACRO v_days(x) AS regexp_extract(x, '^([0-9]+)d$', 1)::INTEGER;
+CREATE OR REPLACE TEMP VIEW v_rule AS
+SELECT v_days(m->'rule'->'psp'->>'grace') AS psp_grace,
+       v_days(m->'rule'->'product'->>'grace') AS product_grace,
+       v_days(m->'rule'->'psp'->>'maxAge') AS psp_max_age,
+       v_days(m->'rule'->'product'->>'maxAge') AS product_max_age,
+       list_transform(from_json(m->'rule'->'buckets', '["VARCHAR"]'), b -> v_days(b)) AS bounds,
+       m->'period'->>'tz' AS tz
+FROM manifest;
+-- The label of an age bucket, from the bucket bounds: [1, 7, 30] gives 0-1d, 2-7d, 8-30d, >30d.
+CREATE OR REPLACE TEMP MACRO v_bucket(age, bounds) AS
+    CASE WHEN age > bounds[-1] THEN '>' || bounds[-1] || 'd'
+         WHEN age <= bounds[1] THEN '0-' || bounds[1] || 'd'
+         ELSE (list_filter(bounds, b -> b < age)[-1] + 1) || '-' || list_filter(bounds, b -> b >= age)[1] || 'd' END;
+
 -- Run-level facts ----------------------------------------------------------------
 
 INSERT INTO violations
@@ -26,7 +42,7 @@ UNION ALL SELECT lettering_name(filename), sha256(content) FROM read_blob(letter
 UNION ALL SELECT lettering_name(filename), sha256(content) FROM read_blob(lettering_file('breaks'))
 UNION ALL SELECT lettering_name(filename), sha256(content) FROM read_blob(lettering_file('unclassified'))
 UNION ALL SELECT lettering_name(filename), sha256(content)
-          FROM read_blob(coalesce(getvariable('period'), getvariable('run') || '/period*.json'));
+          FROM read_blob(coalesce(getvariable('period'), coalesce(getvariable('run'), '/nonexistent') || '/period*.json'));
 
 CREATE OR REPLACE TEMP TABLE actual_rows AS
 SELECT file AS name, count(*) AS rows FROM flow GROUP BY file
@@ -288,7 +304,7 @@ WHERE r.key IS NULL OR b.key IS NULL;
 -- Rows (results doc §6) ---------------------------------------------------------------------
 
 -- A flow row's amounts follow from its transactions. pspAmount sums the final events'
--- amounts, and is 0 once a failed event is listed; productAmount sums the applications.
+-- amounts, and is 0 once a failed event follows a final one; productAmount sums the applications.
 INSERT INTO violations
 WITH failed AS (SELECT from_json(m->'rule'->'psp'->'state'->'failed', '["VARCHAR"]') AS states FROM manifest),
      flow_rows AS (
@@ -298,7 +314,9 @@ WITH failed AS (SELECT from_json(m->'rule'->'psp'->'state'->'failed', '["VARCHAR
                   FROM breaks WHERE leg = 'flow' AND lifecycle <> 'resolved'),
      expected AS (
         SELECT r.*,
-               CASE WHEN list_bool_or(list_transform(r.psp, e -> list_contains(failed.states, e.state))) THEN 0
+               CASE WHEN list_bool_or(list_transform(r.psp, e -> list_contains(failed.states, e.state)
+                         AND e.tx > list_min(list_transform(list_filter(r.psp, x -> x.amount IS NOT NULL), x -> x.tx))))
+                    THEN 0
                     ELSE coalesce(list_sum(list_transform(r.psp, e -> e.amount)), 0) END AS expected_psp,
                coalesce(list_sum(list_transform(r.product, p -> p.amount)), 0) AS expected_product
         FROM flow_rows r, failed)
@@ -333,6 +351,76 @@ WHERE NOT CASE class
     WHEN 'wrong_sign' THEN outcome = 'break' AND open_dir(balance, openSign) < 0
     WHEN 'cleared' THEN outcome = 'ok' AND balance = 0
     ELSE false END;
+
+-- A pending or break row has a drift; a matched, in-progress or failed one has none.
+INSERT INTO violations
+SELECT 'row_drift', 'flow ' || ref || '/' || asset, class || ' ' || outcome || ' with drift ' || drift
+FROM flow
+WHERE (outcome IN ('pending', 'break') AND drift = 0)
+   OR (class IN ('matched', 'in_progress', 'failed') AND drift <> 0);
+
+-- breakOn is firstSeen plus the lagging side's grace.
+INSERT INTO violations
+SELECT 'row_break_on', 'flow ' || f.ref || '/' || f.asset,
+       f.class || ': breakOn ' || coalesce(f.breakOn::VARCHAR, 'missing') || ', firstSeen ' || coalesce(f.firstSeen::VARCHAR, 'missing')
+       || ' + grace ' || coalesce(CASE WHEN f.class = 'unapplied_payment' THEN g.product_grace ELSE g.psp_grace END::VARCHAR, '?')
+FROM flow f, v_rule g
+WHERE (f.class = 'unapplied_payment' AND f.breakOn IS DISTINCT FROM f.firstSeen + g.product_grace)
+   OR (f.class = 'applied_before_final' AND f.breakOn IS DISTINCT FROM f.firstSeen + g.psp_grace)
+   OR (f.class = 'orphan_application' AND f.breakOn IS NOT NULL AND f.breakOn <> f.firstSeen + g.psp_grace);
+
+-- A hold's age is counted in the rule's timezone; it is stuck when older than its side's maxAge,
+-- and its bucket follows from its age.
+INSERT INTO violations
+WITH aged AS (
+    SELECT s.*, r.day - timezone(g.tz, s.openedAt AT TIME ZONE 'UTC')::DATE AS age,
+           CASE s.side WHEN 'psp' THEN g.psp_max_age ELSE g.product_max_age END AS max_age, g.bounds
+    FROM stock s, m_run r, v_rule g)
+SELECT 'stock_age', side || '/' || hold || '/' || asset,
+       class || ', ageDays ' || ageDays || ' (opened ' || age || ' days before the cut), bucket ' || bucket
+       || ', maxAge ' || coalesce(max_age::VARCHAR, 'none')
+FROM aged
+WHERE ageDays <> age
+   OR bucket IS DISTINCT FROM v_bucket(ageDays, bounds)
+   OR (class = 'stuck' AND NOT (max_age IS NOT NULL AND ageDays > max_age))
+   OR (class = 'open' AND max_age IS NOT NULL AND ageDays > max_age);
+
+INSERT INTO violations
+WITH listed AS (
+        SELECT b.side, b.prefix, b.asset, k AS bucket, (m->'books'->(b.i - 1)::INTEGER->'buckets'->>k)::BIGINT AS n
+        FROM (SELECT m, unnest(from_json(m->'books', '[{"side":"VARCHAR","prefix":"VARCHAR","asset":"VARCHAR"}]'), recursive := true),
+                     generate_subscripts(from_json(m->'books', '["JSON"]'), 1) AS i FROM manifest) b,
+             unnest(json_keys(m->'books'->(b.i - 1)::INTEGER->'buckets')) t(k)),
+     found AS (SELECT side, prefix, asset, bucket, count(*) AS n FROM stock WHERE class <> 'cleared' GROUP BY ALL)
+SELECT 'books_buckets', concat_ws('/', coalesce(l.side, f.side), coalesce(l.prefix, f.prefix), coalesce(l.asset, f.asset), coalesce(l.bucket, f.bucket)),
+       'books ' || coalesce(l.n, 0) || ', stock ' || coalesce(f.n, 0)
+FROM listed l FULL JOIN found f USING (side, prefix, asset, bucket)
+WHERE coalesce(l.n, 0) <> coalesce(f.n, 0);
+
+-- An open break is the row it stands for: same class, and its amount is that row's.
+INSERT INTO violations
+SELECT 'break_vs_row', b.breakId, 'break ' || b.class || ' ' || b.amount || ', flow row ' || f.class || ' ' || f.drift
+FROM breaks b JOIN flow f USING (ref, asset)
+WHERE b.leg = 'flow' AND b.outcome = 'break' AND (b.class <> f.class OR b.amount <> f.drift)
+UNION ALL
+SELECT 'break_vs_row', b.breakId, 'break ' || b.class || ' ' || b.amount || ', stock row ' || s.class || ' ' || open_dir(s.balance, s.openSign)
+FROM breaks b JOIN stock s USING (side, hold, asset)
+WHERE b.leg = 'stock' AND b.outcome = 'break' AND (b.class <> s.class OR b.amount <> open_dir(s.balance, s.openSign));
+
+-- The triage lists the first topK open breaks, every pending row and every resolved break.
+INSERT INTO violations
+WITH t AS (SELECT (m->'triage'->>'topK')::INTEGER AS top_k,
+                  json_array_length(m->'triage'->'breaks') AS n_breaks,
+                  json_array_length(m->'triage'->'pending') AS n_pending,
+                  json_array_length(m->'triage'->'resolved') AS n_resolved FROM manifest)
+SELECT 'triage_count', 'breaks', 'triage ' || n_breaks || ', expected ' || least(top_k, (SELECT count(*) FROM breaks WHERE outcome = 'break'))
+FROM t WHERE n_breaks <> least(top_k, (SELECT count(*) FROM breaks WHERE outcome = 'break'))
+UNION ALL
+SELECT 'triage_count', 'pending', 'triage ' || n_pending || ', pending rows ' || (SELECT count(*) FROM flow WHERE outcome = 'pending')
+FROM t WHERE n_pending <> (SELECT count(*) FROM flow WHERE outcome = 'pending')
+UNION ALL
+SELECT 'triage_count', 'resolved', 'triage ' || n_resolved || ', resolved breaks ' || (SELECT count(*) FROM breaks WHERE lifecycle = 'resolved')
+FROM t WHERE n_resolved <> (SELECT count(*) FROM breaks WHERE lifecycle = 'resolved');
 
 -- Keys and order (results doc §8) -----------------------------------------------------------
 
@@ -378,7 +466,7 @@ WITH expected AS (
             THEN 'reconciled_with_warnings'
         WHEN (SELECT count(*) FROM flow WHERE outcome = 'pending') > 0 THEN 'reconciled_with_pending'
         ELSE 'reconciled' END AS verdict)
-SELECT 'verdict', r.run_id, 'manifest ' || r.verdict || ', files say ' || e.verdict
+SELECT 'verdict_mismatch', r.run_id, 'manifest ' || r.verdict || ', files say ' || e.verdict
 FROM m_run r, expected e WHERE r.verdict <> 'incomplete' AND r.verdict <> e.verdict;
 
 -- Report ------------------------------------------------------------------------------------

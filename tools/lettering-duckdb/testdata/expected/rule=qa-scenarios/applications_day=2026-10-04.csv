@@ -1,0 +1,4 @@
+day,ref,class,outcome,tx,business_id,hold_id,amount,inserted_at
+2026-10-04,S04,under_applied,break,544,INV-S04,INV-S04,5000,2026-10-04 10:00:00
+2026-10-04,S14,over_applied,break,545,INV-S14,INV-S14,4000,2026-10-04 11:00:00
+2026-10-04,S20,matched,ok,546,INV-S20,INV-S20,3000,2026-10-04 13:10:00

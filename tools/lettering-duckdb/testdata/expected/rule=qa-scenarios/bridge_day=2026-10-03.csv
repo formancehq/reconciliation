@@ -1,0 +1,4 @@
+asset,class,outcome,earlier_day,amount,payments
+EUR/2,matched,ok,true,-6000,2
+EUR/2,reversed_after_application,break,true,-9000,1
+EUR/2,applied_before_final,pending,false,-3500,1

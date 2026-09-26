@@ -1,0 +1,3 @@
+day,file,class,outcome,ref,hold,amount,detail
+2026-10-01,flow,matched,ok,S15,,0,"psp 2500, product 2500"
+2026-10-03,unclassified,payin.refunded,warning,S15,,2500,tx 1037

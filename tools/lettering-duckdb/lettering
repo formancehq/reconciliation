@@ -8,12 +8,18 @@
 #
 # Directories are local paths or s3:// URLs. Environment:
 #   DUCKDB          the DuckDB CLI to run (default: duckdb on PATH)
-#   LETTERING_INIT  a SQL file run first, such as an S3 secret
-#   LETTERING_MODE  an output mode of the CLI: csv, json, markdown… (default: the CLI's)
+#   LETTERING_INIT  a SQL file run first, such as an S3 secret; its output is discarded
+#   LETTERING_MODE  csv (a standard CSV: a header even with no row, empty fields for
+#                   missing values), or an output mode of the CLI: json, markdown…
+#
+# Exit status: 0 sound, 1 a rule is violated, 2 wrong arguments or directory,
+# 3 the files could not be read or the SQL failed.
 set -eu
 
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 duckdb=${DUCKDB:-duckdb}
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
 
 usage() {
     sed -n '4,7p' "$0" | sed 's/^# //' >&2
@@ -25,27 +31,82 @@ quote() {
     printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
 }
 
-# run_sql VARS FILE...: runs the init file, the variables and the SQL files.
+# dir PATH: a directory as the SQL globs it: no trailing slash, and the glob characters of
+# its name taken literally.
+dir() {
+    printf '%s' "$1" | sed -e 's:/*$::' -e 's/\[/[[]/g' -e 's/\*/[*]/g' -e 's/?/[?]/g'
+}
+
+# init: the init file, with its output discarded, then the output back on stdout.
+init() {
+    if [ -n "${LETTERING_INIT:-}" ]; then
+        printf '.output /dev/null\n'
+        cat "$LETTERING_INIT"
+        printf '\n.output\n'
+    fi
+}
+
+# run_sql VARS FILE...: runs the variables and the SQL files, after the init file. Only the
+# last file's output is shown. A DuckDB error exits 3, except the error check.sql and
+# check-chain.sql raise for a violation, which exits 1.
 run_sql() {
     mode=${LETTERING_MODE:+-$LETTERING_MODE}
     vars=$1
     shift
+    status=0
     {
-        if [ -n "${LETTERING_INIT:-}" ]; then cat "$LETTERING_INIT"; fi
-        printf '%s\n' "$vars"
+        init
+        printf '%s\n.output /dev/null\n' "$vars"
+        while [ $# -gt 1 ]; do
+            cat "$1"
+            printf '\n'
+            shift
+        done
+        printf '.output\n'
+        cat "$1"
+        printf '\n'
+    } | "$duckdb" -bail -cmd '.maxrows -1' $mode 2> "$tmp/err" || status=$?
+    cat "$tmp/err" >&2
+    if [ "$status" -ne 0 ]; then
+        if grep -q 'violation(s)' "$tmp/err"; then exit 1; fi
+        exit 3
+    fi
+}
+
+# run_csv VARS QUERY-FILE LIB...: runs a query as a standard CSV on stdout. The CLI's own
+# csv mode prints no header for an empty result and writes missing values as NULL.
+run_csv() {
+    vars=$1
+    query=$2
+    shift 2
+    body=$(sed '/^[[:space:]]*--/d' "$query" | awk '{ s = s $0 "\n" } END { sub(/;[[:space:]]*$/, "", s); printf "%s", s }')
+    {
+        init
+        printf '.output /dev/null\n%s\n' "$vars"
         for f in "$@"; do
             cat "$f"
             printf '\n'
         done
-    } | "$duckdb" -bail -cmd '.maxrows -1' $mode
+        printf "COPY (%s) TO '/dev/stdout' (FORMAT csv, HEADER);\n" "$body"
+    } | "$duckdb" -bail || exit 3
 }
 
 # sql_value SQL: prints the single value a query returns.
 sql_value() {
     {
-        if [ -n "${LETTERING_INIT:-}" ]; then cat "$LETTERING_INIT"; fi
+        init
         printf '%s\n' "$1"
-    } | "$duckdb" -bail -list -noheader
+    } | "$duckdb" -bail -list -noheader || exit 3
+}
+
+# has_manifest DIR: whether DIR holds a run's manifest.json.
+has_manifest() {
+    [ "$(sql_value "SELECT count(*) FROM glob($(quote "$(dir "$1")/manifest.json"));")" != 0 ]
+}
+
+# verdict_of DIR: the verdict in a run's manifest.
+verdict_of() {
+    sql_value "SELECT coalesce(content::JSON->>'verdict', '-') FROM read_text($(quote "$(dir "$1")/manifest.json"));"
 }
 
 [ $# -ge 1 ] || usage
@@ -55,15 +116,24 @@ shift
 case $command in
 check)
     [ $# -eq 1 ] || usage
-    run=$1
-    state=$(sql_value "SELECT concat_ws(' ', m->>'verdict', coalesce(m->'incomplete'->>'reason', '-'),
-        (SELECT count(*) FROM glob($(quote "$run/*.ndjson.gz"))))
+    run=$(dir "$1")
+    if ! has_manifest "$1"; then
+        echo "no manifest.json in $1: pass a run's directory, …/rule=<id>/day=<YYYY-MM-DD>/run=<runId>" >&2
+        exit 2
+    fi
+    # One query reads the verdict, the reason of an incomplete run, the number of data files and
+    # the kinds of data file that are missing: verdict|reason|files|missing kinds.
+    missing=""
+    for kind in flow carried stock breaks unclassified; do
+        missing="$missing, CASE WHEN (SELECT count(*) FROM glob($(quote "$run/$kind*.ndjson.gz"))) = 0 THEN '$kind' END"
+    done
+    state=$(sql_value "SELECT concat_ws('|', coalesce(m->>'verdict', '-'), coalesce(m->'incomplete'->>'reason', '-'),
+        (SELECT count(*) FROM glob($(quote "$run/*.ndjson.gz"))), concat_ws(' ' $missing))
         FROM (SELECT content::JSON AS m FROM read_text($(quote "$run/manifest.json")));")
-    verdict=${state%% *}
+    IFS='|' read -r verdict reason files missing <<EOF
+$state
+EOF
     if [ "$verdict" = incomplete ]; then
-        reason=${state#* }
-        files=${reason#* }
-        reason=${reason%% *}
         if [ "$files" != 0 ]; then
             echo "violation: incomplete run ($reason) with $files data file(s); an incomplete run writes its manifest only" >&2
             exit 1
@@ -71,12 +141,32 @@ check)
         echo "incomplete run ($reason): it writes its manifest only, so there is nothing else to check"
         exit 0
     fi
+    if [ -n "$missing" ]; then
+        for kind in $missing; do
+            echo "violation: file_missing: no $kind file; a complete run writes every data file, even empty" >&2
+        done
+        exit 1
+    fi
     run_sql "SET VARIABLE run = $(quote "$run");" \
         "$here/sql/schema.sql" "$here/sql/run.sql" "$here/check.sql"
     ;;
 check-chain)
     [ $# -eq 2 ] || usage
-    run_sql "SET VARIABLE prev = $(quote "$1"); SET VARIABLE run = $(quote "$2");" \
+    for run in "$1" "$2"; do
+        if ! has_manifest "$run"; then
+            echo "no manifest.json in $run: pass two runs' directories, …/rule=<id>/day=<YYYY-MM-DD>/run=<runId>" >&2
+            exit 2
+        fi
+    done
+    if [ "$(verdict_of "$2")" = incomplete ]; then
+        echo "$2 is an incomplete run: it is not a link in the chain, so there is nothing to check" >&2
+        exit 2
+    fi
+    if [ "$(verdict_of "$1")" = incomplete ]; then
+        echo "violation: previous_run: $1 is an incomplete run, so it cannot be a link in the chain; pass the run the later manifest's previousRun names" >&2
+        exit 1
+    fi
+    run_sql "SET VARIABLE prev = $(quote "$(dir "$1")"); SET VARIABLE run = $(quote "$(dir "$2")");" \
         "$here/sql/schema.sql" "$here/sql/run.sql" "$here/check-chain.sql"
     ;;
 query)
@@ -85,18 +175,45 @@ query)
     rule=$2
     shift 2
     file=$here/queries/$name.sql
+    case $name in '' | */* | .*) file=/nonexistent ;; esac
     if [ ! -f "$file" ]; then
         echo "no query named $name; list them with: lettering queries" >&2
         exit 2
     fi
-    vars="SET VARIABLE rule = $(quote "$rule");"
+    if [ "$(sql_value "SELECT count(*) FROM glob($(quote "$(dir "$rule")/day=*/run=*/manifest.json"));")" = 0 ]; then
+        echo "no run under $rule: pass a rule's directory, …/rule=<id>, which holds day=<YYYY-MM-DD>/run=<runId>/" >&2
+        exit 2
+    fi
+    # The query's header names its variables: "-- Variables: rule, day (optional…)". A variable
+    # marked "(required" must be given; any other name is refused.
+    header=$(sed -n 's/^-- Variables: *//p' "$file" | head -1)
+    known=$(printf '%s' "$header" | sed -e 's/([^)]*)//g' -e 's/[.]$//' | tr ',' '\n' | tr -d ' ' | grep -v '^rule$' | grep -v '^$' || true)
+    required=$(printf '%s\n' "$header" | grep -o '[A-Za-z_][A-Za-z0-9_]* *(required' | sed 's/ *(required//' || true)
+    vars="SET VARIABLE rule = $(quote "$(dir "$rule")");"
+    given=""
     for pair in "$@"; do
         key=${pair%%=*}
         case $pair in *=*) ;; *) usage ;; esac
         case $key in '' | *[!A-Za-z0-9_]*) usage ;; esac
+        if ! printf '%s\n' "$known" | grep -qx "$key"; then
+            echo "query $name has no variable $key; its variables: $(printf '%s' "$known" | tr '\n' ' ')" >&2
+            exit 2
+        fi
+        given="$given $key"
         vars="$vars SET VARIABLE $key = $(quote "${pair#*=}");"
     done
-    run_sql "$vars" "$here/sql/schema.sql" "$here/sql/rule.sql" "$file"
+    for key in $required; do
+        case " $given " in *" $key "*) ;; *)
+            echo "query $name needs $key=<value>" >&2
+            exit 2
+            ;;
+        esac
+    done
+    if [ "${LETTERING_MODE:-}" = csv ]; then
+        run_csv "$vars" "$file" "$here/sql/schema.sql" "$here/sql/rule.sql"
+    else
+        run_sql "$vars" "$here/sql/schema.sql" "$here/sql/rule.sql" "$file"
+    fi
     ;;
 queries)
     for f in "$here"/queries/*.sql; do

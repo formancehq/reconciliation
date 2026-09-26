@@ -1,0 +1,15 @@
+day,file,class,outcome,ref,hold,amount,detail
+2026-10-01,flow,unapplied_payment,pending,S04,main:hold:invoice:INV-S04,8000,"psp 8000, product 0"
+2026-10-01,stock,open,ok,S04,main:hold:invoice:INV-S04,8000,"new, 0 days old"
+2026-10-02,flow,unapplied_payment,break,S04,main:hold:invoice:INV-S04,8000,"psp 8000, product 0"
+2026-10-02,stock,open,ok,S04,main:hold:invoice:INV-S04,8000,"persisting, 1 days old"
+2026-10-02,breaks,unapplied_payment,break,S04,,8000,P3 new since 2026-10-02
+2026-10-03,flow,unapplied_payment,break,S04,main:hold:invoice:INV-S04,8000,"psp 8000, product 0"
+2026-10-03,stock,open,ok,S04,main:hold:invoice:INV-S04,8000,"persisting, 2 days old"
+2026-10-03,breaks,unapplied_payment,break,S04,,8000,"P3 persisting since 2026-10-02, accepted on 2026-10-03"
+2026-10-04,flow,under_applied,break,S04,,3000,"psp 8000, product 5000"
+2026-10-04,stock,open,ok,,main:hold:invoice:INV-S04,3000,"persisting, 3 days old"
+2026-10-04,breaks,under_applied,break,S04,,3000,P2 persisting since 2026-10-02
+2026-10-05,flow,matched,ok,S04,,0,"psp 8000, product 8000"
+2026-10-05,stock,cleared,ok,S04,main:hold:invoice:INV-S04,0,"cleared, 4 days old"
+2026-10-05,breaks,under_applied,ok,S04,,3000,P2 resolved on 2026-10-05

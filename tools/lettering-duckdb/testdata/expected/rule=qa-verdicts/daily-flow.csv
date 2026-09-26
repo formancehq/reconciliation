@@ -1,0 +1,7 @@
+day,asset,class,outcome,payments,psp_amount,product_amount,drift,impact
+2026-10-05,EUR/2,matched,ok,1,10000,10000,0,0
+2026-10-06,EUR/2,unapplied_payment,pending,1,6000,0,6000,6000
+2026-10-07,EUR/2,matched,ok,1,6000,6000,0,-6000
+2026-10-10,EUR/2,matched,ok,1,7000,7000,0,0
+2026-10-10,EUR/2,unapplied_payment,pending,1,4000,0,4000,4000
+2026-10-11,EUR/2,matched,ok,1,4000,4000,0,-4000

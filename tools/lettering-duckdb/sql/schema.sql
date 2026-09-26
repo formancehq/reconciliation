@@ -2,9 +2,10 @@
 --
 -- The file columns are declared, never inferred, so an empty file (every data file
 -- is written on every complete run, even with no row) still has its columns.
--- Amounts are read as HUGEINT: exact minor units, written as strings in the files.
--- Instants are read as TIMESTAMP in UTC, as the files write them. A key missing
--- from a row reads as NULL. `hive` says whether to read `rule`, `day` and `run`
+-- Every data file is gzipped: the compression is stated, not guessed from the name, which a
+-- pre-signed URL's query string would hide. Amounts are read as HUGEINT: exact minor units,
+-- written as strings in the files. Instants are read as TIMESTAMP in UTC, as the files write
+-- them. A key missing from a row reads as NULL. `hive` says whether to read `rule`, `day` and `run`
 -- from the rule=/day=/run= segments of the path. The macros also return:
 --   - `filename`, to tell a file's parts and runs apart;
 --   - `ordinality`, the row's position in the scan, in file order.
@@ -20,7 +21,7 @@ CREATE OR REPLACE MACRO lettering_name(path) AS
     regexp_replace(parse_filename(path), '\?.*$', '');
 
 CREATE OR REPLACE MACRO flow_file(path, hive) AS TABLE
-SELECT * FROM read_json(path, format = 'newline_delimited', filename = true, hive_partitioning = hive, columns = {
+SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip', filename = true, hive_partitioning = hive, columns = {
     ref: 'VARCHAR', asset: 'VARCHAR', class: 'VARCHAR', outcome: 'VARCHAR',
     pspAmount: 'HUGEINT', productAmount: 'HUGEINT', drift: 'HUGEINT', impact: 'HUGEINT',
     firstSeen: 'DATE', firstSide: 'VARCHAR', breakOn: 'DATE',
@@ -30,7 +31,7 @@ SELECT * FROM read_json(path, format = 'newline_delimited', filename = true, hiv
 }) WITH ORDINALITY;
 
 CREATE OR REPLACE MACRO stock_file(path, hive) AS TABLE
-SELECT * FROM read_json(path, format = 'newline_delimited', filename = true, hive_partitioning = hive, columns = {
+SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip', filename = true, hive_partitioning = hive, columns = {
     side: 'VARCHAR', hold: 'VARCHAR', asset: 'VARCHAR', prefix: 'VARCHAR', holdId: 'VARCHAR',
     openSign: 'VARCHAR', balance: 'HUGEINT', class: 'VARCHAR', outcome: 'VARCHAR',
     lifecycle: 'VARCHAR', openedAt: 'TIMESTAMP', ageDays: 'INTEGER', bucket: 'VARCHAR',
@@ -39,7 +40,7 @@ SELECT * FROM read_json(path, format = 'newline_delimited', filename = true, hiv
 
 -- A break row is a flow or stock row plus the break's own fields.
 CREATE OR REPLACE MACRO breaks_file(path, hive) AS TABLE
-SELECT * FROM read_json(path, format = 'newline_delimited', filename = true, hive_partitioning = hive, columns = {
+SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip', filename = true, hive_partitioning = hive, columns = {
     breakId: 'VARCHAR', leg: 'VARCHAR', priority: 'INTEGER', lifecycle: 'VARCHAR',
     openedOn: 'DATE', resolvedOn: 'DATE', amount: 'HUGEINT', previousClass: 'VARCHAR',
     acceptedOn: 'DATE', class: 'VARCHAR', outcome: 'VARCHAR', asset: 'VARCHAR',
@@ -54,7 +55,7 @@ SELECT * FROM read_json(path, format = 'newline_delimited', filename = true, hiv
 }) WITH ORDINALITY;
 
 CREATE OR REPLACE MACRO unclassified_file(path, hive) AS TABLE
-SELECT * FROM read_json(path, format = 'newline_delimited', filename = true, hive_partitioning = hive, columns = {
+SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip', filename = true, hive_partitioning = hive, columns = {
     side: 'VARCHAR', tx: 'UBIGINT', ref: 'VARCHAR', asset: 'VARCHAR', outcome: 'VARCHAR',
     state: 'VARCHAR', amount: 'HUGEINT', insertedAt: 'TIMESTAMP'
 }) WITH ORDINALITY;

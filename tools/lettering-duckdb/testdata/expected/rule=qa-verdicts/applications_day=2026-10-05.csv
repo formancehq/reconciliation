@@ -1,0 +1,2 @@
+day,ref,class,outcome,tx,business_id,hold_id,amount,inserted_at
+2026-10-05,V1,matched,ok,502,INV-V1,INV-V1,10000,2026-10-05 09:10:00

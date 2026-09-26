@@ -1,0 +1,4 @@
+day,kind,side,prefix,asset,hold,amount,cleared_at
+2026-10-02,book,product,main:hold:invoice:,EUR/2,,4500,
+2026-10-04,book,product,main:hold:invoice:,EUR/2,,3000,
+2026-10-04,hold,product,main:hold:invoice:,EUR/2,main:hold:invoice:INV-S16,3000,2026-10-04 09:00:00

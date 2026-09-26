@@ -53,3 +53,10 @@ FROM current_runs;
 CREATE OR REPLACE VIEW cuts_days AS
 SELECT day, run, unnest(from_json(m->'cuts', lettering_cuts_shape()), recursive := true)
 FROM current_runs;
+
+-- A `day` with no complete run is refused rather than answered with nothing: its activity, if
+-- any, is in the window of the next complete run.
+SELECT CASE WHEN getvariable('day') IS NOT NULL AND getvariable('day')::DATE NOT IN (SELECT day FROM current_runs)
+            THEN error('no complete run for day ' || getvariable('day')
+                       || ': its activity, if any, is in the next complete run; see the current-runs query') END
+       AS lettering_day_check;

@@ -1,7 +1,8 @@
--- One row per PSP event booked on the day, for a spreadsheet or a BI tool. A final
--- event carries `amount`; a pending or failed one carries `hold_amount` instead. Only
--- the PSP side's window (txFrom, txTo] counts, so the earlier events of a row carried
--- in are left out.
+-- One row per PSP event booked on the day that takes part in matching, for a
+-- spreadsheet or a BI tool (the unclassified events are in the unclassified file). A
+-- final event carries `amount`; a pending or failed one carries `hold_amount` instead.
+-- Only the PSP side's window (txFrom, txTo] counts, so the earlier events of a row
+-- carried in are left out.
 -- Variables: rule, day (optional, default the latest day).
 -- Columns: day, ref, class, outcome, tx, state, amount, hold_amount, inserted_at.
 SELECT f.day, f.ref, f.class, f.outcome, f.e.tx, f.e.state, f.e.amount,

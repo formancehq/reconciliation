@@ -5,7 +5,7 @@
 -- applied_to.
 SELECT breakOn AS break_on, breakOn - day AS days_left, class, asset, drift AS amount, ref,
        merchantRef AS merchant_ref, pairedHold AS paired_hold,
-       list_transform(product, p -> p.holdId) AS applied_to
+       list_sort(list_distinct(list_transform(product, p -> p.holdId))) AS applied_to
 FROM flow_days
 WHERE day = lettering_target_day() AND outcome = 'pending'
 ORDER BY breakOn, abs(drift) DESC;

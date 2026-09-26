@@ -1,0 +1,16 @@
+day,ref,class,outcome,tx,state,amount,hold_amount,inserted_at
+2026-10-02,PU,unapplied_payment,pending,1032,payin.pending,,4500,2026-10-02 14:00:00
+2026-10-02,PU,unapplied_payment,pending,1033,payin.succeeded,4500,,2026-10-02 14:05:00
+2026-10-02,S03,matched,ok,1021,payin.succeeded,7000,,2026-10-02 09:00:00
+2026-10-02,S05,under_applied,break,1022,payin.pending,,10000,2026-10-02 09:30:00
+2026-10-02,S05,under_applied,break,1023,payin.succeeded,10000,,2026-10-02 09:35:00
+2026-10-02,S06,over_applied,break,1024,payin.pending,,5000,2026-10-02 10:00:00
+2026-10-02,S06,over_applied,break,1025,payin.succeeded,5000,,2026-10-02 10:05:00
+2026-10-02,S06B,over_applied,break,1026,payin.pending,,5000,2026-10-02 10:20:00
+2026-10-02,S06B,over_applied,break,1027,payin.succeeded,5000,,2026-10-02 10:25:00
+2026-10-02,S07,matched,ok,1030,payin.succeeded,3000,,2026-10-02 12:00:00
+2026-10-02,S09,failed,ok,1028,payin.pending,,2000,2026-10-02 11:00:00
+2026-10-02,S09,failed,ok,1029,payin.compensate,,2000,2026-10-02 11:30:00
+2026-10-02,S19,in_progress,ok,1031,payin.pending,,3500,2026-10-02 12:00:00
+2026-10-02,U02,unapplied_payment,pending,1034,payin.pending,,5000,2026-10-02 16:00:00
+2026-10-02,U02,unapplied_payment,pending,1035,payin.succeeded,5000,,2026-10-02 16:05:00

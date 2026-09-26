@@ -1,0 +1,4 @@
+day,ref,class,outcome,tx,state,amount,hold_amount,inserted_at
+2026-10-03,R01,matched,ok,1038,payin.succeeded,2000,,2026-10-03 13:05:00
+2026-10-03,S10,reversed_after_application,break,1036,payin.compensate,,0,2026-10-03 09:00:00
+2026-10-03,S13,in_progress,ok,1039,payin.pending,,2200,2026-10-03 15:00:00

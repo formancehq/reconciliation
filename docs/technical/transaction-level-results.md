@@ -173,8 +173,9 @@ Gross open flow breaks: Σ|drift| = …    Offsetting: yes/no
     earlier-day under- or over-application goes on the under / over line.
 - **The residual** is B from the rows minus B from the books. A residual other than 0 means a
   lettering the join did not attribute to a reference, and the run is `incomplete`.
-- **The carried lines** are `SUM(drift)` of the rows still open from earlier days. Their `impact`
-  is 0, so they sit outside the window's net.
+- **The carried lines** are `SUM(drift)` of the rows carried in from earlier days with no movement
+  in the window: their `impact` is 0, so they sit outside the window's net. A carried row that
+  moves today is on a window line instead, with its `impact`.
 - **The gross** covers every open flow break, from the window or carried in, so it is not on the
   same scope as the net. `offsetting` says only that open flow breaks of both signs exist, which is
   when a net can hide them.
@@ -207,6 +208,13 @@ open = openPrev + opened − lettered
 
 - `openPrev` is the previous run's stored stock. `opened` and `lettered` are the window's hold
   movements, and `open` is the stock rewound to the cut.
+- A transaction's movement counts in `opened` when it goes in the open direction and in
+  `lettered` when it goes in the settling direction. The exception is a product transaction that
+  takes part in matching: it always counts in `lettered`, with its signed amount, even when it
+  moves the hold in the open direction (an application undone with its reference). That way,
+  `lettered − letteredOther` on the product side is exactly the window's applications, the
+  bridge's B. Movements are counted per hold: a transaction that moves money from one invoice to
+  another counts on each.
 - A lost event, or a hold moved in a transaction that carries neither the key nor a business id,
   breaks the identity. The run is then `incomplete` (`continuity`).
 - **`letteredOther`** is the part of `lettered` done by transactions that take no part in
@@ -273,14 +281,14 @@ from the previous run and the ones read by key.
 | `drift` | `pspAmount − productAmount` |
 | `impact` | The change in `drift` within the window: finalised amount gained, or lost to a failure, minus applications booked in the window. The bridge is `SUM(impact)`. A reference carried in with nothing new today has `impact` 0 |
 | `firstSeen` | The day the reference entered the join: its first final PSP state or its first application. Absent on `in_progress` |
-| `breakOn` | On a `pending` row, the day it becomes a break: `firstSeen` plus the lagging side's `grace`. It stays on the row once the break is open |
+| `breakOn` | On a `pending` row, the day it becomes a break: `firstSeen` plus the lagging side's `grace`. It stays on the row once the break is open, as long as the row keeps the class that set it |
 | `firstSide` | `psp` or `product`: which came first, the PSP's terminal state or the first application. For analysis only |
 | `merchantRef`, `pairedHold` | When the PSP reports a merchant reference, and the open hold it names |
 | `psp` | The reference's PSP transactions: `tx`, `state`, `insertedAt`, plus `amount` on a `final` event, which is its net posting on `psp.paymentAccount` and what `pspAmount` sums. A `pending` or `failed` event carries `holdAmount` instead: its hold movement, in absolute value |
 | `product` | The reference's applications: `tx`, `businessId`, `holdId`, `amount` (the net posting on the hold, in the settling direction), `insertedAt`. A transaction that letters two holds is listed once per hold |
 
-A reference carried in or read by key keeps the transactions of its earlier days, so a row always
-shows its whole history.
+A reference carried in or read by key keeps the transactions of its earlier days. Any other row
+lists the window's transactions only.
 
 **Flow classes:**
 
@@ -375,7 +383,7 @@ manifests and never rewritten afterwards.
 |---|---|
 | `schemaVersion`, `rule` (`id`, `version`) | As in the manifest |
 | `period` | `type`, `from`, `to`, `tz` |
-| `days[]` | One entry per day. For a completed day: `day`, `runId`, `manifestSha256`, `verdict`, `counts` (as in the manifest: `flow`, `flowOutcome`, `stock`, `breaks`), `statement` per asset (`net`, `flowGross`, `suspense`), the run's `path` and its `expiresAt`. For a day with no complete run: `day` and `gap` (`no_run` or `incomplete`) |
+| `days[]` | One entry per day. For a completed day: `day`, `runId`, `manifestSha256`, `verdict`, `counts` (as in the manifest: `flow`, `flowOutcome`, `stock`, `breaks`), `statement` per asset (`net`, `flowGross`, and `suspense`, the open items `suspense.open`), the run's `path` and its `expiresAt`. The last day's entry has no `manifestSha256`: that manifest lists `period.json` with its SHA-256, so it cannot be in it. For a day with no complete run: `day` and `gap` (`no_run` or `incomplete`) |
 
 A break still open at the period's end keeps the day it first appeared. A break resolved after the
 period closed shows up in the next period. A day replayed later changes its own files, not a

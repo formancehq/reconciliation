@@ -1,0 +1,7 @@
+asset,class,outcome,earlier_day,amount,payments
+EUR/2,unapplied_payment,pending,false,4500,1
+EUR/2,under_applied,break,false,1000,1
+EUR/2,over_applied,break,false,-2000,2
+EUR/2,matched,ok,true,3000,1
+EUR/2,orphan_application,break,false,-1500,1
+USD/2,unapplied_payment,pending,false,5000,1
