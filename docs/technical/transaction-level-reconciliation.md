@@ -1509,7 +1509,7 @@ it measured the writers more than the run.
   about the 20 s of the other steps; and **reserving slots** for the short steps, so they never queue
   behind a watch. ADR-005 decision 25 keeps both ways of reading the watch on the table, full read at
   run time and incremental, with the incremental one as the default (§3). On the Ledger side, a
-  `ListLogs` filter on the logs the watch keeps (§8, F-j, ask L10) and L6 ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328))
+  `ListLogs` filter on the logs the watch keeps (§8, F-j, ask L10: [EN-2369](https://formance-team.atlassian.net/browse/EN-2369)) and L6 ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328))
   would remove or shorten the read under either option.
 - From one node on a laptop, just after a large load.
 
@@ -1527,7 +1527,7 @@ it measured the writers more than the run.
 | F-g | No point-in-time read, and no single-snapshot multi-page listing | `common.proto:1844-1849`; `controller_default.go:436-438` | For information only (consistent export): not needed here |
 | F-h | Checkpoints carry no owner and no TTL | `bucket.proto:326` | For information only: not needed here |
 | F-i | An `And` is driven by its first term, in the order given. Led by a dense id range, it seeks its membership once per row, and seeking an `Or` seeks every one of its terms: the product `Or` of three keys read 2 to 3.4 times slower than membership first, for the same rows | §7.11; `internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_and.go:128-146`, `combinator_or.go:69-85` at `7dd615dba` | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), Ledger v3.1): order an `And`'s terms at compile time, or leave an `Or` child alone when it is already past the target. Until then recon writes the membership first (EN-2318) |
-| F-j | `ListLogs` cannot be filtered on what the metadata watch keeps: the `SavedMetadata` and `DeletedMetadata` that target a transaction, and the logs with a non-empty `purged_accounts`. `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS`, so the watch reads every log to keep a few | §7.15: 4.1M logs in 134–158 s, about 95 % of a run; `misc/proto/common.proto` (`QueryFilter`) at `7dd615dba` | **L10** (not filed yet): a log filter on those payloads, so the watch reads only the logs it keeps, under either option of ADR-005 decision 25. Not blocking: the incremental watch spreads the read over the day |
+| F-j | `ListLogs` cannot be filtered on what the metadata watch keeps: the `SavedMetadata` and `DeletedMetadata` that target a transaction, and the logs with a non-empty `purged_accounts`. `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS`, so the watch reads every log to keep a few | §7.15: 4.1M logs in 134–158 s, about 95 % of a run; `misc/proto/common.proto` (`QueryFilter`) at `7dd615dba` | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), Ledger v3.1): a log filter on those payloads, so the watch reads only the logs it keeps, under either option of ADR-005 decision 25. Not blocking: the incremental watch spreads the read over the day |
 
 ## Cross-links
 
