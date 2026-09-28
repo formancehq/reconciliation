@@ -49,6 +49,8 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 | `flow-writes [-ledger product-n9] [-other wload] [-writers 8] [-batch 100]` | Reads the product membership, membership first, over a window fixed before any write: idle, then while writers book keyed transactions on the same ledger, then on another. Reports the read time, the slowest page, the rows and the writers' rate |
 | `lookups [-ledger product-n9] [-n 10000] [-k 8] [-batches 1,10,100,500]` | Looks references up by key (`payment_ref = ref`, `id ≤ T`), one per query or grouped into an `Or` of equalities, key first and id range first |
 | `file-size [-payments 1000000] [-ref-len 27] [-open-holds 60000] [-level 6] [-out DIR]` | Needs no ledger. Generates a day of result files in the `lettering/1` field order and reports, per file, its rows, raw and gzipped size, bytes per row, and the time to encode, compress and hash it |
+| `day-load [-prev 300000] [-day 1000000] [-state day-state.json]` | Creates `pspday` and `prodday` with their indexes, books a day before and a day of payments on both (PSP pending and finals on `EPHEMERAL` holds; product openings, applications, revenue recognitions and unkeyed traffic), and writes each ledger's heads and cut-offs to `-state` |
+| `day-run [-state day-state.json] [-after-cut 80000] [-trickle 50] [-cap 16] [-ranges 8] [-lookups 1000]` | Runs one day's reads on both ledgers under one cap of readers: the cut, the flow, grouped lookups, the listing and its rewind, the metadata watch and the payment account, after booking `-after-cut` payments past the cut and while `-trickle` transactions/s keep coming. Reports each step's reading time, its wait for slots, and the run's wall clock |
 | `cut-cost [-load] [-ledger cut] [-n 10000000] [-reps 3]` | With `-load`, books `-n` light transactions on a fresh ledger, then creates the log-date and `inserted_at` indexes on that history and times how long each takes to serve. Resolves `S` and `T` for cut-offs with 1k to `-n` entries after them, with an open `date > cut-off` and with a bounded range widened while empty, and checks every answer |
 | `rewind-sources [-ledger psp] [-prefix psp:tx:] [-writers 8] [-ranges 8]` | The rewind proof with two window sources side by side: the logs `(S, head]` and the unfiltered transactions `(T, head_tx]`, each read on 1 and on `-ranges` streams. The writers also revert transactions older and newer than the cut and write metadata only. Every rewound row is compared with a checkpoint taken at the cut |
 | `fold [-ledger psp] [-prefix psp:tx:] [-source txs\|logs] [-from X] [-to Y] [-ranges 8] [-compare]` | Folds the balance-moving transactions of `(X, Y]` (default: the whole history), from the logs or from the unfiltered transactions. `-compare` checks the forward fold against the live listing (run it with no writes) |
@@ -161,6 +163,12 @@ transaction reads did not (§7.13): run the log reads more than once, in separat
 
 ```bash
 B=/tmp/bench-ledger/bench; $B file-size -ref-len 27 && $B file-size -ref-len 110 && $B file-size -level 1 && $B file-size -level 9
+```
+
+**One day's run, end to end** (§7.15). About 5 min of load, then three runs; the backlog is booked by the first run only:
+
+```bash
+B=/tmp/bench-ledger/bench; $B day-load && $B day-run -after-cut 80000 -cap 16 && $B day-run -cap 32 && $B day-run -cap 16
 ```
 
 **Daily stock: list and rewind, or forward** (§7.10). On the `psp` scope, the first pass right after

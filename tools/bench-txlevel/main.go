@@ -52,7 +52,7 @@ func main() {
 	svc = servicepb.NewBucketServiceClient(conn)
 
 	if len(os.Args) < 2 {
-		log.Fatal("usage: bench-txlevel load|load-mixed|load-lettering|retag|cp-create|cp-delete|agg|scan|diff|logs|txs|probe|cutprobe|lastlog|rewind|rewind-sources|fold|silent|crossover|load-product|product-or|cut-cost|purge-list|watch|iat-check|flow-writes|lookups|file-size ...")
+		log.Fatal("usage: bench-txlevel load|load-mixed|load-lettering|retag|cp-create|cp-delete|agg|scan|diff|logs|txs|probe|cutprobe|lastlog|rewind|rewind-sources|fold|silent|crossover|load-product|product-or|cut-cost|purge-list|watch|iat-check|flow-writes|lookups|file-size|day-load|day-run ...")
 	}
 	cmd, args := os.Args[1], os.Args[2:]
 	ctx := context.Background()
@@ -119,6 +119,10 @@ func main() {
 		lookups(ctx, args)
 	case "file-size":
 		fileSize(args)
+	case "day-load":
+		dayLoad(ctx, args)
+	case "day-run":
+		dayRun(ctx, args)
 	default:
 		log.Fatalf("unknown %s", cmd)
 	}

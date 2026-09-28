@@ -927,7 +927,7 @@ The projection assumes 1M lettering events per day per side, with an open book o
 | Stock rewind: live listing of `N_open` + unfiltered transactions `(T, head_tx]` | `N_open / 47k` s + (transactions written since the cut-off) / 330k s (§7.8). From the logs, as first designed: / 41k s |
 | Metadata watch: logs `(head_prev, S]` (ADR-005 §5, caveat 1) | about a day of logs, read without the fold: (logs since the previous run's head) / 40k–66k s, **~14–25 s at 1M logs a day** (66k/s at `a08f99bc3`, §7.2; 40k–61k/s at `7dd615dba`, §7.13), the largest step of the run |
 | Joins + artifacts | < 1 s |
-| **Total** | **≈ 25–45 s, with no checkpoint** |
+| **Total** | **≈ 25–45 s, with no checkpoint**, for 1M logs a day. Measured end to end (§7.15), with ledgers of 2M and 3.8M transactions a day: **2 min 20 – 2 min 43**, nearly all of it the metadata watch, which grows with the ledger's logs per day |
 
 The same run on query checkpoints would take **2 min 38 s** on the tip (10 min on the local SHA)
 just to extract two 1M scopes. It would hold a cluster checkpoint slot for that long, and it could
@@ -1432,6 +1432,62 @@ Encoding and compressing the flow file took 4.6 s (5.4 s with the long reference
 - **Parts of 250,000 rows** (results doc §8): about 19 to 36 MB each, so the flow file of a 1M day is
   compressed on 4 cores in about a quarter of the time, and uploaded and fetched part by part. Parts
   cost DuckDB nothing.
+
+### 7.15 One day's run, end to end
+
+**Question.** §7.5 adds up steps measured one by one. What does a whole run cost, both sides at once,
+under the process-wide cap of readers (EN-2323), while the ledgers keep writing?
+
+**Setup** (`day-load`, `day-run`). A fresh node at `7dd615dba`, two ledgers, each with a day before
+(300,000 payments) and a day (1M payments), with the log-date, `inserted_at` and key indexes:
+
+- `pspday`: per payment, a keyed `pending` (`world` → its `EPHEMERAL` hold) and, for 97 in 100, a
+  keyed final (hold → the payment account): about 2M transactions a day, 41,000 holds left open;
+- `prodday`: per invoice, the opening with `invoice_no`; for 9 in 10, the application with
+  `payment_ref` and `invoice_no` and an unkeyed revenue recognition; one unkeyed transaction besides:
+  about 3.8M transactions a day, 138,000 invoices left open.
+
+Before the run, 80,000 payments per ledger are booked after the cut, the backlog a run two hours
+after the cut-off finds; during it, 50 transactions/s per ledger keep coming. The run, per side:
+the cut (`S`, `T`, and the day before's, bounded and widened while empty); then, concurrently, the
+flow read (membership first) and, on the PSP side, 1,000 lookups grouped by 100; the live listing
+and its rewind; the metadata watch `(S_prev, head]`; the payment account. Every read takes its
+slots from one cap; K = 8. Three runs: cap 16, cap 32, cap 16 again.
+
+| Step (reading time, slots excluded) | `pspday` | `prodday` |
+|---|---|---|
+| Cut, both days | 0.3 s | < 0.1 s |
+| Flow, membership first | 12–14 s (1.97M rows) | 10–11 s (1.9M rows) |
+| Lookups, 1,000 references by 100 | 0.3–0.6 s | — |
+| Stock: listing, then rewind | 41,000 holds in about 1 s, 160,000 transactions in 0.7 s | 138,000 holds in 4.5–10 s, 300,000 transactions in about 1 s |
+| Payment account | 10 ms | — |
+| **Metadata watch** | **67–89 s** (2.1M logs) | **134–158 s** (4.1M logs) |
+| **Run, wall clock** | **2 min 20 – 2 min 43**, both sides together | |
+
+At cap 16 the short steps waited 1 to 1 min 48 s for slots behind the two watches (8 slots each).
+At cap 32 nothing waited, but the reads slowed each other (the flow took 21 s instead of 10 to 14)
+and the run took as long: 2 min 39 s. The writers kept their 50 transactions/s throughout.
+
+A first attempt, with writers at 9,000 transactions/s that also piled up across runs, is left out:
+it measured the writers more than the run.
+
+**Reading.**
+
+- **The metadata watch is the run's critical path**: about 95 % of it. It read 26k to 31k logs/s,
+  with the other side's watch running beside it, on a freshly loaded node (the slow regime of §7.13).
+- **The watch grows with the ledger's logs per day, not with its payments.** The product ledger
+  books about 3.8 transactions per invoice, so 1M invoices mean about 4M logs to watch. §7.5 assumed
+  1M logs a day; its total is short for such a ledger.
+- Everything else, both sides, takes 15 to 25 s: the flow read, the stock, the cut and the lookups
+  are not where a run spends its time.
+- The cap only reorders the waits. A larger cap does not shorten a run whose critical path is one
+  read per side.
+- Two recon-side levers follow, with no Ledger change: reading the watch **incrementally**, in slices
+  during the day, so that the run reads only the last slice, which would bring the critical path to
+  about the 20 s of the other steps; and **reserving slots** for the short steps, so they never queue
+  behind a watch. On the Ledger side, the metadata-change filter (§8) and L6
+  ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) are now the main levers.
+- From one node on a laptop, just after a large load.
 
 ## 8. Ledger findings and asks
 
