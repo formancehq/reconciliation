@@ -46,6 +46,8 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 | `purge-list [-ledger purge] [-open 10000] [-stages 0,100000,500000,1000000]` | Keeps `-open` `EPHEMERAL` holds open while holds opened and drained in the same batch (so purged) accumulate stage by stage; after each stage, lists the prefix and aggregates it, live |
 | `watch [-ledger cut10m] [-last 1000000] [-ranges 1,8,16]` | Reads the last `-last` logs unfiltered, as the metadata watch does, over each K, and counts them by payload kind, with no fold |
 | `iat-check [-ledger cut10m]` | Reads every log and every transaction of a ledger, and checks that each transaction's `inserted_at` equals its creating log's date and never goes down as the id goes up |
+| `flow-writes [-ledger product-n9] [-other wload] [-writers 8] [-batch 100]` | Reads the product membership, membership first, over a window fixed before any write: idle, then while writers book keyed transactions on the same ledger, then on another. Reports the read time, the slowest page, the rows and the writers' rate |
+| `lookups [-ledger product-n9] [-n 10000] [-k 8] [-batches 1,10,100,500]` | Looks references up by key (`payment_ref = ref`, `id ≤ T`), one per query or grouped into an `Or` of equalities, key first and id range first |
 | `cut-cost [-load] [-ledger cut] [-n 10000000] [-reps 3]` | With `-load`, books `-n` light transactions on a fresh ledger, then creates the log-date and `inserted_at` indexes on that history and times how long each takes to serve. Resolves `S` and `T` for cut-offs with 1k to `-n` entries after them, with an open `date > cut-off` and with a bounded range widened while empty, and checks every answer |
 | `rewind-sources [-ledger psp] [-prefix psp:tx:] [-writers 8] [-ranges 8]` | The rewind proof with two window sources side by side: the logs `(S, head]` and the unfiltered transactions `(T, head_tx]`, each read on 1 and on `-ranges` streams. The writers also revert transactions older and newer than the cut and write metadata only. Every rewound row is compared with a checkpoint taken at the cut |
 | `fold [-ledger psp] [-prefix psp:tx:] [-source txs\|logs] [-from X] [-to Y] [-ranges 8] [-compare]` | Folds the balance-moving transactions of `(X, Y]` (default: the whole history), from the logs or from the unfiltered transactions. `-compare` checks the forward fold against the live listing (run it with no writes) |
@@ -133,9 +135,6 @@ above:
 B=/tmp/bench-ledger/bench; $B rewind-sources -ledger psp -prefix psp:tx: && for K in 1 8; do $B fold -ledger psp -source logs -ranges $K; $B fold -ledger psp -source txs -ranges $K; done && $B fold -ledger psp -source txs -compare && $B fold -ledger psp -source logs -compare
 ```
 
-Run the folds on a settled node. Right after the load and the writers, the logs read 5 to 9 times
-slower than the transactions; once the node settled, 1.0 to 1.3 times (§7.13).
-
 **A final with no pending and no key** (§7.9). Each run creates its own ledger:
 
 ```bash
@@ -148,12 +147,14 @@ B=/tmp/bench-ledger/bench; $B silent -ledger silent-d1 -keyless-drain 0 && $B si
 B=/tmp/bench-ledger/bench; $B cut-cost -load -ledger cut10m -n 10000000
 ```
 
-**Three checks: the watch, the purged holds, the cut's two dates** (§7.13). On a settled node (no
-load for a while); the `fold` re-run compares with §7.8:
+**Five checks before implementation** (§7.13), on the ledgers loaded above:
 
 ```bash
-B=/tmp/bench-ledger/bench; $B watch -ledger cut10m && $B fold -ledger psp -source logs && $B fold -ledger psp -source txs && $B purge-list -ledger purge1m && for L in psp cut10m; do $B iat-check -ledger $L; done
+B=/tmp/bench-ledger/bench; for L in psp cut10m; do $B iat-check -ledger $L; done && $B purge-list -ledger purge1m && $B watch -ledger cut10m && $B fold -ledger psp -source logs && $B fold -ledger psp -source txs && $B lookups -ledger product-n9 && $B flow-writes -ledger product-n9
 ```
+
+The `ListLogs` figures varied 4 to 9 times across sessions of the node on identical data, while the
+transaction reads did not (§7.13): run the log reads more than once, in separate sessions.
 
 **Daily stock: list and rewind, or forward** (§7.10). On the `psp` scope, the first pass right after
 starting the server, then a warm pass:
