@@ -2,8 +2,7 @@
 --
 -- The file columns are declared, never inferred, so an empty file (every data file
 -- is written on every complete run, even with no row) still has its columns.
--- Every data file is gzipped: the compression is stated, not guessed from the name, which a
--- pre-signed URL's query string would hide. Amounts are read as HUGEINT: exact minor units,
+-- Every data file is gzipped. Amounts are read as HUGEINT: exact minor units,
 -- written as strings in the files. Instants are read as TIMESTAMP in UTC, as the files write
 -- them. A key missing from a row reads as NULL. `hive` says whether to read `rule`, `day` and `run`
 -- from the rule=/day=/run= segments of the path. The macros also return:
@@ -15,10 +14,6 @@
 -- An amount in the hold's open direction: positive = open as its prefix expects.
 CREATE OR REPLACE MACRO open_dir(balance, open_sign) AS
     CASE open_sign WHEN 'negative' THEN -balance ELSE balance END;
-
--- A file's name, without the query string of a pre-signed URL.
-CREATE OR REPLACE MACRO lettering_name(path) AS
-    regexp_replace(parse_filename(path), '\?.*$', '');
 
 CREATE OR REPLACE MACRO flow_file(path, hive) AS TABLE
 SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip', filename = true, hive_partitioning = hive, columns = {

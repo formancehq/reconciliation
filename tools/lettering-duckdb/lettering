@@ -31,10 +31,9 @@ quote() {
     printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
 }
 
-# dir PATH: a directory as the SQL globs it: no trailing slash, and the glob characters of
-# its name taken literally.
+# dir PATH: a directory without its trailing slash.
 dir() {
-    printf '%s' "$1" | sed -e 's:/*$::' -e 's/\[/[[]/g' -e 's/\*/[*]/g' -e 's/?/[?]/g'
+    printf '%s' "$1" | sed 's:/*$::'
 }
 
 # init: the init file, with its output discarded, then the output back on stdout.
@@ -213,8 +212,7 @@ query)
     for pair in "$@"; do
         key=${pair%%=*}
         case $pair in *=*) ;; *) usage ;; esac
-        case $key in '' | *[!A-Za-z0-9_]*) usage ;; esac
-        if ! printf '%s\n' "$known" | grep -qx "$key"; then
+        if ! printf '%s\n' "$known" | grep -qxF "$key"; then
             echo "query $name has no variable $key; its variables: $(printf '%s' "$known" | tr '\n' ' ')" >&2
             exit 2
         fi

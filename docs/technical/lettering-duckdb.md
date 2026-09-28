@@ -102,8 +102,7 @@ There is one table macro per file kind: `flow_file(path, hive)`, `stock_file`, `
 - **Declared columns.** Each column and its type is declared, never inferred. A complete run writes
   every data file, even with no row, and an empty file still has its columns. A key missing from a
   row reads as `NULL`, so a field added within `lettering/1` does not break a reader.
-- **Compression stated.** The files are read as gzip without looking at their name. A pre-signed
-  URL's query string hides the `.gz`, and so does a `?` in a local path.
+- **Compression stated.** The files are read as gzip without looking at their name.
 - **Row position.** `WITH ORDINALITY` gives each row its position in the file. The order checks
   compare keys in that order, since DuckDB does not guarantee the order of rows it returns.
 - **Path columns on demand.** The `hive` flag reads `rule`, `day` and `run` from the path. It is
@@ -121,9 +120,6 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
 - **Manifest views.** The manifest, flattened: `m_run`, `m_files`, `m_cuts`, `m_statement`,
   `m_lines`, `m_carried_outside`, `m_books`, and `m_payment_accounts` with `m_payment_directions`
   (the payment-account book, one row per account and asset, then per direction).
-- **Files served on their own.** A variable named after a file (`manifest`, `flow`, `carried`,
-  `stock`, `breaks`, `unclassified`, `period`) overrides that file's path. This is how a check
-  reads pre-signed URLs, which cannot be globbed.
 
 ### Many days (`sql/rule.sql`)
 
@@ -189,8 +185,7 @@ CLI. It also handles what SQL cannot:
 - **Directory checks.** Before running anything, it refuses a directory that is not a run's or a
   rule's, and it checks an incomplete run on its own: no data file, an `incomplete.kind` that
   follows the reason, and `diagnostic.json` exactly when the cause is structural.
-- **Path escaping.** A trailing slash is removed, a quote is escaped, and the glob characters `[`,
-  `*` and `?` are taken literally.
+- **Quoting.** A trailing slash is removed from a directory, and a quote in a value is escaped.
 - **Init file.** It runs `LETTERING_INIT` first, for example an object-storage secret, and
   discards what it prints.
 - **Exit status.** 0 for a sound run or an answered query, 1 for a violation, 2 for wrong
@@ -232,7 +227,8 @@ python3 tools/lettering-duckdb/testdata/generate.py
   followed by a two-day window, a retry and the week's `period.json`.
 
 The two qa rules come from a small reference engine in `generate.py` that follows the results doc.
-It also writes `expected/`, the CSV each query must return, computed in Python. The Python engine
+It also writes `expected/`, the CSV each query must return, computed in Python. A per-day query
+is computed for three chosen days: two of `qa-scenarios` and the replayed day of `qa-verdicts`. The Python engine
 and the SQL are two independent readings of the doc, so a test passes only when they agree. A
 disagreement found this way is fixed in the doc first, then in the side that was wrong. For
 example, S22 found that the doc did not say whether a bridge line is `earlierDay` on a row with no
@@ -253,16 +249,16 @@ The suite checks four things:
 3. **Every rule fires.** Each rule of `check.sql` and `check-chain.sql` fires on at least one
    corrupted copy of a run. The suite fails when a rule is never exercised, so a new rule needs a
    test.
-4. **Variants and awkward inputs.**
+4. **Variants and wrong arguments.**
    - Legitimate variants pass: a file in parts, a field unknown to `lettering/1`, an incomplete
      run, a triage cut at `topK`.
-   - Awkward inputs are handled: odd paths, quotes in values, unknown or missing variables, a
-     wrong directory, a bad or missing day, an unreadable file, an init file that prints, an empty
-     CSV result.
+   - Wrong arguments get their exit status and a message that says why: an unknown or missing
+     variable, a wrong directory, a bad or missing day, an unreadable file. An init file that
+     prints and an empty CSV result are handled too.
 
-The suite passes on DuckDB 1.4.3 and 1.5.5, under the macOS `sh` and under `dash`. It is not part
-of `just tests`, and it needs only the DuckDB CLI, `gzip`, `sed`, `sort` and `comm`. It runs on
-local files: object storage and pre-signed URLs are not covered.
+The suite runs on the DuckDB the Nix shell pins (1.4.3). It is not part of `just tests`, and it
+needs only the DuckDB CLI, `gzip`, `sed`, `sort` and `comm`. It runs on local files: object storage
+is not covered.
 
 ## 4. Using it
 
@@ -342,9 +338,8 @@ nothing.
 | How much is still unmatched, day after day? | `open-items` | |
 | What is open on each ledger, day after day? | `books` | |
 | How old is what waits for payment? | `stock-ageing` | |
-| What was lettered outside matching (credit notes, write-offs)? | `lettered-other` | |
+| Which holds did a credit note or a write-off letter to zero? | `lettered-other` | |
 | Which applications were booked on the day? | `applications` | `day` |
-| Which PSP events of the day take part in matching? | `psp-events` | `day` |
 
 Results on the worked example, 24 September, printed with `LETTERING_MODE=markdown`:
 
@@ -451,20 +446,8 @@ LETTERING_INIT=s3.sql tools/lettering-duckdb/lettering query open-items s3://buc
 
 - **Azure.** Azure storage works the same way, with DuckDB's `azure` extension and an `az://`
   path.
-- **Pre-signed URLs.** Recon's API returns one pre-signed URL per file. A URL cannot be globbed,
-  so give each file its own variable and run the SQL directly, without the wrapper:
-
-  ```sql
-  SET VARIABLE manifest = 'https://…/manifest.json?…';
-  SET VARIABLE flow = 'https://…/flow.ndjson.gz?…';
-  -- likewise carried, stock, breaks, unclassified and period
-  .read tools/lettering-duckdb/sql/schema.sql
-  .read tools/lettering-duckdb/sql/run.sql
-  .read tools/lettering-duckdb/check.sql
-  ```
-
-- **When a directory is needed.** A file in parts and the multi-day queries need a directory:
-  download the files first, keeping the `rule=/day=/run=` layout.
+- **Pre-signed URLs.** The tool reads directories only. Download the files recon's API lists into
+  a directory first, keeping the `rule=/day=/run=` layout.
 
 ### Use the SQL from Python
 
@@ -539,12 +522,12 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `books_continuity`, `books_vs_stock` | Each book closes, and equals its open stock rows in the open direction |
 | `book_residual` | Each payment-account residual is the account's movement since the previous cut minus the flow's (`input − inputPrev − flowCredits`, `output − outputPrev − flowDebits`), and its volumes never go down |
 | `breaks_vs_rows`, `break_vs_row` | Every open break of the flow and stock files, and every non-zero residual of the payment-account book, is in the breaks file, and back, with the same class and amount; a book break, open or resolved, carries its account's `paymentAccounts` entry as it stands |
-| `break_amount`, `break_outcome`, `break_priority` | A break's amount, outcome and priority follow its leg, lifecycle and class; an open book break's amount is its direction's residual, and a resolved one's residual is 0 again |
+| `break_amount`, `break_outcome`, `break_priority` | What `break_vs_row` cannot see: an open book break's amount is its direction's residual and a resolved one's residual is 0 again, and a resolved stock break keeps its hold's last open balance; a break's outcome and priority follow its lifecycle and class |
 | `row_drift`, `row_break_on` | A pending or break row has a drift and a matched, in-progress or failed one has none; `breakOn` is `firstSeen` plus the lagging side's grace |
 | `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone, it is `stuck` exactly when older than its side's `maxAge`, and its bucket and each book's bucket counts follow from the rule's bounds |
 | `row_amounts`, `row_impact`, `row_outcome` | A flow row's amounts follow from its transactions, a carried row has no `impact`, and each row's outcome (and a stock row's sign) follows from its class |
 | `row_class` | A flow row's class follows from its net amounts: applications that sum to 0 count as none |
-| `triage_break`, `triage_pending`, `triage_count` | The triage matches the breaks and the pending flow rows, and lists the first `topK` open breaks, pending rows and resolved breaks |
+| `triage_break`, `triage_pending`, `triage_count` | The triage matches the breaks and the pending flow rows, and lists at most `topK` open breaks, pending rows and resolved breaks |
 | `unique_key`, `row_order` | Each file's unique key and row order (results doc §8) |
 | `verdict_mismatch` | The verdict follows from the files |
 

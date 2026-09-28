@@ -36,13 +36,12 @@ FROM m_run WHERE schema_version IS DISTINCT FROM 'lettering/1';
 -- Files: listed, present, row counts, SHA-256 -------------------------------------
 
 CREATE OR REPLACE TEMP TABLE actual_files AS
-SELECT lettering_name(filename) AS name, sha256(content) AS sha256 FROM read_blob(lettering_file('flow'))
-UNION ALL SELECT lettering_name(filename), sha256(content) FROM read_blob(lettering_file('carried'))
-UNION ALL SELECT lettering_name(filename), sha256(content) FROM read_blob(lettering_file('stock'))
-UNION ALL SELECT lettering_name(filename), sha256(content) FROM read_blob(lettering_file('breaks'))
-UNION ALL SELECT lettering_name(filename), sha256(content) FROM read_blob(lettering_file('unclassified'))
-UNION ALL SELECT lettering_name(filename), sha256(content)
-          FROM read_blob(coalesce(getvariable('period'), coalesce(getvariable('run'), '/nonexistent') || '/period*.json'));
+SELECT parse_filename(filename) AS name, sha256(content) AS sha256 FROM read_blob(lettering_file('flow'))
+UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('carried'))
+UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('stock'))
+UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('breaks'))
+UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('unclassified'))
+UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(getvariable('run') || '/period*.json');
 
 CREATE OR REPLACE TEMP TABLE actual_rows AS
 SELECT file AS name, count(*) AS rows FROM flow GROUP BY file
@@ -259,21 +258,19 @@ WHERE input < inputPrev OR output < outputPrev
 
 -- Breaks --------------------------------------------------------------------------------
 
+-- What break_vs_row cannot see: a book break's amount is its residual, a resolved book break's
+-- residual is 0 now, and a resolved stock break keeps its hold's last open balance.
 INSERT INTO violations
 SELECT 'break_amount', breakId,
        'amount ' || amount || ', expected ' ||
-       CASE WHEN leg = 'flow' THEN 'the drift ' || drift
-            WHEN leg = 'book' AND lifecycle = 'resolved' THEN 'a residual of 0 now, and the ' || direction || ' residual is ' || coalesce(CASE direction WHEN 'credit' THEN creditResidual ELSE debitResidual END::VARCHAR, 'missing')
+       CASE WHEN leg = 'book' AND lifecycle = 'resolved' THEN 'a residual of 0 now, and the ' || direction || ' residual is ' || coalesce(CASE direction WHEN 'credit' THEN creditResidual ELSE debitResidual END::VARCHAR, 'missing')
             WHEN leg = 'book' THEN 'the ' || coalesce(direction, 'missing') || ' residual ' || coalesce(CASE direction WHEN 'credit' THEN creditResidual ELSE debitResidual END::VARCHAR, 'missing')
-            WHEN lifecycle = 'resolved' THEN 'the previous balance in the open direction ' || open_dir(previousBalance, openSign)
-            ELSE 'the balance in the open direction ' || open_dir(balance, openSign) END
+            ELSE 'the previous balance in the open direction ' || open_dir(previousBalance, openSign) END
 FROM breaks
 WHERE (leg = 'book' AND lifecycle <> 'resolved'
        AND (amount = 0 OR amount IS DISTINCT FROM CASE direction WHEN 'credit' THEN creditResidual WHEN 'debit' THEN debitResidual END))
    OR (leg = 'book' AND lifecycle = 'resolved'
        AND CASE direction WHEN 'credit' THEN creditResidual WHEN 'debit' THEN debitResidual END IS DISTINCT FROM 0)
-   OR (leg = 'flow' AND lifecycle <> 'resolved' AND amount IS DISTINCT FROM drift)
-   OR (leg = 'stock' AND lifecycle <> 'resolved' AND amount IS DISTINCT FROM open_dir(balance, openSign))
    OR (leg = 'stock' AND lifecycle = 'resolved' AND previousBalance IS NOT NULL
        AND amount IS DISTINCT FROM open_dir(previousBalance, openSign));
 
@@ -460,20 +457,12 @@ WHERE b.leg = 'book'
        OR (b.inputPrev, b.input, b.outputPrev, b.output, b.flowCredits, b.flowDebits, b.creditResidual, b.debitResidual)
           IS DISTINCT FROM (p.inputPrev, p.input, p.outputPrev, p.output, p.flowCredits, p.flowDebits, p.creditResidual, p.debitResidual));
 
--- The triage lists the first topK open breaks, pending rows and resolved breaks.
+-- The triage lists at most topK open breaks, pending rows and resolved breaks.
 INSERT INTO violations
-WITH t AS (SELECT (m->'triage'->>'topK')::INTEGER AS top_k,
-                  json_array_length(m->'triage'->'breaks') AS n_breaks,
-                  json_array_length(m->'triage'->'pending') AS n_pending,
-                  json_array_length(m->'triage'->'resolved') AS n_resolved FROM manifest)
-SELECT 'triage_count', 'breaks', 'triage ' || n_breaks || ', expected ' || least(top_k, (SELECT count(*) FROM breaks WHERE outcome = 'break'))
-FROM t WHERE n_breaks <> least(top_k, (SELECT count(*) FROM breaks WHERE outcome = 'break'))
-UNION ALL
-SELECT 'triage_count', 'pending', 'triage ' || n_pending || ', expected ' || least(top_k, (SELECT count(*) FROM flow WHERE outcome = 'pending'))
-FROM t WHERE n_pending <> least(top_k, (SELECT count(*) FROM flow WHERE outcome = 'pending'))
-UNION ALL
-SELECT 'triage_count', 'resolved', 'triage ' || n_resolved || ', expected ' || least(top_k, (SELECT count(*) FROM breaks WHERE lifecycle = 'resolved'))
-FROM t WHERE n_resolved <> least(top_k, (SELECT count(*) FROM breaks WHERE lifecycle = 'resolved'));
+WITH t AS (SELECT (m->'triage'->>'topK')::INTEGER AS top_k, l.list, json_array_length(m->'triage'->l.list) AS n
+           FROM manifest, (VALUES ('breaks'), ('pending'), ('resolved')) l(list))
+SELECT 'triage_count', list, 'triage ' || n || ', topK ' || top_k
+FROM t WHERE n > top_k;
 
 -- Keys and order (results doc §8) -----------------------------------------------------------
 

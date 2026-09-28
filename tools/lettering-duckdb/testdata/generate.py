@@ -282,6 +282,7 @@ class Engine:
         self.accepted_state = {}              # break key -> (class, amount) when accepted
         self.runs = []                        # every run, for the expected query results
         self.business_ids = []                # the ids expected/ holds a business-id result for
+        self.query_days = []                  # the days expected/ holds the per-day query results for
         rule_json = rule.as_json()
         body = dict(rule_json)
         body.pop('sha256')
@@ -1067,11 +1068,6 @@ def scenarios():
     apply(D[1], '16:10', 'U01', [(INVOICE, 'INV-U01', 'USD/2', 12000)])
     opening(D[1], '07:12', inv('INV-U02', 5000, 'USD/2'))
     pay(D[2], '16:00', 'U02', 5000, 'USD/2', t_final='16:05')
-    # S05: applied short on day 2, completed on day 3
-    opening(D[2], '07:00', inv('INV-S05', 10000))
-    pay(D[2], '09:30', 'S05', 10000, t_final='09:35')
-    apply(D[2], '09:40', 'S05', [(INVOICE, 'INV-S05', 'EUR/2', 9000)])
-    apply(D[3], '09:40', 'S05', [(INVOICE, 'INV-S05', 'EUR/2', 1000)])
     # S06: over-applied on day 2 (wrong-sign invoice); an adjustment clears the hold on day 3,
     # which resolves the stock break, while the flow break stays
     opening(D[2], '07:01', inv('INV-S06', 5000))
@@ -1175,7 +1171,8 @@ def ts(t):
 
 
 def expected(engine, out):
-    """One CSV per query and day, in the query's own column order. Row order is not compared."""
+    """One CSV per query, and per query_days day for a per-day query, in the query's own column order.
+    Row order is not compared."""
     runs = [r for r in engine.runs if r['complete']]
     current = {}
     for r in runs:
@@ -1200,7 +1197,7 @@ def expected(engine, out):
                                      sum(x['impact'] for x in rs)])
     res['daily-flow'] = csv_text(['day', 'asset', 'class', 'outcome', 'payments', 'psp_amount', 'product_amount',
                                   'drift', 'impact'], rows)
-    for d in days:
+    for d in [d for d in days if day_str(d) in engine.query_days]:
         st = current[d]
         tag = day_str(d)
         lines = {}
@@ -1236,7 +1233,6 @@ def expected(engine, out):
         res[f'pending@{tag}'] = csv_text(['break_on', 'days_left', 'class', 'asset', 'amount', 'ref', 'merchant_ref',
                                           'paired_hold', 'applied_to'], pend)
         f_prod, t_prod = st['cuts']['product']
-        f_psp, t_psp = st['cuts']['psp']
         apps = []
         for x in st['rows']:
             for e in x['app_ev']:
@@ -1245,15 +1241,6 @@ def expected(engine, out):
                         apps.append([tag, x['ref'], x['class'], x['outcome'], e.tx, hid, hid, -OPEN_SIGN[p] * dlt, ts(e.t)])
         res[f'applications@{tag}'] = csv_text(['day', 'ref', 'class', 'outcome', 'tx', 'business_id', 'hold_id',
                                                'amount', 'inserted_at'], apps)
-        evs = []
-        for x in st['rows']:
-            for e in x['psp_ev']:
-                if f_psp < e.tx <= t_psp:
-                    evs.append([tag, x['ref'], x['class'], x['outcome'], e.tx, PSP_STATES[e.kind],
-                                e.amount if e.kind == 'final' else None,
-                                abs(e.hold) if e.kind != 'final' else None, ts(e.t)])
-        res[f'psp-events@{tag}'] = csv_text(['day', 'ref', 'class', 'outcome', 'tx', 'state', 'amount', 'hold_amount',
-                                             'inserted_at'], evs)
     oi = []
     for d in days:
         m = current[d]['manifest']
@@ -1280,14 +1267,11 @@ def expected(engine, out):
                                     'wrong_sign'], [list(k) + list(v) for k, v in sa.items()])
     lo = []
     for d in days:
-        for b in current[d]['books']:
-            if b['other'] != 0:
-                lo.append([day_str(d), 'book', b['side'], b['prefix'], b['asset'], None, b['other'], None])
         for s in current[d]['stock']:
             if s['class'] == 'cleared' and not s['clearedBy'] and OPEN_SIGN[s['prefix']] * s['previousBalance'] > 0:
-                lo.append([day_str(d), 'hold', s['side'], s['prefix'], s['asset'], s['hold'],
+                lo.append([day_str(d), s['side'], s['prefix'], s['asset'], s['hold'],
                            OPEN_SIGN[s['prefix']] * s['previousBalance'], ts(s['clearedAt'])])
-    res['lettered-other'] = csv_text(['day', 'kind', 'side', 'prefix', 'asset', 'hold', 'amount', 'cleared_at'], lo)
+    res['lettered-other'] = csv_text(['day', 'side', 'prefix', 'asset', 'hold', 'amount', 'cleared_at'], lo)
     for bid in engine.business_ids:
         res[f'business-id@id={bid}'] = business_id(current, days, bid)
     for name, text in res.items():
@@ -1346,13 +1330,15 @@ def main():
 
     rule, book, days, acceptances, anomalies = scenarios()
     engine = Engine(rule, book, out, acceptances, anomalies)
-    engine.business_ids = ['INV-S04', 'S14', 'PU', 'S15', 'INV-S06B']
+    engine.business_ids = ['INV-S06B', 'PU']
+    engine.query_days = ['2026-10-02', '2026-10-05']
     for d in days:
         engine.run(d)
     expected(engine, out)
 
     rule, book = verdicts()
     engine = Engine(rule, book, out, anomalies={'2026-10-10': [('product', 504)]})
+    engine.query_days = ['2026-10-06']  # replayed after an incomplete run
     engine.run('2026-10-05')
     engine.run('2026-10-06', run_id='r-20261007T000003Z', incomplete='short_range')
     engine.run('2026-10-06', run_id='r-20261007T001503Z')

@@ -11,8 +11,8 @@ shipped to customers, and recon does not depend on it.
 - The files and every field (the source of truth):
   [docs/technical/transaction-level-results.md](../../docs/technical/transaction-level-results.md).
 
-It is SQL run by the [DuckDB](https://duckdb.org) CLI (1.4 or later), plus a POSIX shell wrapper.
-The repository's Nix shell provides DuckDB:
+It is SQL run by the [DuckDB](https://duckdb.org) CLI, plus a POSIX shell wrapper. The
+repository's Nix shell provides DuckDB 1.4.3, the version the tests run on:
 
 ```bash
 nix develop --impure

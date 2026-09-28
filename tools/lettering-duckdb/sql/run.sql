@@ -2,35 +2,33 @@
 --
 --   SET VARIABLE run = 'path/to/rule=psp-vs-billing/day=2026-09-24/run=r-20260925T000004Z';
 --
--- The directory may be local or s3://. A file served on its own, such as a
--- pre-signed URL from recon's API, overrides its path: SET VARIABLE flow = 'https://…'
--- (likewise manifest, carried, stock, breaks, unclassified, period).
+-- The directory may be local or s3://.
 --
 -- `flow*` also matches a file that comes in parts (flow-00000.ndjson.gz, …).
 
 CREATE OR REPLACE MACRO lettering_file(name) AS
-    coalesce(getvariable(name), getvariable('run') || '/' || name || '*.ndjson.gz');
+    getvariable('run') || '/' || name || '*.ndjson.gz';
 
 CREATE OR REPLACE VIEW manifest AS
 SELECT content::JSON AS m
-FROM read_text(coalesce(getvariable('manifest'), getvariable('run') || '/manifest.json'));
+FROM read_text(getvariable('run') || '/manifest.json');
 
 -- Each data view adds `file` (the file's name) and `pos` (the row's position, in
 -- file order). The run's day is the manifest's (m_run).
 CREATE OR REPLACE VIEW flow AS
-SELECT * EXCLUDE (filename, ordinality), lettering_name(filename) AS file, ordinality AS pos
+SELECT * EXCLUDE (filename, ordinality), parse_filename(filename) AS file, ordinality AS pos
 FROM flow_file(lettering_file('flow'), false);
 CREATE OR REPLACE VIEW carried AS
-SELECT * EXCLUDE (filename, ordinality), lettering_name(filename) AS file, ordinality AS pos
+SELECT * EXCLUDE (filename, ordinality), parse_filename(filename) AS file, ordinality AS pos
 FROM flow_file(lettering_file('carried'), false);
 CREATE OR REPLACE VIEW stock AS
-SELECT * EXCLUDE (filename, ordinality), lettering_name(filename) AS file, ordinality AS pos
+SELECT * EXCLUDE (filename, ordinality), parse_filename(filename) AS file, ordinality AS pos
 FROM stock_file(lettering_file('stock'), false);
 CREATE OR REPLACE VIEW breaks AS
-SELECT * EXCLUDE (filename, ordinality), lettering_name(filename) AS file, ordinality AS pos
+SELECT * EXCLUDE (filename, ordinality), parse_filename(filename) AS file, ordinality AS pos
 FROM breaks_file(lettering_file('breaks'), false);
 CREATE OR REPLACE VIEW unclassified AS
-SELECT * EXCLUDE (filename, ordinality), lettering_name(filename) AS file, ordinality AS pos
+SELECT * EXCLUDE (filename, ordinality), parse_filename(filename) AS file, ordinality AS pos
 FROM unclassified_file(lettering_file('unclassified'), false);
 
 -- The manifest, flattened.
