@@ -824,7 +824,7 @@ laptop.
 | Load (`Apply`, 200–500 tx per batch, 16 workers) | ~95k tx/s | ~115k tx/s |
 | `AggregateVolumes` prefix, live | 0.22 s | 2.9 s |
 | `AggregateVolumes` prefix, at checkpoint | 3.9 s | 62 s (both SHAs) |
-| `ListAccounts` scan, live, page 1000 | 1.1 s (≈90k/s) | 21.3 s (≈47k/s) |
+| `ListAccounts` scan, live, page 1000 (first pass; a second pass on a warm cache reads ≈92k/s, §7.10) | 1.1 s (≈90k/s) | 21.3 s (≈47k/s) |
 | `ListAccounts` scan, live, **page 200** (recon's `queryPageSize`) | 5.3 s | — |
 | `ListAccounts` scan, at checkpoint, one reader | 26.3 s (3.8k/s) | 5 min 10 s |
 | Create query checkpoint | 1.09 s | 0.61 s |
@@ -1149,6 +1149,57 @@ In every variant, the rewound stock and `psp:main` at `S` matched a checkpoint t
   and asset, opens a P1 break `unkeyed_payment_movement` on the leg `book`, and the rest of the
   statement stands. The payout and fee keys are the rule's `psp.movementKeys`. The booking design of
   the PSP ledger can still change to meet these conventions.
+
+### 7.10 Daily stock: list and rewind, or forward from the stored stock
+
+**Question.** A run can get its stock at `S` in two ways:
+
+- **List and rewind** (§4): list the `N_open` open holds live, then fold the transactions written
+  since the cut, `(T, head_tx]`.
+- **Forward**: read the previous run's stored stock (`N_open` rows), then fold the day's `X`
+  transactions `(T_prev, T]` onto it.
+
+Listing costs grow with the open book, and forward costs grow with the day's traffic. At what open
+book does the forward mode win?
+
+**Setup** (`crossover`). The ledger of §7.8, with the 1M-account `psp` scope and no write running.
+The open book is the accounts under growing hex sub-prefixes of `psp:tx:`, whose ids are uniform.
+The folds read the last `X` transactions, unfiltered, with `reverse = true`, on 8 ranges. The stored
+stock is gzipped NDJSON, decoded and merged in memory: the object-storage read is left out. The run
+starts 2 h after the cut-off, so about 8 % of the next day is already written. The first pass ran on
+a freshly started node (Pebble cache cold), and the second pass on the same process.
+
+| Read | First pass | Second pass |
+|---|---|---|
+| Live listing, one stream, page 1000 | **48k accounts/s** (1M in 20.7 s) | 92k/s (1M in 10.8 s) |
+| Unfiltered fold, K = 8 | 240k/s at 10k, **340k–360k tx/s** from 250k (1M in 2.9 s) | 320k–380k/s (1M in 2.66 s) |
+| Stored stock decoded and merged | 1M rows (12.8 MB gzipped) in 0.85 s, 63k rows in 65 ms | the same |
+
+A daily run lists once, on a cold cache, so the first pass is the one that counts. The 47k/s of §7.1
+is the same first-pass figure. The fold barely depends on the cache.
+
+**Crossover**, on the first pass:
+
+| Transactions per day | Open holds: list and rewind / forward | Crossover |
+|---|---|---|
+| 100k | 4k: 0.12 s / 0.32 s; 63k: 1.35 s / 0.37 s | **~13.9k open holds (13.9 %)** |
+| 1M | 4k: 0.35 s / 2.93 s; 250k: 5.25 s / 3.13 s; 1M: 21 s / 3.8 s | **~142k open holds (14.2 %)** |
+
+On the second pass, the crossover moves to 23–26 %.
+
+**Reading.**
+
+- The crossover is about the listing rate over the fold rate: 48k / 343k ≈ 14 % of the day's
+  transactions. The 2026-09-28 review estimated it at ~12 %.
+- A lettering book is far below it: 10k holds open against 1M transactions a day is 1 %. **List and
+  rewind stays the daily mode.** It reads the ledger's current state, so an error in a stored stock
+  never carries from one day to the next, and continuity stays independent of the flow read.
+- Forward is the replay mode (§4) and, for a rule whose open book exceeds ~15 % of its daily
+  traffic, the faster daily read. Its error then carries from day to day, so it needs the periodic
+  proof. It is not needed in V1.
+- Either way, the stock step is small next to the metadata watch (§7.5, ~14 s at 1M logs a day).
+- These figures come from one node on a laptop, with no concurrent writes, which would slow both
+  modes. Each account has one transaction.
 
 ## 8. Ledger findings and asks
 

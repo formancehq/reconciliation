@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -850,4 +853,192 @@ func accountPair(ctx context.Context, ledger, addr string) pair {
 		}
 	}
 	return p
+}
+
+// crossover measures the two ways to get a day's stock at its cut, to find where
+// one overtakes the other (design doc §7.8):
+//
+//   - list + rewind: a live listing of the N open holds, then a fold of the
+//     transactions written since the cut, w = since × X;
+//   - forward: read the previous day's stored stock (N rows), then fold the day's
+//     X transactions onto it.
+//
+// It times listings of growing hex sub-prefixes (the addresses are uniform), folds
+// of the last X transactions, and the decode and merge of a stored stock of N rows
+// (gzipped NDJSON, in memory: the object-storage read is left out). Run it with no
+// writes. Each figure is the best of -reps runs.
+func crossover(ctx context.Context, args []string) {
+	fs := flag.NewFlagSet("crossover", flag.ExitOnError)
+	ledger := fs.String("ledger", "psp", "")
+	prefix := fs.String("prefix", "psp:tx:", "")
+	ranges := fs.Int("ranges", 8, "concurrent id ranges for the folds")
+	sizesArg := fs.String("sizes", "10000,50000,100000,250000,500000,1000000", "fold window sizes X")
+	days := fs.String("days", "100000,1000000", "transactions per day for the crossover table")
+	since := fs.Float64("since", 2.0/24, "share of the day written between the cut-off and the run")
+	reps := fs.Int("reps", 2, "")
+	_ = fs.Parse(args)
+	_, head := ledgerStats(ctx, *ledger)
+
+	// Listings: the open book is the accounts under a set of sub-prefixes.
+	type listing struct {
+		name string
+		subs []string
+	}
+	hex := "0123456789abcdef"
+	sets := []listing{{"000", []string{"000"}}, {"00", []string{"00"}}, {"0", []string{"0"}}}
+	for _, k := range []int{2, 4, 8} {
+		var subs []string
+		for i := 0; i < k; i++ {
+			subs = append(subs, hex[i:i+1])
+		}
+		sets = append(sets, listing{fmt.Sprintf("0-%c", hex[k-1]), subs})
+	}
+	sets = append(sets, listing{"all", []string{""}})
+	type point struct {
+		n   float64
+		sec float64
+	}
+	var lists []point
+	var all []row
+	fmt.Printf("ledger %s, head tx %d, fold K=%d, best of %d\n\nlive listing, one stream, page 1000:\n", *ledger, head, *ranges, *reps)
+	for _, s := range sets {
+		best := time.Duration(0)
+		n := 0
+		for r := 0; r < *reps; r++ {
+			var rows []row
+			n = 0
+			t0 := time.Now()
+			for _, sub := range s.subs {
+				c, _, _, err := scan(ctx, *ledger, *prefix+sub, 0, 1000, func(x row) {
+					if s.name == "all" {
+						rows = append(rows, x)
+					}
+				})
+				if err != nil {
+					log.Fatalf("scan: %v", err)
+				}
+				n += c
+			}
+			el := time.Since(t0)
+			if best == 0 || el < best {
+				best = el
+			}
+			if s.name == "all" {
+				all = rows
+			}
+		}
+		lists = append(lists, point{float64(n), best.Seconds()})
+		fmt.Printf("  %-6s %8d accounts  %8s  %6.0f/s\n", s.name, n, best.Round(time.Millisecond), float64(n)/best.Seconds())
+	}
+
+	// Folds of the last X transactions.
+	var folds []point
+	fmt.Printf("\nfold of the unfiltered transactions (head-X, head], reverse=true, K=%d:\n", *ranges)
+	for _, f := range strings.Split(*sizesArg, ",") {
+		var x uint64
+		fmt.Sscan(f, &x)
+		if x > head {
+			x = head
+		}
+		best := time.Duration(0)
+		var wr windowRead
+		for r := 0; r < *reps; r++ {
+			wr = readWindow(ctx, *ledger, "txs", head-x, head, *ranges, prefixMatch(*prefix))
+			if best == 0 || wr.elapsed < best {
+				best = wr.elapsed
+			}
+		}
+		folds = append(folds, point{float64(x), best.Seconds()})
+		fmt.Printf("  X=%8d  %8s  %6.0f/s  (%d accounts touched, count check %v)\n", x, best.Round(time.Millisecond), float64(x)/best.Seconds(), len(wr.last), wr.items == x)
+	}
+
+	// Stored stock: decode N rows of gzipped NDJSON and merge a fold onto them.
+	var stocks []point
+	fmt.Printf("\nstored stock, gzipped NDJSON decoded and merged in memory:\n")
+	merge := readWindow(ctx, *ledger, "txs", head-min(head, 100000), head, *ranges, prefixMatch(*prefix)).last
+	for _, lp := range lists {
+		n := int(lp.n)
+		if n > len(all) {
+			n = len(all)
+		}
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		enc := json.NewEncoder(zw)
+		for _, x := range all[:n] {
+			_ = enc.Encode(map[string]string{"side": "psp", "hold": *prefix + x.key, "asset": "USD/2", "balance": x.balance.String()})
+		}
+		_ = zw.Close()
+		best := time.Duration(0)
+		for r := 0; r < *reps; r++ {
+			t0 := time.Now()
+			zr, err := gzip.NewReader(bytes.NewReader(buf.Bytes()))
+			if err != nil {
+				log.Fatal(err)
+			}
+			stock := make(map[string]*big.Int, n)
+			dec := json.NewDecoder(zr)
+			for {
+				var o struct{ Hold, Balance string }
+				if err := dec.Decode(&o); err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					log.Fatal(err)
+				}
+				b, _ := new(big.Int).SetString(o.Balance, 10)
+				stock[o.Hold] = b
+			}
+			for a, p := range merge {
+				if b := p.balance(); b.Sign() == 0 {
+					delete(stock, a)
+				} else {
+					stock[a] = b
+				}
+			}
+			if el := time.Since(t0); best == 0 || el < best {
+				best = el
+			}
+		}
+		stocks = append(stocks, point{float64(n), best.Seconds()})
+		fmt.Printf("  N=%8d  %6.1f MB gz  %8s\n", n, float64(buf.Len())/1e6, best.Round(time.Millisecond))
+	}
+
+	// Piecewise-linear interpolation through measured points, extrapolated at the ends.
+	interp := func(ps []point, v float64) float64 {
+		sort.Slice(ps, func(i, j int) bool { return ps[i].n < ps[j].n })
+		i := sort.Search(len(ps), func(i int) bool { return ps[i].n >= v })
+		switch {
+		case i == 0:
+			i = 1
+		case i == len(ps):
+			i = len(ps) - 1
+		}
+		a, b := ps[i-1], ps[i]
+		return a.sec + (b.sec-a.sec)*(v-a.n)/(b.n-a.n)
+	}
+	fmt.Printf("\ncrossover (the run starts after %.0f%% of the next day is written):\n", *since*100)
+	for _, d := range strings.Split(*days, ",") {
+		var x float64
+		fmt.Sscan(d, &x)
+		w := *since * x
+		fmt.Printf("  X_day=%.0f, w=%.0f:\n", x, w)
+		var prevN, prevDiff float64
+		found := false
+		for _, lp := range lists {
+			n := lp.n
+			lr := lp.sec + interp(folds, w)
+			fw := interp(stocks, n) + interp(folds, x)
+			diff := lr - fw
+			fmt.Printf("    N_open=%8.0f  list+rewind %7.2f s  forward %7.2f s  -> %s\n", n, lr, fw, map[bool]string{true: "forward", false: "list+rewind"}[diff > 0])
+			if !found && prevN > 0 && prevDiff <= 0 && diff > 0 {
+				nStar := prevN + (n-prevN)*(-prevDiff)/(diff-prevDiff)
+				fmt.Printf("    crossover at N_open ≈ %.0f (%.1f%% of the day's transactions)\n", nStar, 100*nStar/x)
+				found = true
+			}
+			prevN, prevDiff = n, diff
+		}
+		if !found {
+			fmt.Printf("    no crossover in the measured range\n")
+		}
+	}
 }
