@@ -189,6 +189,7 @@ class Psp:
     hold: int = 0
     merchant: str = None
     tx: int = 0
+    out: bool = False  # a final that pays money out of the payment account (a refund): a debit
 
 
 @dataclass
@@ -745,9 +746,11 @@ class Engine:
         st['manifest_sha'] = sha(data)
 
     def pay_book(self, rows, books, win_psp, win_prod):
-        """The payment-account book (results doc §5), per asset. The account moves by the window's
-        finals (credits), by the failures after final (debits), and by the unkeyed movements the
-        flow read cannot return; the flow's credits and debits leave the unkeyed ones out, so the
+        """The payment-account book (results doc §5), per asset. The account is credited by the
+        window's payment finals, and debited by its refund finals, by the failures after final and
+        by the PSP transactions in no state set, which in this data are refunds booked on the
+        original payment id (ADR-005 §8 rule 10: a refund is a debit). The unkeyed movements the
+        flow read cannot return move it too; the flow's credits and debits leave them out, so the
         residuals are exactly the unkeyed movements."""
         prev = self.prev['pay_totals'] if self.prev else {}
         unkeyed = [e for e in win_psp if e.kind == 'unkeyed']
@@ -758,10 +761,14 @@ class Engine:
         out = []
         for a in assets:
             psp_a = sum(r['pspAmount'] - r['psp_before'] for r in rows if r['asset'] == a)
-            credits = sum(e.amount for e in win_psp if e.kind == 'final' and e.asset == a)
-            debits = credits - psp_a
-            if debits < 0:
-                credits, debits = psp_a, 0
+            fin_in = sum(e.amount for e in win_psp if e.kind == 'final' and not e.out and e.asset == a)
+            fin_out = sum(e.amount for e in win_psp if e.kind == 'final' and e.out and e.asset == a)
+            failed = fin_in + fin_out - psp_a  # finalised amounts lost to a failure after final
+            if failed < 0:
+                fin_in, failed = psp_a - fin_out, 0
+            unclassified = sum(e.amount for e in win_psp
+                               if e.kind not in PSP_STATES and e.kind != 'unkeyed' and e.asset == a)
+            credits, debits = fin_in, fin_out + failed + unclassified
             u_credits = sum(e.amount for e in unkeyed if e.asset == a and e.amount > 0)
             u_debits = -sum(e.amount for e in unkeyed if e.asset == a and e.amount < 0)
             in_prev, out_prev = prev.get(a, (0, 0))
@@ -986,11 +993,11 @@ def scenarios():
     D = ['2026-09-30'] + [f'2026-10-0{i}' for i in range(1, 8)]
     psp, prod = [], []
 
-    def pay(day, t, ref, amount, asset='EUR/2', pending=True, merchant=None, t_final=None):
+    def pay(day, t, ref, amount, asset='EUR/2', pending=True, merchant=None, t_final=None, out=False):
         if pending:
             psp.append(Psp(at(day, t), ref, asset, 'pending', 0, amount))
         if t_final is not None:
-            psp.append(Psp(at(day, t_final), ref, asset, 'final', amount, -amount if pending else 0, merchant))
+            psp.append(Psp(at(day, t_final), ref, asset, 'final', amount, -amount if pending else 0, merchant, out=out))
 
     def apply(day, t, ref, moves):
         prod.append(Prod(at(day, t), 'apply', moves, ref))
@@ -1085,7 +1092,7 @@ def scenarios():
     psp.append(Psp(at(D[4], '12:00'), 'S19', 'EUR/2', 'final', 3500, -3500))
     # R01: a refund, its own 1-to-1 pair: a refund hold that opens positive
     opening(D[2], '07:04', [(REFUND, 'RF-R01', 'EUR/2', 2000)])
-    pay(D[3], '13:00', 'R01', 2000, pending=False, t_final='13:05')  # the payout's amount, in absolute value
+    pay(D[3], '13:00', 'R01', 2000, pending=False, t_final='13:05', out=True)  # the payout's amount, in absolute value
     apply(D[3], '13:10', 'R01', [(REFUND, 'RF-R01', 'EUR/2', -2000)])
     # S16: an invoice cleared by a credit note (no PSP reference: letteredOther)
     opening(D[2], '07:05', inv('INV-S16', 3000))

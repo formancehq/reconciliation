@@ -244,7 +244,7 @@ fresh "$day24"; edit "$work/run/$m" 's/"manifestSha256":"[0-9a-f]*"/"manifestSha
 expect_violation "a broken chain" previous_run "$lettering" check-chain "$day23" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"120000"/"openPrev":"120001"/'
 expect_violation "open items that do not pick up" suspense_open_prev "$lettering" check-chain "$day23" "$work/run"
-fresh "$qa5"; edit "$work/run/$m" 's/"inputPrev":"91100"/"inputPrev":"91000"/; s/"flowCredits":"0","flowDebits":"2800","creditResidual":"0"/"flowCredits":"100","flowDebits":"2800","creditResidual":"0"/'
+fresh "$qa5"; edit "$work/run/$m" 's/"inputPrev":"89100"/"inputPrev":"89000"/; s/"flowCredits":"0","flowDebits":"2800","creditResidual":"0"/"flowCredits":"100","flowDebits":"2800","creditResidual":"0"/'
 expect_violation "a payment-account book that does not pick up" book_prev "$lettering" check-chain "$qa4" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"430000"/"openPrev":"430001"/'
 expect_violation "a book that does not pick up" books_open_prev "$lettering" check-chain "$day23" "$work/run"
