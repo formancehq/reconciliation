@@ -43,6 +43,9 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 | `rewind [-ledger psp] [-prefix psp:tx:] [-writers 8]` | Proves the rewind: takes an oracle checkpoint at `S`, lists the scope live while writers mutate it, rewinds the listing with the logs `(S, head]`, then compares every row with the checkpoint |
 | `probe` | Shows what a lettered (purged) EPHEMERAL hold still exposes: account listing, and transaction lookup by address and by reference |
 | `cutprobe` | Resolves a cut `S` from a date, using the per-ledger log-date index |
+| `rewind-sources [-ledger psp] [-prefix psp:tx:] [-writers 8] [-ranges 8]` | The rewind proof with two window sources side by side: the logs `(S, head]` and the unfiltered transactions `(T, head_tx]`, each read on 1 and on `-ranges` streams. The writers also revert transactions older and newer than the cut and write metadata only. Every rewound row is compared with a checkpoint taken at the cut |
+| `fold [-ledger psp] [-prefix psp:tx:] [-source txs\|logs] [-from X] [-to Y] [-ranges 8] [-compare]` | Folds the balance-moving transactions of `(X, Y]` (default: the whole history), from the logs or from the unfiltered transactions. `-compare` checks the forward fold against the live listing (run it with no writes) |
+| `silent [-n 100000] [-silent 100] [-keyless-drain 10] [-keyed-other] …` | Books two days of PSP activity on a fresh ledger, including finals with no pending and no payment reference. Prints what the hold continuity and the payment-account book (`psp:main`) each see at the cut, checked against a checkpoint. `-keyed-other` gives payouts and fees a declared `movement_ref` and reads the flow with `Or(payment_ref, movement_ref)` |
 
 ## 3. Reproduce the ADR-005 figures
 
@@ -114,6 +117,19 @@ B=/tmp/bench-ledger/bench; $B txs -ledger h100k -from 180000 -to 200000 -exists 
 
 ```bash
 B=/tmp/bench-ledger/bench; $B probe && $B cutprobe
+```
+
+**Window source for balances, logs or transactions** (§7.8). On the 1M-account `psp` scope loaded
+above:
+
+```bash
+B=/tmp/bench-ledger/bench; $B rewind-sources -ledger psp -prefix psp:tx: && for K in 1 8; do $B fold -ledger psp -source logs -ranges $K; $B fold -ledger psp -source txs -ranges $K; done && $B fold -ledger psp -source txs -compare && $B fold -ledger psp -source logs -compare
+```
+
+**A final with no pending and no key** (§7.9). Each run creates its own ledger:
+
+```bash
+B=/tmp/bench-ledger/bench; $B silent -ledger silent-d1 -keyless-drain 0 && $B silent -ledger silent-d2 -keyless-drain 0 -keyed-other && $B silent -ledger silent-d3 -keyless-drain 10
 ```
 
 Stop the server and delete `/tmp/bench-ledger` when you are done. At 1M accounts per scope the
