@@ -421,9 +421,23 @@ The same question asked of the three orderings the ledger offers:
 transactions `(T, head_tx]`, unfiltered (§4).
 
 **`S` serves the metadata watch.** Only the logs carry the metadata changes recon monitors
-(`key_metadata_mutated`). So the run reads every log in `(head_prev, head]`, the logs since the
-previous run's head, and no log goes unwatched. That is about a day of logs, ~14–25 s at 1M a day
-on 8 ranges, and the largest step of the run (§7.5, §7.13).
+(`key_metadata_mutated`). So every log in `(head_prev, head]`, the logs since the previous run's
+head, is watched, and no log goes unwatched. That is a day of logs: it grows with the ledger's logs
+per day, not with its payments, and it is the largest step of a run (§7.5, §7.13, §7.15). Two ways
+to read it are on the table, both in the design (ADR-005 decision 25):
+
+| | Full read at run time | Incremental (the default) |
+|---|---|---|
+| How | The run reads `(head_prev, head]` itself, over K ranges | A watch job reads each watched ledger's logs in slices during the day, every `--lettering-watch-interval` (1 h), and stores them; the run assembles the slices, checks that they are contiguous and match their SHA-256, and reads only the last stretch itself |
+| Run's critical path | The watch: 134–158 s for the 4.1M logs of a 1M-payment product ledger (§7.15) | The other steps, about 15–25 s; an hourly slice of about 170,000 logs costs a few seconds |
+| What it adds | Nothing: no job, no stored state | A job per ledger, slice files next to the results with their seals, `watch.slices[]` in the manifest (EN-2319, EN-2322, EN-2323) |
+| When a slice is missing or damaged | — | The run reads that range itself: never an error, never a gap |
+| Set by | `--lettering-watch-interval=0` | `--lettering-watch-interval=1h` |
+
+A slice keeps every transaction-metadata change and every `purged_accounts` entry of its range, not
+only the fields of today's rules, so one chain per ledger serves every rule on it, including a rule
+added later. Both options give the same anomalies and the same purge set; the incremental one only
+moves the reading out of the run.
 
 **What the id ranges give for free.**
 
@@ -527,7 +541,7 @@ at `7dd615dba`), so the unfiltered transactions of the window hold every balance
 EN-2036 (ledger `38c6eef55`, protocol 13), each log carries `LedgerLog.purged_accounts`, the
 addresses whose `EPHEMERAL` current state it removed. `ListLogs` exposes it at
 `Log.payload.apply.log.purged_accounts`. The metadata watch reads the logs `(head_prev, head]`,
-which include `(S, head]`, so the run already has it. The field explains the one legitimate way an account open at `S` can be missing from the live listing:
+which include `(S, head]`, in slices or at run time (§3), so the run already has it. The field explains the one legitimate way an account open at `S` can be missing from the live listing:
 
 - a touched hold with `pre ≠ 0` that the listing does not contain must be named in the
   `purged_accounts` of some log in `(S, head]`. Otherwise the listing missed a live account, which
@@ -1485,8 +1499,10 @@ it measured the writers more than the run.
 - Two recon-side levers follow, with no Ledger change: reading the watch **incrementally**, in slices
   during the day, so that the run reads only the last slice, which would bring the critical path to
   about the 20 s of the other steps; and **reserving slots** for the short steps, so they never queue
-  behind a watch. On the Ledger side, the metadata-change filter (§8) and L6
-  ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) are now the main levers.
+  behind a watch. ADR-005 decision 25 keeps both ways of reading the watch on the table, full read at
+  run time and incremental, with the incremental one as the default (§3). On the Ledger side, the
+  metadata-change filter (§8) and L6 ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328))
+  would remove or shorten the read under either option.
 - From one node on a laptop, just after a large load.
 
 ## 8. Ledger findings and asks

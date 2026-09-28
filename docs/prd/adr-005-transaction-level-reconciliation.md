@@ -370,13 +370,27 @@ Three caveats come with this choice, and each has a counter-measure:
    touched; a rewrite of the key would break it in the same way. The original log was untouched.
    - Convention: **the key and state metadata are never rewritten.** A correction is a new
      transaction.
-   - **The convention is monitored, not just trusted.** The run reads every log in
-     `(head_prev, head]`, the logs since the previous run's head, so no log goes unwatched. That is
-     about a day of logs, ~14–25 s at 1M a day on 8 ranges, and the largest step of the run ([design
-     doc §7.5](../technical/transaction-level-reconciliation.md#75-projected-daily-run), §7.13). Any
-     `SavedMetadata` or `DeletedMetadata` there that targets a transaction and touches the key,
-     state, business-id or merchant-reference field is reported as its own anomaly,
-     `key_metadata_mutated`, naming the transaction id and the field.
+   - **The convention is monitored, not just trusted.** Every log in `(head_prev, head]`, the logs
+     since the previous run's head, is watched, so no log goes unwatched. Any `SavedMetadata` or
+     `DeletedMetadata` there that targets a transaction and touches the key, state, business-id or
+     merchant-reference field is reported as its own anomaly, `key_metadata_mutated`, naming the
+     transaction id and the field.
+   - **Two ways to read the watch are on the table** (decision 25). The watch grows with the
+     ledger's logs per day, not with its payments: measured end to end, the product ledger of a
+     1M-payment day wrote about 4.1M logs, whose watch took 134–158 s, about 95 % of the run
+     ([design doc
+     §7.15](../technical/transaction-level-reconciliation.md#715-one-days-run-end-to-end)).
+     - **Full read at run time** (`--lettering-watch-interval=0`): the run reads the whole window
+       itself. Nothing to store, no job; the run pays the watch in full.
+     - **Incremental, the default** (`--lettering-watch-interval=1h`): a watch job reads each
+       watched ledger's logs in slices during the day and keeps in each slice every
+       transaction-metadata change and every `purged_accounts` entry; one chain of slices serves
+       every rule on the ledger. The run assembles the slices that cover its window, checks that
+       they are contiguous and match their SHA-256, reads only the last stretch itself, and re-reads
+       any range whose slice is missing or damaged. The manifest lists the slices it used, so the
+       signed chain covers them. The run's critical path falls to its other steps, about 15–25 s.
+     - Both give the same anomalies and the same purge set ([design doc
+       §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)).
    - This watch is the only daily read of the logs: the stock rewind reads the transactions (below).
    - The run's artifact records what it read.
    - The logs remain the immutable path for re-deriving any past day exactly.
@@ -431,9 +445,10 @@ only read of the logs, so the run would read none if that watch became unnecessa
 
 The logs still serve two purposes:
 
-- the metadata watch `(head_prev, head]` (caveat 1 above);
-- the optional purge consistency check, which reads `purged_accounts` from the logs `(S, head]`
-  that the watch already reads ([design doc
+- the metadata watch `(head_prev, head]` (caveat 1 above), read in slices during the day
+  (decision 25);
+- the optional purge consistency check, which reads `purged_accounts` for the logs `(S, head]` from
+  the same slices and the run's last stretch ([design doc
   §4](../technical/transaction-level-reconciliation.md#4-the-rewind-an-exact-state-at-s-with-no-checkpoint)).
 
 **Validated** against a checkpoint taken at the cut, with concurrent writers:
@@ -922,6 +937,7 @@ for the Ledger team to weigh against its own users:
 | 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, in id order (`reverse = true`), instead of the logs `(S, head]`. It is as exact (0 of 1M rows wrong against the oracle, with 914 reverts in the window) and 5 to 9 times faster, which matters for the backfill and for replays. Replays and forward stocks read the transactions too. The logs keep the metadata watch `(head_prev, head]` and the optional purge check (§5, §7). |
 | 23 | The PSP payment account | A booking convention (§8, rule 10): one payment account per payment kind, every credit a keyed payment final, and a declared key on every debit (`psp.movementKeys`, §6). It turns the book of `psp.paymentAccount` into a strict check, the only one that sees a final with no pending and no reference. **A residual is a P1 break**, `unkeyed_payment_movement`, on the leg `book`, one per account, direction and asset. It was preferred to an `incomplete` run, so that one keyless final cannot hide the rest of the day (results doc §5, §6). |
 | 24 | Bounded date filters in the cut | The cut resolves `S` and `T` with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it: an open filter costs the whole history after the cut-off on a replay (§5). |
+| 25 | How the metadata watch is read | Two options, both in the design: a **full read at run time** (`--lettering-watch-interval=0`: nothing stored, the run pays the watch in full) and an **incremental read, the default** (`--lettering-watch-interval=1h`: the watch reads each watched ledger's logs in slices during the day, one chain per ledger shared by its rules, stored next to the results with their SHA-256; the run reads only the last stretch and re-reads any missing or damaged slice) (§5). Measured end to end, the watch was about 95 % of a 2 min 20 – 2 min 43 run (design doc §7.15); read incrementally, the run's critical path falls to its other steps, about 15–25 s. Both give the same result. A Ledger filter on metadata changes stays the ask that would remove the read altogether (owner, 2026-09-28). |
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
