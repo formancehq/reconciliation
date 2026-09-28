@@ -111,7 +111,8 @@ This design is tuned for the read paths measured in §7:
   costs O(payments in the window).
 - `ListLogs` would cost O(every log in the window): it can only filter by ledger, log id and date
   (`misc/proto/common.proto`, `QueryFilter`: no metadata condition is allowed on
-  `QUERY_TARGET_LOGS`). It is kept for the short rewind window only.
+  `QUERY_TARGET_LOGS`). It is kept for the metadata watch only. The stock rewind reads the
+  unfiltered transactions of the short window since the cut-off (ADR-005 §5).
 - Listing by prefix costs O(open accounts).
 
 | | PSP ledger (Connectivity) | Product ledger |
@@ -134,9 +135,10 @@ apply it". This is the most useful single field in the design.
 
 **Unrelated traffic costs (almost) nothing.** The filtered transaction read returns only the
 payments. On 1M transactions of which 10 % were payments, it took 0.8 s against 15 s for the
-unfiltered log window (§7.2). The short rewind window is the only read that sees every log, so a
-dedicated receivables ledger is not needed for performance. Metadata-only writes on holds are still
-best avoided: each one is a log in the rewind window.
+unfiltered log window (§7.2). Only two reads see all the traffic: the rewind, which reads every
+transaction of the short window since the cut-off, and the metadata watch, which reads every log
+since the previous run. So a dedicated receivables ledger is not needed for performance.
+Metadata-only writes are still best avoided: each one is a log the watch reads.
 
 **Refunds and chargebacks** are their own pair: a refund hold, a refund reference, and a payment
 with its own `payment_ref` on the PSP side (ADR-005 decision 7).
@@ -215,7 +217,8 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
 | 8 | use **EPHEMERAL holds, one per payment, under one prefix per kind**, and note the sign each kind opens with | The open book is then a prefix listing, and lettered holds leave it. The rule declares each prefix with its sign (`holds[].openSign`) |
 | 9 | set `reference = {payment_ref}:{state}` | Re-delivery of an event is idempotent |
 | 10 | have the **`inserted_at` and log-date indexes** created on the ledger | Each resolves the cut-off in one read. The rule is rejected without them (EN-2316) |
-| 11 | credit the **payment amount of a final event to one account per payment kind**, which the rule names as `psp.paymentAccount` (an address pattern) | The PSP amount is read there; the hold alone misses a final event with no `pending` before it, or one whose amount differs |
+| 11 | credit the **payment amount of a final event to one account per payment kind**, which the rule names as `psp.paymentAccount` (an address pattern), and **credit nothing else to it** | The PSP amount is read there; the hold alone misses a final event with no `pending` before it, or one whose amount differs. The book of that account is then the only check that sees a final with no `pending` and no key (§7.9, ADR-005 §8 rule 10) |
+| 12 | carry a **declared key on every debit of that account**: `payment_ref` for a refund, the reference of its own object for a payout or a fee | The debit book of the payment account then closes at 0; otherwise the unkeyed debits are a residual to classify (§7.9) |
 
 **Where two existing mappings stand**, as a starting point:
 
@@ -233,7 +236,9 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
     (`PAYIN_REFUNDED` and five siblings, `:430-704`) but as deltas **on the original payment id**,
     not as their own payment reference; row 7, as a `fees` account is declared (`:82`) but no
     mapping posts to it; row 10, as the profile indexes `timestamp` but neither `inserted_at` nor
-    the log date.
+    the log date; row 12, as payouts and fees on `…:account:{acct}:main` would need a key of
+    their own. Whether the profile credits anything but payment finals to that account (row 11)
+    is still to check.
 - The Stripe plugin, in [`formancehq/connectivity`](https://github.com/formancehq/connectivity)
   (`plugins/stripe` @ `e7ca3e29`), does not model holds. It books balance transactions keyed by
   `stripe_txn_id`, so rows 1–3 and 8 need a lettering mapping first.
@@ -264,8 +269,11 @@ sequenceDiagram
         J->>P: ListTransactions(id ∈ (T_P_prev, T_P] ∧ payment_ref EXISTS)
         J->>Q: ListTransactions(id ∈ (T_Q_prev, T_Q] ∧ (payment_ref EXISTS ∨ business_ref EXISTS))
     and stock rewind
-        J->>P: ListAccounts(each hold prefix, live) then ListLogs((head_prev, head]) (rewind from S)
-        J->>Q: ListAccounts(each hold prefix, live) then ListLogs((head_prev, head]) (rewind from S)
+        J->>P: ListAccounts(each hold prefix, live) then ListTransactions((T_P, head_tx], unfiltered) (rewind to the cut)
+        J->>Q: ListAccounts(each hold prefix, live) then ListTransactions((T_Q, head_tx], unfiltered) (rewind to the cut)
+    and metadata watch
+        J->>P: ListLogs((head_prev, head])  (key_metadata_mutated)
+        J->>Q: ListLogs((head_prev, head])
     end
     J->>O: previous run's stock (open(S_prev), cleared), carried items (drift ≠ 0) and breaks
     J->>P: ListTransactions(key = ref, id ≤ T_P) · applied refs in neither window nor carried
@@ -319,15 +327,16 @@ cheap way to ask the ledger for "the balances at midnight" without a query check
 control takes none ([ADR-005
 §3](../prd/adr-005-transaction-level-reconciliation.md#3-why-not-query-checkpoints-measured)).
 
-**The correction reads the logs from midnight to now**, the *short log window since the cut-off*:
-`(S, head]`. It holds two hours of writes, not a day and not the history, which is why it is short.
+**The correction reads the transactions written from midnight to now**, the *short window since
+the cut-off*: `(T, head_tx]`. It holds two hours of writes, not a day and not the history, which is
+why it is short.
 For each hold touched in it, the rewind recovers the hold's balance just before that first touch,
 and that is its balance at midnight (§4). Holds nobody touched since midnight had the same balance
 at midnight as at 02:00, so the listing is already right for them.
 
 In short: the flow is the day's keyed transactions, read by id range, and settled once the day is
 over. The stock is the open holds listed at run time, set back to midnight with the few hours of
-logs written since.
+transactions written since.
 
 ### The cut: from a business time to id ranges
 
@@ -398,23 +407,25 @@ The same question asked of the three orderings the ledger offers:
 | `ListLogs` over the window | by log id, every log; no metadata filter allowed | O(all traffic in the window) | 15 s for the same 1M-transaction window |
 | Address prefix on the holds | by account, then transaction id | O(every hold ever created), on every page | 2k-tx window: 4.75 s at 100k, **47.8 s at 1M** (§7.6) |
 
-**`S` serves the stock.** Open holds are listed live, then rewound by replaying the logs
-`(S, head]` (§4). Logs are needed there, not transactions, because they carry every event,
-including the metadata changes recon monitors (`key_metadata_mutated`). For that check alone, the
-run also reads `(head_prev, S]`, the logs since the previous run's head, so no log goes unwatched:
-about a day of logs, ~25 s at 1M a day on 8 ranges.
+**`T` serves the stock too.** Open holds are listed live, then rewound by replaying the
+transactions `(T, head_tx]`, unfiltered (§4).
+
+**`S` serves the metadata watch.** Only the logs carry the metadata changes recon monitors
+(`key_metadata_mutated`). So the run reads every log in `(head_prev, head]`, the logs since the
+previous run's head, and no log goes unwatched. That is about a day of logs, ~14 s at 1M a day on
+8 ranges, and the largest step of the run (§7.5).
 
 **What the id ranges give for free.**
 
 - **Parallelism.** `(T_prev, T]` splits into K sub-ranges, read concurrently and merged in id order.
-  The rewind window `(S, head]` is split the same way. K is an **operator setting**, not a rule
+  The rewind window `(T, head_tx]` and the watch window `(head_prev, head]` are split the same way. K is an **operator setting**, not a rule
   parameter: `--lettering-read-ranges` (default 8), capped process-wide by
   `--lettering-max-concurrent-reads` (default 16), so that several rules running at once do not
   multiply the readers on one ledger. Eight readers read about 4× faster than one; up to 16 the
   read still gains about 20 % while the ledger's writes pay more, and beyond 16 it barely improves
   (§7.7).
-- **Completeness.** Ids are contiguous, so the unfiltered log window `(lo, hi]` of the rewind must
-  return exactly `hi − lo` logs. A short count makes the run `incomplete` instead of silently
+- **Completeness.** Ids are contiguous, so an unfiltered window `(lo, hi]` must return exactly
+  `hi − lo` rows: transactions for the rewind, logs for the watch. A short count makes the run `incomplete` instead of silently
   shrinking the window. The flow read is filtered, so its completeness comes from the continuity
   check instead.
 - **Replay.** `S`, `T` and the log hash at `S` are written in the signed capture, so a later
@@ -430,11 +441,12 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 
 | Read | RPC | Index needed |
 |---|---|---|
-| Head of a ledger's log | `GetLedgerStats` → `log_count` (per-ledger log ids are contiguous from 1) | none |
+| Heads of a ledger | `GetLedgerStats` → `log_count` and `transaction_count` (per-ledger log ids and transaction ids are each contiguous from 1, and are two different counters) | none |
 | Resolve `S` from the cut-off | `ListLogs`, filter `log_builtin_uint(DATE) > cut-off`, page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`): **mandatory**. Connectivity's `formancepayments` profile does not create it today, so the implementer adds it (checklist row 10) |
 | Resolve `T` (transaction-id cut) | `ListTransactions`, filter `builtin_uint(INSERTED_AT) > cut-off`, page 1 → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
 | **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], membership)`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
-| Rewind window `(S, head]`, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
+| Rewind window `(T, head_tx]`, replays and forward stocks | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **`reverse = true`** (the API lists newest first; `reverse` gives id order), page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
+| Metadata watch `(head_prev, head]`, purge check, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
 | Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch. Until EN-2036 merges, it is the only lookup left once a hold is purged, since address filters miss it (§2). After that, an exact address reaches it too |
 
@@ -447,14 +459,14 @@ Each `ListTransactions` call is a server stream of at most 1,000 `Transaction`, 
 its postings, its metadata and its `post_commit_volumes`.
 
 **Parallel reads.** A window `(lo, hi]` splits into K disjoint id ranges, of transaction ids for the
-flow and of log ids for the rewind. K concurrent streams each page their own range.
+flow and the rewind, and of log ids for the watch. K concurrent streams each page their own range.
 
 - This needs **no snapshot**. A log at or below the head is immutable. A transaction at or below the
   cut is immutable too, except for its metadata and revert flags, hence the write-once convention.
   Ranges read at different instants therefore return what one frozen read would have returned. An
   account listing does not have this property: its pages see moving balances.
 - **Merging the ranges.** For the flow, each range keeps its per-reference facts, and the facts are
-  combined in transaction-id order. For the rewind, each account keeps its *first* touch after `S`,
+  combined in transaction-id order. For the rewind, each account keeps its *first* touch after `T`,
   taken from the lowest range that touched it.
 - Measured on one node (§7.2):
   - logs: 7.3k/s to 13.8k/s on one stream, 41k/s to 66k/s over 8 streams;
@@ -472,22 +484,25 @@ flow and of log ids for the rewind. K concurrent streams each page their own ran
 
 ## 4. The rewind: an exact state at `S` with no checkpoint
 
-After a live, possibly torn, listing of the scope has finished, read the logs `(S, head]`. For each
-scope account touched there, **discard the listed value**. Replace it with the account's balance
-*just before its first touch after `S`*:
+After a live, possibly torn, listing of the scope has finished, read the transactions
+`(T, head_tx]`, unfiltered and in id order (`reverse = true`). For each scope account touched
+there, **discard the listed value**. Replace it with the account's balance *just before its first
+touch after the cut*:
 
 ```text
 pre = post_commit_volumes[account] − Σ(this transaction's postings on account)
 ```
 
 - Touched accounts that are missing from the listing are added back when `pre ≠ 0`.
-- Accounts created after `S` have `pre = 0` and drop out.
-- An account untouched in `(S, head]` held one value for the whole listing, so the listed value is
-  its value at `S`.
+- Accounts created after the cut have `pre = 0` and drop out.
+- An account untouched in the window held one value for the whole listing, so the listed value is
+  its value at the cut.
 
 The method needs no baseline and no stored state, and it applies to NORMAL accounts as well as to
 EPHEMERAL holds. Only created and reverted transactions move balances, and both carry
-`post_commit_volumes` (`misc/proto/common.proto:133-136`, `823-831`).
+`post_commit_volumes` (`misc/proto/common.proto:133-136`, `823-831`). A revert is its own
+transaction, with its own id (`internal/domain/processing/processor_revert_transaction.go:188-207`
+at `7dd615dba`), so the unfiltered transactions of the window hold every balance movement.
 
 **Worked example**, the day of [Flow and stock in plain terms](#flow-and-stock-in-plain-terms)
 (invoice holds open negative):
@@ -501,8 +516,8 @@ EPHEMERAL holds. Only created and reverted transactions move balances, and both 
 **Consistency check from `purged_accounts`** (optional; the rewind is exact without it). Since
 EN-2036 (ledger `38c6eef55`, protocol 13), each log carries `LedgerLog.purged_accounts`, the
 addresses whose `EPHEMERAL` current state it removed. `ListLogs` exposes it at
-`Log.payload.apply.log.purged_accounts`, so the rewind window already reads it. It explains the one
-legitimate way an account open at `S` can be missing from the live listing:
+`Log.payload.apply.log.purged_accounts`. The metadata watch reads the logs `(head_prev, head]`,
+which include `(S, head]`, so the run already has it. The field explains the one legitimate way an account open at `S` can be missing from the live listing:
 
 - a touched hold with `pre ≠ 0` that the listing does not contain must be named in the
   `purged_accounts` of some log in `(S, head]`. Otherwise the listing missed a live account, which
@@ -528,15 +543,24 @@ purge, so the rewind uses balances only, never cumulative input or output volume
 log itself still carries the purged hold in `post_commit_volumes` (`100-100`) and names it in
 `purged_accounts`.
 
-**Why the logs, and not a filtered `ListTransactions`**, for this window:
+**Why the unfiltered transactions**, and neither a filtered read nor the logs, for this window:
 
-- The window is short, so reading every log costs little: 8,208 logs in 267 ms in the proof run.
-- It is **complete**: log ids are contiguous, so the count `hi − lo` proves no log was missed.
+- It is **complete**: transaction ids are contiguous, so the count `hi − lo` proves no transaction
+  was missed.
 - It depends on **no metadata convention**: a transaction that touched a hold without carrying the
-  key is still corrected.
+  key is still corrected. A filtered read would miss it.
+- It holds **every balance movement**, and none of the metadata-only logs.
+- It is **5 to 9 times faster** than the logs: an id range reads the main store and never waits for
+  the index, while `ListLogs` always does (§7.8). The first design read the logs `(S, head]`, which
+  are just as exact.
 
-**Proof run** (§7.4): against a checkpoint taken at `S`, under concurrent writes, the rewound
-listing matched on every one of 1,002,408 rows. The raw live listing differed on 2,233.
+**Proof runs**, against a checkpoint taken at the cut, under concurrent writes:
+
+- From the logs (§7.4): the rewound listing matched on every one of 1,002,408 rows. The raw live
+  listing differed on 2,233.
+- From the transactions (§7.8): the writers also reverted transactions older and newer than the cut
+  and wrote metadata only. The rewound listing matched on all 1,000,000 rows, against 355 for the
+  raw listing.
 
 ### Replaying an old day
 
@@ -549,16 +573,19 @@ O(payments of that day), a day or a year later. It matches the original run as l
 state metadata stayed write-once. The exact variant reads that day's logs `(S_prev, S]`, which is
 slower but still one day's worth.
 
-**The rewind from head grows with the day's age.** It reads every log since `S`, and it keeps the
-first touch of every hold touched since. With 1M logs written a day, at the measured 41k logs/s
-with the fold of `post_commit_volumes` over 8 ranges (§7.2, 24.2 s per 1M logs):
+**The rewind from head grows with the day's age.** It reads every transaction since the day's cut,
+and it keeps the first touch of every hold touched since. With 1M transactions written a day, at the
+measured ~330k/s with the fold of `post_commit_volumes` over 8 ranges (§7.8, 3.0 s per 1M):
 
-| Replay | Logs in `(S, head]` | Read time |
-|---|---|---|
-| A replay the next day | ~1M | ~25 s |
-| A week later | ~7M | ~3 min |
-| A month later | ~30M | ~12 min |
-| A year later | ~365M | **~2 h 30**, with close to a year of holds to track |
+| Replay | Transactions in `(T, head_tx]` | Read time | From the logs, for comparison |
+|---|---|---|---|
+| A replay the next day | ~1M | ~3 s | ~16–25 s |
+| A week later | ~7M | ~20 s | ~2–3 min |
+| A month later | ~30M | ~1 min 30 | ~8–12 min |
+| A year later | ~365M | **~18 min**, with close to a year of holds to track | ~1 h 40 – 2 h 30 |
+
+The logs column spans the two measured rates: 61k/s at `7dd615dba` (§7.8) and 41k/s at `a08f99bc3`
+(§7.2).
 
 **So a replay starts from the nearest stored stock, not from head.** Each run stores its stock at
 its cut (`stock.ndjson.gz`), and the stock is additive over time:
@@ -567,19 +594,19 @@ its cut (`stock.ndjson.gz`), and the stock is additive over time:
 stock(S_D) = stock(S_A) + hold movements in (S_A, S_D]
 ```
 
-- **Forward** from an earlier stock `A`: read the logs `(S_A, S_D]`. Each touched hold takes its
-  balance after its last touch at or before `S_D` (`post_commit_volumes`), and a hold at zero drops
-  out. Untouched holds keep their stored balance.
+- **Forward** from an earlier stock `A`: read the transactions `(T_A, T_D]`, unfiltered. Each
+  touched hold takes its balance after its last touch at or before `T_D` (`post_commit_volumes`),
+  and a hold at zero drops out. Untouched holds keep their stored balance.
 - **Backward** from a later stock `A`: the rewind above, with that stored stock in place of the live
-  listing, over `(S_D, S_A]`.
+  listing, over `(T_D, T_A]`.
 - The stored stock and carried files are verified against the SHA-256 in their signed capture
   before they are used.
 
 | Age of the replayed day | Starting point | Cost |
 |---|---|---|
-| Within the 90-day retention | the previous day's stored stock | one day of logs, whatever the age |
-| Beyond it | the nearest monthly anchor (`anchorRetention`) | at most about half a month of logs |
-| No stored stock at all (anchors expired, rule created later) | the live listing, rewound from head | O(logs since the day), as in the table above |
+| Within the 90-day retention | the previous day's stored stock | one day of transactions, whatever the age |
+| Beyond it | the nearest monthly anchor (`anchorRetention`) | at most about half a month of transactions |
+| No stored stock at all (anchors expired, rule created later) | the live listing, rewound from head | O(transactions since the day), as in the table above |
 
 A monthly anchor holds only the open book and the carried items, which lettering keeps small, so
 keeping one per month for a year costs a few files per rule. The flow and break files can still
@@ -851,6 +878,9 @@ appears as a new `SavedMetadata` log at the head. This is why the flow filters o
 
 ### 7.4 Rewind proof
 
+This proof read the window from the logs, the source of the first design. The rewind now reads the
+unfiltered transactions, proven the same way in §7.8.
+
 The bench command `rewind` ([tools/bench-txlevel](../../tools/bench-txlevel/README.md)):
 
 1. Record `S` (the `psp` log head) and create an **oracle checkpoint** with no write in between.
@@ -884,7 +914,7 @@ The projection assumes 1M lettering events per day per side, with an open book o
 |---|---|
 | Resolve `S` and `T` (one date-filtered page per ledger and per read path) | ms |
 | Flow: 1M payments per side, filtered `ListTransactions` over 8 ranges, both sides in parallel | ~8 s (125k payments/s measured with `payment_ref EXISTS`; the unadopted `kind =` filter read 177k/s), **whatever the ledger's other traffic** |
-| Stock rewind: live listing of `N_open` + logs `(S, head]` | `N_open / 47k` s + (logs written since the cut-off) / 41k s. Read from the unfiltered transactions instead, the window costs about 1/330k s per transaction (§7.8) |
+| Stock rewind: live listing of `N_open` + unfiltered transactions `(T, head_tx]` | `N_open / 47k` s + (transactions written since the cut-off) / 330k s (§7.8). From the logs, as first designed: / 41k s |
 | Metadata watch: logs `(head_prev, S]` (ADR-005 §5, caveat 1) | about a day of logs, read without the fold: (logs since the previous run's head) / 66k s, **~14 s at 1M logs a day**, the largest step of the run |
 | Joins + artifacts | < 1 s |
 | **Total** | **≈ 25–45 s, with no checkpoint** |
@@ -1005,8 +1035,8 @@ while K readers loop over the unfiltered window, two series:
 
 ### 7.8 Window source for balances: logs or unfiltered transactions
 
-**Question.** The rewind reads the logs `(S, head]` (§4). Could it read the transactions `(T, head_tx]`,
-unfiltered, instead? The three reasons for the logs hold for them too:
+**Question.** The first design rewound with the logs `(S, head]`. Could the rewind read the
+transactions `(T, head_tx]`, unfiltered, instead? The three reasons for the logs hold for them too:
 
 - **Complete.** Transaction ids are contiguous, so the count check `hi − lo` still holds.
 - **Immutable.** Postings and `post_commit_volumes` never change.
@@ -1122,7 +1152,7 @@ In every variant, the rewound stock and `psp:main` at `S` matched a checkpoint t
 | F-c | One INFO log line per listed account | `store.go:189-195` | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)) |
 | F-d | A purged EPHEMERAL account's transactions are no longer returned by an address filter. That includes the **opening** transaction, which was returned before the purge. Unchanged on EN-2036's head `92b378e4b`: the mappings are kept, but the query checks that the account currently exists before reading them (`internal/query/compile.go:1069-1110`). **Fixed at `20a5595d6`, merged as `38c6eef55`** (2026-09-25, EN-2331 closed): addresses are read from the mappings. The prefix path then costs O(every hold ever created) per page: 50.7 s for a 2k window at 1M purged holds, [reported on the PR](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700) | §2 probe, re-run on both PR heads; §7.6 bench with EPHEMERAL holds | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331), closed): a tested contract for the metadata and `reference` paths, which is all this design needs. The ledger fixed the exact address, extended the prefix to purged accounts against the ask (§7.6), and added no test for those paths. They behave correctly on `7dd615dba`, so recon pins them: EN-2318 (window filter, key lookup, business id, `reference`) and EN-2319 (`post_commit_volumes` and `purged_accounts` in the logs) |
 | F-e | `ListLogs` runs at 7.3k–13.8k logs/s on one stream, 5–7× slower than `ListTransactions` over the same data | §7.2 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) |
-| F-e2 | Transaction metadata is mutable (`SavedMetadata` on a transaction id), so a filtered `ListTransactions` re-read of a past window can change; logs do not. Ledger v3 has no immutable alternative today: no label concept in the protos at `a08f99bc3`, and `reference` is exact-match only | §7.2 `retag` | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): immutable transaction labels, add-only indexed, filterable on `ListTransactions` and `ListLogs`. Until then: write-once convention, monitored through the rewind window (`key_metadata_mutated`) |
+| F-e2 | Transaction metadata is mutable (`SavedMetadata` on a transaction id), so a filtered `ListTransactions` re-read of a past window can change; logs do not. Ledger v3 has no immutable alternative today: no label concept in the protos at `a08f99bc3`, and `reference` is exact-match only | §7.2 `retag` | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): immutable transaction labels, add-only indexed, filterable on `ListTransactions` and `ListLogs`. Until then: write-once convention, monitored by the metadata watch over the logs `(head_prev, head]` (`key_metadata_mutated`) |
 | F-f | Reads do not say which log id their snapshot saw | `AggregateVolumes` / `ListAccounts` responses | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the horizon (in EN-1480's scope) |
 | F-g | No point-in-time read, and no single-snapshot multi-page listing | `common.proto:1844-1849`; `controller_default.go:436-438` | For information only (consistent export): not needed here |
 | F-h | Checkpoints carry no owner and no TTL | `bucket.proto:326` | For information only: not needed here |
