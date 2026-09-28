@@ -46,6 +46,8 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 | `rewind-sources [-ledger psp] [-prefix psp:tx:] [-writers 8] [-ranges 8]` | The rewind proof with two window sources side by side: the logs `(S, head]` and the unfiltered transactions `(T, head_tx]`, each read on 1 and on `-ranges` streams. The writers also revert transactions older and newer than the cut and write metadata only. Every rewound row is compared with a checkpoint taken at the cut |
 | `fold [-ledger psp] [-prefix psp:tx:] [-source txs\|logs] [-from X] [-to Y] [-ranges 8] [-compare]` | Folds the balance-moving transactions of `(X, Y]` (default: the whole history), from the logs or from the unfiltered transactions. `-compare` checks the forward fold against the live listing (run it with no writes) |
 | `crossover [-ledger psp] [-prefix psp:tx:] [-ranges 8] [-sizes …] [-days 100000,1000000] [-since 0.083] [-reps 2]` | Times the two ways to get a day's stock: live listings of growing hex sub-prefixes (the open book), folds of the last `X` transactions, and the decode and merge of a stored stock of `N` rows (gzipped NDJSON, in memory). Prints where forward from the stored stock overtakes list and rewind. Run it with no writes; `-reps 1` right after starting the server gives the cold-cache first pass |
+| `load-product [-ledger product] [-n 50000] [-noise 1]` | Books a product ledger as the design doc §2 recommends: invoices opened on `EPHEMERAL` holds with `invoice_no`, 9 in 10 applied with `payment_ref` and `invoice_no` (plus an unkeyed revenue recognition), 1 in 25 refunded with `refund_no`, and `-noise` unkeyed transactions per invoice. Declares and indexes the three keys |
+| `product-or [-ledger product] [-from X] [-ranges 8] [-reps 3]` | Reads the window `(X, head]` with each key alone, with the product `Or` of the three written id range first, membership first and as an `Or` of `And`s, and with the three reads merged client-side. Checks that every `Or` returns exactly the union of its terms |
 | `silent [-n 100000] [-silent 100] [-keyless-drain 10] [-keyed-other] …` | Books two days of PSP activity on a fresh ledger, including finals with no pending and no payment reference. Prints what the hold continuity and the payment-account book (`psp:main`) each see at the cut, checked against a checkpoint. `-keyed-other` gives payouts and fees a declared `movement_ref` and reads the flow with `Or(payment_ref, movement_ref)` |
 
 ## 3. Reproduce the ADR-005 figures
@@ -138,6 +140,13 @@ starting the server, then a warm pass:
 
 ```bash
 B=/tmp/bench-ledger/bench; $B crossover -ledger psp -prefix psp:tx: -reps 1 && $B crossover -ledger psp -prefix psp:tx:
+```
+
+**The product-side Or, and the order of an And's terms** (§7.11). Each load creates its own
+ledger:
+
+```bash
+B=/tmp/bench-ledger/bench; $B load-product -ledger product-n1 -noise 1 && $B load-product -ledger product-n9 -noise 9 && $B product-or -ledger product-n1 && $B product-or -ledger product-n9 && $B product-or -ledger product-n9 -from 534600
 ```
 
 Stop the server and delete `/tmp/bench-ledger` when you are done. At 1M accounts per scope the

@@ -52,7 +52,7 @@ func main() {
 	svc = servicepb.NewBucketServiceClient(conn)
 
 	if len(os.Args) < 2 {
-		log.Fatal("usage: bench-txlevel load|load-mixed|load-lettering|retag|cp-create|cp-delete|agg|scan|diff|logs|txs|probe|cutprobe|lastlog|rewind|rewind-sources|fold|silent|crossover ...")
+		log.Fatal("usage: bench-txlevel load|load-mixed|load-lettering|retag|cp-create|cp-delete|agg|scan|diff|logs|txs|probe|cutprobe|lastlog|rewind|rewind-sources|fold|silent|crossover|load-product|product-or ...")
 	}
 	cmd, args := os.Args[1], os.Args[2:]
 	ctx := context.Background()
@@ -101,6 +101,10 @@ func main() {
 		silentHole(ctx, args)
 	case "crossover":
 		crossover(ctx, args)
+	case "load-product":
+		loadProduct(ctx, args)
+	case "product-or":
+		productOr(ctx, args)
 	default:
 		log.Fatalf("unknown %s", cmd)
 	}

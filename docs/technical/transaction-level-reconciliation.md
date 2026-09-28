@@ -394,7 +394,7 @@ yesterday's capture.
 **Why this makes the metadata-filtered read cheap.** The flow read is one query per range:
 
 ```text
-ListTransactions  And( id ∈ (1 204 000, 1 318 500] ,  metadata[payment_ref] EXISTS )
+ListTransactions  And( metadata[payment_ref] EXISTS ,  id ∈ (1 204 000, 1 318 500] )
 ```
 
 The metadata existence index (`eidx`) holds **only** the transactions that carry the key, **ordered
@@ -403,6 +403,11 @@ at ledger `f390ea683`). The ledger's `AndIterator` intersects its sorted inputs 
 (`internal/storage/readstore/combinator_and.go:86-153`). So the engine jumps straight to the first
 key-bearing transaction above `T_prev`, reads in order, and stops after `T`. It never touches the
 history before the day, nor the day's transactions that carry no payment.
+
+**The membership comes first.** The ledger drives an `And` from its first term, in the order given
+(`internal/query/compile.go:299-346` at ledger `7dd615dba`). With the dense id range first, every row
+costs a seek of the membership, and seeking an `Or` seeks each of its terms. Membership first, the
+product `Or` read measured 2 to 3.4 times faster, with the same rows (§7.11).
 
 The same question asked of the three orderings the ledger offers:
 
@@ -449,7 +454,7 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Heads of a ledger | `GetLedgerStats` → `log_count` and `transaction_count` (per-ledger log ids and transaction ids are each contiguous from 1, and are two different counters) | none |
 | Resolve `S` from the cut-off | `ListLogs`, filter `cut-off < log_builtin_uint(DATE) ≤ cut-off + δ` (bounded, widened while empty: the range is materialized before paging), page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`): **mandatory**. Connectivity's `formancepayments` profile does not create it today, so the implementer adds it (checklist row 10) |
 | Resolve `T` (transaction-id cut) | `ListTransactions`, filter `cut-off < builtin_uint(INSERTED_AT) ≤ cut-off + δ`, page 1, `reverse = true` → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
-| **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], membership)`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
+| **Flow window** | `ListTransactions`, filter `And(membership, builtin_uint(ID) ∈ (lo, hi])`, **membership first** (the ledger drives an `And` from its first term; id range first, the product `Or` reads 2 to 3.4 times slower, §7.11), `reverse = true`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
 | Rewind window `(T, head_tx]`, replays and forward stocks | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **`reverse = true`** (the API lists newest first; `reverse` gives id order), page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
 | Metadata watch `(head_prev, head]`, purge check, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
@@ -918,7 +923,7 @@ The projection assumes 1M lettering events per day per side, with an open book o
 | Step | Cost |
 |---|---|
 | Resolve `S` and `T` (one date-filtered page per ledger and per read path) | ms |
-| Flow: 1M payments per side, filtered `ListTransactions` over 8 ranges, both sides in parallel | ~8 s (125k payments/s measured with `payment_ref EXISTS`; the unadopted `kind =` filter read 177k/s), **whatever the ledger's other traffic** |
+| Flow: 1M payments per side, filtered `ListTransactions` over 8 ranges, both sides in parallel | ~8 s (125k payments/s measured with `payment_ref EXISTS`, id range first; the unadopted `kind =` filter read 177k/s), **whatever the ledger's other traffic**. Membership first, the same read ran about twice as fast on 47k payments (§7.11): not re-measured at 1M |
 | Stock rewind: live listing of `N_open` + unfiltered transactions `(T, head_tx]` | `N_open / 47k` s + (transactions written since the cut-off) / 330k s (§7.8). From the logs, as first designed: / 41k s |
 | Metadata watch: logs `(head_prev, S]` (ADR-005 §5, caveat 1) | about a day of logs, read without the fold: (logs since the previous run's head) / 66k s, **~14 s at 1M logs a day**, the largest step of the run |
 | Joins + artifacts | < 1 s |
@@ -1201,6 +1206,66 @@ On the second pass, the crossover moves to 23–26 %.
 - These figures come from one node on a laptop, with no concurrent writes, which would slow both
   modes. Each account has one transaction.
 
+### 7.11 The product-side Or, and the order of an And's terms
+
+**Question.** On the product ledger the flow's membership is an `Or` of one `EXISTS` per key: the
+payment reference, and the business id of each hold kind, so that hold openings are returned for
+continuity (§3). `Or(payment_ref, movement_ref)` cost +31 % on the PSP side (§7.9). What does the
+product `Or` cost?
+
+**Setup** (`load-product`, `product-or`). The ledger of §7.8. Two product ledgers of 50,000 invoices,
+booked as §2 recommends:
+
+- each invoice opened on an `EPHEMERAL` hold with `invoice_no`;
+- 9 in 10 applied, as one batch: the application with `payment_ref` and `invoice_no`, then the
+  revenue recognition with no key;
+- 1 in 25 with a refund, its hold opened with `refund_no`, then applied with `payment_ref` and
+  `refund_no`;
+- unkeyed transactions besides: 1 per invoice on `product-n1` (194,000 transactions, 51 % of them in
+  the flow), 9 on `product-n9` (594,000, 17 %).
+
+The flow is 99,000 transactions on both. The reads cover the whole history, on 8 ranges, with
+`reverse = true`; best of three runs.
+
+| Read | `product-n1` | `product-n9` |
+|---|---|---|
+| `payment_ref EXISTS` alone, id range first (47,000 rows: no hold opening) | 0.34 s | 0.24 s |
+| `Or(payment_ref, invoice_no, refund_no)`, **id range first**: `And(id, Or(…))` | 1.35 s | 0.81 s |
+| The three `EXISTS` read one by one and merged client-side | 1.02 s | 0.66 s |
+| The same `Or`, **membership first**: `And(Or(…), id)` | **0.40 s** | **0.29 s** |
+| `Or(And(payment_ref, id), And(invoice_no, id), And(refund_no, id))` | 0.41 s | 0.29 s |
+| `payment_ref EXISTS` alone, membership first | 0.18 s | 0.12 s |
+
+Every form of the `Or` returned exactly the union of its terms, with no duplicate. On the last tenth
+of `product-n9`'s history, a day at the end of a longer one, the `Or` of three read in 87 ms id
+range first and in 32 ms membership first.
+
+**Why the order matters** (ledger `7dd615dba`):
+
+- The ledger keeps an `And`'s terms in the order the query gives them and drives the intersection
+  from the first (`internal/query/compile.go:299-346`).
+- With the id range first, the driving term is dense: every id of the window. For each row, the
+  `And` finds the membership term behind and seeks it (`internal/storage/readstore/combinator_and.go:128-146`).
+- Seeking an `Or` seeks every one of its terms (`internal/storage/readstore/combinator_or.go:69-85`).
+  The read therefore pays one index seek per row and per term: the 4,000-row `refund_no` term alone
+  added 0.3 s.
+- With the membership first, the `Or` advances by merging its terms, and the id range is sought only
+  to confirm each row.
+
+**Reading.**
+
+- **The flow reads its membership first, on both ledgers:** `And(membership, id ∈ (lo, hi])` (§3).
+  The product `Or` then costs +17 to 21 % over `payment_ref` alone, for twice the rows (1.47 index
+  entries per row), and the PSP read, a single `EXISTS`, gets about twice as fast.
+- The unkeyed traffic does not slow the read: `product-n9` read no slower than `product-n1`.
+- A client that writes the id range first pays the difference without knowing it. A ledger that
+  ordered an `And`'s terms itself, or whose `Or` skipped re-seeking a term already past the target,
+  would remove the trap (§8, finding F-i, ask L9: [EN-2356](https://formance-team.atlassian.net/browse/EN-2356)).
+- The flow step of §7.5 was measured id range first. It has not been re-measured at 1M payments
+  since.
+- These figures come from one node on a laptop, with no concurrent writes, and a flow of 99,000
+  transactions.
+
 ## 8. Ledger findings and asks
 
 | # | Finding | Evidence | Ask |
@@ -1214,6 +1279,7 @@ On the second pass, the crossover moves to 23–26 %.
 | F-f | Reads do not say which log id their snapshot saw | `AggregateVolumes` / `ListAccounts` responses | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the horizon (in EN-1480's scope) |
 | F-g | No point-in-time read, and no single-snapshot multi-page listing | `common.proto:1844-1849`; `controller_default.go:436-438` | For information only (consistent export): not needed here |
 | F-h | Checkpoints carry no owner and no TTL | `bucket.proto:326` | For information only: not needed here |
+| F-i | An `And` is driven by its first term, in the order given. Led by a dense id range, it seeks its membership once per row, and seeking an `Or` seeks every one of its terms: the product `Or` of three keys read 2 to 3.4 times slower than membership first, for the same rows | §7.11; `internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_and.go:128-146`, `combinator_or.go:69-85` at `7dd615dba` | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), Ledger v3.1): order an `And`'s terms at compile time, or leave an `Or` child alone when it is already past the target. Until then recon writes the membership first (EN-2318) |
 
 ## Cross-links
 
