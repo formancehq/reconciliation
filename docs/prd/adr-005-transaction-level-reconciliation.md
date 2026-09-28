@@ -9,7 +9,7 @@ watch, in full at run time or incrementally (§10).
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
 to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9 period summary), EN-2334 (R10 rewind oracle test) and
 EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
-L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L10 EN-2369, L5 EN-2331; EN-2336 tracks the checkpoint read
+L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L10 EN-2369, L5 EN-2331 (closed); EN-2336 tracks the checkpoint read
 penalty, which this design does not depend on.
 **Date:** 2026-09-24, updated 2026-09-25 and 2026-09-28
 **Decision owners:** Reconciliation maintainers
@@ -255,7 +255,7 @@ provide point-in-time queries" (ledger backup README).
 |---|---|---|
 | **C** | **A cut at the business cut-off, plus a rewind.** The cut is `S` (the last log id with `date ≤ cut-off`) and `T` (the last transaction id with `inserted_at ≤ cut-off`), on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the unfiltered transactions `(T, head_tx]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible, because logs are permanent. Cost ∝ the day's payments plus the open items, plus the metadata watch, which reads every log of the ledger since the previous run (in slices during the day by default, decision 25). |
 | A | Shared, short-lived query checkpoint per (cluster, run): extract, then delete | **Fallback and oracle only.** Used to validate the rewind (§5) and possibly for a periodic or on-demand full proof. Too slow and too scarce as the steady-state path (§3). |
-| B | Ledger-side consistent export (Pebble `NewSnapshot()` at a Raft-ordered trigger, streamed or written through `backup.Storage`) | **Not needed for this use case.** Still the right primitive for a frozen listing of a large *non-lettered* universe (EN-1480 generalised). Filed as an ask, not a dependency (§9). |
+| B | Ledger-side consistent export (Pebble `NewSnapshot()` at a Raft-ordered trigger, streamed or written through `backup.Storage`) | **Not needed for this use case.** Still the right primitive for a frozen listing of a large *non-lettered* universe (EN-1480 generalised). Passed on to the Ledger team for information, not asked (§9). |
 | D | Store the checkpoint in S3/Azure through backup | **Rejected** (§3). |
 | E | Pebble primitives: EFOS, `Checkpoint(WithRestrictToSpans)`, `RemoteStorage` | **Rejected**, evidence in the [design doc §6](../technical/transaction-level-reconciliation.md#6-could-pebble-do-better). Pebble is not the bottleneck; the ledger read API is. |
 | F | Paginate live without correction | **Rejected.** A 1M listing spans about 1,000 snapshots and tears under writes (measured, §5). |
@@ -295,8 +295,8 @@ is at or before the cut-off.
 
 - Both ledgers are cut at the **same business time**, whatever their cluster and whenever the run
   starts. This is better than a checkpoint's cross-cluster semantics.
-- `S` and its log hash go into the capture, so the cut is identified exactly and can be re-derived
-  later.
+- `S` and `logSha256`, the SHA-256 of the log at `S` (results doc §6), go into the capture, so the
+  cut is identified exactly and can be re-derived later.
 - **Resolving `S`.** Per-ledger log ids are contiguous from 1, so the head is
   `GetLedgerStats.log_count` (checked on the bench). `ListLogs` rejects `reverse`
   ("options.reverse is not supported on this endpoint"), so `S` is **(the first log with
@@ -350,10 +350,12 @@ node, over **1M transactions of which 10 % are payments** ([design doc
 
 So the flow is read with `ListTransactions`, filtered on `And(<membership>, id ∈ (T_prev, T])` and
 split into parallel id ranges. The membership comes first: the ledger drives an `And` from its first
-term, and with the dense id range first the product `Or` read measured 2 to 3.4 times slower
+term, and with the dense id range first the product `Or` read measured 2.7 to 3.4 times slower
 (design doc §7.11).
 
-- On the PSP ledger, membership is `payment_ref EXISTS`.
+- On the PSP ledger, membership is `payment_ref EXISTS`, plus one `EXISTS` term per
+  `psp.movementKeys` field when the rule declares them (decision 23): those transactions feed the
+  payment-account book only.
 - On the product ledger it is **`Or(payment_ref EXISTS, business_ref EXISTS)`**, with one
   `business_ref` term per hold kind (each `holds` entry names its business-id field). A business
   hold's opening (an invoice issued) carries no payment reference yet, but continuity needs
@@ -656,9 +658,13 @@ checkpoint's listing.
       from the flow rows, so the residual ties the join to the books.
     - The **open items**: the sum of the carried drifts at the previous cut, plus the window's
       net, gives the sum at this cut. This is the running balance of what is still unmatched.
-    - The verdict is `incomplete` when the residual is not 0, when a required index is missing,
-      when a log range comes back short, or when a continuity identity fails (books or open
-      items). No conclusion can be drawn, and the run is never green.
+    - The verdict is `incomplete` when a required index is missing, when a transaction or log range
+      comes back short, when a continuity identity fails (books or open items), when the residual
+      is not 0, when a hold open at the cut is missing without having been purged, or when a stored
+      file differs from its signed capture: `incomplete.reason` is `missing_index`, `short_range`,
+      `continuity`, `residual`, `purge_check` or `stored_file_mismatch` (results doc §4). No
+      conclusion can be drawn, and the run is never green. The payment-account book is the
+      exception: its residual is a P1 break, not an `incomplete` run (decision 23).
     - The **gross** Σ|drift| of the open flow breaks next to the net, with an explicit
       *offsetting* flag: open flow breaks of both signs exist.
     - The breaks in **priority order**, each with new versus persisting.
@@ -775,7 +781,7 @@ checkpoint's listing.
    - Re-running with an earlier `backfillFrom` is idempotent per (rule, period, cut). It only costs
      a longer window read.
 7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
-   (`S`, `T`, log hash) is in the signed capture.
+   (`S`, `T`, `logSha256`) is in the signed capture.
    - **The flow costs the same at any age.** Resolving the cut takes one index page per ledger, and
      the day is the id range `(T_prev, T]`, so the read stays O(payments of that day). It matches
      the original run as long as the write-once convention held. The exact variant reads that day's
@@ -898,11 +904,11 @@ connector change is required.
 | Ask | Why | Size |
 |---|---|---|
 | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths (`internal/application/ctrl/store.go:189-195`). **Done 2026-09-28** with formancehq/ledger#2128 (`199bee364`): the line is logged at TRACE | A listing of 1M accounts writes 1M log lines (this bench: 3.86M lines, 970 MB) | XS |
-| **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. EN-2331 also covers the Ledger-side part, which this design does not need: resolve an exact address from the account→tx mappings (the query currently checks that the account exists, `internal/query/compile.go:1069-1110`), keep the address prefix limited to current accounts, and fix EN-2036's READMEs. **Closed 2026-09-26** with formancehq/ledger#2058 (`38c6eef55`): the exact address was fixed, but the prefix was extended to purged accounts, the indexer README contradicts the code, and no ledger test pins the metadata and `reference` paths. Those paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the logs | The flow leg finds lettered items through indexed transaction metadata (`payment_ref EXISTS`, then a join on its value), and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
+| **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. EN-2331 also covers the Ledger-side part, which this design does not need: resolve an exact address from the account→tx mappings (the query then checked that the account exists, `internal/query/compile.go:1069-1110` at `92b378e4b`; at `03d8792b5` that check applies to the ACCOUNTS target only, `compile.go:1104-1113`), keep the address prefix limited to current accounts, and fix EN-2036's READMEs. **Closed 2026-09-26** with formancehq/ledger#2058 (`38c6eef55`): the exact address was fixed, but the prefix was extended to purged accounts, the indexer README contradicts the code, and no ledger test pins the metadata and `reference` paths. Those paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the logs | The flow leg finds lettered items through indexed transaction metadata (`payment_ref EXISTS`, then a join on its value), and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–7× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream). At `7dd615dba` the gap holds (×5.4 on 8 ranges, ×9 on one stream), except in one session of the node where the same reads ran 4 to 9 times faster; that variance is part of the ask (design doc §7.13) | Only the metadata watch and exact re-derivations still read logs, the rewind having moved to the transactions (§5); the watch is the largest step of a daily run, so the gap deserves an explanation | S–M |
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
-| **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
-| **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), Ledger v3.1): a `ListLogs` filter on the logs the metadata watch needs, the `SavedMetadata` and `DeletedMetadata` that target a transaction and the logs with a non-empty `purged_accounts`. Today `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS` (`misc/proto/common.proto` at `7dd615dba`) | The watch reads every log of the ledger to find a few: 4.1M logs in 134–158 s for a 1M-payment product ledger, about 95 % of the run (design doc §7.15). Filtered, it would read only the rare logs it keeps, under either option of decision 25. Not blocking: the incremental watch spreads the cost over the day | M |
+| **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), epic EN-1336, Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
+| **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), epic EN-1336, Ledger v3.1): a `ListLogs` filter on the logs the metadata watch needs, the `SavedMetadata` and `DeletedMetadata` that target a transaction and the logs with a non-empty `purged_accounts`. Today `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS` (`misc/proto/common.proto` at `7dd615dba`) | The watch reads every log of the ledger to find a few: 4.1M logs in 134–158 s for a 1M-payment product ledger, about 95 % of the run (design doc §7.15). Filtered, it would read only the rare logs it keeps, under either option of decision 25. Not blocking: the incremental watch spreads the cost over the day | M |
 | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the snapshot horizon (the per-ledger log id the read saw) on `AggregateVolumes` and `ListAccounts` | Makes the phase-1 aggregate exact at `S` (`agg(S) = agg − Σ net(S, horizon]`) and lets the rewind skip the untouched part of the window; it is already part of EN-1480's scope (`log_sequence`) | S |
 
 Only these are asked, because only these serve this design. L2 is done and L5 is closed.

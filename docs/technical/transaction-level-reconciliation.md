@@ -120,11 +120,11 @@ This design is tuned for the read paths measured in §7:
 | **In-flight hold** (EPHEMERAL) | `psp:{conn}:payment:pending:{payment_ref}` (and `psp:{conn}:refund:pending:{refund_ref}`), a single prefix per kind | `main:hold:invoice:{business_ref}` (and `main:hold:refund:{refund_no}`): **one hold per business object**, not one per state. Here the invoice hold opens negative, against pending revenue. Each prefix is one entry of the rule's `holds`, with its own sign |
 | **Final accounts** (NORMAL) | `psp:{conn}:account:{acct}:main`, and **`psp:{conn}:fees`**: with no tolerance, every fee is an explicit posting | **`main:clearing:{conn}`**: the application transaction credits the invoice hold from the clearing account, so the clearing balance is the product's view of cash at the PSP (an aggregate control total). Revenue recognition, if any, is a separate transaction in the same atomic batch that does not touch the hold |
 | **One transaction =** | one event of one payment: pending, succeeded, failed… A refund or a chargeback is **its own payment reference**, not an event of the original payment (decision 7) | one application of one payment to one business object. A payment split across two invoices is two transactions with the same `payment_ref` |
-| **Transaction metadata** (declared, typed) | `payment_ref`, **`merchant_ref`** (the business id the merchant passed when it created the payment: Stripe `metadata`, Adyen `merchantReference`…), `state` (the rule maps its values to pending, final and failed), `kind` (payment, refund, chargeback) | `payment_ref` on applications only, not on the revenue recognition; `business_ref` on **every** transaction touching a business hold, including its opening; `kind` |
+| **Transaction metadata** (declared, typed) | `payment_ref`; a **movement key** on every other movement of the payment account, payouts and fees (the rule's `psp.movementKeys`, decision 23); **`merchant_ref`** (the business id the merchant passed when it created the payment: Stripe `metadata`, Adyen `merchantReference`…), `state` (the rule maps its values to pending, final and failed), `kind` (payment, refund, chargeback) | `payment_ref` on applications only, not on the revenue recognition; `business_ref` on **every** transaction touching a business hold, including its opening; `kind` |
 | **`reference`** | `{payment_ref}:{state}`: idempotent on re-delivery | `{payment_ref}:{business_ref}` |
 | **`timestamp`** | the PSP event time | the business event time |
 | **Postings** | exact amounts, with fees split out | application **strict on the amount** (`send [$asset $amount]`, never `*`): an over-application takes the hold past zero, to the sign opposite its opening (`wrong_sign`), and a partial payment leaves an honest residual |
-| **Indexes** | **`payment_ref` (mandatory: it drives the flow read)**; **`inserted_at` and log date (mandatory: they resolve the cut)**; `merchant_ref` (investigation) | **`payment_ref` and `business_ref` (mandatory: together they drive the flow read)**; **`inserted_at` and log date (mandatory)** |
+| **Indexes** | **`payment_ref` and the `psp.movementKeys` fields (mandatory: they drive the flow read)**; **`inserted_at` and log date (mandatory: they resolve the cut)**; `merchant_ref` (investigation) | **`payment_ref` and `business_ref` (mandatory: together they drive the flow read)**; **`inserted_at` and log date (mandatory)** |
 | **Mutability** | key and state metadata are **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one. Recon reads every log since its previous run and flags any violation (`key_metadata_mutated`). **Labels** (ask L8) would make this structural | same |
 
 **Why `merchant_ref` matters.** Without it, a payment the PSP finalised that the product never
@@ -269,7 +269,7 @@ sequenceDiagram
     J->>C: capture(phase=aggregate, S_P, S_Q, T_P, T_Q, live exposure)
     Note over J,O: Phase 2 — async, resumable
     par flow window, K transaction-id ranges each (default 8)
-        J->>P: ListTransactions(payment_ref EXISTS ∧ id ∈ (T_P_prev, T_P])  (membership first)
+        J->>P: ListTransactions((payment_ref EXISTS ∨ movementKeys EXISTS…) ∧ id ∈ (T_P_prev, T_P])  (membership first)
         J->>Q: ListTransactions((payment_ref EXISTS ∨ business_ref EXISTS) ∧ id ∈ (T_Q_prev, T_Q])
     and stock rewind
         J->>P: ListAccounts(each hold prefix, live) then ListTransactions((T_P, head_tx], unfiltered) (rewind to the cut)
@@ -411,7 +411,7 @@ history before the day, nor the day's transactions that carry no payment.
 **The membership comes first.** The ledger drives an `And` from its first term, in the order given
 (`internal/query/compile.go:299-346` at ledger `7dd615dba`). With the dense id range first, every row
 costs a seek of the membership, and seeking an `Or` seeks each of its terms. Membership first, the
-product `Or` read measured 2 to 3.4 times faster, with the same rows (§7.11).
+product `Or` read measured 2.7 to 3.4 times faster, with the same rows (§7.11).
 
 The same question asked of the three orderings the ledger offers:
 
@@ -456,7 +456,7 @@ moves the reading out of the run.
   `hi − lo` rows: transactions for the rewind, logs for the watch. A short count makes the run `incomplete` instead of silently
   shrinking the window. The flow read is filtered, so its completeness comes from the continuity
   check instead.
-- **Replay.** `S`, `T` and the log hash at `S` are written in the signed capture, so a later
+- **Replay.** `S`, `T` and `logSha256`, the SHA-256 of the log at `S`, are written in the signed capture, so a later
   re-read covers the same window. Both ledgers are cut at the same business time, whenever the job
   runs.
 - **No checkpoint.** Everything at or below `T` is immutable, except transaction metadata. Hence the
@@ -472,7 +472,7 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Heads of a ledger | `GetLedgerStats` → `log_count` and `transaction_count` (per-ledger log ids and transaction ids are each contiguous from 1, and are two different counters) | none |
 | Resolve `S` from the cut-off | `ListLogs`, filter `cut-off < log_builtin_uint(DATE) ≤ cut-off + δ` (bounded, widened while empty: the range is materialized before paging), page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`): **mandatory**. Connectivity's `formancepayments` profile does not create it today, so the implementer adds it (checklist row 10) |
 | Resolve `T` (transaction-id cut) | `ListTransactions`, filter `cut-off < builtin_uint(INSERTED_AT) ≤ cut-off + δ`, page 1, `reverse = true` → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
-| **Flow window** | `ListTransactions`, filter `And(membership, builtin_uint(ID) ∈ (lo, hi])`, **membership first** (the ledger drives an `And` from its first term; id range first, the product `Or` reads 2 to 3.4 times slower, §7.11), `reverse = true`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
+| **Flow window** | `ListTransactions`, filter `And(membership, builtin_uint(ID) ∈ (lo, hi])`, **membership first** (the ledger drives an `And` from its first term; id range first, the product `Or` reads 2.7 to 3.4 times slower, §7.11), `reverse = true`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, or `Or(<psp.key> EXISTS, <psp.movementKeys> EXISTS…)` when the rule declares movement keys (decision 23), and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
 | Rewind window `(T, head_tx]`, replays and forward stocks | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **`reverse = true`** (the API lists newest first; `reverse` gives id order), page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
 | Metadata watch `(head_prev, head]`, purge check, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
@@ -529,7 +529,7 @@ pre = post_commit_volumes[account] − Σ(this transaction's postings on account
 
 The method needs no baseline and no stored state, and it applies to NORMAL accounts as well as to
 EPHEMERAL holds. Only created and reverted transactions move balances, and both carry
-`post_commit_volumes` (`misc/proto/common.proto:133-136`, `823-831`). A revert is its own
+`post_commit_volumes` (`misc/proto/common.proto:133-136`, `827-835` at `03d8792b5`). A revert is its own
 transaction, with its own id (`internal/domain/processing/processor_revert_transaction.go:188-207`
 at `7dd615dba`), so the unfiltered transactions of the window hold every balance movement.
 
@@ -568,7 +568,9 @@ with none of it. So a hold the rewind adds back takes every field from its addre
 previous stored stock, never from account metadata. Its volumes restart too: on `7dd615dba`, a hold
 opened with 100, lettered, then re-funded with 100 shows `post_commit_volumes` of `100-0` on the
 re-funding, not a cumulative `200-100`. The balance (input − output) is right on both sides of the
-purge, so the rewind uses balances only, never cumulative input or output volumes. The lettering
+purge, so the rewind uses balances only on the EPHEMERAL holds, never cumulative input or output
+volumes. The payment-account book is the exception: its account is NORMAL, never purged, so its
+input and output are rewound as they are (decision 23). The lettering
 log itself still carries the purged hold in `post_commit_volumes` (`100-100`) and names it in
 `purged_accounts`.
 
@@ -593,7 +595,7 @@ log itself still carries the purged hold in `post_commit_volumes` (`100-100`) an
 
 ### Replaying an old day
 
-Any past day can be replayed: the logs are permanent, and the day's cut (`S`, `T`, log hash) is in
+Any past day can be replayed: the logs are permanent, and the day's cut (`S`, `T`, `logSha256`) is in
 the signed capture (ADR-005 §7, item 7).
 
 **The flow costs the same at any age.** The cut of an old day resolves in one index page per
@@ -715,16 +717,19 @@ no vocabulary.
 
 A net drift of 0 proves nothing. Two breaks of +1,000 € and −1,000 € also net to zero. Every run
 therefore answers with a **reconciliation statement**: the classic *état de rapprochement*, with an
-explicit verdict. Each of its three parts closes on an identity that ties two independent
+explicit verdict. Each of its four checks closes on an identity that ties two independent
 computations, so a statement that closes is also evidence that the reads were complete:
 
 | Part | What ties it | What a failure catches |
 |---|---|---|
-| The bridge, for the window | The product total comes from the product books, the lines from the flow rows. The books are themselves tied to the rewound stock by continuity, which is read by another path. The PSP total has no such tie: it is read on the payment account, not on the hold (decision 17) | A lettering the join did not attribute to a reference: an engine fault, or a read cut short |
+| The bridge, for the window | The product total comes from the product books, the lines from the flow rows. The books are themselves tied to the rewound stock by continuity, which is read by another path. The PSP total is tied by the payment-account book below, not by the hold: it is read on the payment account (decision 17) | A lettering the join did not attribute to a reference: an engine fault, or a read cut short |
 | The open items, all days together | The previous run's carried file against this run's, through the window's net | A carried item lost or counted twice between two runs |
 | The open books, per ledger | The window's hold movements against the stock rewound to the cut | A lost event, or a hold moved by a transaction with neither the key nor a business id |
+| The payment-account book, per account and asset | The account's volumes at the cut against the flow's credits and debits to it (decision 23) | A final with no pending and no reference, or a movement of the account that carries no declared key |
 
-Any failure makes the run `incomplete`: no conclusion is drawn, and the run is never green.
+A failure of the first three makes the run `incomplete`: no conclusion is drawn, and the run is
+never green. A residual of the payment-account book is a P1 break instead, so that one keyless
+movement does not hide the rest of the day (decision 23).
 Otherwise the verdict is `breaks`, `reconciled_with_warnings` (an unclassified transaction, or
 identifying metadata changed after insertion), `reconciled_with_pending` or `reconciled`. The alert
 opens on an open break that is not accepted, never on the net alone. The verdicts, every line of
@@ -896,7 +901,7 @@ appears as a new `SavedMetadata` log at the head. This is why the flow filters o
    holds it, which shows the reopen is the cost. Not needed by recon (§8, F-b); filed for the Ledger
    team as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336).
 3. **Page size costs ×4.7.** Bulk reads must use `MaxPageSize` = 1000.
-4. **Every listed account emits an INFO log line** (`internal/application/ctrl/store.go:189-195`):
+4. **Every listed account emitted an INFO log line** until `199bee364` (`internal/application/ctrl/store.go:189-195`):
    3.86M lines, a 970 MB log. → ask **L2**, done in formancehq/ledger#2128 (`199bee364`): the
    line is logged at TRACE.
 5. **For the same data, logs are 5–7× slower than transactions** (13.8k/s against 94.5k/s on one
@@ -1405,7 +1410,7 @@ ledger has no `IN`), lookups cost about a hundredth. The id range first falls in
 
 - **Plan with the slow regime.** Reading balances from the logs is 5.4 times slower than from the
   transactions on 8 ranges, and 9 times on one stream, as §7.8 measured. Decision 22 stands on speed
-  as well as on exactness and on never waiting for the index. The watch costs 16–25 s per 1M logs
+  as well as on exactness and on never waiting for the index. The watch costs 14–25 s per 1M logs
   on 8 ranges (§7.5).
 - **The same `ListLogs` read varied 4 to 9 times across sessions** of one node, on identical data,
   while the transactions did not. This is worth the Ledger team's attention (L6,
@@ -1524,9 +1529,9 @@ it measured the writers more than the run.
 | F-e | `ListLogs` runs at 7.3k–13.8k logs/s on one stream, 5–7× slower than `ListTransactions` over the same data. At `7dd615dba`, 10.7k/s with the fold on one stream and ~60k/s on 8 ranges; in one session of the node the same reads ran 4–9× faster, which did not reproduce | §7.2, §7.8, §7.13 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) |
 | F-e2 | Transaction metadata is mutable (`SavedMetadata` on a transaction id), so a filtered `ListTransactions` re-read of a past window can change; logs do not. Ledger v3 has no immutable alternative today: no label concept in the protos at `a08f99bc3`, and `reference` is exact-match only | §7.2 `retag` | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): immutable transaction labels, add-only indexed, filterable on `ListTransactions` and `ListLogs`. Until then: write-once convention, monitored by the metadata watch over the logs `(head_prev, head]` (`key_metadata_mutated`) |
 | F-f | Reads do not say which log id their snapshot saw | `AggregateVolumes` / `ListAccounts` responses | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the horizon (in EN-1480's scope) |
-| F-g | No point-in-time read, and no single-snapshot multi-page listing | `common.proto:1844-1849`; `controller_default.go:436-438` | For information only (consistent export): not needed here |
+| F-g | No point-in-time read, and no single-snapshot multi-page listing | `ReadOptions`, `common.proto:1880-1885` at `03d8792b5`; `controller_default.go:436-438` | For information only (consistent export): not needed here |
 | F-h | Checkpoints carry no owner and no TTL | `bucket.proto:326` | For information only: not needed here |
-| F-i | An `And` is driven by its first term, in the order given. Led by a dense id range, it seeks its membership once per row, and seeking an `Or` seeks every one of its terms: the product `Or` of three keys read 2 to 3.4 times slower than membership first, for the same rows | §7.11; `internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_and.go:128-146`, `combinator_or.go:69-85` at `7dd615dba` | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), Ledger v3.1): order an `And`'s terms at compile time, or leave an `Or` child alone when it is already past the target. Until then recon writes the membership first (EN-2318) |
+| F-i | An `And` is driven by its first term, in the order given. Led by a dense id range, it seeks its membership once per row, and seeking an `Or` seeks every one of its terms: the product `Or` of three keys read 2.7 to 3.4 times slower than membership first, for the same rows | §7.11; `internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_and.go:128-146`, `combinator_or.go:69-85` at `7dd615dba` | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), Ledger v3.1): order an `And`'s terms at compile time, or leave an `Or` child alone when it is already past the target. Until then recon writes the membership first (EN-2318) |
 | F-j | `ListLogs` cannot be filtered on what the metadata watch keeps: the `SavedMetadata` and `DeletedMetadata` that target a transaction, and the logs with a non-empty `purged_accounts`. `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS`, so the watch reads every log to keep a few | §7.15: 4.1M logs in 134–158 s, about 95 % of a run; `misc/proto/common.proto` (`QueryFilter`) at `7dd615dba` | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), Ledger v3.1): a log filter on those payloads, so the watch reads only the logs it keeps, under either option of ADR-005 decision 25. Not blocking: the incremental watch spreads the read over the day |
 
 ## Cross-links

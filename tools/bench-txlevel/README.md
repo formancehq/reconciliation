@@ -186,5 +186,5 @@ B=/tmp/bench-ledger/bench; $B load-product -ledger product-n1 -noise 1 && $B loa
 ```
 
 Stop the server and delete `/tmp/bench-ledger` when you are done. At 1M accounts per scope the
-store takes about 3 GB. The server log also grows by about 1 GB, because the ledger writes one INFO
-line per listed account (ADR-005 ask L2).
+store takes about 3 GB. On a ledger before `199bee364` the server log also grows by about 1 GB,
+because it wrote one INFO line per listed account (ADR-005 ask L2, done in formancehq/ledger#2128).

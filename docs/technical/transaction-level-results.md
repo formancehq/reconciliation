@@ -292,7 +292,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt`, `timingsMs` | When the run ran and how long each phase took: `cut`, `flow`, `lookup`, `stock`, `watch`, `join`, `write` |
-| `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead` and `logHead`, the heads the run read up to (the rewind reads the transactions `(txTo, txHead]`, the metadata watch the logs up to `logHead`), and `logSha256`, which identifies the log at `S` |
+| `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead` and `logHead`, the heads the run read up to (the rewind reads the transactions `(txTo, txHead]`, the metadata watch the logs up to `logHead`), and `logSha256`, the SHA-256 of the deterministic protobuf encoding of the `Log` message at `S` as `GetLog` returns it (sequence, payload and response signature). Anyone can re-read that log and compare. It is stable for one ledger protocol version; the ledger's own chain hash is not exposed on the log |
 | `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `daily`, `anchor` or `head` for a replay), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (logs of `(head_prev, logHead]` watched for the metadata check, `head_prev` being the previous run's `logHead`, as `{fromSlices, readByRun}`: the logs covered by the slices, and those the run read itself) |
 | `watch` | How the metadata watch was read (ADR-005 decision 25), per side: `mode` (`full` or `incremental`); `slices`, the slices the run used, in log order, each with `logFrom`, `logTo`, `rows` and `sha256` (empty on a full read); `reread`, the log ranges the run read itself, each with `logFrom`, `logTo` and `reason` (`full` for the whole window of a full read; `last_stretch` for the logs after the last slice; `missing`, `sha256_mismatch` or `overlap` for a range whose slice could not be used). Together they cover `(head_prev, logHead]` exactly once |
 | `verdict` | §4 |
@@ -306,7 +306,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`, `offsetting`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `S_prev` values here |
-| `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`; `acceptedOn`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
+| `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`; `acceptedOn`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
 | `files` | One entry per file: `name`, `rows`, `sha256`, `expiresAt`, and `part` when the file comes in parts |
 | `anchor` | `true` on the last run of a month |
 | `expiresAt` | The manifest's own expiry |
@@ -500,8 +500,8 @@ overlap; otherwise it reads that range from the logs itself. The manifest's `wat
   - the same engine version;
   - the same rule version;
   - the same previous run, whose carried and stock files seed the day;
-  - no key or state metadata changed since the original run (`key_metadata_mutated`), because the
-    ledger serves the current metadata.
+  - no key, state, business-id or merchant-reference metadata changed since the original run
+    (`key_metadata_mutated`), because the ledger serves the current metadata.
 
   Only the manifest differs, through its instants and timings.
 - **Compatibility.** A new optional field may appear within `lettering/1`, so a reader ignores
@@ -513,7 +513,7 @@ overlap; otherwise it reads that range from the logs itself. The manifest's `wat
 | `flow` | `ref`, `asset` | `ref`, `asset` |
 | `carried` | `ref`, `asset` | `ref`, `asset` |
 | `stock` | `side`, `hold`, `asset` | `side`, `hold`, `asset` |
-| `breaks` | `breakId` | open before resolved, then `priority`, then `\|amount\|` descending |
+| `breaks` | `breakId` | open before resolved, then `priority`, then `\|amount\|` descending, then `breakId` |
 | `unclassified` | `side`, `tx`, `asset` | `side`, `tx`, `asset` |
 
 ## 9. Queries
