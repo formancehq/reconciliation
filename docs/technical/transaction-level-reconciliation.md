@@ -1279,8 +1279,8 @@ range first and in 32 ms membership first.
 - A client that writes the id range first pays the difference without knowing it. A ledger that
   ordered an `And`'s terms itself, or whose `Or` skipped re-seeking a term already past the target,
   would remove the trap (§8, finding F-i, ask L9: [EN-2356](https://formance-team.atlassian.net/browse/EN-2356)).
-- The flow step of §7.5 was measured id range first. It has not been re-measured at 1M payments
-  since.
+- The flow step of §7.5 was measured id range first. Re-measured membership first at 1M payments
+  in §7.15: 10 to 14 s for 1.9M to 2M rows per side.
 - These figures come from one node on a laptop, with no concurrent writes, and a flow of 99,000
   transactions.
 
