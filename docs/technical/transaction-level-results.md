@@ -74,6 +74,22 @@
 - **Size.** A day of 1M payments writes about 80 to 155 MB of gzipped files, most of it the flow
   file (74 to 142 bytes per row, depending on the length of the payment reference): about 7 to
   14 GB per rule over the default 90 days (design doc §7.14).
+- **Watch slices** (ADR-005 decision 25). When the metadata watch is read incrementally, the
+  default, its slices are not under a rule. They sit in the **watched ledger's own** backup
+  destination, one chain per ledger, shared by every rule that reads that ledger:
+
+  ```text
+  {backup bucket}/{bucketID}/reconciliation/watch/ledger={name}/
+    from={logFrom}-to={logTo}.ndjson.gz   the slice: every transaction-metadata change and purge of its log range
+    from={logFrom}-to={logTo}.json        its seal: range, row count and SHA-256
+  ```
+
+  `{bucketID}` is the watched ledger's bucket, so a PSP ledger's slices sit in the PSP ledger's
+  destination even though the rule's files sit in the product ledger's. The path is never under
+  `{bucketID}/backups/`. A slice is kept as long as a manifest that lists it is kept (the rule's
+  `retention`, or `anchorRetention` for an anchor's manifest), through the same object tag as the
+  anchors; a slice that no manifest lists is swept after 7 days. With the watch read in full at run
+  time (`--lettering-watch-interval=0`), no slice is written.
 
 ## 3. Conventions
 
@@ -277,7 +293,8 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt`, `timingsMs` | When the run ran and how long each phase took: `cut`, `flow`, `lookup`, `stock`, `watch`, `join`, `write` |
 | `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead` and `logHead`, the heads the run read up to (the rewind reads the transactions `(txTo, txHead]`, the metadata watch the logs up to `logHead`), and `logSha256`, which identifies the log at `S` |
-| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `daily`, `anchor` or `head` for a replay), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (logs read in `(head_prev, logHead]` for the metadata check, `head_prev` being the previous run's `logHead`) |
+| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `daily`, `anchor` or `head` for a replay), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (logs of `(head_prev, logHead]` watched for the metadata check, `head_prev` being the previous run's `logHead`, as `{fromSlices, readByRun}`: the logs covered by the slices, and those the run read itself) |
+| `watch` | How the metadata watch was read (ADR-005 decision 25), per side: `mode` (`full` or `incremental`); `slices`, the slices the run used, in log order, each with `logFrom`, `logTo`, `rows` and `sha256` (empty on a full read); `reread`, the log ranges the run read itself, each with `logFrom`, `logTo` and `reason` (`full` for the whole window of a full read; `last_stretch` for the logs after the last slice; `missing`, `sha256_mismatch` or `overlap` for a range whose slice could not be used). Together they cover `(head_prev, logHead]` exactly once |
 | `verdict` | §4 |
 | `incomplete` | Only when `verdict` is `incomplete`: `reason` and a human-readable `detail` |
 | `counts.flow` | Flow rows per class; adds up to the flow file's row count |
@@ -426,6 +443,30 @@ manifests and never rewritten afterwards.
 A break still open at the period's end keeps the day it first appeared. A break resolved after the
 period closed shows up in the next period. A day replayed later changes its own files, not a
 closed summary.
+
+### Watch slices
+
+Written by the watch job, not by a run, when the metadata watch is read incrementally (ADR-005
+decision 25; where they are: §2). A slice covers the logs `(logFrom, logTo]` of one ledger, and the
+next slice starts at its `logTo`. It keeps every transaction-metadata change and every purge of its
+range, not only the fields of one rule, so every rule on the ledger reads the same chain.
+
+`from={logFrom}-to={logTo}.ndjson.gz`, in `logId` order, one row per:
+
+| Row | Fields |
+|---|---|
+| Transaction-metadata change | `logId`, `tx`, `op` (`saved` or `deleted`), `keys` (the keys it set or deleted) |
+| Purged account | `logId`, `address`, one row per entry of the log's `purged_accounts` |
+
+A slice with no row is still written, so the chain has no hole. A slice is written only once its
+ranges returned exactly `logTo − logFrom` logs.
+
+`from={logFrom}-to={logTo}.json`, the seal beside it: `logFrom`, `logTo`, `logsRead`
+(`logTo − logFrom`), `rows`, `sha256` (of the gzipped slice), `writtenAt` and `engine`.
+
+A run uses a slice only if it matches its seal and follows the previous one without a gap or an
+overlap; otherwise it reads that range from the logs itself. The manifest's `watch` lists both
+(§6, `manifest.json`), and its SHA-256 in the signed capture covers them.
 
 ## 7. How rows move from day to day
 
@@ -593,7 +634,9 @@ and was lettered on the same day.
   ],
   "execution": {"readRanges": 8, "maxConcurrentReads": 16, "stockFrom": "live",
                 "rewindTxs": {"psp": 2106, "product": 1750}, "lookups": {"psp": 0, "product": 0},
-                "watchLogs": {"psp": 228321, "product": 44373}},
+                "watchLogs": {"psp": {"fromSlices": 0, "readByRun": 228321}, "product": {"fromSlices": 0, "readByRun": 44373}}},
+  "watch": {"psp":     {"mode": "full", "slices": [], "reread": [{"logFrom": 2416007, "logTo": 2644328, "reason": "full"}]},
+            "product": {"mode": "full", "slices": [], "reread": [{"logFrom": 1531800, "logTo": 1576173, "reason": "full"}]}},
   "verdict": "breaks",
   "counts": {
     "flow": {"matched": 3, "under_applied": 1, "over_applied": 0, "unapplied_payment": 2,
