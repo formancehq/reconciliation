@@ -43,7 +43,7 @@
   flow.ndjson.gz          one row per payment reference and asset: the window's, plus the ones carried in or looked up
   carried.ndjson.gz       the flow rows whose drift is not 0, handed to the next run
   stock.ndjson.gz         one row per open hold at the cut, plus the holds cleared since the previous run
-  breaks.ndjson.gz        every break of both legs, open or resolved since the previous run
+  breaks.ndjson.gz        every break of the three legs, open or resolved since the previous run
   unclassified.ndjson.gz  the transactions whose state is in none of the rule's sets
   period.json             weekly and monthly rules only, on the period's last run: the period summary
 ```
@@ -138,7 +138,8 @@ offsetting breaks net to zero. An `incomplete` run opens the engine-error alert 
 
 A net difference of 0 proves nothing: breaks of +1,000 € and −1,000 € net to zero. Every run
 therefore answers with a reconciliation statement, the classic *état de rapprochement*. It has
-three parts per asset, each closed by an identity that the engine checks.
+three parts per asset, each closed by an identity that the engine checks, and a fourth check on the
+PSP payment account, whose residual is a break rather than an `incomplete` run.
 
 ### The bridge: why the window's net is what it is
 
@@ -226,6 +227,28 @@ open = openPrev + opened − lettered
 - On the PSP side, `letteredOther` holds only the letterings of unclassified events.
 - The age buckets count the open holds by age.
 
+### The payment-account book: did the PSP payment account move only as the flow says?
+
+For each account matching `psp.paymentAccount`, per asset, and separately for credits and debits:
+
+```text
+input(S)  − input(S_prev)  = credits on the account by the transactions the flow read returned
+output(S) − output(S_prev) = debits on the account by the transactions the flow read returned
+```
+
+- The account is `NORMAL`, so its volumes are cumulative. `input(S)` and `output(S)` are its live
+  volumes rewound to the cut with the stock's transaction window; the `S_prev` values are the
+  previous run's.
+- The flow read returns every transaction that carries the PSP key or one of the rule's
+  `psp.movementKeys` (payouts, fees), whatever its class, unclassified ones included. The
+  movement-key transactions count here and nowhere else.
+- **This is the one check that sees a final with no `pending` before it and no reference**: such a
+  final moves no hold, so the open books close, and the flow read cannot return it. A payout or a
+  fee booked without its key shows up here too.
+- A residual on either side opens a P1 break of the class `unkeyed_payment_movement` on the leg
+  `book` (§6). It does not stop the run: the bridge, the open items and the books stand, and the
+  verdict is `breaks`.
+
 ### Around the three parts
 
 - **Triage**, in priority order, then by amount: each open break new or persisting, with its
@@ -245,7 +268,7 @@ open = openPrev + opened − lettered
 |---|---|
 | `schemaVersion` | `lettering/1` |
 | `engine` | The version of recon that produced the run. A replay reproduces the files only with the same one |
-| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `maxAge`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount` and `psp.merchantRef`. `buckets` are the age buckets' upper bounds |
+| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `maxAge`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `buckets` are the age buckets' upper bounds |
 | `runId` | `r-{UTC start instant}`; run ids sort in time order |
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
@@ -257,12 +280,13 @@ open = openPrev + opened − lettered
 | `counts.flow` | Flow rows per class; adds up to the flow file's row count |
 | `counts.flowOutcome` | Flow rows per outcome |
 | `counts.stock` | Stock rows per side and class |
-| `counts.breaks` | `new`, `persisting`, `resolved`, `accepted`, and open breaks `openByLeg` and `openByPriority` |
+| `counts.breaks` | `new`, `persisting`, `resolved`, `accepted`, and open breaks `openByLeg` (`flow`, `stock`, `book`) and `openByPriority` |
 | `counts.unclassified` | Unclassified transactions per side |
 | `anomalies.key_metadata_mutated` | The transactions (`side`, `tx`) whose key, state, business-id or merchant-reference metadata was changed or deleted after insertion, seen since the previous run's head. Empty in a sound booking |
 | `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`, `offsetting`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
-| `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`, or `side` and `hold`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`; `acceptedOn`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
+| `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `S_prev` values here |
+| `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`; `acceptedOn`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
 | `files` | One entry per file: `name`, `rows`, `sha256`, `expiresAt`, and `part` when the file comes in parts |
 | `anchor` | `true` on the last run of a month |
 | `expiresAt` | The manifest's own expiry |
@@ -342,27 +366,34 @@ by design.
 
 ### `breaks.ndjson.gz`
 
-Every open break of both legs, plus the breaks resolved since the previous run. A break row is the
-complete row of its flow or stock file, so a reader never joins files to show a break, plus these
-fields:
+Every open break of the three legs, plus the breaks resolved since the previous run. A break row is
+the complete row of its flow or stock file, or, for a book break, its entry of the manifest's
+`paymentAccounts` with the `direction` it breaks on, so a reader never joins files to show a break,
+plus these fields:
 
 | Field | Meaning |
 |---|---|
-| `breakId` | A hash of rule, leg, key and asset, **not the class**. The key is `ref` for a flow break, and `side` + `hold` for a stock break. It stays the same from day to day, and comments, assignments and acceptances attach to it |
-| `leg` | `flow` or `stock` |
+| `breakId` | A hash of rule, leg, key and asset, **not the class**. The key is `ref` for a flow break, `side` + `hold` for a stock break, and `side` + `account` + `direction` for a book break. It stays the same from day to day, and comments, assignments and acceptances attach to it |
+| `leg` | `flow`, `stock` or `book` |
 | `priority` | 1 to 4, below |
 | `lifecycle` | `new`, `persisting` or `resolved` |
 | `openedOn`, `resolvedOn` | The day the break opened, and the day it was resolved |
-| `amount` | Signed. On a flow break it is the `drift` (`psp − product`); on a stock break, the balance in the open direction |
+| `amount` | Signed. On a flow break it is the `drift` (`psp − product`); on a stock break, the balance in the open direction; on a book break, the residual of its direction (the account's movement minus the flow's) |
 | `previousClass` | On the day the class changes only |
 | `acceptedOn` | The day of the acceptance, while it holds |
 
 | `priority` | Classes | Why |
 |---|---|---|
 | 1 | `orphan_application`, `reversed_after_application` | The product booked money with no cash behind it |
+| 1 | `unkeyed_payment_movement` | The PSP payment account moved by money no keyed transaction explains: a final with no pending and no reference, or a payout or fee without its key |
 | 2 | `under_applied`, `over_applied` | The amounts disagree |
 | 3 | `unapplied_payment` past `product.grace` | Cash received and still not applied |
 | 4 | `stuck`, `wrong_sign` | An open hold to investigate |
+
+**Book class.** The leg `book` has one class, `unkeyed_payment_movement`, with `outcome` `break`
+(**1**). A book row carries `side` (`psp`), `account`, `asset`, `direction` (`credit` or
+`debit`), and the fields of its `paymentAccounts` entry. It is resolved on the first run whose
+residual in that direction is 0 again.
 
 `class`, `outcome`, `priority`, `lifecycle` and `amount` are the break's. A resolved break keeps
 the class, priority and amount it had when it was last open, next to the row as it stands now, and
@@ -567,7 +598,7 @@ and was lettered on the same day.
     "stock": {"psp":     {"open": 2, "wrong_sign": 0, "stuck": 0, "cleared": 0},
               "product": {"open": 4, "wrong_sign": 1, "stuck": 1, "cleared": 1}},
     "breaks": {"new": 1, "persisting": 3, "resolved": 1, "accepted": 0,
-               "openByLeg": {"flow": 2, "stock": 2}, "openByPriority": {"1": 0, "2": 1, "3": 1, "4": 2}},
+               "openByLeg": {"flow": 2, "stock": 2, "book": 0}, "openByPriority": {"1": 0, "2": 1, "3": 1, "4": 2}},
     "unclassified": {"psp": 1, "product": 0}
   },
   "anomalies": {"key_metadata_mutated": []},
@@ -600,6 +631,11 @@ and was lettered on the same day.
     {"side": "product", "prefix": "main:hold:refund:",                 "asset": "EUR/2", "openSign": "positive",
      "openPrev": "0",      "opened": "20000",  "lettered": "0",      "letteredOther": "0", "open": "20000",  "count": 1,
      "buckets": {"0-1d": 1, "2-7d": 0, "8-30d": 0, ">30d": 0}, "continuityOk": true}
+  ],
+  "paymentAccounts": [
+    {"account": "fpay:stripe:account:acct_eu:main", "asset": "EUR/2",
+     "inputPrev": "9120000", "input": "9520000", "outputPrev": "310000", "output": "330000",
+     "flowCredits": "400000", "flowDebits": "20000", "creditResidual": "0", "debitResidual": "0"}
   ],
   "triage": {
     "topK": 10,

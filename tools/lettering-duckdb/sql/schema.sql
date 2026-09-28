@@ -51,7 +51,11 @@ SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip'
     product: 'STRUCT(tx UBIGINT, businessId VARCHAR, holdId VARCHAR, amount HUGEINT, insertedAt TIMESTAMP)[]',
     side: 'VARCHAR', hold: 'VARCHAR', prefix: 'VARCHAR', holdId: 'VARCHAR', openSign: 'VARCHAR',
     balance: 'HUGEINT', openedAt: 'TIMESTAMP', ageDays: 'INTEGER', bucket: 'VARCHAR',
-    pairedRef: 'VARCHAR', previousBalance: 'HUGEINT', clearedAt: 'TIMESTAMP', clearedBy: 'VARCHAR'
+    pairedRef: 'VARCHAR', previousBalance: 'HUGEINT', clearedAt: 'TIMESTAMP', clearedBy: 'VARCHAR',
+    -- book breaks (leg 'book', results doc §6): the manifest's paymentAccounts entry and a direction
+    account: 'VARCHAR', direction: 'VARCHAR', inputPrev: 'HUGEINT', input: 'HUGEINT',
+    outputPrev: 'HUGEINT', output: 'HUGEINT', flowCredits: 'HUGEINT', flowDebits: 'HUGEINT',
+    creditResidual: 'HUGEINT', debitResidual: 'HUGEINT'
 }) WITH ORDINALITY;
 
 CREATE OR REPLACE MACRO unclassified_file(path, hive) AS TABLE

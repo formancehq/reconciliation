@@ -3,7 +3,8 @@
 **Status:** Proposed. The design is under evaluation and nothing is implemented. The owner's answers
 of 2026-09-24 settle the questions of the first draft, and those of 2026-09-25 refine the rule
 contract, the cut, the matching and the result files. Those of 2026-09-28 move the stock rewind to
-the transactions and add the PSP payment-account convention (§10).
+the transactions, add the PSP payment-account convention and its book, and bound the cut's date
+filters (§10).
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
 to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9 period summary), EN-2334 (R10 rewind oracle test) and
 EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
@@ -295,6 +296,12 @@ is at or before the cut-off.
   `date > cut-off`) − 1**: one ascending page of size 1 on the per-ledger log-date index
   (`LOG_BUILTIN_INDEX_DATE`, "lldt"). `T` is resolved the same way on the `inserted_at` index
   (`TX_BUILTIN_INDEX_INSERTED_AT`).
+- **The date filter is bounded** (owner decision, 2026-09-28, decision 24): `cut-off < date ≤
+  cut-off + δ`, widening δ while the page comes back empty. The ledger materializes the whole range
+  of a date filter before it pages it (`internal/query/compile.go:1382-1416` and `:1913` at
+  `7dd615dba`), so an open `date > cut-off` costs everything written since the cut-off: nothing
+  for the daily run, but a memory spike the size of the history for an old day's replay or a long
+  backfill.
 - **Both indexes are mandatory on both ledgers** (owner decision, 2026-09-25; §8.8). The rule's
   validation rejects a ledger without them, and a run waits while they build, exactly as for the
   key's metadata index.
@@ -490,6 +497,10 @@ checkpoint's listing.
   - The sign cannot be inferred: a hold may have been opened before the window, and the stock sees
     only its balance, where −500 could be an open invoice or an over-application.
   - Validation rejects overlapping prefixes on one side, so every hold has exactly one sign.
+- **`psp.movementKeys`** (optional, decision 23, §8 rule 10) names the declared,
+  indexed metadata fields that key the payment account's other movements, such as payouts and
+  fees. The PSP flow read adds one `EXISTS` term per field; those transactions feed the
+  payment-account book only, never matching.
 - **`psp.merchantRef`** (optional) names the PSP metadata field holding the merchant's reference.
   When set, an unapplied payment whose merchant reference names an open hold is paired with it
   ("invoice X is paid: apply it").
@@ -828,8 +839,11 @@ rules that the engine's efficiency depends on:
       - Keying the payouts and fees, and reading the flow with `Or(payment_ref, movement_ref)`,
         brought the debit residual to 0, for +31 % on the flow read.
       - The book itself costs one `GetAccount` per payment account.
-    - The rule contract carries neither the book nor the payout and fee keys yet (EN-2316). The PSP
-      booking can still be changed to follow this convention (owner, 2026-09-28).
+    - **Recon checks the book** (owner, 2026-09-28, decision 23). Per payment account and asset, a
+      credit or debit residual opens a P1 break of its own class, `unkeyed_payment_movement`, on a
+      third leg, `book`. It does not stop the run: the rest of the statement stands, and the verdict
+      is `breaks`. The payout and fee keys are declared in the rule as `psp.movementKeys` (§6). The
+      PSP booking can still be changed to follow this convention.
 
 On the PSP ledger, these conventions come from the **connector mapping**, which is configured per
 customer at implementation time. The implementer's checklist is in the [design doc
@@ -901,7 +915,8 @@ for the Ledger team to weigh against its own users:
 | # | Question | Decision |
 |---|---|---|
 | 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, in id order (`reverse = true`), instead of the logs `(S, head]`. It is as exact (0 of 1M rows wrong against the oracle, with 914 reverts in the window) and 5 to 9 times faster, which matters for the backfill and for replays. Replays and forward stocks read the transactions too. The logs keep the metadata watch `(head_prev, head]` and the optional purge check (§5, §7). |
-| 23 | The PSP payment account | A booking convention (§8, rule 10): one payment account per payment kind, every credit a keyed payment final, and a declared key on every debit. It turns the book of `psp.paymentAccount` into a strict check, the only one that sees a final with no pending and no reference. The check still has to enter the rule contract (EN-2316). |
+| 23 | The PSP payment account | A booking convention (§8, rule 10): one payment account per payment kind, every credit a keyed payment final, and a declared key on every debit (`psp.movementKeys`, §6). It turns the book of `psp.paymentAccount` into a strict check, the only one that sees a final with no pending and no reference. **A residual is a P1 break**, `unkeyed_payment_movement`, on the leg `book`, one per account, direction and asset. It was preferred to an `incomplete` run, so that one keyless final cannot hide the rest of the day (results doc §5, §6). |
+| 24 | Bounded date filters in the cut | The cut resolves `S` and `T` with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it: an open filter costs the whole history after the cut-off on a replay (§5). |
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.

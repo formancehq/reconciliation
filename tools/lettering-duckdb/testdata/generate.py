@@ -144,6 +144,7 @@ INVOICE = 'main:hold:invoice:'
 REFUND = 'main:hold:refund:'
 OPEN_SIGN = {PSP_HOLD: 1, INVOICE: -1, REFUND: 1}
 SIGN_NAME = {1: 'positive', -1: 'negative'}
+PAYMENT_ACCOUNT = 'fpay:stripe:account:acct_1:main'  # matches the rules' psp.paymentAccount pattern
 PSP_STATES = {'pending': 'payin.pending', 'final': 'payin.succeeded', 'failed': 'payin.compensate'}
 FLOW_CLASSES = ['matched', 'under_applied', 'over_applied', 'unapplied_payment', 'applied_before_final',
                 'orphan_application', 'reversed_after_application', 'in_progress', 'failed']
@@ -719,6 +720,21 @@ class Engine:
         st['manifest'] = m
         st['manifest_sha'] = sha(data)
 
+    def payment_accounts(self, st):
+        prev = self.prev['pay_totals'] if self.prev else {}
+        st['pay_totals'] = dict(prev)
+        out = []
+        for a in sorted(st.get('pay', {})):
+            credits, debits = st['pay'][a]
+            in_prev, out_prev = prev.get(a, (0, 0))
+            st['pay_totals'][a] = (in_prev + credits, out_prev + debits)
+            out.append({"account": PAYMENT_ACCOUNT, "asset": a,
+                        "inputPrev": str(in_prev), "input": str(in_prev + credits),
+                        "outputPrev": str(out_prev), "output": str(out_prev + debits),
+                        "flowCredits": str(credits), "flowDebits": str(debits),
+                        "creditResidual": "0", "debitResidual": "0"})
+        return out
+
     def statement(self, day, st):
         out = {}
         assets = sorted({r['asset'] for r in st['rows']} | {b['asset'] for b in st['books']}
@@ -730,6 +746,14 @@ class Engine:
             f_prod, t_prod = st['cuts']['product']
             psp_a = sum(r['pspAmount'] - r['psp_before'] for r in rows)
             psp_n = sum(1 for e in st['win_psp'] if e.kind == 'final' and e.asset == a)
+            # The payment-account book (results doc §5): the account moves by the window's finals
+            # (credits) and by the failures after final (debits), so A = credits - debits and the
+            # residuals are 0 in this engine's bookings.
+            credits = sum(e.amount for e in st['win_psp'] if e.kind == 'final' and e.asset == a)
+            debits = credits - psp_a
+            if debits < 0:
+                credits, debits = psp_a, 0
+            st.setdefault('pay', {})[a] = (credits, debits)
             prod_books = [b for b in st['books'] if b['side'] == 'product' and b['asset'] == a]
             prod_a = sum(b['lettered'] - b['other'] for b in prod_books)
             prod_n = sum(len(e.moves) for e in st['win_prod'] if e.kind == 'apply' and e.moves[0][2] == a)
@@ -795,7 +819,7 @@ class Engine:
                          'persisting': sum(1 for b in breaks if b['lifecycle'] == 'persisting'),
                          'resolved': sum(1 for b in breaks if b['lifecycle'] == 'resolved'),
                          'accepted': sum(1 for b in open_breaks if b['acceptedOn']),
-                         'openByLeg': {leg: sum(1 for b in open_breaks if b['leg'] == leg) for leg in ('flow', 'stock')},
+                         'openByLeg': {leg: sum(1 for b in open_breaks if b['leg'] == leg) for leg in ('flow', 'stock', 'book')},
                          'openByPriority': {str(p): sum(1 for b in open_breaks if b['priority'] == p) for p in (1, 2, 3, 4)}}
         verdict = st['verdict']
         statement = self.statement(day, st)
@@ -857,6 +881,7 @@ class Engine:
                        "openPrev": str(b['open_prev']), "opened": str(b['opened']), "lettered": str(b['lettered']),
                        "letteredOther": str(b['other']), "open": str(b['open']), "count": b['count'],
                        "buckets": b['buckets'], "continuityOk": True} for b in st['books']],
+            "paymentAccounts": self.payment_accounts(st),
             "triage": {"topK": 10, "breaks": [triage_break(b) for b in breaks if b['open']][:10],
                        "pending": [dict({'ref': r['ref'], 'class': r['class'], 'asset': r['asset'],
                                          'amount': str(r['drift']), 'breakOn': day_str(r['breakOn'])},

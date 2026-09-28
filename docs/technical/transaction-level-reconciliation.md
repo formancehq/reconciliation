@@ -218,7 +218,7 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
 | 9 | set `reference = {payment_ref}:{state}` | Re-delivery of an event is idempotent |
 | 10 | have the **`inserted_at` and log-date indexes** created on the ledger | Each resolves the cut-off in one read. The rule is rejected without them (EN-2316) |
 | 11 | credit the **payment amount of a final event to one account per payment kind**, which the rule names as `psp.paymentAccount` (an address pattern), and **credit nothing else to it** | The PSP amount is read there; the hold alone misses a final event with no `pending` before it, or one whose amount differs. The book of that account is then the only check that sees a final with no `pending` and no key (§7.9, ADR-005 §8 rule 10) |
-| 12 | carry a **declared key on every debit of that account**: `payment_ref` for a refund, the reference of its own object for a payout or a fee | The debit book of the payment account then closes at 0; otherwise the unkeyed debits are a residual to classify (§7.9) |
+| 12 | carry a **declared key on every debit of that account**: `payment_ref` for a refund, the reference of its own object for a payout or a fee, declared in the rule as `psp.movementKeys` | The debit book of the payment account then closes at 0; an unkeyed debit is a P1 break, `unkeyed_payment_movement` (§7.9) |
 
 **Where two existing mappings stand**, as a starting point:
 
@@ -370,7 +370,12 @@ yesterday's capture.
 ```
 
 - **Resolving it** costs one read per ledger and per day: ask for the first transaction with
-  `inserted_at > cut-off`, page size 1. It is id 1 318 501, so `T = 1 318 500`. `S` works the same
+  `inserted_at > cut-off`, page size 1. It is id 1 318 501, so `T = 1 318 500`. The filter is
+  **bounded above**, `cut-off < inserted_at ≤ cut-off + δ`, widened while the page comes back empty
+  (ADR-005 decision 24): the ledger materializes the whole range of a date filter before it pages
+  it (`internal/query/compile.go:1382-1416`, `materializeIterator` at `:1913`, at `7dd615dba`), so
+  an open filter would cost everything written since the cut-off, the whole history on an old
+  day's replay. `S` works the same
   way on the log-date index. **Both indexes are mandatory**: the rule is rejected without them, a
   run waits while they build, as for the key's index, and an index missing at run time is an engine
   error (`incomplete`), never a silent fallback. `formancepayments` creates neither today,
@@ -442,8 +447,8 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Read | RPC | Index needed |
 |---|---|---|
 | Heads of a ledger | `GetLedgerStats` → `log_count` and `transaction_count` (per-ledger log ids and transaction ids are each contiguous from 1, and are two different counters) | none |
-| Resolve `S` from the cut-off | `ListLogs`, filter `log_builtin_uint(DATE) > cut-off`, page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`): **mandatory**. Connectivity's `formancepayments` profile does not create it today, so the implementer adds it (checklist row 10) |
-| Resolve `T` (transaction-id cut) | `ListTransactions`, filter `builtin_uint(INSERTED_AT) > cut-off`, page 1 → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
+| Resolve `S` from the cut-off | `ListLogs`, filter `cut-off < log_builtin_uint(DATE) ≤ cut-off + δ` (bounded, widened while empty: the range is materialized before paging), page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`): **mandatory**. Connectivity's `formancepayments` profile does not create it today, so the implementer adds it (checklist row 10) |
+| Resolve `T` (transaction-id cut) | `ListTransactions`, filter `cut-off < builtin_uint(INSERTED_AT) ≤ cut-off + δ`, page 1, `reverse = true` → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
 | **Flow window** | `ListTransactions`, filter `And(builtin_uint(ID) ∈ (lo, hi], membership)`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
 | Rewind window `(T, head_tx]`, replays and forward stocks | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **`reverse = true`** (the API lists newest first; `reverse` gives id order), page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
 | Metadata watch `(head_prev, head]`, purge check, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
@@ -1140,8 +1145,10 @@ In every variant, the rewound stock and `psp:main` at `S` matched a checkpoint t
 - It stays strict on one condition: every credit to the account must be a keyed payment final.
 - The debit book closes at 0 only if every debit carries a declared key: the payment reference for a
   refund, and the reference of its own object for a payout or a fee.
-- Neither is in the rule contract yet (EN-2316). The booking design of the PSP ledger can still change
-  to meet them.
+- Recon checks the book (ADR-005 decision 23, owner, 2026-09-28): a residual, per account, direction
+  and asset, opens a P1 break `unkeyed_payment_movement` on the leg `book`, and the rest of the
+  statement stands. The payout and fee keys are the rule's `psp.movementKeys`. The booking design of
+  the PSP ledger can still change to meet these conventions.
 
 ## 8. Ledger findings and asks
 
