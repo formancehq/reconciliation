@@ -18,6 +18,8 @@ qa=$data/rule=qa-scenarios
 qa1=$qa/day=2026-10-01/run=r-20261002T000004Z
 qa2=$qa/day=2026-10-02/run=r-20261003T000004Z
 qa3=$qa/day=2026-10-03/run=r-20261004T000004Z
+qa4=$qa/day=2026-10-04/run=r-20261005T000004Z
+qa5=$qa/day=2026-10-05/run=r-20261006T000004Z
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
@@ -178,6 +180,14 @@ fresh "$day24"; edit "$work/run/$m" 's/"opened":"230000"/"opened":"230001"/'
 expect_violation "a book's continuity" books_continuity "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"open":"245000","count":5/"open":"245000","count":6/'
 expect_violation "a book against the stock" books_vs_stock "$lettering" check "$work/run"
+fresh "$day24"; edit "$work/run/$m" 's/"flowCredits":"400000"/"flowCredits":"399000"/'
+expect_violation "a payment-account residual its volumes contradict" book_residual "$lettering" check "$work/run"
+fresh "$qa4"; edit "$work/run/breaks.ndjson.gz" '/"leg":"book"/d'
+expect_violation "a book residual missing from the breaks file" breaks_vs_rows "$lettering" check "$work/run"
+fresh "$qa4"; edit "$work/run/breaks.ndjson.gz" '/"leg":"book"/s/"amount":"1800"/"amount":"1700"/'
+expect_violation "a book break whose amount is not its residual" break_amount "$lettering" check "$work/run"
+fresh "$qa5"; edit "$work/run/breaks.ndjson.gz" '/"leg":"book","priority":1,"lifecycle":"resolved"/s/"flowCredits":"0"/"flowCredits":"1"/'
+expect_violation "a resolved book break that is not its entry" break_vs_row "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/breaks.ndjson.gz" 's/"amount":"120000","side":"product","hold":"main:hold:invoice:INV-3"/"amount":"-120000","side":"product","hold":"main:hold:invoice:INV-3"/'
 expect_violation "a stock break with the wrong sign" break_amount "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/breaks.ndjson.gz" '/"lifecycle":"resolved"/s/"outcome":"ok"/"outcome":"break"/'
@@ -234,6 +244,8 @@ fresh "$day24"; edit "$work/run/$m" 's/"manifestSha256":"[0-9a-f]*"/"manifestSha
 expect_violation "a broken chain" previous_run "$lettering" check-chain "$day23" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"120000"/"openPrev":"120001"/'
 expect_violation "open items that do not pick up" suspense_open_prev "$lettering" check-chain "$day23" "$work/run"
+fresh "$qa5"; edit "$work/run/$m" 's/"inputPrev":"91100"/"inputPrev":"91000"/; s/"flowCredits":"0","flowDebits":"2800","creditResidual":"0"/"flowCredits":"100","flowDebits":"2800","creditResidual":"0"/'
+expect_violation "a payment-account book that does not pick up" book_prev "$lettering" check-chain "$qa4" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"430000"/"openPrev":"430001"/'
 expect_violation "a book that does not pick up" books_open_prev "$lettering" check-chain "$day23" "$work/run"
 rm -rf "$work/prev" && mkdir -p "$work/prev" && cp "$day23"/* "$work/prev/"

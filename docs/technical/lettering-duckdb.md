@@ -119,7 +119,8 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
   adds `file` (the file's name) and `pos` (the row's position). `flow*` also matches a file in
   parts.
 - **Manifest views.** The manifest, flattened: `m_run`, `m_files`, `m_cuts`, `m_statement`,
-  `m_lines`, `m_carried_outside` and `m_books`.
+  `m_lines`, `m_carried_outside`, `m_books`, and `m_payment_accounts` with `m_payment_directions`
+  (the payment-account book, one row per account and asset, then per direction).
 - **Files served on their own.** A variable named after a file (`manifest`, `flow`, `carried`,
   `stock`, `breaks`, `unclassified`, `period`) overrides that file's path. This is how a check
   reads pre-signed URLs, which cannot be globbed.
@@ -217,6 +218,14 @@ python3 tools/lettering-duckdb/testdata/generate.py
   | S20 | Paid and applied on 4 Oct, undone on 5 Oct | `matched`, then `unapplied_payment`: a P3 break at once, since its `firstSeen` stays 4 Oct |
   | S21 | Paid and applied on 2 Oct; on 5 Oct the PSP fails the payment and the product undoes the application | `matched`, then `failed`, `ok`, drift 0: no break |
   | S22 | Applied on 5 Oct while the PSP is `pending`, undone on 6 Oct, still `pending` | `applied_before_final` (pending, carried), then `in_progress`, `ok`, no `firstSeen`, with a bridge line of +19.00 in the window |
+
+  Two more stories move the PSP payment account with no key, so that the flow read cannot return
+  them (results doc §5, the payment-account book):
+
+  | Story | What happens | Breaks |
+  |---|---|---|
+  | K01 | A final with no pending and no reference credits the account 18.00 on 4 Oct | `unkeyed_payment_movement` on `credit`, P1, new on 4 Oct, resolved on 5 Oct |
+  | K02 | Payouts without their movement key debit it 7.00 on 5 Oct and 3.00 on 6 Oct | `unkeyed_payment_movement` on `debit`, new on 5 Oct, persisting on 6 Oct with 3.00, resolved on 7 Oct |
 
 - **`rule=qa-verdicts`** is one week through every verdict, with an empty day, an incomplete run
   followed by a two-day window, a retry and the week's `period.json`.
@@ -521,8 +530,9 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `statement_unclassified` | The statement's unclassified totals match the file |
 | `carried_vs_flow`, `suspense_open`, `suspense_identity` | The carried file holds exactly the flow rows whose drift is not 0; the open items equal its sum and count, and `open = openPrev + net + fromLookups` |
 | `books_continuity`, `books_vs_stock` | Each book closes, and equals its open stock rows in the open direction |
-| `breaks_vs_rows`, `break_vs_row` | Every open break of the flow and stock files is in the breaks file, and back, with the same class and amount |
-| `break_amount`, `break_outcome`, `break_priority` | A break's amount, outcome and priority follow its leg, lifecycle and class |
+| `book_residual` | Each payment-account residual is the account's movement since the previous cut minus the flow's (`input − inputPrev − flowCredits`, `output − outputPrev − flowDebits`), and its volumes never go down |
+| `breaks_vs_rows`, `break_vs_row` | Every open break of the flow and stock files, and every non-zero residual of the payment-account book, is in the breaks file, and back, with the same class and amount; a book break, open or resolved, carries its account's `paymentAccounts` entry as it stands |
+| `break_amount`, `break_outcome`, `break_priority` | A break's amount, outcome and priority follow its leg, lifecycle and class; an open book break's amount is its direction's residual, and a resolved one's residual is 0 again |
 | `row_drift`, `row_break_on` | A pending or break row has a drift and a matched, in-progress or failed one has none; `breakOn` is `firstSeen` plus the lagging side's grace |
 | `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone, it is `stuck` exactly when older than its side's `maxAge`, and its bucket and each book's bucket counts follow from the rule's bounds |
 | `row_amounts`, `row_impact`, `row_outcome` | A flow row's amounts follow from its transactions, a carried row has no `impact`, and each row's outcome (and a stock row's sign) follows from its class |
@@ -540,4 +550,5 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `carried_in`, `carried_drift` | Every carried item shows up again, and its drift moves only by this window's impact |
 | `from_lookups` | `fromLookups` equals the drift of the rows not carried in |
 | `suspense_open_prev`, `books_open_prev` | The open items and the books pick up where the earlier run left them |
+| `book_prev` | The payment-account book picks up too: `inputPrev` and `outputPrev` are the earlier run's `input` and `output`, and an account and asset listed then are still listed |
 | `break_lifecycle`, `stock_lifecycle` | Each break and hold is new, persisting, resolved or cleared as the earlier run implies, with `openedOn`, `previousClass` and the cleared balance |

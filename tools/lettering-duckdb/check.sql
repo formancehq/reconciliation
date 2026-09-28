@@ -239,16 +239,40 @@ SELECT 'books_vs_stock', concat_ws('/', coalesce(b.side, f.side), coalesce(b.pre
 FROM m_books b FULL JOIN found f USING (side, prefix, asset)
 WHERE coalesce(b.open, 0) <> coalesce(f.open, 0) OR coalesce(b.count, 0) <> coalesce(f.n, 0);
 
+-- The payment-account book (results doc §5) ---------------------------------------------------
+
+-- Each residual is the account's movement since the previous cut minus the flow's, and the
+-- account's volumes never go down: it is NORMAL, so they are cumulative.
+INSERT INTO violations
+SELECT 'book_residual', account || '/' || asset,
+       CASE WHEN input < inputPrev OR output < outputPrev
+                THEN 'volumes went down: input ' || inputPrev || ' -> ' || input || ', output ' || outputPrev || ' -> ' || output
+            WHEN creditResidual IS DISTINCT FROM input - inputPrev - flowCredits
+                THEN 'creditResidual ' || coalesce(creditResidual::VARCHAR, 'missing') || ' <> input ' || input
+                     || ' - inputPrev ' || inputPrev || ' - flowCredits ' || flowCredits
+            ELSE 'debitResidual ' || coalesce(debitResidual::VARCHAR, 'missing') || ' <> output ' || output
+                 || ' - outputPrev ' || outputPrev || ' - flowDebits ' || flowDebits END
+FROM m_payment_accounts
+WHERE input < inputPrev OR output < outputPrev
+   OR creditResidual IS DISTINCT FROM input - inputPrev - flowCredits
+   OR debitResidual IS DISTINCT FROM output - outputPrev - flowDebits;
+
 -- Breaks --------------------------------------------------------------------------------
 
 INSERT INTO violations
 SELECT 'break_amount', breakId,
        'amount ' || amount || ', expected ' ||
        CASE WHEN leg = 'flow' THEN 'the drift ' || drift
+            WHEN leg = 'book' AND lifecycle = 'resolved' THEN 'a residual of 0 now, and the ' || direction || ' residual is ' || coalesce(CASE direction WHEN 'credit' THEN creditResidual ELSE debitResidual END::VARCHAR, 'missing')
+            WHEN leg = 'book' THEN 'the ' || coalesce(direction, 'missing') || ' residual ' || coalesce(CASE direction WHEN 'credit' THEN creditResidual ELSE debitResidual END::VARCHAR, 'missing')
             WHEN lifecycle = 'resolved' THEN 'the previous balance in the open direction ' || open_dir(previousBalance, openSign)
             ELSE 'the balance in the open direction ' || open_dir(balance, openSign) END
 FROM breaks
-WHERE (leg = 'flow' AND lifecycle <> 'resolved' AND amount IS DISTINCT FROM drift)
+WHERE (leg = 'book' AND lifecycle <> 'resolved'
+       AND (amount = 0 OR amount IS DISTINCT FROM CASE direction WHEN 'credit' THEN creditResidual WHEN 'debit' THEN debitResidual END))
+   OR (leg = 'book' AND lifecycle = 'resolved'
+       AND CASE direction WHEN 'credit' THEN creditResidual WHEN 'debit' THEN debitResidual END IS DISTINCT FROM 0)
+   OR (leg = 'flow' AND lifecycle <> 'resolved' AND amount IS DISTINCT FROM drift)
    OR (leg = 'stock' AND lifecycle <> 'resolved' AND amount IS DISTINCT FROM open_dir(balance, openSign))
    OR (leg = 'stock' AND lifecycle = 'resolved' AND previousBalance IS NOT NULL
        AND amount IS DISTINCT FROM open_dir(previousBalance, openSign));
@@ -262,7 +286,7 @@ INSERT INTO violations
 SELECT 'break_priority', breakId, class || ' has priority ' || priority
 FROM breaks
 WHERE priority IS DISTINCT FROM CASE
-    WHEN class IN ('orphan_application', 'reversed_after_application') THEN 1
+    WHEN class IN ('orphan_application', 'reversed_after_application', 'unkeyed_payment_movement') THEN 1
     WHEN class IN ('under_applied', 'over_applied') THEN 2
     WHEN class = 'unapplied_payment' THEN 3
     WHEN class IN ('stuck', 'wrong_sign') THEN 4 END;
@@ -287,16 +311,21 @@ SELECT 'triage_pending', t.ref,
 FROM t LEFT JOIN (SELECT * FROM flow WHERE outcome = 'pending') f USING (ref, asset)
 WHERE f.ref IS NULL OR t.amount <> f.drift OR t.breakOn IS DISTINCT FROM f.breakOn OR t.class <> f.class;
 
--- Every open break of the flow and stock files is in the breaks file, and back.
+-- Every open break of the flow and stock files, and every non-zero residual of the
+-- payment-account book, is in the breaks file, and back.
 INSERT INTO violations
 WITH open_rows AS (
     SELECT 'flow' AS leg, ref AS key, asset FROM flow WHERE outcome = 'break'
-    UNION ALL SELECT 'stock', side || '/' || hold, asset FROM stock WHERE outcome = 'break'),
+    UNION ALL SELECT 'stock', side || '/' || hold, asset FROM stock WHERE outcome = 'break'
+    UNION ALL SELECT 'book', concat_ws('/', side, account, direction), asset FROM m_payment_directions WHERE residual <> 0),
      open_breaks AS (
-    SELECT leg, CASE leg WHEN 'flow' THEN ref ELSE side || '/' || hold END AS key, asset
+    SELECT leg, CASE leg WHEN 'flow' THEN ref WHEN 'book' THEN concat_ws('/', side, account, direction)
+                         ELSE side || '/' || hold END AS key, asset
     FROM breaks WHERE outcome = 'break')
 SELECT 'breaks_vs_rows', coalesce(r.leg, b.leg) || ' ' || coalesce(r.key, b.key) || '/' || coalesce(r.asset, b.asset),
-       CASE WHEN b.key IS NULL THEN 'a break in its ' || r.leg || ' file, missing from the breaks file'
+       CASE WHEN b.key IS NULL AND r.leg = 'book' THEN 'a residual in the manifest''s paymentAccounts, missing from the breaks file'
+            WHEN b.key IS NULL THEN 'a break in its ' || r.leg || ' file, missing from the breaks file'
+            WHEN b.leg = 'book' THEN 'an open book break with no residual in the manifest''s paymentAccounts'
             ELSE 'an open break with no break row in its ' || b.leg || ' file' END
 FROM open_rows r FULL JOIN open_breaks b USING (leg, key, asset)
 WHERE r.key IS NULL OR b.key IS NULL;
@@ -416,7 +445,20 @@ WHERE b.leg = 'flow' AND b.outcome = 'break' AND (b.class <> f.class OR b.amount
 UNION ALL
 SELECT 'break_vs_row', b.breakId, 'break ' || b.class || ' ' || b.amount || ', stock row ' || s.class || ' ' || open_dir(s.balance, s.openSign)
 FROM breaks b JOIN stock s USING (side, hold, asset)
-WHERE b.leg = 'stock' AND b.outcome = 'break' AND (b.class <> s.class OR b.amount <> open_dir(s.balance, s.openSign));
+WHERE b.leg = 'stock' AND b.outcome = 'break' AND (b.class <> s.class OR b.amount <> open_dir(s.balance, s.openSign))
+UNION ALL
+-- A book break, open or resolved, is its account's paymentAccounts entry as it stands now.
+SELECT 'break_vs_row', b.breakId,
+       CASE WHEN p.account IS NULL THEN 'no paymentAccounts entry for ' || coalesce(b.account, 'no account') || '/' || b.asset
+            WHEN b.class <> 'unkeyed_payment_movement' OR b.side IS DISTINCT FROM 'psp' OR b.direction NOT IN ('credit', 'debit')
+                THEN 'class ' || b.class || ', side ' || coalesce(b.side, 'missing') || ', direction ' || coalesce(b.direction, 'missing')
+            ELSE 'the break row''s volumes, flow totals or residuals differ from its paymentAccounts entry' END
+FROM breaks b LEFT JOIN m_payment_accounts p USING (account, asset)
+WHERE b.leg = 'book'
+  AND (p.account IS NULL OR b.class <> 'unkeyed_payment_movement' OR b.side IS DISTINCT FROM 'psp'
+       OR b.direction IS NULL OR b.direction NOT IN ('credit', 'debit')
+       OR (b.inputPrev, b.input, b.outputPrev, b.output, b.flowCredits, b.flowDebits, b.creditResidual, b.debitResidual)
+          IS DISTINCT FROM (p.inputPrev, p.input, p.outputPrev, p.output, p.flowCredits, p.flowDebits, p.creditResidual, p.debitResidual));
 
 -- The triage lists the first topK open breaks, pending rows and resolved breaks.
 INSERT INTO violations
@@ -440,7 +482,8 @@ SELECT 'unique_key', 'flow ' || ref || '/' || asset, count(*) || ' rows' FROM fl
 UNION ALL SELECT 'unique_key', 'carried ' || ref || '/' || asset, count(*) || ' rows' FROM carried GROUP BY ref, asset HAVING count(*) > 1
 UNION ALL SELECT 'unique_key', 'stock ' || side || '/' || hold || '/' || asset, count(*) || ' rows' FROM stock GROUP BY side, hold, asset HAVING count(*) > 1
 UNION ALL SELECT 'unique_key', 'breaks ' || breakId, count(*) || ' rows' FROM breaks GROUP BY breakId HAVING count(*) > 1
-UNION ALL SELECT 'unique_key', 'unclassified ' || side || '/' || tx || '/' || asset, count(*) || ' rows' FROM unclassified GROUP BY side, tx, asset HAVING count(*) > 1;
+UNION ALL SELECT 'unique_key', 'unclassified ' || side || '/' || tx || '/' || asset, count(*) || ' rows' FROM unclassified GROUP BY side, tx, asset HAVING count(*) > 1
+UNION ALL SELECT 'unique_key', 'paymentAccounts ' || account || '/' || asset, count(*) || ' entries' FROM m_payment_accounts GROUP BY account, asset HAVING count(*) > 1;
 
 -- Rows are read in file order; each file's key must never go backwards.
 INSERT INTO violations

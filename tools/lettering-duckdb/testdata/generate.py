@@ -9,7 +9,8 @@ Three rules come out:
   Its NDJSON lines are copied from the doc, byte for byte; the manifest is the doc's, with real
   SHA-256 values. The run of 23 September is partial: only what check-chain reads (its manifest,
   carried, stock and breaks files).
-- rule=qa-scenarios: seven days, two assets, one scripted story per class and edge case.
+- rule=qa-scenarios: seven days, two assets, one scripted story per class and edge case, including
+  unkeyed movements of the PSP payment account (book breaks: new, persisting, resolved).
 - rule=qa-verdicts: a week that walks through every verdict, an empty day, an incomplete run
   followed by a two-day window, a retry, and the week's period.json.
 
@@ -117,6 +118,9 @@ def worked_example(out):
             {"side": "product", "prefix": "main:hold:invoice:", "asset": "EUR/2", "openSign": "negative", "open": "430000", "count": 6},
             {"side": "product", "prefix": "main:hold:refund:", "asset": "EUR/2", "openSign": "positive", "open": "0", "count": 0},
         ],
+        # the day 24 run reads its payment-account S_prev volumes here
+        "paymentAccounts": [{"account": "fpay:stripe:account:acct_eu:main", "asset": "EUR/2",
+                             "input": "9120000", "output": "310000"}],
         "files": [{"name": "carried.ndjson.gz", "rows": 2, "sha256": sha(carried23), "expiresAt": "2026-12-22"},
                   {"name": "stock.ndjson.gz", "rows": 6, "sha256": sha(stock23_gz), "expiresAt": "2026-12-22"},
                   {"name": "breaks.ndjson.gz", "rows": 4, "sha256": sha(breaks23_gz), "expiresAt": "2026-12-22"}],
@@ -149,7 +153,7 @@ PSP_STATES = {'pending': 'payin.pending', 'final': 'payin.succeeded', 'failed': 
 FLOW_CLASSES = ['matched', 'under_applied', 'over_applied', 'unapplied_payment', 'applied_before_final',
                 'orphan_application', 'reversed_after_application', 'in_progress', 'failed']
 STOCK_CLASSES = ['open', 'wrong_sign', 'stuck', 'cleared']
-PRIORITY = {'orphan_application': 1, 'reversed_after_application': 1, 'under_applied': 2,
+PRIORITY = {'orphan_application': 1, 'reversed_after_application': 1, 'unkeyed_payment_movement': 1, 'under_applied': 2,
             'over_applied': 2, 'unapplied_payment': 3, 'stuck': 4, 'wrong_sign': 4}
 
 
@@ -174,11 +178,13 @@ def day_str(d):
 @dataclass
 class Psp:
     """A PSP event. `amount` is the net posting on the payment account, in absolute value;
-    `hold` the signed movement on the payment's pending hold."""
+    `hold` the signed movement on the payment's pending hold. An `unkeyed` event carries no key,
+    so the flow read never returns it: its signed `amount` (+ credit, − debit) moves only the
+    payment account (results doc §5, the payment-account book)."""
     t: dt.datetime
     ref: str
     asset: str
-    kind: str  # pending, final, failed, or an unclassified state value
+    kind: str  # pending, final, failed, unkeyed, or an unclassified state value
     amount: int = 0
     hold: int = 0
     merchant: str = None
@@ -361,7 +367,8 @@ class Engine:
         for s in stock:
             s['pairedRef'] = paired.get(s['hold'])
         books = self.books(day, win_psp, win_prod, stock, f_psp, f_prod)
-        breaks = self.breaks(day, rows, stock)
+        pay = self.pay_book(rows, books, win_psp, win_prod)
+        breaks = self.breaks(day, rows, stock, pay)
         unclassified = self.unclassified(win_psp, win_prod)
         carried = [r for r in rows if r['drift'] != 0]
         anomalies = self.anomalies.get(day_str(day), [])
@@ -374,9 +381,10 @@ class Engine:
         else:
             verdict = 'reconciled'
         return {'verdict': verdict, 'day': day, 'run': run_id, 'complete': True, 'rows': rows, 'carried': carried,
-                'stock': stock, 'books': books, 'breaks': breaks, 'unclassified': unclassified,
+                'stock': stock, 'books': books, 'pay': pay, 'breaks': breaks, 'unclassified': unclassified,
                 'cuts': {'psp': (f_psp, t_psp), 'product': (f_prod, t_prod)}, 'lookups': lookups,
-                'win_psp': win_psp, 'win_prod': win_prod, 'anomalies': anomalies}
+                'win_psp': win_psp, 'win_prod': win_prod, 'anomalies': anomalies,
+                'pay_totals': dict(prev['pay_totals'] if prev else {}, **{p['asset']: (p['input'], p['output']) for p in pay})}
 
     def flow_row(self, day, ref, psp_items, app_items, f_psp, f_prod, t_prod, carried):
         asset = (psp_items or app_items)[0].asset if psp_items else self.app_asset(app_items)
@@ -565,7 +573,7 @@ class Engine:
                         'other': b['other'], 'open': open_, 'count': len(rows), 'buckets': buckets})
         return out
 
-    def breaks(self, day, rows, stock):
+    def breaks(self, day, rows, stock, pay):
         prev_open = {b['breakId']: b for b in (self.prev['breaks'] if self.prev else []) if b['open']}
         out = []
         seen = set()
@@ -575,11 +583,19 @@ class Engine:
 
         candidates = [('flow', r['ref'], r['asset'], r) for r in rows if r['outcome'] == 'break']
         candidates += [('stock', f"{s['side']}/{s['hold']}", s['asset'], s) for s in stock if s['outcome'] == 'break']
+        book_rows = {}  # key, asset -> the payment-account entry seen in one direction
+        for p in pay:
+            for direction in ('credit', 'debit'):
+                r = dict(p, side='psp', direction=direction, **{'class': 'unkeyed_payment_movement'})
+                book_rows[(f"psp/{p['account']}/{direction}", p['asset'])] = r
+                if p[direction + 'Residual'] != 0:
+                    candidates.append(('book', f"psp/{p['account']}/{direction}", p['asset'], r))
         for leg, key, asset, r in candidates:
             bid = break_id(leg, key, asset)
             seen.add(bid)
             was = prev_open.get(bid)
-            amount = r['drift'] if leg == 'flow' else OPEN_SIGN[r['prefix']] * r['balance']
+            amount = {'flow': lambda: r['drift'], 'stock': lambda: OPEN_SIGN[r['prefix']] * r['balance'],
+                      'book': lambda: r[r['direction'] + 'Residual']}[leg]()
             accepted = None
             acc_day = self.acceptances.get(key)
             if acc_day and dt.date.fromisoformat(acc_day) <= day:
@@ -598,6 +614,8 @@ class Engine:
                 continue
             if was['leg'] == 'flow':
                 row = next((r for r in rows if r['ref'] == was['key'] and r['asset'] == was['asset']), None)
+            elif was['leg'] == 'book':
+                row = book_rows.get((was['key'], was['asset']))
             else:
                 row = next((s for s in stock if f"{s['side']}/{s['hold']}" == was['key'] and s['asset'] == was['asset']), None)
             assert row is not None, ('a resolved break has no row today', was['key'])
@@ -611,7 +629,7 @@ class Engine:
     def unclassified(self, win_psp, win_prod):
         out = []
         for e in win_psp:
-            if e.kind not in PSP_STATES:
+            if e.kind not in PSP_STATES and e.kind != 'unkeyed':
                 out.append({'side': 'psp', 'tx': e.tx, 'ref': e.ref, 'asset': e.asset, 'state': e.kind,
                             'amount': abs(e.amount) + abs(e.hold), 't': e.t})
         for e in win_prod:
@@ -685,7 +703,13 @@ class Engine:
             o['previousClass'] = b['previousClass']
         if b['acceptedOn']:
             o['acceptedOn'] = day_str(b['acceptedOn'])
-        row = self.flow_json(b['row']) if b['leg'] == 'flow' else self.stock_json(b['row'], with_lifecycle=False)
+        if b['leg'] == 'flow':
+            row = self.flow_json(b['row'])
+        elif b['leg'] == 'book':
+            row = {'side': 'psp', 'account': b['row']['account'], 'asset': b['asset'], 'direction': b['row']['direction']}
+            row.update({k: v for k, v in self.pay_json(b['row']).items() if k not in ('side', 'account', 'asset', 'direction', 'class')})
+        else:
+            row = self.stock_json(b['row'], with_lifecycle=False)
         row['class'] = b['class']
         row['outcome'] = 'break' if b['open'] else 'ok'
         o.update(row)
@@ -720,20 +744,37 @@ class Engine:
         st['manifest'] = m
         st['manifest_sha'] = sha(data)
 
-    def payment_accounts(self, st):
+    def pay_book(self, rows, books, win_psp, win_prod):
+        """The payment-account book (results doc §5), per asset. The account moves by the window's
+        finals (credits), by the failures after final (debits), and by the unkeyed movements the
+        flow read cannot return; the flow's credits and debits leave the unkeyed ones out, so the
+        residuals are exactly the unkeyed movements."""
         prev = self.prev['pay_totals'] if self.prev else {}
-        st['pay_totals'] = dict(prev)
+        unkeyed = [e for e in win_psp if e.kind == 'unkeyed']
+        # the account's volumes are cumulative: an asset it held at the previous cut stays listed
+        assets = sorted(set(prev) | {r['asset'] for r in rows} | {b['asset'] for b in books} | {e.asset for e in unkeyed}
+                        | {e.asset for e in win_psp if e.kind not in PSP_STATES}
+                        | {asset for e in win_prod if e.kind == 'unclassified' for (_, _, asset, _) in e.moves})
         out = []
-        for a in sorted(st.get('pay', {})):
-            credits, debits = st['pay'][a]
+        for a in assets:
+            psp_a = sum(r['pspAmount'] - r['psp_before'] for r in rows if r['asset'] == a)
+            credits = sum(e.amount for e in win_psp if e.kind == 'final' and e.asset == a)
+            debits = credits - psp_a
+            if debits < 0:
+                credits, debits = psp_a, 0
+            u_credits = sum(e.amount for e in unkeyed if e.asset == a and e.amount > 0)
+            u_debits = -sum(e.amount for e in unkeyed if e.asset == a and e.amount < 0)
             in_prev, out_prev = prev.get(a, (0, 0))
-            st['pay_totals'][a] = (in_prev + credits, out_prev + debits)
-            out.append({"account": PAYMENT_ACCOUNT, "asset": a,
-                        "inputPrev": str(in_prev), "input": str(in_prev + credits),
-                        "outputPrev": str(out_prev), "output": str(out_prev + debits),
-                        "flowCredits": str(credits), "flowDebits": str(debits),
-                        "creditResidual": "0", "debitResidual": "0"})
+            out.append({'account': PAYMENT_ACCOUNT, 'asset': a,
+                        'inputPrev': in_prev, 'input': in_prev + credits + u_credits,
+                        'outputPrev': out_prev, 'output': out_prev + debits + u_debits,
+                        'flowCredits': credits, 'flowDebits': debits,
+                        'creditResidual': u_credits, 'debitResidual': u_debits})
         return out
+
+    @staticmethod
+    def pay_json(p):
+        return {k: (str(v) if isinstance(v, int) else v) for k, v in p.items()}
 
     def statement(self, day, st):
         out = {}
@@ -746,14 +787,6 @@ class Engine:
             f_prod, t_prod = st['cuts']['product']
             psp_a = sum(r['pspAmount'] - r['psp_before'] for r in rows)
             psp_n = sum(1 for e in st['win_psp'] if e.kind == 'final' and e.asset == a)
-            # The payment-account book (results doc §5): the account moves by the window's finals
-            # (credits) and by the failures after final (debits), so A = credits - debits and the
-            # residuals are 0 in this engine's bookings.
-            credits = sum(e.amount for e in st['win_psp'] if e.kind == 'final' and e.asset == a)
-            debits = credits - psp_a
-            if debits < 0:
-                credits, debits = psp_a, 0
-            st.setdefault('pay', {})[a] = (credits, debits)
             prod_books = [b for b in st['books'] if b['side'] == 'product' and b['asset'] == a]
             prod_a = sum(b['lettered'] - b['other'] for b in prod_books)
             prod_n = sum(len(e.moves) for e in st['win_prod'] if e.kind == 'apply' and e.moves[0][2] == a)
@@ -824,14 +857,20 @@ class Engine:
         verdict = st['verdict']
         statement = self.statement(day, st)
 
+        def key_json(b):
+            if b['leg'] == 'flow':
+                return {'ref': b['key']}
+            if b['leg'] == 'book':
+                return {'side': 'psp', 'account': b['row']['account'], 'direction': b['row']['direction']}
+            return {'side': b['row']['side'], 'hold': b['row']['hold']}
+
         def triage_break(b):
             o = {'breakId': b['breakId'], 'priority': b['priority'], 'class': b['class'], 'lifecycle': b['lifecycle']}
-            if b['leg'] == 'flow':
-                o['ref'] = b['key']
-            else:
-                o['side'], o['hold'] = b['row']['side'], b['row']['hold']
+            o.update(key_json(b))
             o.update({'asset': b['asset'], 'amount': str(b['amount'])})
-            if b['leg'] == 'flow':
+            if b['leg'] == 'book':
+                pass
+            elif b['leg'] == 'flow':
                 hold_ids = [hid for e in b['row']['app_ev'] for (_, hid, _, _) in e.moves]
                 if hold_ids:
                     o['holdIds'] = hold_ids
@@ -881,7 +920,7 @@ class Engine:
                        "openPrev": str(b['open_prev']), "opened": str(b['opened']), "lettered": str(b['lettered']),
                        "letteredOther": str(b['other']), "open": str(b['open']), "count": b['count'],
                        "buckets": b['buckets'], "continuityOk": True} for b in st['books']],
-            "paymentAccounts": self.payment_accounts(st),
+            "paymentAccounts": [self.pay_json(p) for p in st['pay']],
             "triage": {"topK": 10, "breaks": [triage_break(b) for b in breaks if b['open']][:10],
                        "pending": [dict({'ref': r['ref'], 'class': r['class'], 'asset': r['asset'],
                                          'amount': str(r['drift']), 'breakOn': day_str(r['breakOn'])},
@@ -889,9 +928,7 @@ class Engine:
                                            ({'holdIds': [hid for e in r['app_ev'] for (_, hid, _, _) in e.moves]}
                                             if r['app_ev'] else {})))
                                    for r in pending][:10],
-                       "resolved": [dict({'breakId': b['breakId'], 'class': b['class']},
-                                         **({'ref': b['key']} if b['leg'] == 'flow' else
-                                            {'side': b['row']['side'], 'hold': b['row']['hold']}),
+                       "resolved": [dict({'breakId': b['breakId'], 'class': b['class']}, **key_json(b),
                                          asset=b['asset'], amount=str(b['amount']),
                                          **({'clearedBy': b['row']['clearedBy']}
                                             if b['leg'] == 'stock' and b['row'].get('clearedBy') else {}))
@@ -1073,6 +1110,13 @@ def scenarios():
     apply(D[5], '10:10', 'S22', [(INVOICE, 'INV-S22', 'EUR/2', 1900)])
     apply(D[6], '10:10', 'S22', [(INVOICE, 'INV-S22', 'EUR/2', -1900)])
 
+    # K01: a final with no pending and no reference credits the payment account on day 4 (a book
+    # break, resolved on day 5). K02: payouts without their movement key debit it on days 5 and 6
+    # (a book break, new then persisting with the new residual, resolved on day 7).
+    psp.append(Psp(at(D[4], '11:30'), None, 'EUR/2', 'unkeyed', 1800))
+    psp.append(Psp(at(D[5], '17:00'), None, 'EUR/2', 'unkeyed', -700))
+    psp.append(Psp(at(D[6], '17:00'), None, 'EUR/2', 'unkeyed', -300))
+
     rule = Rule('qa-scenarios', psp_grace=3, product_grace=1, psp_max_age=3, product_max_age=5,
                 backfill_from=dt.date(2026, 10, 1))
     acceptances = {'S04': '2026-10-03', 'PU': '2026-10-04'}
@@ -1160,6 +1204,8 @@ def expected(engine, out):
                 if b['leg'] == 'flow':
                     detail = ', '.join(sorted({hid for e in r['app_ev'] for (_, hid, _, _) in e.moves})) or None
                     ref, hold = r['ref'], None
+                elif b['leg'] == 'book':
+                    detail, ref, hold = f"{r['direction']} on {r['account']}", None, None
                 else:
                     detail, ref, hold = f"{r['ageDays']} days old", None, r['hold']
                 ob.append([b['priority'], b['class'], b['lifecycle'], b['asset'], b['amount'], ref, hold,
@@ -1258,6 +1304,8 @@ def business_id(current, days, bid):
                 holds = {hid for e in r['app_ev'] for (_, hid, _, _) in e.moves}
                 hit = bid == r['ref'] or r['merchant'] == bid or bid in holds
                 ref, hold = r['ref'], None
+            elif b['leg'] == 'book':
+                hit, ref, hold = False, None, None
             else:
                 hit = bid == r['holdId']
                 ref, hold = None, r['hold']
