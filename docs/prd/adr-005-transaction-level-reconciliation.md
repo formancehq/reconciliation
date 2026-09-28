@@ -277,8 +277,8 @@ run, which could then run more often. At most, it would enable an optimisation o
 read the open holds at the ledger's own **daily** checkpoint when one exists near the cut-off (one
 for all rules, not one per evaluation), then rewind only the few transactions between the cut and
 that checkpoint. That is worth doing only if runs start long after the cut-off, which makes the
-rewind window large. The bench measured 8,208 logs in 267 ms, and reading the transactions is 5 to
-9 times faster still (§5). The rewind would stay the general mechanism
+rewind window large. The bench measured 8,208 logs in 267 ms, and reading the transactions is at
+least as fast (§5). The rewind would stay the general mechanism
 for backfill, replay, and any missing checkpoint.
 
 ## 5. Decision A — the cut is a log id, and the stock is rewound to it
@@ -372,8 +372,9 @@ Three caveats come with this choice, and each has a counter-measure:
      transaction.
    - **The convention is monitored, not just trusted.** The run reads every log in
      `(head_prev, head]`, the logs since the previous run's head, so no log goes unwatched. That is
-     about a day of logs, ~14 s at 1M a day on 8 ranges, and the largest step of the run ([design
-     doc §7.5](../technical/transaction-level-reconciliation.md#75-projected-daily-run)). Any
+     about a day of logs, ~4 s at 1M a day on 8 ranges on a settled ledger and ~8 s while it writes,
+     one of the two largest steps of the run with the flow ([design
+     doc §7.5](../technical/transaction-level-reconciliation.md#75-projected-daily-run), §7.13). Any
      `SavedMetadata` or `DeletedMetadata` there that targets a transaction and touches the key,
      state, business-id or merchant-reference field is reported as its own anomaly,
      `key_metadata_mutated`, naming the transaction id and the field.
@@ -414,17 +415,20 @@ Why this is exact:
 - It needs no baseline and no stored state, and it works for NORMAL accounts too.
 
 **Why the transactions and not the logs.** The first design read the logs `(S, head]`, for the
-same three properties. The transactions have them too, and they read faster:
+same three properties. The transactions have them too, and they never wait for the index:
 
 - a read by transaction-id range takes the main-store path and never waits for the index to align,
   whereas `ListLogs` always waits for it (ledger `list_entities.go:84-96`,
   `aligned_snapshot.go:70-72`);
-- measured on the whole 1M history: 3.0 s against 16.5 s on 8 ranges, and 10.4 s against 91 s on
-  one ([design doc
-  §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)).
+- measured on the whole 1M history on a settled ledger: 3.06 s against 3.9 s on 8 ranges, and
+  10.6 s against 10.5 s on one ([design doc
+  §7.13](../technical/transaction-level-reconciliation.md#713-three-checks-before-implementation-the-watch-the-purged-holds-the-cuts-two-dates)).
+  A first run right after the load gave 3.0 s against 16.5 s and 10.4 s against 91 s (§7.8); that
+  gap did not reproduce.
 
-For the daily window the gain is small (about 2 s at 1M logs a day and a run two hours after the
-cut-off). It matters for the backfill and for replays (§7). It also leaves the metadata watch as the
+For the daily window the gain in time is negligible (well under a second at 1M logs a day and a run
+two hours after the cut-off); for the backfill and replays it is about a quarter (§7). What counts is
+that the read never waits for the index while the ledger writes. It also leaves the metadata watch as the
 only read of the logs, so the run would read none if that watch became unnecessary (L8, §9).
 
 The logs still serve two purposes:
@@ -747,7 +751,7 @@ checkpoint's listing.
      and keeps the first touch of every hold touched since. With 1M transactions a day and the
      measured ~330k/s with the fold (8 ranges), that is ~3 s the next day, ~20 s a week later,
      ~1 min 30 a month later and **~18 min a year later**, with close to a year of holds to track.
-     From the logs (61k/s with the fold on the same bench) it would be ~1 h 40 a year later
+     From the logs (255k/s with the fold, re-measured on a settled ledger) it would be ~24 min a year later
      ([design doc
      §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)).
    - **So a replay starts from the nearest stored stock instead of from head.** The stock is
@@ -858,7 +862,7 @@ connector change is required.
 |---|---|---|
 | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths (`internal/application/ctrl/store.go:189-195`) | A listing of 1M accounts writes 1M log lines (this bench: 3.86M lines, 970 MB) | XS |
 | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. EN-2331 also covers the Ledger-side part, which this design does not need: resolve an exact address from the account→tx mappings (the query currently checks that the account exists, `internal/query/compile.go:1069-1110`), keep the address prefix limited to current accounts, and fix EN-2036's READMEs. **Closed 2026-09-26** with formancehq/ledger#2058 (`38c6eef55`): the exact address was fixed, but the prefix was extended to purged accounts, the indexer README contradicts the code, and no ledger test pins the metadata and `reference` paths. Those paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the logs | The flow leg finds lettered items through indexed transaction metadata (`payment_ref EXISTS`, then a join on its value), and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
-| **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–7× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream) | Only the metadata watch and exact re-derivations still read logs, the rewind having moved to the transactions (§5); the watch is the largest step of a daily run, so the gap deserves an explanation | S–M |
+| **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it was 5–7× slower than `ListTransactions` at `a08f99bc3` (13.8k/s against 94.5k/s on one stream). **Not reproduced at `7dd615dba` on a settled ledger**, where both read ~95k/s (design doc §7.13): to confirm with the Ledger team before it is prioritised | Only the metadata watch and exact re-derivations still read logs, the rewind having moved to the transactions (§5). The watch is one of the two largest steps of a daily run; what is left to understand is its wait for the index under heavy writes | S–M |
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
 | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the snapshot horizon (the per-ledger log id the read saw) on `AggregateVolumes` and `ListAccounts` | Makes the phase-1 aggregate exact at `S` (`agg(S) = agg − Σ net(S, horizon]`) and lets the rewind skip the untouched part of the window; it is already part of EN-1480's scope (`log_sequence`) | S |
@@ -917,7 +921,7 @@ for the Ledger team to weigh against its own users:
 
 | # | Question | Decision |
 |---|---|---|
-| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, in id order (`reverse = true`), instead of the logs `(S, head]`. It is as exact (0 of 1M rows wrong against the oracle, with 914 reverts in the window) and 5 to 9 times faster, which matters for the backfill and for replays. Replays and forward stocks read the transactions too. The logs keep the metadata watch `(head_prev, head]` and the optional purge check (§5, §7). |
+| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, in id order (`reverse = true`), instead of the logs `(S, head]`. It is as exact (0 of 1M rows wrong against the oracle, with 914 reverts in the window), it never waits for the index to align, and it reads 1.0 to 1.3 times faster on a settled ledger. The 5 to 9 times first measured did not reproduce (design doc §7.13). Replays and forward stocks read the transactions too. The logs keep the metadata watch `(head_prev, head]` and the optional purge check (§5, §7). |
 | 23 | The PSP payment account | A booking convention (§8, rule 10): one payment account per payment kind, every credit a keyed payment final, and a declared key on every debit (`psp.movementKeys`, §6). It turns the book of `psp.paymentAccount` into a strict check, the only one that sees a final with no pending and no reference. **A residual is a P1 break**, `unkeyed_payment_movement`, on the leg `book`, one per account, direction and asset. It was preferred to an `incomplete` run, so that one keyless final cannot hide the rest of the day (results doc §5, §6). |
 | 24 | Bounded date filters in the cut | The cut resolves `S` and `T` with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it: an open filter costs the whole history after the cut-off on a replay (§5). |
 

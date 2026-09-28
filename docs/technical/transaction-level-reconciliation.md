@@ -422,8 +422,9 @@ transactions `(T, head_tx]`, unfiltered (§4).
 
 **`S` serves the metadata watch.** Only the logs carry the metadata changes recon monitors
 (`key_metadata_mutated`). So the run reads every log in `(head_prev, head]`, the logs since the
-previous run's head, and no log goes unwatched. That is about a day of logs, ~14 s at 1M a day on
-8 ranges, and the largest step of the run (§7.5).
+previous run's head, and no log goes unwatched. That is about a day of logs: ~4 s at 1M a day on 8
+ranges on a settled ledger, ~8 s while it writes (§7.13), one of the two largest steps of the run
+with the flow (§7.5).
 
 **What the id ranges give for free.**
 
@@ -478,8 +479,9 @@ flow and the rewind, and of log ids for the watch. K concurrent streams each pag
 - **Merging the ranges.** For the flow, each range keeps its per-reference facts, and the facts are
   combined in transaction-id order. For the rewind, each account keeps its *first* touch after `T`,
   taken from the lowest range that touched it.
-- Measured on one node (§7.2):
-  - logs: 7.3k/s to 13.8k/s on one stream, 41k/s to 66k/s over 8 streams;
+- Measured on one node:
+  - logs: 7.3k/s to 13.8k/s on one stream, 41k/s to 66k/s over 8 streams at `a08f99bc3` (§7.2);
+    at `7dd615dba` on a settled ledger, 95k/s on one stream and ~270k/s over 8 (§7.13);
   - transactions: 94.5k/s on one stream, 351k/s over 8.
 
   Scaling is sub-linear: the service sets the limit, not the client.
@@ -560,9 +562,10 @@ log itself still carries the purged hold in `post_commit_volumes` (`100-100`) an
 - It depends on **no metadata convention**: a transaction that touched a hold without carrying the
   key is still corrected. A filtered read would miss it.
 - It holds **every balance movement**, and none of the metadata-only logs.
-- It is **5 to 9 times faster** than the logs: an id range reads the main store and never waits for
-  the index, while `ListLogs` always does (§7.8). The first design read the logs `(S, head]`, which
-  are just as exact.
+- It **never waits for the index**: an id range reads the main store, while `ListLogs` always waits
+  for the index to align (§7.8). On a settled ledger it is 1.0 to 1.3 times faster than the logs
+  (§7.13); the 5 to 9 times first measured in §7.8 did not reproduce. The first design read the logs
+  `(S, head]`, which are just as exact.
 
 **Proof runs**, against a checkpoint taken at the cut, under concurrent writes:
 
@@ -589,13 +592,14 @@ measured ~330k/s with the fold of `post_commit_volumes` over 8 ranges (§7.8, 3.
 
 | Replay | Transactions in `(T, head_tx]` | Read time | From the logs, for comparison |
 |---|---|---|---|
-| A replay the next day | ~1M | ~3 s | ~16–25 s |
-| A week later | ~7M | ~20 s | ~2–3 min |
-| A month later | ~30M | ~1 min 30 | ~8–12 min |
-| A year later | ~365M | **~18 min**, with close to a year of holds to track | ~1 h 40 – 2 h 30 |
+| A replay the next day | ~1M | ~3 s | ~4 s |
+| A week later | ~7M | ~20 s | ~27 s |
+| A month later | ~30M | ~1 min 30 | ~2 min |
+| A year later | ~365M | **~18 min**, with close to a year of holds to track | ~24 min |
 
-The logs column spans the two measured rates: 61k/s at `7dd615dba` (§7.8) and 41k/s at `a08f99bc3`
-(§7.2).
+The logs column uses the rate re-measured on a settled ledger, 255k/s with the fold over 8 ranges
+(§7.13). The first measurements, 61k/s at `7dd615dba` (§7.8) and 41k/s at `a08f99bc3` (§7.2), gave
+1 h 40 to 2 h 30 a year later; they did not reproduce.
 
 **So a replay starts from the nearest stored stock, not from head.** Each run stores its stock at
 its cut (`stock.ndjson.gz`), and the stock is additive over time:
@@ -861,6 +865,9 @@ and indexed. Tip `a08f99bc3`:
 Every row returned by `ListTransactions` carried its `post_commit_volumes`. The `payment_ref` index
 was created on the loaded ledger, and its backfill over 1M transactions was ready about 1 s later.
 
+The `ListLogs` rates above did not reproduce at `7dd615dba` on a settled ledger, where the logs read
+like the transactions, ~95k/s on one stream (§7.13).
+
 **Mutability, shown.** `retag` rewrote one payment's `kind` to `internal` after the fact. The same
 `kind = payment` read of the same past window then returned **99,999** rows, while
 `payment_ref EXISTS` still returned 100,000. That transaction's log was unchanged; the retag
@@ -879,8 +886,9 @@ appears as a new `SavedMetadata` log at the head. This is why the flow filters o
 3. **Page size costs ×4.7.** Bulk reads must use `MaxPageSize` = 1000.
 4. **Every listed account emits an INFO log line** (`internal/application/ctrl/store.go:189-195`):
    3.86M lines, a 970 MB log. → ask **L2**.
-5. **For the same data, logs are 5–7× slower than transactions** (13.8k/s against 94.5k/s on one
-   stream). Neither can filter on metadata server-side, except `ListTransactions`, which returns
+5. **For the same data, logs were 5–7× slower than transactions** at `a08f99bc3` (13.8k/s against
+   94.5k/s on one stream). This did not reproduce at `7dd615dba` on a settled ledger, where both read
+   ~95k/s (§7.13). Neither can filter on metadata server-side, except `ListTransactions`, which returns
    only the payments. The flow therefore reads transactions, and the logs keep the short rewind
    window and exact re-derivation. → asks **L6** and **L8**.
 6. **Disk.** A 100k-account checkpoint kept its 169 MB alive after the live store had grown to
@@ -924,10 +932,10 @@ The projection assumes 1M lettering events per day per side, with an open book o
 |---|---|
 | Resolve `S` and `T` (one date-filtered page per ledger and per read path) | ms |
 | Flow: 1M payments per side, filtered `ListTransactions` over 8 ranges, both sides in parallel | ~8 s (125k payments/s measured with `payment_ref EXISTS`, id range first; the unadopted `kind =` filter read 177k/s), **whatever the ledger's other traffic**. Membership first, the same read ran about twice as fast on 47k payments (§7.11): not re-measured at 1M |
-| Stock rewind: live listing of `N_open` + unfiltered transactions `(T, head_tx]` | `N_open / 47k` s + (transactions written since the cut-off) / 330k s (§7.8). From the logs, as first designed: / 41k s |
-| Metadata watch: logs `(head_prev, S]` (ADR-005 §5, caveat 1) | about a day of logs, read without the fold: (logs since the previous run's head) / 66k s, **~14 s at 1M logs a day**, the largest step of the run |
+| Stock rewind: live listing of `N_open` + unfiltered transactions `(T, head_tx]` | `N_open / 47k` s + (transactions written since the cut-off) / 330k s (§7.8). From the logs, as first designed: / 255k s on a settled ledger (§7.13) |
+| Metadata watch: logs `(head_prev, head]` (ADR-005 §5, caveat 1) | about a day of logs, read without the fold: (logs since the previous run's head) / 270k s on a settled ledger, **~4 s at 1M logs a day, ~8 s while the ledger writes** (§7.13). First estimated at ~14 s from §7.2's 66k/s, which did not reproduce |
 | Joins + artifacts | < 1 s |
-| **Total** | **≈ 25–45 s, with no checkpoint** |
+| **Total** | **≈ 10–20 s, with no checkpoint** (first projected at 25–45 s) |
 
 The same run on query checkpoints would take **2 min 38 s** on the tip (10 min on the local SHA)
 just to extract two 1M scopes. It would hold a cluster checkpoint slot for that long, and it could
@@ -1085,6 +1093,10 @@ stock pays:
 | Unfiltered `ListTransactions` + fold | 10.4 s (96k/s) | **3.0 s (~330k/s)** |
 | Ratio | ×8.7 | ×5.5 |
 
+These runs followed the load and the writers of `rewind-sources`. **Re-run on the settled node, the
+logs read 10.5 s and 3.9 s, and the transactions 10.6 s and 3.06 s: a ratio of ×1.0 and ×1.3**
+(§7.13). The gap above came from a transient state of the node, not from the read path.
+
 Folded forward from an empty stock up to the head, with no write running, both sources gave the live
 listing exactly (`fold -compare`, 0 of 1,000,460 rows).
 
@@ -1095,9 +1107,10 @@ that keeps each account's first touch after the cut is silently wrong without it
 
 **Reading.**
 
-- For balances, the unfiltered transactions are as exact as the logs, and 5 to 9 times faster to read.
-  A replay from head a year later (§4, 365M transactions) would take about 18 min instead of
-  1 h 40 to 2 h 30.
+- For balances, the unfiltered transactions are as exact as the logs, never wait for the index, and
+  read 1.0 to 1.3 times faster on a settled ledger (§7.13; the ×5.5–8.7 above did not reproduce). A
+  replay from head a year later (§4, 365M transactions) would take about 18 min, against about
+  24 min from the logs.
 - What only the logs carry is the metadata changes the watch monitors, and `purged_accounts`, which
   the purge consistency check of §4 uses. The rewind is exact without that check.
 - ADR-005 adopted the transactions as the rewind's source on 2026-09-28 (decision 22, §5).
@@ -1202,7 +1215,8 @@ On the second pass, the crossover moves to 23–26 %.
 - Forward is the replay mode (§4) and, for a rule whose open book exceeds ~15 % of its daily
   traffic, the faster daily read. Its error then carries from day to day, so it needs the periodic
   proof. It is not needed in V1.
-- Either way, the stock step is small next to the metadata watch (§7.5, ~14 s at 1M logs a day).
+- Either way, the stock step is small next to the flow and the metadata watch (§7.5, a few seconds
+  each at 1M a day).
 - These figures come from one node on a laptop, with no concurrent writes, which would slow both
   modes. Each account has one transaction.
 
@@ -1308,6 +1322,73 @@ every entry, then sorts them (`:1927-1960`), before the first row is returned.
   unchanged at the tip of `release/v3.0` (`5405f7c46`), whose three later commits touch the audit
   index only.
 
+### 7.13 Three checks before implementation: the watch, the purged holds, the cut's two dates
+
+Run on the ledger of §7.8 (`7dd615dba`), on the data sets of §7.8 to §7.12, with the node settled:
+no load had run for hours, and the index was aligned. Best of two or three runs.
+
+**The metadata watch** (`watch`). Every log of the window, unfiltered, counted by payload kind and
+not folded, as the watch reads them (ADR-005 §5):
+
+| 1M logs of `cut10m` | K = 1 | K = 8 | K = 16 |
+|---|---|---|---|
+| Settled node | 10.5 s (95k/s) | **3.7 s (270k/s)** | 3.7 s |
+| While another ledger of the node writes 12.6k tx/s | — | 7.9 s (126k/s) | — |
+
+`product-n9` (594k logs with metadata) read at 290k/s on 8 ranges, and `psp` (1M logs, 914 reverts
+and 452 metadata-only logs) at 260k/s.
+
+**The folds of §7.8, re-run** (`fold`, the same 1M-account `psp` history):
+
+| Source | K = 1 | K = 8 | K = 8, while another ledger writes |
+|---|---|---|---|
+| `ListLogs` + fold | 10.5 s | 3.9 s | 4.0–4.8 s |
+| Unfiltered `ListTransactions` + fold | 10.6 s | 3.06 s | 3.1–3.6 s |
+| Ratio | ×1.0 | ×1.3 | ×1.3 |
+
+**The logs are not 5 to 9 times slower.** §7.8 measured 91 s and 16.5 s for the logs, on the same
+binary and history, right after the load and the writers of `rewind-sources`. The transactions read
+the same then as now. The most likely cause is a transient state of the node after the load: the
+index catching up, which every `ListLogs` page waits for (`internal/query/aligned_snapshot.go:70-72`),
+or pending compactions. It was not isolated. Likewise, §7.2's 13.8k/s on one stream (at `a08f99bc3`)
+did not reproduce at `7dd615dba`, where the logs read like the transactions, ~95k/s.
+
+**Listing an `EPHEMERAL` prefix after purges** (`purge-list`). 10,000 holds stay open while holds
+opened and drained in the same batch, and so purged, accumulate:
+
+| Purged holds | `ListAccounts`, 1 stream | `AggregateVolumes` |
+|---|---|---|
+| 0 | 193 ms | 38 ms |
+| 100,000 | 202 ms | 37 ms |
+| 300,000 | 234 ms | 48 ms |
+| 1,000,000, right after | 273 ms | 97 ms |
+| 1,000,000, a few minutes later | 217–224 ms | 42 ms |
+
+The listing costs O(open holds). Fresh deletions add a transient cost, which fades as they are
+compacted.
+
+**The cut's two dates** (`iat-check`). For every transaction, its `inserted_at` against the date of
+the log that created it (or reverted it), and whether `inserted_at` ever goes down as the id goes
+up. On `psp` (1M transactions, 914 reverts, 8 concurrent writers), `product-n9`, `silent-d1` and
+`cut10m` (10M transactions from 16 concurrent workers): **0 mismatches, 0 backward steps.**
+
+**Reading.**
+
+- **The watch costs about 4 s at 1M logs a day on a settled ledger, and about 8 s while it writes**,
+  not ~14 s. With the flow (~8 s id range first, §7.5), it is one of the two largest steps of a run.
+- **Decision 22 stands**, with a narrower reason. The unfiltered transactions are as exact as the
+  logs, and a read by id range never waits for the index, where `ListLogs` always does. They are
+  1.0 to 1.3 times faster, not 5 to 9. A replay from head a year later (365M transactions) takes
+  about 18 min from the transactions and about 24 min from the logs, not 1 h 40 to 2 h 30.
+- Ask L6 ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) rested on the 5–7× gap of
+  §7.2, which did not reproduce on this binary. It is worth confirming with the Ledger team before it
+  is prioritised; the index wait under heavy writes is the part still worth measuring.
+- **The daily stock does not grow with the history of purged holds**: list and rewind (§7.10) keeps
+  its cost as the book turns over.
+- **`S` and `T` name the same instant.** A transaction's `inserted_at` is its log's date, and it only
+  grows with the id, so a transaction inserted after the cut-off always lands after `T` (§3).
+- From one node on a laptop; a three-node cluster adds a quorum round-trip per page (§8).
+
 ## 8. Ledger findings and asks
 
 | # | Finding | Evidence | Ask |
@@ -1316,7 +1397,7 @@ every entry, then sorts them (`:1927-1960`), before the first row is returned.
 | F-b | Checkpoint reads are ×20 slower: every page reopens both databases with the backup profile | §7.3.2 | For information: evaluations take no checkpoint, and the test oracle and optional proof run can afford the slowdown. Filed at the Ledger team's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1), related to EN-2108 |
 | F-c | One INFO log line per listed account | `store.go:189-195` | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)) |
 | F-d | A purged EPHEMERAL account's transactions are no longer returned by an address filter. That includes the **opening** transaction, which was returned before the purge. Unchanged on EN-2036's head `92b378e4b`: the mappings are kept, but the query checks that the account currently exists before reading them (`internal/query/compile.go:1069-1110`). **Fixed at `20a5595d6`, merged as `38c6eef55`** (2026-09-25, EN-2331 closed): addresses are read from the mappings. The prefix path then costs O(every hold ever created) per page: 50.7 s for a 2k window at 1M purged holds, [reported on the PR](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700) | §2 probe, re-run on both PR heads; §7.6 bench with EPHEMERAL holds | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331), closed): a tested contract for the metadata and `reference` paths, which is all this design needs. The ledger fixed the exact address, extended the prefix to purged accounts against the ask (§7.6), and added no test for those paths. They behave correctly on `7dd615dba`, so recon pins them: EN-2318 (window filter, key lookup, business id, `reference`) and EN-2319 (`post_commit_volumes` and `purged_accounts` in the logs) |
-| F-e | `ListLogs` runs at 7.3k–13.8k logs/s on one stream, 5–7× slower than `ListTransactions` over the same data | §7.2 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) |
+| F-e | `ListLogs` runs at 7.3k–13.8k logs/s on one stream, 5–7× slower than `ListTransactions` over the same data. **Not reproduced at `7dd615dba` on a settled ledger**: both read ~95k/s on one stream, and the logs ~270k/s over 8 ranges (§7.13) | §7.2, §7.13 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) |
 | F-e2 | Transaction metadata is mutable (`SavedMetadata` on a transaction id), so a filtered `ListTransactions` re-read of a past window can change; logs do not. Ledger v3 has no immutable alternative today: no label concept in the protos at `a08f99bc3`, and `reference` is exact-match only | §7.2 `retag` | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): immutable transaction labels, add-only indexed, filterable on `ListTransactions` and `ListLogs`. Until then: write-once convention, monitored by the metadata watch over the logs `(head_prev, head]` (`key_metadata_mutated`) |
 | F-f | Reads do not say which log id their snapshot saw | `AggregateVolumes` / `ListAccounts` responses | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the horizon (in EN-1480's scope) |
 | F-g | No point-in-time read, and no single-snapshot multi-page listing | `common.proto:1844-1849`; `controller_default.go:436-438` | For information only (consistent export): not needed here |
