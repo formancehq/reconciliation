@@ -1060,8 +1060,7 @@ that keeps each account's first touch after the cut is silently wrong without it
   1 h 40 to 2 h 30.
 - What only the logs carry is the metadata changes the watch monitors, and `purged_accounts`, which
   the purge consistency check of §4 uses. The rewind is exact without that check.
-- ADR-005 §5 still reads the logs for the rewind. Changing the source is a design decision that has
-  not been taken yet.
+- ADR-005 adopted the transactions as the rewind's source on 2026-09-28 (decision 22, §5).
 
 ### 7.9 A final with no pending and no key: the payment-account book
 

@@ -2,13 +2,14 @@
 
 **Status:** Proposed. The design is under evaluation and nothing is implemented. The owner's answers
 of 2026-09-24 settle the questions of the first draft, and those of 2026-09-25 refine the rule
-contract, the cut, the matching and the result files (§10).
+contract, the cut, the matching and the result files. Those of 2026-09-28 move the stock rewind to
+the transactions and add the PSP payment-account convention (§10).
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
 to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9 period summary), EN-2334 (R10 rewind oracle test) and
 EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
 L2 EN-2327, L6 EN-2328, L7 EN-2329, L8 EN-2326, L5 EN-2331; EN-2336 tracks the checkpoint read
 penalty, which this design does not depend on.
-**Date:** 2026-09-24, updated 2026-09-25
+**Date:** 2026-09-24, updated 2026-09-25 and 2026-09-28
 **Decision owners:** Reconciliation maintainers
 **Related:** [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [design, measurements and evidence](../technical/transaction-level-reconciliation.md)
 **Upstream facts verified at:**
@@ -16,6 +17,8 @@ penalty, which this design does not depend on.
 - ledger `release/v3.0` @ `0b4676d97` (local checkout) and @ `a08f99bc3` (`origin/release/v3.0` tip,
   2026-09-24);
 - ledger branch `codex/en-2036-purge-ephemeral-accounts` @ `92b378e4b`, then @ `20a5595d6`;
+- ledger `release/v3.0` @ `7dd615dba` for the rewind source and the payment-account book
+  (2026-09-28);
 - Pebble `v2.1.4`;
 - Connectivity: `formancehq/connectivity` @ `e7ca3e29` and `formancehq/connectivity-plugins-poc` @
   `9df05c5b` (re-checked 2026-09-24; first read at `89f4eb72`).
@@ -35,10 +38,10 @@ reconciles two legs:
 - the **flow**: what each ledger booked during the window, read with `ListTransactions` filtered
   server-side on the presence of the reference, and joined on it;
 - the **stock**: what is still open at the cut, rebuilt exactly as of the cut by **rewinding a live
-  listing with the log window**.
+  listing with the transactions written since the cut-off**.
 
 **Query checkpoints are not used.** The control reads filtered transactions for the flow, and live
-listings corrected by the short log window since the cut-off for the stock.
+listings corrected by the short window of transactions since the cut-off for the stock.
 
 The synchronous path reports aggregate figures. The per-key
 detail is computed asynchronously and stored in object storage, and its hash is anchored in the
@@ -174,7 +177,7 @@ Two legs:
 | Leg | Question | Universe | Source of truth |
 |---|---|---|---|
 | **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (logs remain the immutable re-derivation path), plus the previous run's carried items |
-| **Stock** (per hold, on each side) | What is still open at `S`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to `S` with the log window `(S, head]` (§5) |
+| **Stock** (per hold, on each side) | What is still open at `S`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to the cut with the unfiltered transactions `(T, head_tx]` (§5) |
 | **Continuity** (self-check) | `open(S) = open(S_prev) + opened(W) − lettered(W)`, per side, per hold prefix and per asset | Aggregates | `open(S)` from the rewind and `open(S_prev)` from the previous run's stored stock (rewound only when there is none); `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
 
 The two stock books do not join to each other: an unpaid invoice has no PSP counterpart by design.
@@ -242,7 +245,7 @@ provide point-in-time queries" (ledger backup README).
 
 | # | Option | Verdict |
 |---|---|---|
-| **C** | **A cut at the business cut-off, plus a rewind.** The cut is `S` (the last log id with `date ≤ cut-off`) and `T` (the last transaction id with `inserted_at ≤ cut-off`), on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the logs `(S, head]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible, because logs are permanent. Cost ∝ the day's payments plus the open items. |
+| **C** | **A cut at the business cut-off, plus a rewind.** The cut is `S` (the last log id with `date ≤ cut-off`) and `T` (the last transaction id with `inserted_at ≤ cut-off`), on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the unfiltered transactions `(T, head_tx]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible, because logs are permanent. Cost ∝ the day's payments plus the open items. |
 | A | Shared, short-lived query checkpoint per (cluster, run): extract, then delete | **Fallback and oracle only.** Used to validate the rewind (§5) and possibly for a periodic or on-demand full proof. Too slow and too scarce as the steady-state path (§3). |
 | B | Ledger-side consistent export (Pebble `NewSnapshot()` at a Raft-ordered trigger, streamed or written through `backup.Storage`) | **Not needed for this use case.** Still the right primitive for a frozen listing of a large *non-lettered* universe (EN-1480 generalised). Filed as an ask, not a dependency (§9). |
 | D | Store the checkpoint in S3/Azure through backup | **Rejected** (§3). |
@@ -271,9 +274,10 @@ one of the reasons, and the others don't depend on read speed:
 What a fast checkpoint read would improve is the rewind's oracle test (R10) and the optional proof
 run, which could then run more often. At most, it would enable an optimisation of the stock leg:
 read the open holds at the ledger's own **daily** checkpoint when one exists near the cut-off (one
-for all rules, not one per evaluation), then rewind only the few logs between that checkpoint and
-`S`. That is worth doing only if runs start long after the cut-off, which makes the `(S, head]`
-window large. The bench measured 8,208 logs in 267 ms. The rewind would stay the general mechanism
+for all rules, not one per evaluation), then rewind only the few transactions between the cut and
+that checkpoint. That is worth doing only if runs start long after the cut-off, which makes the
+rewind window large. The bench measured 8,208 logs in 267 ms, and reading the transactions is 5 to
+9 times faster still (§5). The rewind would stay the general mechanism
 for backfill, replay, and any missing checkpoint.
 
 ## 5. Decision A — the cut is a log id, and the stock is rewound to it
@@ -357,12 +361,14 @@ Three caveats come with this choice, and each has a counter-measure:
    touched; a rewrite of the key would break it in the same way. The original log was untouched.
    - Convention: **the key and state metadata are never rewritten.** A correction is a new
      transaction.
-   - **The convention is monitored, not just trusted.** The rewind reads every log in `(S, head]`,
-     and the run also reads `(head_prev, S]`, the logs since the previous run's head, for this check
-     alone (about a day of logs, ~25 s at 1M a day), so no log goes unwatched. Any `SavedMetadata`
-     or `DeletedMetadata` there that targets a transaction and touches the key, state, business-id
-     or merchant-reference field is reported as its own anomaly, `key_metadata_mutated`, naming the
-     transaction id and the field.
+   - **The convention is monitored, not just trusted.** The run reads every log in
+     `(head_prev, head]`, the logs since the previous run's head, so no log goes unwatched. That is
+     about a day of logs, ~14 s at 1M a day on 8 ranges, and the largest step of the run ([design
+     doc §7.5](../technical/transaction-level-reconciliation.md#75-projected-daily-run)). Any
+     `SavedMetadata` or `DeletedMetadata` there that targets a transaction and touches the key,
+     state, business-id or merchant-reference field is reported as its own anomaly,
+     `key_metadata_mutated`, naming the transaction id and the field.
+   - This watch is the only daily read of the logs: the stock rewind reads the transactions (below).
    - The run's artifact records what it read.
    - The logs remain the immutable path for re-deriving any past day exactly.
    - The structural fix is **immutable transaction labels** (ask **L8**).
@@ -375,28 +381,61 @@ Three caveats come with this choice, and each has a counter-measure:
 **Stock leg (rewind).** The steps:
 
 1. List the open holds under each of the side's hold prefixes (§6), live. The listing may tear.
-2. When the listing ends, read the logs `(S, head]`. This window runs from the cut-off to the run,
-   so it is short, and `ListLogs` is kept for it on purpose: it is **complete** (the count check
-   `hi − lo` holds), immutable, and independent of any metadata convention. A hold touched by a
-   transaction that forgot its key is still corrected.
+2. When the listing ends, read the transactions `(T, head_tx]`, **unfiltered**, in id order. The
+   head is `GetLedgerStats.transaction_count`. `ListTransactions` lists newest first by default, so
+   the read sets `reverse = true`. This window runs from the cut-off to the run, so it is short. It
+   has the three properties the rewind needs:
+   - it is **complete**: transaction ids are contiguous, so the count check `hi − lo` holds;
+   - it is **immutable**: postings and `post_commit_volumes` never change;
+   - it is **independent of any metadata convention**, because it is unfiltered. A hold touched by
+     a transaction that forgot its key is still corrected.
 3. For every hold touched in that window, discard the listed value and use its balance **just before
-   its first touch after `S`**. That balance is the transaction's `post_commit_volumes` minus the
+   its first touch after `T`**. That balance is the transaction's `post_commit_volumes` minus the
    transaction's own net posting on the hold.
 4. Holds touched but absent from the listing are added back if that balance is non-zero. Holds
-   created after `S` have a pre-balance of 0 and drop out.
+   created after the cut have a pre-balance of 0 and drop out.
 
 Why this is exact:
 
-- A hold untouched in `(S, head]` held one value throughout the listing.
-- A hold touched in it is recomputed from its own log.
+- Only created and reverted transactions move a balance. A revert is its own transaction, with its
+  own id and its own `post_commit_volumes` (ledger
+  `internal/domain/processing/processor_revert_transaction.go:188-207` at `7dd615dba`).
+- A hold untouched in the window held one value throughout the listing.
+- A hold touched in it is recomputed from its own transaction.
 - It needs no baseline and no stored state, and it works for NORMAL accounts too.
 
-**Validated** against a checkpoint taken at `S`, while 8 writers ran concurrently ([design doc
-§7.4](../technical/transaction-level-reconciliation.md#74-rewind-proof)):
+**Why the transactions and not the logs.** The first design read the logs `(S, head]`, for the
+same three properties. The transactions have them too, and they read faster:
 
-- the raw live listing of 1M accounts was wrong on **2,233** rows;
-- the rewound listing was wrong on **0** of 1,002,408;
-- the correction cost 8,208 logs and 267 ms.
+- a read by transaction-id range takes the main-store path and never waits for the index to align,
+  whereas `ListLogs` always waits for it (ledger `list_entities.go:84-96`,
+  `aligned_snapshot.go:70-72`);
+- measured on the whole 1M history: 3.0 s against 16.5 s on 8 ranges, and 10.4 s against 91 s on
+  one ([design doc
+  §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)).
+
+For the daily window the gain is small (about 2 s at 1M logs a day and a run two hours after the
+cut-off). It matters for the backfill and for replays (§7). It also leaves the metadata watch as the
+only read of the logs, so the run would read none if that watch became unnecessary (L8, §9).
+
+The logs still serve two purposes:
+
+- the metadata watch `(head_prev, head]` (caveat 1 above);
+- the optional purge consistency check, which reads `purged_accounts` from the logs `(S, head]`
+  that the watch already reads ([design doc
+  §4](../technical/transaction-level-reconciliation.md#4-the-rewind-an-exact-state-at-s-with-no-checkpoint)).
+
+**Validated** against a checkpoint taken at the cut, with concurrent writers:
+
+- **From the logs** ([design doc §7.4](../technical/transaction-level-reconciliation.md#74-rewind-proof)):
+  the raw live listing of 1M accounts was wrong on **2,233** rows, and the rewound listing on **0**
+  of 1,002,408. The correction cost 8,208 logs and 267 ms.
+- **From the transactions** ([design doc
+  §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)):
+  the writers also reverted transactions older and newer than the cut and wrote metadata only. The
+  raw listing was wrong on 355 rows. The rewind from the transactions and the rewind from the logs
+  were both wrong on **0** of 1,000,000, over a window of 2,286 transactions that included
+  914 reverts.
 
 **The checkpoint's role shrinks to an oracle.** It serves the rewind's regression test, and it can
 back an optional periodic proof: the rewound stock at `S = checkpoint.max_sequence` must equal the
@@ -682,7 +721,7 @@ checkpoint's listing.
    - The stock books need no backfill. They come from the listing, so an invoice unpaid for 60 days
      is aged correctly from day one.
    - Continuity is available from the first run as well: the rewind can rebuild `open(S_prev)` for
-     any past cut, from the live listing and the logs `(S_prev, head]`.
+     any past cut, from the live listing and the transactions `(T_prev, head_tx]`.
    - Re-running with an earlier `backfillFrom` is idempotent per (rule, period, cut). It only costs
      a longer window read.
 7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
@@ -691,18 +730,22 @@ checkpoint's listing.
      the day is the id range `(T_prev, T]`, so the read stays O(payments of that day). It matches
      the original run as long as the write-once convention held. The exact variant reads that day's
      logs `(S_prev, S]`: slower, but still one day's worth, whatever its age.
-   - **The rewind from head does not.** It reads every log written since the day's cut, and keeps
-     the first touch of every hold touched since. With 1M logs a day and the measured 41k logs/s
-     with the fold (8 ranges), that is ~25 s the next day, ~3 min a week later, ~12 min a month
-     later and **~2 h 30 a year later**, with close to a year of holds to track.
+   - **The rewind from head does not.** It reads every transaction written since the day's cut,
+     and keeps the first touch of every hold touched since. With 1M transactions a day and the
+     measured ~330k/s with the fold (8 ranges), that is ~3 s the next day, ~20 s a week later,
+     ~1 min 30 a month later and **~18 min a year later**, with close to a year of holds to track.
+     From the logs (61k/s with the fold on the same bench) it would be ~1 h 40 a year later
+     ([design doc
+     §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)).
    - **So a replay starts from the nearest stored stock instead of from head.** The stock is
      additive over time: `stock(S_D) = stock(S_A) + hold movements in (S_A, S_D]`.
-     - Forward from an earlier stock `A`: read the logs `(S_A, S_D]`. Each touched hold takes its
-       balance after its last touch at or before `S_D`, and a hold at zero drops out.
+     - Forward from an earlier stock `A`: read the transactions `(T_A, T_D]`, unfiltered. Each
+       touched hold takes its balance after its last touch at or before `T_D`, and a hold at zero
+       drops out.
      - Backward from a later stock `A`: the rewind of §5, with that stored stock in place of the
-       live listing, over `(S_D, S_A]`.
-     - Within the 90 days, the previous day's stock is stored, so a replay costs one day of logs.
-       Beyond, the nearest monthly anchor bounds it to about half a month of logs.
+       live listing, over `(T_D, T_A]`.
+     - Within the 90 days, the previous day's stock is stored, so a replay costs one day of
+       transactions. Beyond, the nearest monthly anchor bounds it to about half a month.
      - The replay checks the stored stock's SHA-256 against its signed capture before using it.
      - With no stored stock at all (anchors expired, or a rule created later), the rewind from head
        remains the fallback, at the cost above.
@@ -761,9 +804,32 @@ rules that the engine's efficiency depends on:
 8. **Log-date and `inserted_at` indexes on both ledgers: mandatory.** Each resolves the cut in one
    read. The rule is rejected without them, as it is without the key's index (§5).
 9. **Traffic unrelated to payments costs nothing on the flow leg.** The filtered transaction read
-   costs O(payments). Only the short rewind window reads every log, so a dedicated receivables
-   ledger is no longer needed for performance. Metadata-only writes on holds are still best avoided:
-   each one is a log to read in the rewind.
+   costs O(payments). The rewind reads every transaction of the short window since the cut-off,
+   and the metadata watch reads every log since the previous run, so a dedicated receivables ledger
+   is no longer needed for performance. Metadata-only writes are still best avoided: each one is a
+   log the watch reads.
+10. **One payment account per payment kind on the PSP ledger, and a declared key on every movement
+    of it.** The rule names that account as `psp.paymentAccount` (decision 17). No other flow uses
+    it.
+    - **Every credit is a payment final that carries `payment_ref`.** The book of the account then
+      becomes a strict check: `input(S) − input(S_prev)` must equal the flow's credits to it. That
+      book is the only check that sees a final with no `pending` before it and no reference. Such a
+      final moves no hold, so it breaks no continuity, and the flow read cannot return it.
+    - **Every debit carries a declared key**: `payment_ref` for a refund, and the reference of its
+      own object for a payout or a fee. The debit book, `output(S) − output(S_prev)` against the
+      flow's debits, then closes at 0. Without those keys, the unkeyed debits are a residual that
+      has to be classified.
+    - The account is `NORMAL`, so its volumes are cumulative. Its value at `S` is a live read
+      rewound like the holds (§5), and its value at `S_prev` is the previous run's.
+    - **Measured** ([design doc
+      §7.9](../technical/transaction-level-reconciliation.md#79-a-final-with-no-pending-and-no-key-the-payment-account-book)):
+      - 100 such finals among 216k transactions left the flow and the hold continuity green, and
+        the credit book's residual was exactly their total.
+      - Keying the payouts and fees, and reading the flow with `Or(payment_ref, movement_ref)`,
+        brought the debit residual to 0, for +31 % on the flow read.
+      - The book itself costs one `GetAccount` per payment account.
+    - The rule contract carries neither the book nor the payout and fee keys yet (EN-2316). The PSP
+      booking can still be changed to follow this convention (owner, 2026-09-28).
 
 On the PSP ledger, these conventions come from the **connector mapping**, which is configured per
 customer at implementation time. The implementer's checklist is in the [design doc
@@ -776,7 +842,7 @@ connector change is required.
 |---|---|---|
 | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths (`internal/application/ctrl/store.go:189-195`) | A listing of 1M accounts writes 1M log lines (this bench: 3.86M lines, 970 MB) | XS |
 | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. EN-2331 also covers the Ledger-side part, which this design does not need: resolve an exact address from the account→tx mappings (the query currently checks that the account exists, `internal/query/compile.go:1069-1110`), keep the address prefix limited to current accounts, and fix EN-2036's READMEs. **Closed 2026-09-26** with formancehq/ledger#2058 (`38c6eef55`): the exact address was fixed, but the prefix was extended to purged accounts, the indexer README contradicts the code, and no ledger test pins the metadata and `reference` paths. Those paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the logs | The flow leg finds lettered items through indexed transaction metadata (`payment_ref EXISTS`, then a join on its value), and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
-| **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–7× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream) | Only the rewind window and exact re-derivations still read logs; the gap deserves an explanation | S–M |
+| **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–7× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream) | Only the metadata watch and exact re-derivations still read logs, the rewind having moved to the transactions (§5); the watch is the largest step of a daily run, so the gap deserves an explanation | S–M |
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the snapshot horizon (the per-ledger log id the read saw) on `AggregateVolumes` and `ListAccounts` | Makes the phase-1 aggregate exact at `S` (`agg(S) = agg − Σ net(S, horizon]`) and lets the rewind skip the untouched part of the window; it is already part of EN-1480's scope (`log_sequence`) | S |
 
@@ -830,6 +896,13 @@ for the Ledger team to weigh against its own users:
 | 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**: the application follows the PSP's final state automatically, and the day covers a payment finalised before midnight and applied after it. A business that applies later or by hand (B2B transfers) raises it; a payment-to-apply hold on the product ledger is described as an option, outside the V1 rule contract (design doc §2). |
 | 21 | Result files, review of 2026-09-26 | Every check in the statement ties two independent computations. The bridge's product total comes from the product books, so the residual can fail. The open items (the sum of the carried drifts) close run to run. The books report `letteredOther`, the letterings outside matching (credit notes, write-offs, unclassified transactions). An `incomplete` run writes its manifest only, and the next run chains on the last complete one. The latest complete run of a day is its current run, and run ids sort by start instant. Monthly anchors keep the carried file too, so an expired day replays to the same bytes. The manifest records the `engine` version. A PSP `pending` or `failed` item shows `holdAmount`, never `amount`. The books and a stock break's `amount` read in the open direction. `negative_hold` is renamed `wrong_sign`. An acceptance is on the break row (`acceptedOn`), and the alert opens only on breaks not accepted. The triage's pending and resolved lists stop at `topK` like its breaks, so the manifest stays small when a pending state lasts days (SEPA) or an incident resolves thousands of breaks at once; the counts give the totals and the files the full lists. A flow class reads the net amounts: applications that sum to 0 (an application undone with its reference) count as none, so a payment applied then undone is `unapplied_payment` (P3), not `under_applied`, and a matched payment failed at the PSP and undone by the product is `failed`, not a P1 break with nothing to do. An unclassified transaction, or identifying metadata changed after insertion, gives `reconciled_with_warnings`, never green. The files sit in the product ledger's bucket, and every file is readable through a pre-signed URL. The [results reference](../technical/transaction-level-results.md) becomes the source of truth for the format. Deliberately left out: a write-off state, a flat transactions file and a separate alert threshold. |
 
+**Refined by the owner on 2026-09-28:**
+
+| # | Question | Decision |
+|---|---|---|
+| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, in id order (`reverse = true`), instead of the logs `(S, head]`. It is as exact (0 of 1M rows wrong against the oracle, with 914 reverts in the window) and 5 to 9 times faster, which matters for the backfill and for replays. Replays and forward stocks read the transactions too. The logs keep the metadata watch `(head_prev, head]` and the optional purge check (§5, §7). |
+| 23 | The PSP payment account | A booking convention (§8, rule 10): one payment account per payment kind, every credit a keyed payment final, and a declared key on every debit. It turns the book of `psp.paymentAccount` into a strict check, the only one that sees a final with no pending and no reference. The check still has to enter the rule contract (EN-2316). |
+
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
 
@@ -849,7 +922,10 @@ new `periodType` without changing this design.
   and for an optional proof run.
 - **A new template kind, with its own async execution path** and resumable jobs. The scheduler's
   10 s drain grace does not apply to it ([scheduler.md](../technical/scheduler.md)).
-- **Recon starts reading `ListTransactions` in bulk, and `ListLogs`.** For the logs, it has to
-  handle every payload that moves a balance (created and reverted transactions), and `SavedMetadata`
-  and `DeletedMetadata` on transactions for the `key_metadata_mutated` monitoring. It ignores the
-  rest.
+- **Recon starts reading `ListTransactions` in bulk, and `ListLogs`.**
+  - From the transactions, it reads every one that moves a balance: created transactions and revert
+    transactions, which carry their own id. The flow reads them filtered, and the rewind and the
+    replays unfiltered, always with `reverse = true`, since the API lists newest first.
+  - From the logs, it reads only `SavedMetadata` and `DeletedMetadata` on transactions, for the
+    `key_metadata_mutated` monitoring, and `purged_accounts` for the optional purge check. It
+    ignores the rest.
