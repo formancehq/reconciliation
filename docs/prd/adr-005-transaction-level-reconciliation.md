@@ -1,32 +1,19 @@
 # ADR-005 — Transaction-level (lettering) reconciliation: a log-window cut instead of query checkpoints
 
-**Status:** Proposed. The design is under evaluation and nothing is implemented. The owner's answers
-of 2026-09-24 settle the questions of the first draft, and those of 2026-09-25 refine the rule
-contract, the cut, the matching and the result files. Those of 2026-09-28 move the stock rewind to
-the transactions, add the PSP payment-account convention and its book, bound the cut's date
-filters, write the flow's membership before its id range, and offer two ways to read the metadata
-watch, in full at run time or incrementally (§10).
+**Status:** Proposed. The design is under evaluation and nothing is implemented. The decisions
+taken so far are in §10.
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
 to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9 period summary), EN-2334 (R10 rewind oracle test) and
 EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
 L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L10 EN-2369, L5 EN-2331 (closed); EN-2336 tracks the checkpoint read
 penalty, which this design does not depend on.
-**Date:** 2026-09-24, updated 2026-09-25 and 2026-09-28
+**Date:** 2026-09-28
 **Decision owners:** Reconciliation maintainers
 **Related:** [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [design, measurements and evidence](../technical/transaction-level-reconciliation.md)
-**Upstream facts verified at:**
-
-- ledger `release/v3.0` @ `0b4676d97` (local checkout) and @ `a08f99bc3` (`origin/release/v3.0` tip,
-  2026-09-24);
-- ledger branch `codex/en-2036-purge-ephemeral-accounts` @ `92b378e4b`, then @ `20a5595d6`;
-- ledger `release/v3.0` @ `7dd615dba` for the rewind source, the payment-account book, the
-  materialized date filters, the order of an `And`'s terms and the `ListLogs` read path
-  (2026-09-28);
-- ledger `release/v3.0` @ `03d8792b5` for the EPHEMERAL purge, the account listing and the
-  index-building error (2026-09-28): unchanged for readers, and L2 delivered;
-- Pebble `v2.1.4`;
-- Connectivity: `formancehq/connectivity` @ `e7ca3e29` and `formancehq/connectivity-plugins-poc` @
-  `9df05c5b` (re-checked 2026-09-24; first read at `89f4eb72`).
+**Upstream facts verified at:** ledger `release/v3.0` @ `7dd615dba` (rewind source, date filters,
+`And` order, `ListLogs`) and @ `03d8792b5` (EPHEMERAL purge, account listing, index-building
+error); Connectivity `formancehq/connectivity-plugins-poc` @ `9df05c5b` and
+`formancehq/connectivity` @ `e7ca3e29`. The measurements' own SHAs are in the design doc.
 
 ---
 
@@ -72,21 +59,18 @@ account, named after the id **of the thing it tracks on that ledger**:
 | 2. Finality | The payment is captured or succeeds | The confirming transaction drains the hold to exactly zero and books to the final accounts: `reference = {id}:done`, `to_final`. |
 | 3. Failure | The payment fails | The hold unwinds to where it came from. |
 
-**The two ledgers do not key their holds by the same id** (owner, 2026-09-24).
+**The two ledgers do not key their holds by the same id.**
 
 - On the **PSP ledger**, the hold tracks the *external payment* and is keyed by the **PSP payment
   reference**. The payment is seen here first.
 - On the **product ledger**, the hold tracks a *business object*: an invoice, an order, a
   subscription period. It is keyed by that object's id, for example
   `main:hold:invoice:{invoice_no}`. When the payment arrives, the product books a transaction that
-  **carries the PSP payment reference** and letters that business hold.
-  - In the owner's model, the invoice opens the hold at −X against `user:revenue:{acct}:pending`,
-    so a product hold opens **negative** where a PSP hold opens positive.
-  - The payment is then booked as **one atomic batch of two transactions**. The application
-    `main:clearing:{conn}` → hold carries the PSP reference and brings the hold to 0. The revenue
-    recognition `…:pending` → `user:revenue:{acct}` does not touch the hold and takes no part in
-    reconciliation ([design doc
-    §2](../technical/transaction-level-reconciliation.md#2-the-booking-this-control-relies-on)).
+  **carries the PSP payment reference** and letters that business hold. In the owner's model the
+  invoice hold opens **negative** (−X against pending revenue), and the payment is one atomic batch:
+  the application, which carries the reference and brings the hold to 0, and a revenue recognition
+  that does not touch the hold ([design doc
+  §2](../technical/transaction-level-reconciliation.md#2-the-booking-this-control-relies-on)).
 - Authorization/capture, where both sides know the authorization number from the start, is the
   special case in which the two ids coincide.
 
@@ -120,58 +104,23 @@ So a lettered item is **reachable only through its transactions**, and only thro
 transaction metadata or `reference`**. The address alone cannot find it. The control reads through
 the metadata; `reference`, being single-valued and exact-match, only serves point lookups.
 
-**Re-checked on EN-2036's head** (formancehq/ledger#2058 @ `92b378e4b`, open, awaiting review), with
-the same probe (`tools/bench-txlevel probe`) on an isolated ledger: **the observed behaviour is
-unchanged.** The PR purges the account row and its metadata too. Its documentation says the
-account-to-transaction mappings are immutable history that survives the purge, and its indexer now
-excludes only TRANSIENT volumes from those mappings, so the lettering transaction gets one too. The
-mappings are nevertheless unreachable, because the query layer gates an address filter on the
-account's **current** existence before it reads them:
-
-- an exact address first checks `pebbleAccountExists` in the primary attributes store and returns
-  nothing when the account is gone (`internal/query/compile.go:1100-1110`);
-- an address prefix enumerates the matching accounts from the same store, which only holds current
-  accounts (`internal/query/compile.go:1069-1071`).
-
-The same gate exists on `0b4676d97` and on the `release/v3.0` tip `a08f99bc3`. It is what made the
-opening transaction disappear there too: the purged volume was the account's only attribute. So the
-conclusion stands whatever EN-2036 becomes.
-
-**Merged** (2026-09-25, squash `38c6eef55` on `release/v3.0`, checked at `7dd615dba`; no tag yet).
-On the TRANSACTIONS target, both filters now read the retained account→tx mappings instead of the
-current accounts:
-
-- an exact address wraps the address directly in `AddressTxIterator`, with no existence check;
-- an address prefix enumerates the addresses from the mapping keyspace
-  (`NewAccountTxAddressPrefixIterator`), so it includes every purged hold.
-
-A purged hold is therefore reachable by address again, and a prefix over the holds scales with every
-hold ever created (§7.6 of the design doc). EN-2331 is closed. The key stays indexed metadata.
-The ACCOUNTS target is unaffected, re-checked at `03d8792b5`: an address prefix lists the current
-volume and metadata rows (`NewPebbleAccountPrefixIterator`), and a purge deletes both
+**Since EN-2036** (formancehq/ledger#2058, merged as squash `38c6eef55` on `release/v3.0`, not yet
+released), the TRANSACTIONS target reads the retained account→tx mappings, so a purged hold is
+reachable by address again. But an address prefix now scales with every hold ever created, purged
+ones included; the merged prefix path was not re-measured ([design doc
+§7.6](../technical/transaction-level-reconciliation.md#76-where-the-key-comes-from-transaction-metadata-not-the-hold-address)).
+None of it changes this design, which never reads the flow by address. The ACCOUNTS target is
+unaffected (`03d8792b5`): a purge deletes the volume and metadata rows
 (`PrepareEphemeralAccountPurge`), so the stock listing stays bounded to the open holds.
 
-**Fixed later in the same PR** (head `20a5595d6`, still open, not merged): address filters on
-transactions now read the mappings (`MappedAccountPrefixIterator`), and the probe returns both
-transactions of a purged hold by address. But the **prefix** path now enumerates every hold ever
-created, purged ones included, and materializes their transactions on every page. On real EPHEMERAL
-holds, a 2k-transaction window costs 5.7 s at a 100k-payment history and 50.7 s at 1M, against
-56–65 ms for `payment_ref EXISTS`. That is reported on the PR
-([comment](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700)), with options.
-None of it changes this design, which never reads by address.
-
 Ask **L5** keeps only what this design needs: the metadata and `reference` paths stay a tested
-contract for purged accounts. The ledger closed it without such a test, so recon's own it-tests
-pin it (EN-2318, EN-2319; §9). Reaching them by address is a Ledger matter, and an address prefix
-must not be extended to purged accounts (§6, and [design doc
-§7.6](../technical/transaction-level-reconciliation.md#76-where-the-key-comes-from-transaction-metadata-not-the-hold-address)).
+contract for purged accounts, pinned by recon's own it-tests (EN-2318, EN-2319; §9).
 
 **Consequence for the recommended booking.** Every lettering transaction, on both ledgers, must
 carry the **PSP payment reference** as declared, indexed transaction metadata. On the product
 ledger, it should also carry the **business id** of the hold it letters. Its postings name that
-hold, but the address filters miss it once the hold is purged on a ledger without EN-2036 (merged
-in `38c6eef55`, not yet released), and a metadata field makes "which payments settled
-invoice X" a query.
+hold, but the address filters miss it once the hold is purged on a released ledger, and a metadata
+field makes "which payments settled invoice X" a query.
 
 ### 2.3 The need
 
@@ -225,13 +174,8 @@ table is in the [design doc §7](../technical/transaction-level-reconciliation.m
 | Keyed diff of two 1M scopes | 22 s | **10 min 25 s** (sequential at `0b4676d97`); **2 min 38 s** (parallel, on the tip) |
 | Concurrent reads of one checkpoint | — | fail (`lock held by current process`, non-retryable `Unknown`) at `0b4676d97`; fixed by EN-2108 on the tip |
 
-The measurements also located the cost:
-
-- **Every page reopens both checkpoint databases.** The open uses a backup-tuned profile: 32 open
-  files and the default 8 MiB cache (`internal/storage/dal/store_readonly.go`).
-- **Two concurrent readers on the tip scan faster than one.** The fix for EN-2108 keeps a shared
-  open alive while any reader holds it, and 100k × 2 scopes took 8.3 s against 26 s for one scope
-  alone. So reopening, not reading, is what costs.
+The cost is in reopening, not reading: every page reopens both checkpoint databases (finding F-b,
+[design doc §7.3](../technical/transaction-level-reconciliation.md#73-what-the-numbers-say)).
 
 The structural limits hold whatever the speed:
 
@@ -258,35 +202,26 @@ provide point-in-time queries" (ledger backup README).
 | B | Ledger-side consistent export (Pebble `NewSnapshot()` at a Raft-ordered trigger, streamed or written through `backup.Storage`) | **Not needed for this use case.** Still the right primitive for a frozen listing of a large *non-lettered* universe (EN-1480 generalised). Passed on to the Ledger team for information, not asked (§9). |
 | D | Store the checkpoint in S3/Azure through backup | **Rejected** (§3). |
 | E | Pebble primitives: EFOS, `Checkpoint(WithRestrictToSpans)`, `RemoteStorage` | **Rejected**, evidence in the [design doc §6](../technical/transaction-level-reconciliation.md#6-could-pebble-do-better). Pebble is not the bottleneck; the ledger read API is. |
-| F | Paginate live without correction | **Rejected.** A 1M listing spans about 1,000 snapshots and tears under writes (measured, §5). |
+| F | Paginate live without correction | **Rejected.** A 1M listing spans about 1,000 snapshots and tears under writes (measured, [design doc §7.4](../technical/transaction-level-reconciliation.md#74-rewind-proof)). |
 
 ### If checkpoint reads became as fast as live reads
 
 [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) asks the Ledger to remove the ~20×
-read penalty at a checkpoint. **Option A would stay rejected even then.** The slow read was only
-one of the reasons, and the others don't depend on read speed:
+read penalty at a checkpoint. **Option A would stay rejected even then**, for reasons that do not
+depend on read speed:
 
-- **The cap.** Live checkpoints are capped at 10 per cluster, shared by every ledger, every tenant
-  and the ledger's own checkpoint scheduler. Rules cluster on round instants, so eleven daily rules
-  at midnight already exceed it (ADR-003).
-- **The write path.** Creating a checkpoint is a Raft order that pauses the applier while the whole
-  bucket store is checkpointed, and deleting it is a second order. Every evaluation would load
-  everyone's writes.
-- **The wrong instant.** A checkpoint captures the run instant, not the business cut-off. The job
-  runs after the cut-off, so the stock would still need rewinding to `S`.
-- **Past days.** The first-run backfill and the replay of an old day need a cut where no checkpoint
-  exists. Keeping checkpoints for 90 days is impossible under the cap, and would pin SSTs.
-- **The flow needs no snapshot.** Every transaction at or below `T` is immutable except for its
-  metadata, so a live read of `(T_prev, T]` already returns what a snapshot would.
+- **The cap.** 10 live checkpoints per cluster, shared by every tenant and by the ledger's own
+  checkpoint scheduler; eleven daily rules at midnight already exceed it (ADR-003).
+- **The write path.** Each create and delete is a Raft order, and the create pauses the applier.
+- **The wrong instant.** A checkpoint captures the run instant, so the stock would still need
+  rewinding to `S`.
+- **Past days.** Backfill and replay need a cut where no checkpoint exists. Keeping checkpoints for
+  90 days is impossible under the cap, and would pin SSTs.
+- **The flow needs no snapshot.** Transactions at or below `T` are immutable except for their
+  metadata.
 
-What a fast checkpoint read would improve is the rewind's oracle test (R10) and the optional proof
-run, which could then run more often. At most, it would enable an optimisation of the stock leg:
-read the open holds at the ledger's own **daily** checkpoint when one exists near the cut-off (one
-for all rules, not one per evaluation), then rewind only the few transactions between the cut and
-that checkpoint. That is worth doing only if runs start long after the cut-off, which makes the
-rewind window large. The bench measured 8,208 logs in 267 ms, and reading the transactions is 5 to
-9 times faster still (§5). The rewind would stay the general mechanism
-for backfill, replay, and any missing checkpoint.
+A fast checkpoint read would only make the rewind's oracle test (R10) and the optional proof run
+cheaper to run more often.
 
 ## 5. Decision A — the cut is a log id, and the stock is rewound to it
 
@@ -297,29 +232,24 @@ is at or before the cut-off.
   starts. This is better than a checkpoint's cross-cluster semantics.
 - `S` and `logSha256`, the SHA-256 of the log at `S` (results doc §6), go into the capture, so the
   cut is identified exactly and can be re-derived later.
-- **Resolving `S`.** Per-ledger log ids are contiguous from 1, so the head is
-  `GetLedgerStats.log_count` (checked on the bench). `ListLogs` rejects `reverse`
-  ("options.reverse is not supported on this endpoint"), so `S` is **(the first log with
-  `date > cut-off`) − 1**: one ascending page of size 1 on the per-ledger log-date index
-  (`LOG_BUILTIN_INDEX_DATE`, "lldt"). `T` is resolved the same way on the `inserted_at` index
-  (`TX_BUILTIN_INDEX_INSERTED_AT`).
-- **The date filter is bounded** (owner decision, 2026-09-28, decision 24): `cut-off < date ≤
-  cut-off + δ`, widening δ while the page comes back empty. The ledger materializes the whole range
-  of a date filter before it pages it (`internal/query/compile.go:1382-1416` and `:1913` at
-  `7dd615dba`), so an open `date > cut-off` costs everything written since the cut-off: nothing
-  for the daily run, but a memory spike the size of the history for an old day's replay or a long
+- **Resolving `S`.** `ListLogs` rejects `reverse`, so `S` is **(the first log with
+  `date > cut-off`) − 1**: one ascending page of size 1 on the log-date index. `T` is resolved the
+  same way on the `inserted_at` index.
+- **The date filter is bounded** (decision 24): `cut-off < date ≤ cut-off + δ`, widening δ while
+  the page comes back empty. The ledger materializes the whole range of a date filter before it
+  pages it (`internal/query/compile.go:1382-1416` and `:1913` at `7dd615dba`), so an open
+  `date > cut-off` costs a memory spike the size of the history for an old day's replay or a long
   backfill.
-- **Both indexes are mandatory on both ledgers** (owner decision, 2026-09-25; §8.8). The rule's
+- **Both indexes are mandatory on both ledgers** (decision 12; §8 rule 8). The rule's
   validation rejects a ledger without them, and a run waits while they build, exactly as for the
   key's metadata index.
-- **Bisection was considered and dropped.** Ids are contiguous and the insertion date grows with
-  them, so the cut could be found without the indexes by halving the id range, about 20 reads for
-  1M rows. It is no faster than the indexes, it was never benched, and it would be a second code
-  path that the index path makes rarely exercised. Since the rule already requires an index on its
-  key, two more indexes do not change what onboarding asks for.
+- **Bisection was considered and dropped.** Halving the contiguous id range would find the cut
+  without the indexes, in about 20 reads for 1M rows. It is no faster, was never benched, and
+  would be a second, rarely exercised code path. The rule already requires an index on its key,
+  so two more do not change what onboarding asks for.
 
-A worked example, and why the id range is what makes the metadata-filtered read cheap, are in the
-[design doc
+The reads, a worked example, and why the id range makes the metadata-filtered read cheap are in
+the [design doc
 §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges).
 
 **Why the log date, not the transaction `timestamp`.**
@@ -334,19 +264,12 @@ A worked example, and why the id range is what makes the metadata-filtered read 
   on the log date instead places that payment in D+1's window, visibly and without losing it.
 - The `timestamp` still serves ageing and reporting.
 
-**Flow leg: `ListTransactions` filtered server-side, not `ListLogs`.**
-
-The first draft read the flow from `ListLogs`. But logs cannot be filtered server-side on metadata
-(`QueryFilter` allows only `ledger`, `log_id` and log `date` on `QUERY_TARGET_LOGS`), so a busy
-product ledger would have its whole traffic read. `ListTransactions` is filterable. Measured on one
-node, over **1M transactions of which 10 % are payments** ([design doc
-§7.2](../technical/transaction-level-reconciliation.md#72-log-and-transaction-reads)):
-
-| Read of the same 1M-transaction window | 1 stream | 8 id ranges |
-|---|---|---|
-| `ListLogs`, everything | 72.5 s (13.8k/s) | 15.1 s |
-| `ListTransactions`, everything | 10.6 s (94.5k/s) | 2.85 s |
-| `ListTransactions`, `payment_ref EXISTS` → the 100k payments | 2.9 s | **0.8 s** |
+**Flow leg: `ListTransactions` filtered server-side, not `ListLogs`.** Logs cannot be filtered
+server-side on metadata (`QueryFilter` allows only `ledger`, `log_id` and log `date` on
+`QUERY_TARGET_LOGS`), so a busy product ledger would have its whole traffic read.
+`ListTransactions` is filterable: on 1M transactions of which 10 % are payments, the filtered read
+took 0.8 s on 8 id ranges, against 15.1 s for the logs ([design doc
+§7.2](../technical/transaction-level-reconciliation.md#72-log-and-transaction-reads)).
 
 So the flow is read with `ListTransactions`, filtered on `And(<membership>, id ∈ (T_prev, T])` and
 split into parallel id ranges. The membership comes first: the ledger drives an `And` from its first
@@ -360,62 +283,23 @@ term, and with the dense id range first the product `Or` read measured 2.7 to 3.
   `business_ref` term per hold kind (each `holds` entry names its business-id field). A business
   hold's opening (an invoice issued) carries no payment reference yet, but continuity needs
   `opened(W)`, so every product transaction that touches a business hold carries its `business_ref`
-  (§8.3).
-
-- `T` is the transaction-id image of the cut: the last transaction with `inserted_at ≤ cut-off`.
-  It is resolved with the `inserted_at` index in one page. Per-ledger
-  transaction ids are contiguous: an unfiltered `(0, 1M]` returned exactly 1M rows.
-- Every returned transaction carries its postings, its metadata and its `post_commit_volumes`.
+  (§8 rule 3).
 - **Membership is the key's presence, not a `kind` tag.** Any transaction that carries the payment
   reference belongs to the flow, including a manual correction.
 - It costs O(payments in the window), whatever else the ledger books.
 
 Three caveats come with this choice, and each has a counter-measure:
 
-1. **Transaction metadata is mutable, and logs are not.** A `SavedMetadata` can target a
-   transaction id. The bench retagged one payment's `kind` after the fact, and the same
-   `kind = payment` re-read of the same past window returned 99,999 payments instead of 100,000.
-   The adopted `payment_ref EXISTS` filter still returned 100,000, because the key itself was not
-   touched; a rewrite of the key would break it in the same way. The original log was untouched.
-   - Convention: **the key and state metadata are never rewritten.** A correction is a new
-     transaction.
-   - **The convention is monitored, not just trusted.** Every log in `(head_prev, head]`, the logs
-     since the previous run's head, is watched, so no log goes unwatched. Any `SavedMetadata` or
-     `DeletedMetadata` there that targets a transaction and touches the key, state, business-id or
-     merchant-reference field is reported as its own anomaly, `key_metadata_mutated`, naming the
-     transaction id and the field.
-   - **Two ways to read the watch are on the table** (decision 25). The watch grows with the
-     ledger's logs per day, not with its payments: measured end to end, the product ledger of a
-     1M-payment day wrote about 4.1M logs, whose watch took 134–158 s, about 95 % of the run
-     ([design doc
-     §7.15](../technical/transaction-level-reconciliation.md#715-one-days-run-end-to-end)).
-     - **Full read at run time** (`--lettering-watch-interval=0`): the run reads the whole window
-       itself. Nothing to store, no job; the run pays the watch in full.
-     - **Incremental, the default** (`--lettering-watch-interval=1h`): a watch job reads each
-       watched ledger's logs in slices during the day and keeps in each slice every
-       transaction-metadata change and every `purged_accounts` entry; one chain of slices serves
-       every rule on the ledger. The slices are stored in the watched ledger's own backup
-       destination, under `{bucketID}/reconciliation/watch/ledger={name}/`, so a PSP ledger's chain
-       sits with the PSP ledger even when the rule's files sit with the product ledger. The run
-       assembles the slices that cover its window, checks that they are contiguous and match their
-       SHA-256, reads only the last stretch itself, and re-reads any range whose slice is missing or
-       damaged. The manifest lists the slices it used, so the signed chain covers them. The run's
-       critical path should fall to its other steps, measured at 15–25 s; the slices themselves are
-       not measured yet (an hourly slice of about 170,000 logs is estimated at a few seconds from
-       the logs' measured rate).
-     - Both give the same anomalies and the same purge set ([design doc
-       §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)).
-   - This watch is the only daily read of the logs: the stock rewind reads the transactions (below).
-   - The run's artifact records what it read.
-   - The logs remain the immutable path for re-deriving any past day exactly.
-   - The structural fix is **immutable transaction labels** (ask **L8**).
-2. **The `payment_ref` index becomes mandatory** (declared type plus metadata index). While it
-   builds, the read returns a retryable `Unavailable` ("index is still building"), with the reason
-   `INDEX_BUILDING` in its error info since EN-2081 (`f73eae1f3`): recon matches the reason, not the
-   message.
+1. **Transaction metadata is mutable, and logs are not.** The key and state metadata are never
+   rewritten (a correction is a new transaction), and the metadata watch over every log since the
+   previous run's head, `(head_prev, head]`, reports any change to a transaction's key, state,
+   business-id or merchant-reference field as `key_metadata_mutated`. How the watch is read is
+   decision 25; the structural fix is immutable transaction labels (ask **L8**).
+2. **The `payment_ref` index becomes mandatory.** While it builds, the read returns a retryable
+   `Unavailable` with the reason `INDEX_BUILDING` (EN-2081, `f73eae1f3`), which recon matches on the reason, never on the message.
 3. **No free count-based completeness check**, because a filtered range has gaps by design.
-   Completeness rests on the index, whose reads are aligned to the main-store horizon (ledger
-   EN-1748), and on the continuity identity (§2.3).
+   Completeness rests on the index, aligned to the main-store horizon (ledger EN-1748), and on the
+   continuity identity (§2.3).
 
 **Stock leg (rewind).** The steps:
 
@@ -443,41 +327,19 @@ Why this is exact:
 - A hold touched in it is recomputed from its own transaction.
 - It needs no baseline and no stored state, and it works for NORMAL accounts too.
 
-**Why the transactions and not the logs.** The first design read the logs `(S, head]`, for the
-same three properties. The transactions have them too, and they read faster:
+**Why the transactions and not the logs** (decision 22). The logs `(S, head]` have the same three
+properties, but a read by transaction-id range takes the main-store path and never waits for the
+index to align, so it is faster ([design doc
+§7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)).
+The daily gain is small (about 2 s at 1M logs a day); it matters for the backfill and for replays,
+and it leaves the watch as the only read of the logs, so a run would read none if the watch became
+unnecessary (L8).
+The logs keep the metadata watch and the optional purge consistency check ([design doc
+§4](../technical/transaction-level-reconciliation.md#4-the-rewind-an-exact-state-at-s-with-no-checkpoint)).
 
-- a read by transaction-id range takes the main-store path and never waits for the index to align,
-  whereas `ListLogs` always waits for it (ledger `list_entities.go:84-96`,
-  `aligned_snapshot.go:70-72`);
-- measured on the whole 1M history: 3.0 s against 16.5 s on 8 ranges, and 10.4 s against 91 s on
-  one ([design doc
-  §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)),
-  confirmed later the same day, apart from one session of the node where the logs read 4 to 9 times
-  faster and which did not reproduce (§7.13).
-
-For the daily window the gain is small (about 2 s at 1M logs a day and a run two hours after the
-cut-off). It matters for the backfill and for replays (§7). It also leaves the metadata watch as the
-only read of the logs, so the run would read none if that watch became unnecessary (L8, §9).
-
-The logs still serve two purposes:
-
-- the metadata watch `(head_prev, head]` (caveat 1 above), read in slices during the day
-  (decision 25);
-- the optional purge consistency check, which reads `purged_accounts` for the logs `(S, head]` from
-  the same slices and the run's last stretch ([design doc
-  §4](../technical/transaction-level-reconciliation.md#4-the-rewind-an-exact-state-at-s-with-no-checkpoint)).
-
-**Validated** against a checkpoint taken at the cut, with concurrent writers:
-
-- **From the logs** ([design doc §7.4](../technical/transaction-level-reconciliation.md#74-rewind-proof)):
-  the raw live listing of 1M accounts was wrong on **2,233** rows, and the rewound listing on **0**
-  of 1,002,408. The correction cost 8,208 logs and 267 ms.
-- **From the transactions** ([design doc
-  §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)):
-  the writers also reverted transactions older and newer than the cut and wrote metadata only. The
-  raw listing was wrong on 355 rows. The rewind from the transactions and the rewind from the logs
-  were both wrong on **0** of 1,000,000, over a window of 2,286 transactions that included
-  914 reverts.
+**Validated** against a checkpoint taken at the cut, with concurrent writers and reverts: the rewind
+was wrong on **0** of 1,000,000 rows ([design doc
+§7.4](../technical/transaction-level-reconciliation.md#74-rewind-proof) and §7.8).
 
 **The checkpoint's role shrinks to an oracle.** It serves the rewind's regression test, and it can
 back an optional periodic proof: the rewound stock at `S = checkpoint.max_sequence` must equal the
@@ -489,16 +351,15 @@ checkpoint's listing.
   field that carries it, for example `payment_id` on the PSP ledger and `psp_payment_ref` on the
   product ledger. The product side also names the field that carries the **business id** of the hold
   it letters (`invoice_no`…), which gives the payment → invoice link. The key is **never taken from
-  the hold address**, even on the PSP ledger where holds are named after the reference. Measured
-  with purged holds made reachable by prefix (as EN-2036's head `20a5595d6` did, and as the merged
-  `38c6eef55` does through the mapping keyspace), an address prefix
-  costs O(history) per page: 47.8 s for a 2k-transaction window on a 1M-payment history, against 48
-  ms for `payment_ref EXISTS`, which stays O(window) ([design doc
+  the hold address**, even on the PSP ledger where holds are named after the reference: with purged
+  holds reachable by prefix, an address prefix costs O(history) per page, 47.8 s for a
+  2k-transaction window on a 1M-payment history, while `payment_ref EXISTS` stays O(window) ([design
+  doc
   §7.6](../technical/transaction-level-reconciliation.md#76-where-the-key-comes-from-transaction-metadata-not-the-hold-address)).
   The hold address keys the stock only.
-- **States are parameters, not a fixed vocabulary** (owner, 2026-09-24). How external payment states
-  are modelled on the PSP ledger is a per-deployment choice. The rule therefore declares, **for each
-  side**, the metadata field or fields and the value sets that mean `pending`, `final` and `failed`:
+- **States are parameters, not a fixed vocabulary.** How external payment states are modelled on
+  the PSP ledger is a per-deployment choice. The rule therefore declares, **for each side**, the
+  metadata field or fields and the value sets that mean `pending`, `final` and `failed`:
 
   ```json
   "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
@@ -512,14 +373,12 @@ checkpoint's listing.
   ```
 
   A transaction whose state value is in no set takes no part in matching, but it is **never dropped
-  silently**. It is counted per side, per state value and per asset as `unclassified` in the
-  statement, with a warning, and listed in the unclassified file. Connectivity's `formancepayments`
-  profile books refunds on the original payment id with the state `payin.refunded`
-  (`formancehq/connectivity-plugins-poc` @ `9df05c5b`), so a default mapping shows up there instead
-  of vanishing. The connector mapping checklist ([design doc
-  §2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation))
-  tells the implementer to give refunds their own reference. The rule's validation rejects
-  overlapping sets.
+  silently**: it is counted as `unclassified` in the statement, with a warning, and listed in the
+  unclassified file. `formancepayments` books refunds on the original payment id as
+  `payin.refunded` (`formancehq/connectivity-plugins-poc` @ `9df05c5b`), so a default mapping shows
+  up there instead of vanishing; the [connector mapping
+  checklist](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation)
+  gives refunds their own reference. The rule's validation rejects overlapping sets.
 - **Hold prefixes and their signs are parameters too.** Each side lists its hold kinds in `holds`,
   one entry per prefix, each with the sign of an **open** hold under it (`openSign`, `positive` by
   default). On the product side each entry also names its `businessId` field (`invoice_no`,
@@ -544,137 +403,86 @@ checkpoint's listing.
   A transaction that carries the key but moves no hold, such as a revenue recognition booked in the
   same batch as the application, therefore counts for nothing.
 - **A PSP payment's amount is its net posting on the side's `paymentAccount`**, the account a final
-  event credits with the payment (owner, 2026-09-25). It is an address pattern where `*` matches one
-  segment (`fpay:stripe:account:*:main` for `formancepayments`), matched in memory on the postings
-  the flow read already returns, and counted in absolute value.
-  - The hold cannot give it. `formancepayments`' `payin.succeeded` sends the payment amount to
-    `account:{acct}:main`, taking it from the hold first and from the provider mirror
-    `account:{acct}` for any shortfall, then returns what is left in the hold to the mirror. The
-    net on the hold is therefore 0 for a final event that no `pending` preceded, and the `pending`
-    amount, not the paid one, when the two differ.
-  - The hold still gives the PSP stock and its continuity: `opened` and `lettered` are hold
-    movements by definition. A `pending` or `failed` event shows its hold movement as
-    `holdAmount` in the flow rows, never as `amount`.
+  event credits with the payment. It is an address pattern where `*` matches one segment
+  (`fpay:stripe:account:*:main` for `formancepayments`), matched in memory on the postings the flow
+  read already returns, and counted in absolute value.
+  - The hold cannot give it. `formancepayments`' `payin.succeeded` takes the payment amount from the
+    hold first and from the provider mirror `account:{acct}` for any shortfall, so the net on the
+    hold is 0 for a final event that no `pending` preceded, and the `pending` amount, not the paid
+    one, when the two differ.
+  - The hold still gives the PSP stock and its continuity. A `pending` or `failed` event shows its
+    hold movement as `holdAmount` in the flow rows, never as `amount`.
   - The postings are immutable, so this needs no connector change and no amount metadata.
-- **No tolerance.** Owner decision, 2026-09-24. The comparison is exact: a fee or FX difference on a
-  payment is a break, never an accepted gap. Fees and FX must be booked explicitly on the side that
-  bears them.
-- **Refunds and chargebacks are their own 1-to-1 pairs.** Owner decision, 2026-09-24. A refund is a
-  **separate PSP payment**, with its own reference, on the PSP ledger. On the product ledger it is a
-  **refund hold**, lettered by a transaction carrying that reference. It flows through the same
-  classes as any payment. Refunds are not modelled as a reversal of the original payment, because
-  PSPs and product implementations differ too much for that to be general.
+- **No tolerance.** The comparison is exact: a fee or FX difference on a payment is a break, never
+  an accepted gap. Fees and FX must be booked explicitly on the side that bears them.
+- **Refunds and chargebacks are their own 1-to-1 pairs.** A refund is a **separate PSP payment**,
+  with its own reference, on the PSP ledger. On the product ledger it is a **refund hold**, lettered
+  by a transaction carrying that reference. It flows through the same classes as any payment.
+  Refunds are not modelled as a reversal of the original payment, because PSPs and product
+  implementations differ too much for that to be general.
 - **Cardinality.** The join is on transactions, per payment reference. One payment may be applied by
   several product transactions: split across invoices, or applied in parts. Their amounts are
   **summed per reference** before comparison. One invoice settled by several payments is a
   stock-side fact (the business hold only letters to zero once), not a flow break.
-- **References missing from the window are looked up by key.** A product application whose reference
-  is neither in the PSP window nor carried in may belong to a payment the PSP settled or failed
-  earlier: a `failed` never applied (drift 0, so not carried), an `in_progress` of an earlier day,
-  or a payment finalised before `backfillFrom`. The run reads that reference's PSP transactions up
-  to `T` with one `ListTransactions` filtered on the indexed key, and classes it on its real
-  history. When that finds a final state, the reference's earlier applications are read on the
-  product ledger too, so a second application on a payment matched days ago shows as `over_applied`.
-  On every run, each PSP reference of the window with a `failed` event that is neither in the
-  product window nor carried is looked up on the product ledger as well, so a payment matched on an
-  earlier day and failed today shows as `reversed_after_application`. The cost is O(looked-up
-  references), counted in the manifest.
-- **Which came first.** Between two days, the window decides; within a day, `insertedAt`, although
-  it compares the clocks of two ledgers. Every flow row records it as `firstSide`: `psp` when the
-  PSP's first terminal state (`final` or `failed`) came before the first application, `product`
-  otherwise; a `failed` after a `final` does not change it. It is informative: it changes no
-  priority and no bridge line.
-- **Flow classes**, per payment reference:
-
-  | Class | Meaning | Outcome (priority) |
-  |---|---|---|
-  | `matched` | PSP `final`, and product applications summing to the same amount | ok |
-  | `under_applied` / `over_applied` | PSP `final`, but the product applications sum to less or to more. There is no tolerance | break (2) |
-  | `unapplied_payment` | PSP `final`, nothing applied (no application, or applications that sum to 0). **Pending while within `product.grace`**, a break after it | pending, then break (3) |
-  | `in_progress` | PSP `pending` only, no application yet. Its hold is in the PSP stock | ok |
-  | `failed` | PSP `failed` and nothing applied: nothing to letter. Listed so that every reference of the window has a row | ok |
-  | `applied_before_final` | A product application points at a reference the PSP has not finalised yet: `pending`, or not seen at all. Legitimate when the product applies at `pending`, as with debits that settle in days (SEPA, ACH). **Pending while within `psp.grace`**, then `orphan_application` | pending, then `orphan_application` (**1**) |
-  | `orphan_application` | A product application whose reference is still not final past `psp.grace`, or that the PSP had already reported `failed` | break (**1**) |
-  | `reversed_after_application` | The PSP reports `failed` on a reference **after** the product applied it, within `psp.grace` or not. A refund or chargeback is *not* this: it has its own reference | break (**1**) |
-
-  `applied_before_final` becomes `orphan_application` on its `breakOn` day, the way an `open` hold
-  becomes `stuck` at `maxAge`: the class says what is known. An unknown reference gets the same
-  delay, because the PSP's `pending` event can land after the cut (product at 23:58, PSP at 00:02).
-
+- **References missing from the window are looked up by key**, on the PSP ledger up to `T` and,
+  when that finds a final state, on the product ledger too; a window reference with a `failed`
+  event that is not carried is looked up on both ledgers, even when the product books on it the same
+  day. So `over_applied` and `reversed_after_application` are caught across days. The cost is
+  O(looked-up references), counted in the manifest ([design doc
+  §5](../technical/transaction-level-reconciliation.md#5-matching-semantics)).
+- **Which came first** is recorded on every flow row as `firstSide`. It is informative: it changes
+  no priority and no bridge line.
+- **Classes.** The flow classes (`matched`, `under_applied` / `over_applied`, `unapplied_payment`,
+  `in_progress`, `failed`, `applied_before_final`, `orphan_application`,
+  `reversed_after_application`) and the stock classes (`open` with its age bucket, `wrong_sign`,
+  `stuck`, `cleared`), with their outcomes and priorities, are defined in the [results
+  reference](../technical/transaction-level-results.md#flowndjsongz). `orphan_application` and
+  `reversed_after_application` are priority 1; `wrong_sign` and `stuck` are priority 4. The two
+  stock books are aged, never joined to each other.
 - **Each side has its own `grace`: how long it may lag behind the other.** `product.grace` is how
   long the product has to apply a payment the PSP finalised (`unapplied_payment`); `psp.grace` is
   how long the PSP has to finalise a reference the product already applied
-  (`applied_before_final`). A `breakOn` is `firstSeen` plus the lagging side's `grace`. At 0, the
-  side may not lag at all: `psp.grace: 0` is the integration where the product applies only on the
-  PSP's final state, and an early application is a priority-1 break at once, including the
-  cross-cut race above, which then resolves the next day.
-
-- **Stock classes**, per hold and per side: `open` with its age bucket, `wrong_sign` (the balance
-  has the sign opposite its prefix's `openSign`: an over-application or a skipped state,
-  "investigate id"), `stuck` (open past the side's `maxAge`, the `stale_holds` signal per key) and
-  `cleared` (open at the previous run's `S`, lettered since: listed once, not a break).
-  `wrong_sign` and `stuck` are breaks of priority 4.
-  PSP holds are pending payments; product holds are unpaid business objects. The two books are aged,
-  never joined to each other.
-- **Grace and ageing: proposed defaults, to calibrate with the design partner** (the owner has no
-  prior on them).
-  - `product.grace` = **1 calendar day** (owner, 2026-09-25): the product applies a payment as
-    soon as the PSP finalises it, so the day of grace only absorbs a payment finalised before
-    midnight and applied after it. A team that letters by hand raises it to its usual delay.
-  - `psp.grace` = **7 calendar days**: a debit final at D+5 business days spans a weekend.
+  (`applied_before_final`, unknown references included, which then becomes `orphan_application`).
+  An unknown reference gets the same delay because the PSP's `pending` event can land after the
+  cut (product at 23:58, PSP at 00:02). A `breakOn` is `firstSeen` plus the lagging side's `grace`.
+  At 0, the side may not lag at all: `psp.grace: 0` is the integration where the product applies
+  only on the PSP's final state, so an early application is a priority-1 break at once, including
+  that cross-cut race, which then resolves the next day.
+- **Grace and ageing: proposed defaults, to calibrate with the design partner.**
+  - `product.grace` = **1 calendar day**: the product applies a payment as soon as the PSP
+    finalises it, so the day of grace only absorbs a payment finalised before midnight and applied
+    after it. A team that letters by hand raises it to its usual delay.
+  - `psp.grace` = **7 calendar days**: a direct debit (SEPA, ACH) final at D+5 business days spans a
+    weekend, and applying at `pending` is common with those debits.
   - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`.
   - `maxAge` has no default: without one, no hold is ever `stuck`. A rule sets it only where an
-    open hold past it is abnormal (an invoice paid by card at checkout, a pending payment). For
-    B2B receivables it stays unset: ageing them is credit management, and the buckets still show
-    it.
-  - All four are rule parameters. **Ageing** comes from comparing with the previous run's
-    artifact: `new` / `persisting` / `cleared` for holds, `new` / `persisting` / `resolved` for
-    breaks, matched by a `breakId` that stays the same from day to day. The `breakId` hashes the
-    rule, leg, key (`ref`, or `side` + `hold`) and asset, not the class: an orphan the PSP later
-    reports `failed`, or an unapplied payment later applied short, stays the same break, with its
-    comments, and records its `previousClass` on the day of the change. An acceptance records the
-    class and amount it accepted and lapses when either changes. A resolved break that opens again
-    keeps its `breakId` and history, and is `new` again.
+    open hold past it is abnormal. For B2B receivables it stays unset: ageing them is credit
+    management, and the buckets still show it. `stuck` is the `stale_holds` signal per key.
+  - All four are rule parameters.
+- **`breakId`.** Ageing compares with the previous run's artifact, matched by a `breakId` that
+  hashes the rule, leg, key (`ref`, or `side` + `hold`) and asset, not the class: a break that
+  changes class stays the same break, with its comments. Lifecycle, acceptance and reopening are in
+  the [results reference
+  §7](../technical/transaction-level-results.md#7-how-rows-move-from-day-to-day).
 - **Arithmetic.** Exact integer minor units, colors collapsed per asset, and multi-asset through
   `asset: "*"` as in ADR-004.
-- **Schedule and alerts reuse the existing model.** Owner decision, 2026-09-24.
+- **Schedule and alerts reuse the existing model.**
   - The rule runs on a **daily schedule by default**. It takes the existing `periodType` (`daily`,
     `weekly` or `monthly`), and the alert identity is `(rule, fingerprint, period)` exactly as in
     [alert-period-model.md](../technical/alert-period-model.md). With `monthly`, the month's alert
     is opened by the first failing daily run and updated by the following ones.
   - **The alert carries the aggregate comparison.** Its evidence holds the net and the gross
     per asset, the class counts per leg, the continuity check, the top-K breaks and the link to the
-    day's files. When a drift shows up, the analysis continues in the detail kept in the backup
-    storage.
-  - **What the alert says: a reconciliation statement**, never a bare drift ([design
-    doc](../technical/transaction-level-reconciliation.md#what-the-controller-sees-a-reconciliation-statement-never-a-bare-drift);
-    every line is defined in the [results
-    reference](../technical/transaction-level-results.md#5-the-statement)).
-    - A **verdict**, evaluated in this order: `incomplete`, `breaks`, `reconciled_with_warnings`
-      (an unclassified transaction, so never green), `reconciled_with_pending`, `reconciled`.
-    - A **bridge** from the PSP control total to the product control total. It explains the net
-      difference class by class, and its **unexplained residual must be 0**. The product total is
-      taken from the product books (letterings by a transaction carrying the key), and the lines
-      from the flow rows, so the residual ties the join to the books.
-    - The **open items**: the sum of the carried drifts at the previous cut, plus the window's
-      net, gives the sum at this cut. This is the running balance of what is still unmatched.
-    - The verdict is `incomplete` when a required index is missing, when a transaction or log range
-      comes back short, when a continuity identity fails (books or open items), when the residual
-      is not 0, when a hold open at the cut is missing without having been purged, or when a stored
-      file differs from its signed capture: `incomplete.reason` is `missing_index`, `short_range`,
-      `continuity`, `residual`, `purge_check` or `stored_file_mismatch` (results doc §4). No
-      conclusion can be drawn, and the run is never green. The payment-account book is the
-      exception: its residual is a P1 break, not an `incomplete` run (decision 23). A transient
-      cause (`missing_index`, `short_range`) clears on the next run; a structural one repeats
-      until an operator fixes it, and the chain resumes with a re-seed (decision 26).
-    - The **gross** Σ|drift| of the open flow breaks next to the net, with an explicit
-      *offsetting* flag: open flow breaks of both signs exist.
-    - The breaks in **priority order**, each with new versus persisting.
-  - **What opens the alert:** at least one open break that is not accepted. An accepted break
-    stays a break in the files and the verdict; a resolved one does not open it. The net alone never
-    opens it: pending items move the net without being breaks, and offsetting breaks (+x on one
-    payment, −x on another) net to zero. The aggregate is what the alert *shows*, never the trigger.
-    An `incomplete` run opens the engine-error alert instead.
+    day's files.
+  - **What the alert says: a reconciliation statement**, never a bare drift: a verdict, a bridge
+    whose unexplained residual must be 0, the open items, the gross next to the net, and the breaks
+    in priority order ([results reference §4](../technical/transaction-level-results.md#4-the-verdict)
+    and [§5](../technical/transaction-level-results.md#5-the-statement)). An `incomplete` run is
+    never green. The payment-account book's residual is a P1 break, not an `incomplete` run
+    (decision 23); transient and structural `incomplete` causes are decision 26.
+  - **What opens the alert:** at least one open break that is not accepted. The net alone never
+    opens it, since pending items move it and offsetting breaks cancel in it. An `incomplete` run
+    opens the engine-error alert instead.
   - There is never one alert per payment (the reasoning of the ADR-004 2026-09-08 amendment).
 
 ## 7. Decision C — two-phase workflow, detail kept 90 days in the backup storage
@@ -695,40 +503,23 @@ checkpoint's listing.
    4. Write the **detail capture**: counts, drifts, `S` and `T` per ledger, and the artifact URI and
       SHA-256, signed with Ed25519 (EN-1930).
    5. Update the alert.
-3. **Where the files go: the backup object storage, under a recon prefix.** Owner decision,
-   2026-09-24.
+3. **Where the files go: the backup object storage, under a recon prefix.**
    - Recon writes to the S3 or Azure destination the rule's **product ledger** backs up to, under
-     `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. The files are
-     `manifest.json`, `flow.ndjson.gz`, `carried.ndjson.gz`, `stock.ndjson.gz`, `breaks.ndjson.gz`
-     and `unclassified.ndjson.gz`, plus `period.json` on the last run of a weekly or monthly period.
-   - The metadata watch's slices (decision 25) are not a rule's files: they sit in the backup
-     destination of **the ledger they watch**, under `{bucketID}/reconciliation/watch/ledger={name}/`,
-     one chain per ledger shared by every rule that reads it ([results
-     reference §2](../technical/transaction-level-results.md#2-where-the-files-are-and-which-run-counts)).
+     `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. The metadata watch's
+     slices (decision 25) sit instead in the backup destination of **the ledger they watch**, one
+     chain per ledger shared by every rule that reads it. Files and paths: [results reference
+     §2](../technical/transaction-level-results.md#2-where-the-files-are-and-which-run-counts).
    - **The customer is the first reader.** They analyse the files with their own tools (jq, DuckDB,
-     pandas); recon's API and UI read them too. So the format stays simple:
-     gzipped NDJSON, a JSON Schema per file, and a `schemaVersion` in the manifest to evolve it. The
-     `key=value` path segments let query engines read rule, day and run as columns. Identifiers keep
-     one name across files, every row has an `outcome` (`ok`, `pending`, `break`, `warning`), breaks
-     carry a `priority` (1 to 4) and a `breakId` stable from day to day and are self-contained, and
-     the manifest carries the statement and the triage (the top-K breaks, pending items and resolved
-     breaks), so the alert and a dashboard need no other file. The [results
-     reference](../technical/transaction-level-results.md) is the source of truth for every file
-     and field.
-   - **Rules a reader can rely on:**
-     - Every data file is written on every complete run, even empty.
-     - A file may come in parts, listed in the manifest, once it passes a row threshold.
-     - The same cut, rule version, engine version and previous run give byte-identical data files,
-       as long as no identifying metadata changed since, so a replay proves itself by reproducing
-       their SHA-256.
-     - An `incomplete` run writes its manifest, and no data file; a structural cause adds
-       `diagnostic.json`. The next run chains on the last complete one, over every day since, and a
-       re-seed restarts the chain after a structural cause is fixed (decision 26).
-     - The latest complete run of a day is its current run.
-   - The prefix **must stay outside `{bucketID}/backups/`**. The ledger's post-manifest orphan prune
-     lists and deletes every unreferenced object under `{bucketID}/backups/data/` and
-     `{bucketID}/backups/exports/` (`internal/infra/backup/manager.go:229-235`, prefixes at
-     `segment.go:54-61`). A sibling prefix is never touched.
+     pandas); recon's API and UI read them too. So the format stays simple: gzipped NDJSON, a JSON
+     Schema per file and a `schemaVersion`, self-contained break rows with a stable `breakId`, and a
+     manifest that carries the statement and the triage, so the alert and a dashboard need no other
+     file. The [results reference](../technical/transaction-level-results.md) is the source of
+     truth for every file and field, and for the [rules a reader can rely
+     on](../technical/transaction-level-results.md#8-rules-a-reader-can-rely-on) (byte-identical
+     files for a given cut, `incomplete` runs, the current run of a day).
+   - The prefix **must stay outside `{bucketID}/backups/`**: the ledger's orphan prune deletes every
+     unreferenced object under `backups/data/` and `backups/exports/`, and never touches a sibling
+     prefix.
    - Recon brings its own credentials for that destination, and the same drivers (`s3`, `azure`).
      It also accepts `file` for local development.
    - The manifest's hash sits in the signed capture, so the signature covers the files transitively.
@@ -751,17 +542,11 @@ checkpoint's listing.
    - The period is the rule's `periodType`, calendar-based in the rule's timezone. There is no
      separate accounting-period model.
    - The period's alert, and a period summary built from the period's **daily manifests** rather
-     than from the ledgers, list each day with:
-     - its counts per class;
-     - its net and its gross of open flow breaks;
-     - the breaks it opened and resolved, and the holds it cleared;
-     - the link to its files.
-   - A break still open at the end of the period keeps the day it first appeared. A break that is
-     resolved after its period has closed shows up in the next period; the closed period is never
-     rewritten.
-   - **The summary is a file of the period's last run**, `period.json`, listed in its manifest and
-     kept like a monthly stock anchor (same object tag, `anchorRetention`). It outlives the daily
-     files; its links to expired days are marked as expired. A `daily` rule writes none.
+     than from the ledgers, list each day with its counts, its net and gross, its breaks and the
+     link to its files. A closed period is never rewritten.
+   - **The summary is a file of the period's last run**, `period.json`, kept like a monthly stock
+     anchor (`anchorRetention`), so it outlives the daily files. A `daily` rule writes none
+     ([results reference](../technical/transaction-level-results.md#periodjson)).
    - The 90-day default retention covers a monthly period plus a review margin.
 6. **First run: bounded backfill.** A rule's first run has no previous day, so no carried items.
    Left alone, a payment the PSP finalised before the rule existed, and that the product never
@@ -784,130 +569,74 @@ checkpoint's listing.
    - Re-running with an earlier `backfillFrom` is idempotent per (rule, period, cut). It only costs
      a longer window read.
 7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
-   (`S`, `T`, `logSha256`) is in the signed capture.
-   - **The flow costs the same at any age.** Resolving the cut takes one index page per ledger, and
-     the day is the id range `(T_prev, T]`, so the read stays O(payments of that day). It matches
-     the original run as long as the write-once convention held. The exact variant reads that day's
-     logs `(S_prev, S]`: slower, but still one day's worth, whatever its age.
-   - **The rewind from head does not.** It reads every transaction written since the day's cut,
-     and keeps the first touch of every hold touched since. With 1M transactions a day and the
-     measured ~330k/s with the fold (8 ranges), that is ~3 s the next day, ~20 s a week later,
-     ~1 min 30 a month later and **~18 min a year later**, with close to a year of holds to track.
-     From the logs (61k/s with the fold on the same bench) it would be ~1 h 40 a year later
-     ([design doc
-     §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)).
-   - **So a replay starts from the nearest stored stock instead of from head.** The stock is
-     additive over time: `stock(S_D) = stock(S_A) + hold movements in (S_A, S_D]`.
-     - Forward from an earlier stock `A`: read the transactions `(T_A, T_D]`, unfiltered. Each
-       touched hold takes its balance after its last touch at or before `T_D`, and a hold at zero
-       drops out.
-     - Backward from a later stock `A`: the rewind of §5, with that stored stock in place of the
-       live listing, over `(T_D, T_A]`.
-     - Within the 90 days, the previous day's stock is stored, so a replay costs one day of
-       transactions. Beyond, the nearest monthly anchor bounds it to about half a month.
-     - The replay checks the stored stock's SHA-256 against its signed capture before using it.
-     - With no stored stock at all (anchors expired, or a rule created later), the rewind from head
-       remains the fallback, at the cost above.
-8. **Execution settings are operator settings, not rule parameters.** The number of id ranges read
-   concurrently, for the flow, the rewind window and the metadata watch, is `--lettering-read-ranges`
-   (default 8). `--lettering-max-concurrent-reads` (default 16) caps the readers across every run
-   and watch job of the process, so that several rules running at once cannot multiply the load on
-   one ledger; a read that would exceed it waits for a slot. `--lettering-watch-interval` (default
-   `1h`, `0` for a full read at run time) sets how often the watch job reads each watched ledger's
-   logs (decision 25).
-   - They are `serve` flags (with the matching environment variables), like `scheduler-interval`.
-     The team running the deployment tunes them through Helm or the Operator; they are absent from
-     the rule contract and the API.
-   - Measured on one node: 8 readers read about ×4 faster than one and slow the ledger's writes by
-     10–20 % while they run; beyond 16 the read barely improves while writes keep slowing ([design
-     doc §7.7](../technical/transaction-level-reconciliation.md#77-concurrent-readers-choosing-k)).
-   - The manifest records the K a run used, so run durations stay comparable.
+   (`S`, `T`, `logSha256`) is in the signed capture. The flow costs the same at any age, one day's
+   id range `(T_prev, T]`. The rewind from head does not: it reads every transaction since the
+   day's cut, ~18 min a year later.
+   - **So a replay starts from the nearest stored stock instead of from head**, forward or backward
+     over the transactions between the two cuts: the previous day's stock within the 90 days, the
+     nearest monthly anchor beyond. The stored stock is checked against its signed capture first.
+   - With no stored stock at all, the rewind from head remains the fallback. Mechanics and costs:
+     [design doc](../technical/transaction-level-reconciliation.md#replaying-an-old-day).
+8. **Execution settings are operator settings, not rule parameters.** They are `serve` flags (with
+   the matching environment variables), like `scheduler-interval`, absent from the rule contract
+   and the API. The team running the deployment tunes them through Helm or the Operator:
+   - `--lettering-read-ranges` (default 8): the number of id ranges read concurrently, for the
+     flow, the rewind window and the metadata watch;
+   - `--lettering-max-concurrent-reads` (default 16): caps the readers across every run and watch
+     job of the process; a read that would exceed it waits for a slot;
+   - `--lettering-watch-interval` (default `1h`, `0` for a full read at run time): how often the
+     watch job reads each watched ledger's logs (decision 25).
+
+   The manifest records the K a run used, so run durations stay comparable. How K was chosen: [design doc
+   §7.7](../technical/transaction-level-reconciliation.md#77-concurrent-readers-choosing-k).
 9. **Reads.** The run's status comes from the capture. Breaks are paged from the artifact by the
    API, and the API lists every file of a run with a pre-signed URL, so a customer reads them
    without access to the bucket.
 
 ## 8. Booking conventions we recommend
 
-The full table is in the design doc ([recommended booking
+The full table, the reasons and the connector checklist are in the design doc ([recommended booking
 design](../technical/transaction-level-reconciliation.md#recommended-booking-design-adr-005-8)). The
 rules that the engine's efficiency depends on:
 
-1. **EPHEMERAL holds, one prefix per kind.** One hold per external payment on the PSP ledger. One
-   hold per **business object** on the product ledger, not one per state. The open book is then a
-   prefix listing, with no index. Each prefix is declared in the rule's `holds` with the sign its
-   holds open with (§6).
-2. **One transaction = one event of one payment reference.** The flow is then extracted
-   transaction by transaction, without splitting multi-reference transactions.
-3. **Declared transaction metadata**:
-   - PSP ledger: `payment_ref`, `merchant_ref` (the business id passed when the payment was
-     created), `state`, `kind`;
-   - product ledger: `payment_ref`, a `business_ref` per hold kind (the field each `holds` entry
-     names, such as `invoice_no` or `refund_no`), `kind`. **Every** product transaction that
-     touches a business hold carries its `business_ref`, including the one that opens it, so the
-     flow read returns hold openings too and continuity can be computed.
-
-   **`payment_ref` must be declared and indexed on both ledgers**, because the flow is read by
-   filtering on its presence (§5). **`business_ref` must be indexed on the product ledger** too,
-   because the product-side flow read filters on it to return hold openings. Index `merchant_ref`
-   for investigation: address filters miss purged holds today, and an address prefix scales with
-   history (§2.2).
-   **These fields are write-once.** A correction is a new transaction, never a `SavedMetadata` on an
-   existing one, because a filtered re-read would otherwise change a past day (§5, caveat 1).
-   **`merchant_ref` is what turns an `unapplied_payment` into "invoice X is paid: apply it"**; the
-   rule names it as `psp.merchantRef`.
-4. **Strict amounts, explicit fees and FX** (decision 6). Product applications are
-   `send [$asset $amount]`, never `*`. PSP fees are their own posting to `psp:{conn}:fees`.
-5. **Clearing account.** A `main:clearing:{conn}` account on the product side gives an aggregate
-   control total that lines up with the PSP's `:main`.
+1. **EPHEMERAL holds, one prefix per kind**: one hold per external payment on the PSP ledger, one
+   per **business object** (not per state) on the product ledger, each prefix declared in `holds`
+   with its sign (§6).
+2. **One transaction = one event of one payment reference.**
+3. **Declared transaction metadata**: `payment_ref`, `merchant_ref`, `state`, `kind` on the PSP
+   ledger; `payment_ref`, a `business_ref` per hold kind and `kind` on the product ledger, where
+   **every** transaction that touches a business hold carries its `business_ref`, including the one
+   that opens it. `payment_ref` **must be declared and indexed on both ledgers** and `business_ref`
+   **must be indexed** on the product ledger, since the flow read filters on them (§5); `merchant_ref` is indexed for investigation and named
+   as `psp.merchantRef`. **These fields are write-once** (§5, caveat 1).
+4. **Strict amounts, explicit fees and FX** (decision 6): `send [$asset $amount]`, never `*`; PSP
+   fees are their own posting to `psp:{conn}:fees`.
+5. **Clearing account** `main:clearing:{conn}` on the product side, as an aggregate control total.
 6. **`reference = {payment_ref}:{state}`** on the PSP side and `{payment_ref}:{business_ref}` on the
    product side: idempotent on re-delivery.
 7. **`timestamp` = event time; the log date is the cut.**
-8. **Log-date and `inserted_at` indexes on both ledgers: mandatory.** Each resolves the cut in one
-   read. The rule is rejected without them, as it is without the key's index (§5).
-9. **Traffic unrelated to payments costs nothing on the flow leg.** The filtered transaction read
-   costs O(payments). The rewind reads every transaction of the short window since the cut-off,
-   and the metadata watch reads every log since the previous run. The watch grows with all the
-   ledger's logs: at 1M payments a day, the product ledger's 4.1M logs took 134–158 s to watch
-   (design doc §7.15), which is why it is read in slices during the day by default (decision 25).
-   With that, a dedicated receivables ledger is not needed for performance. Metadata-only writes
-   are still best avoided: each one is a log the watch reads.
+8. **Log-date and `inserted_at` indexes on both ledgers: mandatory** (§5).
+9. **Traffic unrelated to payments costs nothing on the flow leg.** Only the rewind window and the
+   metadata watch read all traffic; metadata-only writes are best avoided, since each one is a log
+   the watch reads.
 10. **One payment account per payment kind on the PSP ledger, and a declared key on every movement
-    of it.** The rule names that account as `psp.paymentAccount` (decision 17). No other flow uses
-    it.
-    - **Every credit is a payment final that carries `payment_ref`.** The book of the account then
-      becomes a strict check: `input(S) − input(S_prev)` must equal the flow's credits to it. That
-      book is the only check that sees a final with no `pending` before it and no reference. Such a
-      final moves no hold, so it breaks no continuity, and the flow read cannot return it.
-    - **Every debit carries a declared key**: `payment_ref` for a refund, and the reference of its
-      own object for a payout or a fee. The debit book, `output(S) − output(S_prev)` against the
-      flow's debits, then closes at 0. Without those keys, the unkeyed debits are a residual that
-      has to be classified.
-    - The account is `NORMAL`, so its volumes are cumulative. Its value at `S` is a live read
-      rewound like the holds (§5), and its value at `S_prev` is the previous run's.
-    - **Measured** ([design doc
-      §7.9](../technical/transaction-level-reconciliation.md#79-a-final-with-no-pending-and-no-key-the-payment-account-book)):
-      - 100 such finals among 216k transactions left the flow and the hold continuity green, and
-        the credit book's residual was exactly their total.
-      - Keying the payouts and fees, and reading the flow with `Or(payment_ref, movement_ref)`,
-        brought the debit residual to 0, for +31 % on the flow read.
-      - The book itself costs one `GetAccount` per payment account.
-    - **Recon checks the book** (owner, 2026-09-28, decision 23). Per payment account and asset, a
-      credit or debit residual opens a P1 break of its own class, `unkeyed_payment_movement`, on a
-      third leg, `book`. It does not stop the run: the rest of the statement stands, and the verdict
-      is `breaks`. The payout and fee keys are declared in the rule as `psp.movementKeys` (§6). The
-      PSP booking can still be changed to follow this convention.
+    of it**, named as `psp.paymentAccount` (decision 17). No other flow uses it. Every credit is a
+    payment final that carries `payment_ref`, and every debit carries a declared key (`payment_ref`
+    for a refund, the reference of its own object for a payout or a fee, `psp.movementKeys`). Its
+    book is then a strict check, the only one that sees a final with no `pending` and no reference; recon checks
+    it (decision 23, [design doc
+    §7.9](../technical/transaction-level-reconciliation.md#79-a-final-with-no-pending-and-no-key-the-payment-account-book)).
 
-On the PSP ledger, these conventions come from the **connector mapping**, which is configured per
-customer at implementation time. The implementer's checklist is in the [design doc
-§2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation). No
-connector change is required.
+On the PSP ledger, these conventions come from the **connector mapping**, configured per customer at
+implementation time ([checklist](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation)).
+No connector change is required.
 
 ## 9. Upstream asks
 
 | Ask | Why | Size |
 |---|---|---|
-| **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths (`internal/application/ctrl/store.go:189-195`). **Done 2026-09-28** with formancehq/ledger#2128 (`199bee364`): the line is logged at TRACE | A listing of 1M accounts writes 1M log lines (this bench: 3.86M lines, 970 MB) | XS |
-| **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. EN-2331 also covers the Ledger-side part, which this design does not need: resolve an exact address from the account→tx mappings (the query then checked that the account exists, `internal/query/compile.go:1069-1110` at `92b378e4b`; at `03d8792b5` that check applies to the ACCOUNTS target only, `compile.go:1104-1113`), keep the address prefix limited to current accounts, and fix EN-2036's READMEs. **Closed 2026-09-26** with formancehq/ledger#2058 (`38c6eef55`): the exact address was fixed, but the prefix was extended to purged accounts, the indexer README contradicts the code, and no ledger test pins the metadata and `reference` paths. Those paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the logs | The flow leg finds lettered items through indexed transaction metadata (`payment_ref EXISTS`, then a join on its value), and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
+| **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths. **Done** in formancehq/ledger#2128 (`199bee364`): logged at TRACE | A listing of 1M accounts wrote 1M log lines | XS |
+| **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. **Closed** with formancehq/ledger#2058 (`38c6eef55`) without such a test; the paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the logs | The flow leg finds lettered items through indexed transaction metadata, and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–7× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream). At `7dd615dba` the gap holds (×5.4 on 8 ranges, ×9 on one stream), except in one session of the node where the same reads ran 4 to 9 times faster; that variance is part of the ask (design doc §7.13) | Only the metadata watch and exact re-derivations still read logs, the rewind having moved to the transactions (§5); the watch is the largest step of a daily run, so the gap deserves an explanation | S–M |
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), epic EN-1336, Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
@@ -921,57 +650,42 @@ evaluation, so it does not ask for any of the following. The measurements stay i
 ([§8](../technical/transaction-level-reconciliation.md#8-ledger-findings-and-asks), F-b, F-g, F-h)
 for the Ledger team to weigh against its own users:
 
-- **Checkpoint reads are about ×20 slower than live reads.** Every page reopens both databases with
-  the backup profile. First posted as a [comment on
-  EN-2108](https://formance-team.atlassian.net/browse/EN-2108?focusedCommentId=25936), which already
-  shares that open between concurrent readers. The Ledger team (gfyrag) then asked for a ticket:
-  [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1). It is theirs to prioritise.
-  The two remaining checkpoint uses here are the rewind's test oracle and ADR-003's optional proof
-  run, and both can afford the slowdown.
+- **Checkpoint reads are about ×20 slower than live reads**: every page reopens both databases.
+  Filed at the Ledger team's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336)
+  (ex-L1), theirs to prioritise. The rewind's test oracle and ADR-003's optional proof run can
+  afford the slowdown.
 - **No consistent export**, meaning no single-snapshot multi-page listing, and **checkpoints have
   no owner and no TTL**. These served options A and B only.
 
 ## 10. Decisions taken and what remains open
 
-**Settled by the owner on 2026-09-24:**
-
 | # | Question | Decision |
 |---|---|---|
-| 1 | The shared key | The **PSP payment reference**. The payment is seen on the PSP ledger first, and the product ledger later books a transaction carrying the same reference, which letters a business hold (an invoice…). Authorization/capture, where both sides share the authorization number, is a special case (§2.1, §6). |
-| 2 | The state vocabulary | **Parameterised per side** in the rule (§6), because it depends on how external payment states are modelled on the PSP ledger. |
-| 3 | Grace and ageing | No prior: the proposed defaults are 3 days of grace and buckets of 0–1, 2–7, 8–30 and > 30 days, all per rule and to be calibrated (§6). Refined by decisions 16 and 20: `product.grace` 1 day, `psp.grace` 7 days. |
-| 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`. **90 days** of retention by default, and **monthly stock anchors** kept longer (`anchorRetention`, proposed 13 months) so that replaying an old day stays cheap. The monthly reconciliation points at each day's diffs (§7). |
+| 1 | The shared key | The **PSP payment reference**, carried by the transactions on both ledgers. Authorization/capture, where both sides share the authorization number, is the special case (§2.1, §6). |
+| 2 | The state vocabulary | **Parameterised per side** in the rule, because it depends on how external payment states are modelled on the PSP ledger (§6). |
+| 3 | Grace and ageing | `grace` is per side: `product.grace` 1 day and `psp.grace` 7 days by default (decisions 16, 20). Age buckets 0–1, 2–7, 8–30 and > 30 days; all are rule parameters, to calibrate (§6). |
+| 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`: **90 days** by default, and **monthly stock anchors** kept for `anchorRetention` (proposed 13 months) (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
-| 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**: a refund hold on the product ledger and a payment with its own reference on the PSP ledger. They are never a reversal of the original payment (§6). |
-| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType` (`daily`, `weekly`, `monthly`); no accounting-period model. The alert carries the aggregate comparison, and the per-payment detail sits in the backup storage (§6, §7). |
-| 9 | First run | A bounded **backfill** from `backfillFrom` (default: cut-off − the longer `grace` − 1 day), announced explicitly in the first statement (§7). |
-| 10 | Read path of the flow | **`ListTransactions` filtered on `payment_ref EXISTS`** (product side: `payment_ref` or `business_ref`), over parallel id ranges: 5–7× faster than logs and O(payments). Logs stay for the rewind window and for exact re-derivation (§5). Refined on 2026-09-28: the rewind reads the unfiltered transactions (decision 22), the logs keep the metadata watch (decision 25), and the membership is written before the id range (§5). |
-
-**Refined by the owner on 2026-09-25:**
-
-| # | Question | Decision |
-|---|---|---|
-| 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**: the sign depends on the integration and cannot be inferred. An application's amount is its net posting on those prefixes; `wrong_sign` (named `negative_hold` until decision 21) is the sign opposite `openSign`; continuity runs per prefix (§5, §6). |
-| 12 | The cut's indexes | The **`inserted_at` and log-date indexes are mandatory** on both ledgers; bisection is dropped, and an index missing at run time is an engine error (§5). |
+| 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**, never a reversal of the original payment (§6). |
+| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries the aggregates, the detail sits in the backup storage (§6, §7). |
+| 9 | First run | A bounded **backfill** from `backfillFrom` (default: cut-off − the longer `grace` − 1 day), announced in the first statement (§7). |
+| 10 | Read path of the flow | **`ListTransactions` filtered on the key's presence** (product side: `payment_ref` or `business_ref`), membership before the id range, over parallel id ranges: O(payments). The logs keep the metadata watch and exact re-derivation (§5). |
+| 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
+| 12 | The cut's indexes | The **`inserted_at` and log-date indexes are mandatory** on both ledgers, and bisection is dropped. An index missing at run time is an engine error (§5). |
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
-| 14 | Replaying an old day | From the **nearest stored stock**: daily within `retention`, monthly anchors for `anchorRetention`; the rewind from head is the fallback (§7). |
-| 15 | Result files | For the customer first: simple gzipped NDJSON under `rule=/day=/run=`, one name per identifier, an `outcome` on every row and a `priority` on breaks, a self-contained breaks file with a stable `breakId`, every reference with a drift carried to the next run, byte-identical files for a given cut (§7, design doc). |
-| 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break. **`grace` is per side**, the time that side may lag behind the other: `product.grace` (1 day since decision 20) for `unapplied_payment`, `psp.grace` (7 days) for `applied_before_final`, unknown references included, which then becomes `orphan_application` (P1); 0 forbids any lag. References missing from the window are looked up by key; every flow row records its `firstSide`; `breakId` leaves out the class; the alert opens on a break, never on the net alone (§6). |
-| 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern, `fpay:stripe:account:*:main` for `formancepayments`), not on the hold: a final event with no `pending` before it, or with another amount than its `pending`, moves the hold by 0 or by the wrong amount (§6). |
-| 18 | Review of 2026-09-25 | A PSP `failed` never applied gets the class `failed` (ok); window PSP references with a `failed` event are looked up on the product ledger every run, so `reversed_after_application` is caught in steady state; the product `businessId` is per `holds` entry; `psp.merchantRef` names the merchant-reference field; `open(S_prev)` and `cleared` come from the previous run's stored stock; the metadata check reads every log since the previous run's head (§5, §6). |
-| 19 | Simplifications, 2026-09-25 | The bridge no longer groups by `firstSide`, which stays on flow rows for analysis only: one earlier-day line for `matched`, whose sign says which side caught up. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` instead (§6, §7). |
-| 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**: the application follows the PSP's final state automatically, and the day covers a payment finalised before midnight and applied after it. A business that applies later or by hand (B2B transfers) raises it; a payment-to-apply hold on the product ledger is described as an option, outside the V1 rule contract (design doc §2). |
-| 21 | Result files, review of 2026-09-26 | Every check in the statement ties two independent computations. The bridge's product total comes from the product books, so the residual can fail. The open items (the sum of the carried drifts) close run to run. The books report `letteredOther`, the letterings outside matching (credit notes, write-offs, unclassified transactions). An `incomplete` run writes its manifest only, and the next run chains on the last complete one. The latest complete run of a day is its current run, and run ids sort by start instant. Monthly anchors keep the carried file too, so an expired day replays to the same bytes. The manifest records the `engine` version. A PSP `pending` or `failed` item shows `holdAmount`, never `amount`. The books and a stock break's `amount` read in the open direction. `negative_hold` is renamed `wrong_sign`. An acceptance is on the break row (`acceptedOn`), and the alert opens only on breaks not accepted. The triage's pending and resolved lists stop at `topK` like its breaks, so the manifest stays small when a pending state lasts days (SEPA) or an incident resolves thousands of breaks at once; the counts give the totals and the files the full lists. A flow class reads the net amounts: applications that sum to 0 (an application undone with its reference) count as none, so a payment applied then undone is `unapplied_payment` (P3), not `under_applied`, and a matched payment failed at the PSP and undone by the product is `failed`, not a P1 break with nothing to do. An unclassified transaction, or identifying metadata changed after insertion, gives `reconciled_with_warnings`, never green. The files sit in the product ledger's bucket, and every file is readable through a pre-signed URL. The [results reference](../technical/transaction-level-results.md) becomes the source of truth for the format. Deliberately left out: a write-off state, a flat transactions file and a separate alert threshold. |
-
-**Refined by the owner on 2026-09-28:**
-
-| # | Question | Decision |
-|---|---|---|
-| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, in id order (`reverse = true`), instead of the logs `(S, head]`. It is as exact (0 of 1M rows wrong against the oracle, with 914 reverts in the window) and 5 to 9 times faster, which matters for the backfill and for replays. Replays and forward stocks read the transactions too. The logs keep the metadata watch `(head_prev, head]` and the optional purge check (§5, §7). |
-| 23 | The PSP payment account | A booking convention (§8, rule 10): one payment account per payment kind, every credit a keyed payment final, and a declared key on every debit (`psp.movementKeys`, §6). It turns the book of `psp.paymentAccount` into a strict check, the only one that sees a final with no pending and no reference. **A residual is a P1 break**, `unkeyed_payment_movement`, on the leg `book`, one per account, direction and asset. It was preferred to an `incomplete` run, so that one keyless final cannot hide the rest of the day (results doc §5, §6). |
-| 24 | Bounded date filters in the cut | The cut resolves `S` and `T` with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it: an open filter costs the whole history after the cut-off on a replay (§5). |
-| 25 | How the metadata watch is read | Two options, both in the design: a **full read at run time** (`--lettering-watch-interval=0`: nothing stored, the run pays the watch in full) and an **incremental read, the default** (`--lettering-watch-interval=1h`: the watch reads each watched ledger's logs in slices during the day, one chain per ledger shared by its rules, stored with their SHA-256 in the watched ledger's own backup destination; the run reads only the last stretch and re-reads any missing or damaged slice) (§5, §7). Measured end to end, the watch was about 95 % of a 2 min 20 – 2 min 43 run (design doc §7.15); read incrementally, the run's critical path should fall to its other steps, measured at 15–25 s (the slices themselves are not measured yet). Both give the same result. A Ledger filter on the logs the watch keeps (L10, [EN-2369](https://formance-team.atlassian.net/browse/EN-2369), §9) stays the ask that would shrink the read under either option (owner, 2026-09-28). |
+| 14 | Replaying an old day | From the **nearest stored stock**: daily within `retention`, monthly anchors for `anchorRetention`. The rewind from head is the fallback (§7). |
+| 15 | Result files | For the customer first: gzipped NDJSON under `rule=/day=/run=`, a stable `breakId`, drifts carried to the next run, byte-identical files for a given cut ([results reference](../technical/transaction-level-results.md)). |
+| 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break: `applied_before_final` stays pending within `psp.grace`, unknown references included, then becomes `orphan_application` (P1). Missing references are looked up by key, and the alert opens on a break, never on the net alone (§6). |
+| 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern), not on the hold, which a final event with no `pending` before it moves by 0 (§6). |
+| 18 | Cases across days | A PSP `failed` never applied is `failed` (ok), and window references with a `failed` event that are not carried are looked up on both ledgers every run, so `reversed_after_application` is caught. The rest (a `businessId` per `holds` entry, `psp.merchantRef`, the previous stock read from storage, the watch since the previous head) is in §5 and §6. |
+| 19 | Simplifications | The bridge does not group by `firstSide`, which stays on flow rows for analysis only. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` (§6, §7). |
+| 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**; a business that applies later or by hand raises it. A payment-to-apply hold is an option outside the V1 rule contract ([design doc](../technical/transaction-level-reconciliation.md#when-application-is-deferred-or-manual-a-payment-to-apply-hold)). |
+| 21 | Result files, statement and triage | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a write-off state, a flat transactions file, a separate alert threshold. |
+| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`** (`reverse = true`), not the logs, and so do replays and forward stocks. The logs keep the metadata watch and the optional purge check (§5, §7). |
+| 23 | The PSP payment account | A booking convention (§8, rule 10), with the debit keys in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
+| 24 | Bounded date filters in the cut | `S` and `T` are resolved with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it (§5). |
+| 25 | How the metadata watch is read | Two options, same result: a **full read at run time** (`--lettering-watch-interval=0`) or, by default, an **incremental read** in slices during the day, one chain per watched ledger ([design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)). Read in full, the watch is about 95 % of a run; L10 ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), §9) would shrink it under either option. |
 | 26 | A run that fails every day | Some `incomplete` causes clear by themselves, others repeat on every run while each window grows, and a run that writes its manifest only leaves nothing to diagnose. The reasons split in two, in `incomplete.kind`: **transient** (`missing_index`, `short_range`), which the next run retries, and **structural** (`continuity`, `residual`, `purge_check`, `stored_file_mismatch`), which repeat until fixed. A structural run also writes **`diagnostic.json`**, outside the chain: the books, holds, applications or files at fault, with their transactions. Its engine-error alert says that an operator must act. After the fix, a **re-seed** run trusts nothing stored: it rewinds the stock from the head, rebuilds the carried items by key lookups on both ledgers, recomputes `openPrev` and records the gap with the last complete run (results doc §2, §6). |
 
 **Open, to review with the Connectivity team (no decision):** decision 23 assumes that the payment
