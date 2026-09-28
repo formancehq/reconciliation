@@ -123,7 +123,7 @@ The verdict is evaluated in this order, and the first condition that holds wins:
 
 | `verdict` | Condition | What it tells the controller |
 |---|---|---|
-| `incomplete` | A required index is missing, a log range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, a hold open at the cut is missing from the listing without having been purged, or a stored file differs from the SHA-256 in its signed capture. `incomplete.reason` says which: `missing_index`, `short_log_range`, `continuity`, `residual`, `purge_check`, `stored_file_mismatch` | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes no data file and opens the engine-error alert, never a green one |
+| `incomplete` | A required index is missing, a transaction or log range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, a hold open at the cut is missing from the listing without having been purged, or a stored file differs from the SHA-256 in its signed capture. `incomplete.reason` says which: `missing_index`, `short_range`, `continuity`, `residual`, `purge_check`, `stored_file_mismatch` | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes no data file and opens the engine-error alert, never a green one |
 | `breaks` | At least one open break | The breaks, by priority, new or persisting |
 | `reconciled_with_warnings` | No break, but at least one unclassified transaction, or a key, state, business-id or merchant-reference metadata changed after insertion (`anomalies`) | Money moved that the rule does not classify, or a transaction's identity changed after the fact: the rule, the connector mapping or the booking needs attention |
 | `reconciled_with_pending` | No break and no warning, but unapplied payments within `product.grace` or applications within `psp.grace` | "OK for now". Each pending item comes with the day it becomes a break |
@@ -250,8 +250,8 @@ open = openPrev + opened − lettered
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt`, `timingsMs` | When the run ran and how long each phase took: `cut`, `flow`, `lookup`, `stock`, `watch`, `join`, `write` |
-| `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `logHead`, the head the run read up to, and `logSha256`, which identifies the log at `S` |
-| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `daily`, `anchor` or `head` for a replay), and per side `rewindLogs`, `lookups` (references read by key) and `watchLogs` (logs read in `(head_prev, S]` for the metadata check) |
+| `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead` and `logHead`, the heads the run read up to (the rewind reads the transactions `(txTo, txHead]`, the metadata watch the logs up to `logHead`), and `logSha256`, which identifies the log at `S` |
+| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `daily`, `anchor` or `head` for a replay), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (logs read in `(head_prev, logHead]` for the metadata check, `head_prev` being the previous run's `logHead`) |
 | `verdict` | §4 |
 | `incomplete` | Only when `verdict` is `incomplete`: `reason` and a human-readable `detail` |
 | `counts.flow` | Flow rows per class; adds up to the flow file's row count |
@@ -552,12 +552,12 @@ and was lettered on the same day.
   "finishedAt": "2026-09-25T00:00:31Z",
   "timingsMs": {"cut": 420, "flow": 11240, "lookup": 0, "stock": 6810, "watch": 6500, "join": 900, "write": 1080},
   "cuts": [
-    {"side": "psp",     "ledger": "psp",  "logFrom": 2411902, "logTo": 2640118, "txFrom": 1204000, "txTo": 1318500, "logHead": 2644328, "logSha256": "3f9a…"},
-    {"side": "product", "ledger": "main", "logFrom": 1530010, "logTo": 1574300, "txFrom": 880400,  "txTo": 902750,  "logHead": 1576173, "logSha256": "b07c…"}
+    {"side": "psp",     "ledger": "psp",  "logFrom": 2411902, "logTo": 2640118, "txFrom": 1204000, "txTo": 1318500, "txHead": 1320606, "logHead": 2644328, "logSha256": "3f9a…"},
+    {"side": "product", "ledger": "main", "logFrom": 1530010, "logTo": 1574300, "txFrom": 880400,  "txTo": 902750,  "txHead": 904500,  "logHead": 1576173, "logSha256": "b07c…"}
   ],
   "execution": {"readRanges": 8, "maxConcurrentReads": 16, "stockFrom": "live",
-                "rewindLogs": {"psp": 4210, "product": 1873}, "lookups": {"psp": 0, "product": 0},
-                "watchLogs": {"psp": 224111, "product": 42500}},
+                "rewindTxs": {"psp": 2106, "product": 1750}, "lookups": {"psp": 0, "product": 0},
+                "watchLogs": {"psp": 228321, "product": 44373}},
   "verdict": "breaks",
   "counts": {
     "flow": {"matched": 3, "under_applied": 1, "over_applied": 0, "unapplied_payment": 2,

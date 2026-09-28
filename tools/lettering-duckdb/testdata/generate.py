@@ -289,7 +289,7 @@ class Engine:
         if incomplete:
             m = {"schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
                  "runId": run_id, "period": self.period(day), "verdict": "incomplete",
-                 "incomplete": {"reason": incomplete, "detail": "a log range came back short"}}
+                 "incomplete": {"reason": incomplete, "detail": "a transaction range came back short"}}
             write(os.path.join(run_dir, 'manifest.json'), (dump(m) + '\n').encode())
             self.runs.append({'day': day, 'run': run_id, 'verdict': 'incomplete', 'reason': incomplete,
                               'complete': False})
@@ -827,7 +827,9 @@ class Engine:
             events = self.book.psp if side == 'psp' else self.book.prod
             head = Book.last_tx(events, cutoff(day) + dt.timedelta(hours=2))
             cuts.append({'side': side, 'ledger': ledger, 'logFrom': lo, 'logTo': hi, 'txFrom': lo, 'txTo': hi,
-                         'logHead': head, 'logSha256': sha(f'{ledger}:{hi}'.encode())})
+                         'txHead': head, 'logHead': head, 'logSha256': sha(f'{ledger}:{hi}'.encode())})
+        # The next run's metadata watch starts at this run's log heads.
+        st['heads'] = {c['side']: c['logHead'] for c in cuts}
         m = {
             "schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
             "runId": run_id,
@@ -842,9 +844,9 @@ class Engine:
             "timingsMs": {"cut": 400, "flow": 1100, "lookup": 30, "stock": 700, "watch": 650, "join": 90, "write": 100},
             "cuts": cuts,
             "execution": {"readRanges": 8, "maxConcurrentReads": 16, "stockFrom": "live",
-                          "rewindLogs": {"psp": 0, "product": 0}, "lookups": st['lookups'],
-                          "watchLogs": {"psp": st['cuts']['psp'][1] - st['cuts']['psp'][0],
-                                        "product": st['cuts']['product'][1] - st['cuts']['product'][0]}},
+                          "rewindTxs": {c['side']: c['txHead'] - c['txTo'] for c in cuts}, "lookups": st['lookups'],
+                          "watchLogs": {c['side']: c['logHead'] - (self.prev['heads'][c['side']] if self.prev else c['logFrom'])
+                                        for c in cuts}},
             "verdict": verdict,
             "counts": {"flow": flow_counts, "flowOutcome": outcomes, "stock": stock_counts, "breaks": breaks_counts,
                        "unclassified": {side: sum(1 for u in st['unclassified'] if u['side'] == side)
@@ -1265,11 +1267,11 @@ def main():
     rule, book = verdicts()
     engine = Engine(rule, book, out, anomalies={'2026-10-10': [('product', 504)]})
     engine.run('2026-10-05')
-    engine.run('2026-10-06', run_id='r-20261007T000003Z', incomplete='short_log_range')
+    engine.run('2026-10-06', run_id='r-20261007T000003Z', incomplete='short_range')
     engine.run('2026-10-06', run_id='r-20261007T001503Z')
     engine.run('2026-10-07')
     engine.run('2026-10-08')
-    engine.run('2026-10-09', incomplete='short_log_range')
+    engine.run('2026-10-09', incomplete='short_range')
     engine.run('2026-10-10')
     engine.run('2026-10-11')
     expected(engine, out)

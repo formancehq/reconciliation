@@ -262,7 +262,7 @@ edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-42"/s/"drift":"0",/"drift":"0","new
 reseal "$work/run/flow.ndjson.gz"
 expect_ok "a row with a field unknown to lettering/1" "$lettering" check "$work/run"
 rm -rf "$work/run" && mkdir -p "$work/run"
-printf '%s\n' '{"schemaVersion":"lettering/1","runId":"r-20260925T060000Z","period":{"type":"daily","day":"2026-09-24"},"verdict":"incomplete","incomplete":{"reason":"short_log_range","detail":"test"}}' > "$work/incomplete.json"
+printf '%s\n' '{"schemaVersion":"lettering/1","runId":"r-20260925T060000Z","period":{"type":"daily","day":"2026-09-24"},"verdict":"incomplete","incomplete":{"reason":"short_range","detail":"test"}}' > "$work/incomplete.json"
 cp "$work/incomplete.json" "$work/run/manifest.json"
 expect_ok "an incomplete run with its manifest only" "$lettering" check "$work/run"
 cp "$day24/flow.ndjson.gz" "$work/run/"
@@ -295,7 +295,7 @@ status=0; "$lettering" check "$worked" > "$work/out" 2>&1 || status=$?
 printf '%s\n' "SELECT true AS Success;" > "$work/noisy.sql"
 expect_ok "an init file that prints a row, like CREATE SECRET" env LETTERING_INIT="$work/noisy.sql" "$lettering" check "$day24"
 if [ "$(LETTERING_INIT="$work/noisy.sql" "$lettering" check "$data/rule=qa-verdicts/day=2026-10-09/run=r-20261010T000004Z")" \
-    = "incomplete run (short_log_range): it writes its manifest only, so there is nothing else to check" ]; then
+    = "incomplete run (short_range): it writes its manifest only, so there is nothing else to check" ]; then
     pass "  and its row reaches neither the parsing nor the output"
 else
     : > "$work/out"

@@ -281,7 +281,7 @@ Invalid Input Error: 4 violation(s) of the lettering/1 rules
 One fault usually breaks several rules. Read the rows by key: the rules named together point to
 the fault, and `file_sha256` says whether the file was changed after the manifest was written.
 
-- **Incomplete run.** `check` prints its reason (`short_log_range`, `residual`…) and checks only
+- **Incomplete run.** `check` prints its reason (`short_range`, `residual`…) and checks only
   that it holds no data file. The data is in the day's current run, which `current-runs` names.
 - **Missing file.** A data file that is absent is reported as `file_missing`: a complete run writes
   every data file, even empty.
@@ -367,9 +367,9 @@ the current run. On 9 October no run completed, so the 10th's window covers two 
 
 | day | run | verdict | current | reason |
 |---|---|---|---:|---|
-| 2026-10-06 | r-20261007T000003Z | incomplete | false | short_log_range |
+| 2026-10-06 | r-20261007T000003Z | incomplete | false | short_range |
 | 2026-10-06 | r-20261007T001503Z | reconciled_with_pending | true | |
-| 2026-10-09 | r-20261010T000004Z | incomplete | false | short_log_range |
+| 2026-10-09 | r-20261010T000004Z | incomplete | false | short_range |
 | 2026-10-10 | r-20261011T000004Z | reconciled_with_warnings | true | |
 
 Amounts are in minor units of their asset: `EUR/2` 5000 is 50.00 EUR.
