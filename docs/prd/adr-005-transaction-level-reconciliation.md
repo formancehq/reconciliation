@@ -8,7 +8,7 @@ filters (§10).
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
 to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9 period summary), EN-2334 (R10 rewind oracle test) and
 EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
-L2 EN-2327, L6 EN-2328, L7 EN-2329, L8 EN-2326, L5 EN-2331; EN-2336 tracks the checkpoint read
+L2 EN-2327, L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L5 EN-2331; EN-2336 tracks the checkpoint read
 penalty, which this design does not depend on.
 **Date:** 2026-09-24, updated 2026-09-25 and 2026-09-28
 **Decision owners:** Reconciliation maintainers
