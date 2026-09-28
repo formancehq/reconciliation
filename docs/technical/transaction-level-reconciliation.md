@@ -783,10 +783,10 @@ or `monthly`, calendar-based in the rule's timezone).
 - A closed period is never rewritten: a day replayed later changes its own files, not the summary.
   A `daily` rule writes no `period.json`, since its manifest already is the summary.
 
-**Size.** Measured: **about 15 bytes per break**, gzipped (3,499 breaks = 54 KB), on the earlier
-narrow break rows. The self-contained rows of this format are larger. They are to be measured with
-`tools/bench-txlevel` before the format is frozen, the flow file first, since it has one row per
-payment of the day.
+**Size.** Measured first at **about 15 bytes per break**, gzipped (3,499 breaks = 54 KB), on the
+earlier narrow break rows. The self-contained rows of this format weigh 74 to 142 bytes per flow row
+and 93 to 161 per break row: a day of 1M payments writes about 80 to 155 MB, 7 to 14 GB per rule
+over 90 days, and the files are split into parts of 250,000 rows (§7.14, results doc §8).
 
 ## 6. Could Pebble do better?
 
@@ -1394,6 +1394,44 @@ ledger has no `IN`), lookups cost about a hundredth. The id range first falls in
 - `S` and `T` name the same instant, and the open-hold listing does not grow with the purged holds.
 - From one node on a laptop; a three-node cluster adds a quorum round-trip per call, which lookups
   one by one would pay 10,000 times.
+
+### 7.14 The size of the result files
+
+**Question.** EN-2322 left the size of the self-contained rows to measure before the format is
+frozen, the flow file first. How large are a day's files, how long do they take to write, and
+where should a file be split into parts (results doc §8)?
+
+**Setup** (`file-size`). No ledger: a generated day of 1M payments in the `lettering/1` field order
+(results doc §6), 88 % matched, about 7 % carried, 2 % breaks, and 60,000 open holds. Payment
+references of 27 characters (a Stripe id) or 110 (a base64 Payments id, which `formancepayments`'
+`slug(parent_ref, parent_id)` can yield). Gzip level 6 with no name and no timestamp (results doc
+§8), one thread.
+
+| File | Rows | 27-character references | 110-character references |
+|---|---|---|---|
+| `flow` | 1,000,000 | **74.3 MB** (74 B/row; 525 MB raw) | **141.9 MB** (142 B/row) |
+| `carried` | ~70,000 | 4.8 MB | 9.4 MB |
+| `stock` | 60,000 | 1.0 MB (17 B/row) | 1.0 MB |
+| `breaks` | ~20,000 | 1.8 MB (93 B/row) | 3.2 MB (161 B/row) |
+| `unclassified` | 1,000 | < 0.1 MB | 0.1 MB |
+
+Encoding and compressing the flow file took 4.6 s (5.4 s with the long references); at level 1,
+1.7 s for 89 MB; at level 9, 10.2 s for 73 MB. Its SHA-256 took 22 to 43 ms. DuckDB read it
+(count, sum of `impact`, a filter on `outcome`) in 0.7 to 1.0 s, the same whole or in 4 parts of
+250,000 rows.
+
+**Reading.**
+
+- **About 80 to 155 MB a day per rule, 7 to 14 GB over the 90 days of retention**, nearly all of it
+  the flow file. The length of the payment reference doubles it; it is the key the rows are joined
+  on, so it cannot be shortened.
+- A self-contained break row weighs 93 to 161 bytes, against the 15 of the earlier narrow rows (§5).
+  Breaks remain a small file.
+- Level 6 stays: level 1 saves 3 s of one thread for 20 % more bytes, level 9 doubles the time for
+  1 % less.
+- **Parts of 250,000 rows** (results doc §8): about 19 to 36 MB each, so the flow file of a 1M day is
+  compressed on 4 cores in about a quarter of the time, and uploaded and fetched part by part. Parts
+  cost DuckDB nothing.
 
 ## 8. Ledger findings and asks
 

@@ -71,6 +71,9 @@
   - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
     (`engine` in the manifest), replaying forward from the nearest anchor, whose stock and carried
     files seed the chain.
+- **Size.** A day of 1M payments writes about 80 to 155 MB of gzipped files, most of it the flow
+  file (74 to 142 bytes per row, depending on the length of the payment reference): about 7 to
+  14 GB per rule over the default 90 days (design doc §7.14).
 
 ## 3. Conventions
 
@@ -445,9 +448,11 @@ closed summary.
 
 - **Every data file is written on every complete run**, even with no row, so a glob never breaks
   on a quiet day. The manifest gives each file's row count.
-- **A file may come in parts.** Past a row threshold, `flow.ndjson.gz` becomes
-  `flow-00000.ndjson.gz`, `flow-00001.ndjson.gz` and so on, each listed in `files` with its `part`.
-  A reader that follows the manifest, or globs `flow*.ndjson.gz`, needs no change.
+- **A file may come in parts.** Past **250,000 rows**, `flow.ndjson.gz` becomes
+  `flow-00000.ndjson.gz`, `flow-00001.ndjson.gz` and so on, 250,000 rows each and the last one
+  shorter, each listed in `files` with its `part`. The same holds for every data file. A reader that
+  follows the manifest, or globs `flow*.ndjson.gz`, needs no change. A part of the flow file weighs
+  about 19 to 36 MB gzipped; parts are compressed and uploaded in parallel (design doc §7.14).
 - **The same cut gives the same bytes.** Keys follow the order of the file's JSON Schema, rows the
   order below, and gzip uses a fixed level with no name and no timestamp. A replay therefore
   reproduces every data file's SHA-256, provided four things hold:

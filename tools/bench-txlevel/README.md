@@ -48,6 +48,7 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 | `iat-check [-ledger cut10m]` | Reads every log and every transaction of a ledger, and checks that each transaction's `inserted_at` equals its creating log's date and never goes down as the id goes up |
 | `flow-writes [-ledger product-n9] [-other wload] [-writers 8] [-batch 100]` | Reads the product membership, membership first, over a window fixed before any write: idle, then while writers book keyed transactions on the same ledger, then on another. Reports the read time, the slowest page, the rows and the writers' rate |
 | `lookups [-ledger product-n9] [-n 10000] [-k 8] [-batches 1,10,100,500]` | Looks references up by key (`payment_ref = ref`, `id ≤ T`), one per query or grouped into an `Or` of equalities, key first and id range first |
+| `file-size [-payments 1000000] [-ref-len 27] [-open-holds 60000] [-level 6] [-out DIR]` | Needs no ledger. Generates a day of result files in the `lettering/1` field order and reports, per file, its rows, raw and gzipped size, bytes per row, and the time to encode, compress and hash it |
 | `cut-cost [-load] [-ledger cut] [-n 10000000] [-reps 3]` | With `-load`, books `-n` light transactions on a fresh ledger, then creates the log-date and `inserted_at` indexes on that history and times how long each takes to serve. Resolves `S` and `T` for cut-offs with 1k to `-n` entries after them, with an open `date > cut-off` and with a bounded range widened while empty, and checks every answer |
 | `rewind-sources [-ledger psp] [-prefix psp:tx:] [-writers 8] [-ranges 8]` | The rewind proof with two window sources side by side: the logs `(S, head]` and the unfiltered transactions `(T, head_tx]`, each read on 1 and on `-ranges` streams. The writers also revert transactions older and newer than the cut and write metadata only. Every rewound row is compared with a checkpoint taken at the cut |
 | `fold [-ledger psp] [-prefix psp:tx:] [-source txs\|logs] [-from X] [-to Y] [-ranges 8] [-compare]` | Folds the balance-moving transactions of `(X, Y]` (default: the whole history), from the logs or from the unfiltered transactions. `-compare` checks the forward fold against the live listing (run it with no writes) |
@@ -155,6 +156,12 @@ B=/tmp/bench-ledger/bench; for L in psp cut10m; do $B iat-check -ledger $L; done
 
 The `ListLogs` figures varied 4 to 9 times across sessions of the node on identical data, while the
 transaction reads did not (§7.13): run the log reads more than once, in separate sessions.
+
+**The size of the result files** (§7.14), no ledger needed:
+
+```bash
+B=/tmp/bench-ledger/bench; $B file-size -ref-len 27 && $B file-size -ref-len 110 && $B file-size -level 1 && $B file-size -level 9
+```
 
 **Daily stock: list and rewind, or forward** (§7.10). On the `psp` scope, the first pass right after
 starting the server, then a warm pass:
