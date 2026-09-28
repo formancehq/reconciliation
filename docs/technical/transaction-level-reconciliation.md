@@ -884,9 +884,10 @@ The projection assumes 1M lettering events per day per side, with an open book o
 |---|---|
 | Resolve `S` and `T` (one date-filtered page per ledger and per read path) | ms |
 | Flow: 1M payments per side, filtered `ListTransactions` over 8 ranges, both sides in parallel | ~8 s (125k payments/s measured with `payment_ref EXISTS`; the unadopted `kind =` filter read 177k/s), **whatever the ledger's other traffic** |
-| Stock rewind: live listing of `N_open` + logs `(S, head]` | `N_open / 47k` s + (logs written since the cut-off) / 41k s |
+| Stock rewind: live listing of `N_open` + logs `(S, head]` | `N_open / 47k` s + (logs written since the cut-off) / 41k s. Read from the unfiltered transactions instead, the window costs about 1/330k s per transaction (§7.8) |
+| Metadata watch: logs `(head_prev, S]` (ADR-005 §5, caveat 1) | about a day of logs, read without the fold: (logs since the previous run's head) / 66k s, **~14 s at 1M logs a day**, the largest step of the run |
 | Joins + artifacts | < 1 s |
-| **Total** | **≈ 10–30 s, with no checkpoint** |
+| **Total** | **≈ 25–45 s, with no checkpoint** |
 
 The same run on query checkpoints would take **2 min 38 s** on the tip (10 min on the local SHA)
 just to extract two 1M scopes. It would hold a cluster checkpoint slot for that long, and it could
@@ -1001,6 +1002,117 @@ while K readers loop over the unfiltered window, two series:
 - This is why K is an operator setting (`--lettering-read-ranges`,
   `--lettering-max-concurrent-reads`, ADR-005 §7) that the team running the deployment can tune
   without a rule change, and why it is not exposed to customers.
+
+### 7.8 Window source for balances: logs or unfiltered transactions
+
+**Question.** The rewind reads the logs `(S, head]` (§4). Could it read the transactions `(T, head_tx]`,
+unfiltered, instead? The three reasons for the logs hold for them too:
+
+- **Complete.** Transaction ids are contiguous, so the count check `hi − lo` still holds.
+- **Immutable.** Postings and `post_commit_volumes` never change.
+- **Independent of any metadata convention.** The read is unfiltered.
+
+Only created and reverted transactions move a balance, and a revert is its own transaction, with its
+own id and its own `post_commit_volumes` (`internal/domain/processing/processor_revert_transaction.go:188-207`
+at ledger `7dd615dba`). A read by id range takes the main-store path and never waits for the index
+to align (`internal/application/ctrl/list_entities.go:84-96`). `ListLogs` always waits for it, even
+unfiltered (`internal/query/aligned_snapshot.go:70-72`).
+
+**Setup.** A fresh single-node ledger at `7dd615dba`, one scope of 1M accounts (`load`). Median of
+two runs.
+
+**Exactness** (`rewind-sources`). The scope is listed live while 8 writers run. The writers mix:
+
+- top-ups, drains and new accounts;
+- reverts of transactions older than the cut;
+- reverts of transactions written after it;
+- metadata-only writes.
+
+Both windows are then folded and compared, row for row, with a checkpoint taken at the cut.
+
+| | Rows read | Differs from the oracle |
+|---|---|---|
+| Raw live listing (27 s, 1,000,245 rows) | — | 355 rows |
+| Rewound from the logs `(S, head]` | 2,738 logs: 2,286 balance-moving transactions (914 reverts) and 452 metadata logs | **0** of 1,000,000 |
+| Rewound from the transactions `(T, head_tx]` | 2,286 transactions (914 reverts) | **0** of 1,000,000 |
+
+**Throughput** (`fold`). A fold of the whole 1M-transaction history, the read a replay or a forward
+stock pays:
+
+| Source | K = 1 | K = 8 |
+|---|---|---|
+| `ListLogs` + fold | 91 s (11k/s) | 16.5 s (61k/s) |
+| Unfiltered `ListTransactions` + fold | 10.4 s (96k/s) | **3.0 s (~330k/s)** |
+| Ratio | ×8.7 | ×5.5 |
+
+Folded forward from an empty stock up to the head, with no write running, both sources gave the live
+listing exactly (`fold -compare`, 0 of 1,000,460 rows).
+
+**Order.** `ListTransactions` lists **newest first** by default: `reverse = true` gives id order
+(`internal/application/ctrl/controller_default.go:375`, "API: reverse=false → newest-first"). A fold
+that keeps each account's first touch after the cut is silently wrong without it. The flow's merge
+"in transaction-id order" (§3) needs the same flag.
+
+**Reading.**
+
+- For balances, the unfiltered transactions are as exact as the logs, and 5 to 9 times faster to read.
+  A replay from head a year later (§4, 365M transactions) would take about 18 min instead of
+  1 h 40 to 2 h 30.
+- What only the logs carry is the metadata changes the watch monitors, and `purged_accounts`, which
+  the purge consistency check of §4 uses. The rewind is exact without that check.
+- ADR-005 §5 still reads the logs for the rewind. Changing the source is a design decision that has
+  not been taken yet.
+
+### 7.9 A final with no pending and no key: the payment-account book
+
+**Question.** A PSP final with no `pending` before it moves its hold by 0 (§2). If it also lacks the
+payment reference, or the flow read misses it, it breaks no identity. Does a book of the rule's
+`psp.paymentAccount` close that gap, and what does it cost?
+
+The book compares the account's movement over the day with the flow's postings on it:
+
+- credits: `input(S) − input(S_prev)` against the flow's credits to the account;
+- debits: `output(S) − output(S_prev)` against the flow's debits.
+
+The account is `NORMAL`, so its volumes are cumulative. Its value at `S` comes from a live read,
+rewound with the window already read (§7.8). Its value at `S_prev` is the previous run's.
+
+**Setup** (`silent`). Same ledger. The holds are `EPHEMERAL`, the payment account is `psp:main`, and
+`payment_ref` and `movement_ref` are declared and indexed.
+
+- **Day 1:** 5,000 pendings stay open, and 10,000 payments complete.
+- **Day 2**, the window of 216,100 transactions:
+  - 100,000 payments, pending then final;
+  - 3,000 day-1 pendings finalised;
+  - 10,000 keyed finals with no pending;
+  - **100 finals with no pending and no payment reference;**
+  - 1,000 keyed refunds, 1,000 payouts and 1,000 fees.
+- **After the cut:** 5,000 more payments and 500 late settlements, so that the rewind has work to do.
+
+In every variant, the rewound stock and `psp:main` at `S` matched a checkpoint taken at the cut.
+
+| Variant | Hold continuity | Credit book | Debit book |
+|---|---|---|---|
+| Silent finals only | residual **0** | residual 4,909,050 = **exactly the 100 silent finals** | residual 53,000 = the unkeyed payouts and fees |
+| Payouts and fees keyed with `movement_ref`, flow read with `Or(payment_ref, movement_ref)` | 0 | idem | **0** |
+| Control: 10 holds drained without the reference | −357,355 = exactly those drains | silent finals + drains | 53,000 |
+
+**Cost.**
+
+- One `GetAccount` per payment account, and that account folded in the window already read:
+  15,500 transactions in 84 ms.
+- The `Or` of two keys raised the flow read from 1.34 s to 1.76 s for 216k transactions (+31 %).
+
+**Reading.**
+
+- The gap is real: a final that carries no pending and no key leaves the flow and the continuity
+  green.
+- The credit book of the payment account closes it exactly, at almost no cost.
+- It stays strict on one condition: every credit to the account must be a keyed payment final.
+- The debit book closes at 0 only if every debit carries a declared key: the payment reference for a
+  refund, and the reference of its own object for a payout or a fee.
+- Neither is in the rule contract yet (EN-2316). The booking design of the PSP ledger can still change
+  to meet them.
 
 ## 8. Ledger findings and asks
 
