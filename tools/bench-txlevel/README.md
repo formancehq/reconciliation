@@ -43,6 +43,7 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 | `rewind [-ledger psp] [-prefix psp:tx:] [-writers 8]` | Proves the rewind: takes an oracle checkpoint at `S`, lists the scope live while writers mutate it, rewinds the listing with the logs `(S, head]`, then compares every row with the checkpoint |
 | `probe` | Shows what a lettered (purged) EPHEMERAL hold still exposes: account listing, and transaction lookup by address and by reference |
 | `cutprobe` | Resolves a cut `S` from a date, using the per-ledger log-date index |
+| `cut-cost [-load] [-ledger cut] [-n 10000000] [-reps 3]` | With `-load`, books `-n` light transactions on a fresh ledger, then creates the log-date and `inserted_at` indexes on that history and times how long each takes to serve. Resolves `S` and `T` for cut-offs with 1k to `-n` entries after them, with an open `date > cut-off` and with a bounded range widened while empty, and checks every answer |
 | `rewind-sources [-ledger psp] [-prefix psp:tx:] [-writers 8] [-ranges 8]` | The rewind proof with two window sources side by side: the logs `(S, head]` and the unfiltered transactions `(T, head_tx]`, each read on 1 and on `-ranges` streams. The writers also revert transactions older and newer than the cut and write metadata only. Every rewound row is compared with a checkpoint taken at the cut |
 | `fold [-ledger psp] [-prefix psp:tx:] [-source txs\|logs] [-from X] [-to Y] [-ranges 8] [-compare]` | Folds the balance-moving transactions of `(X, Y]` (default: the whole history), from the logs or from the unfiltered transactions. `-compare` checks the forward fold against the live listing (run it with no writes) |
 | `crossover [-ledger psp] [-prefix psp:tx:] [-ranges 8] [-sizes …] [-days 100000,1000000] [-since 0.083] [-reps 2]` | Times the two ways to get a day's stock: live listings of growing hex sub-prefixes (the open book), folds of the last `X` transactions, and the decode and merge of a stored stock of `N` rows (gzipped NDJSON, in memory). Prints where forward from the stored stock overtakes list and rewind. Run it with no writes; `-reps 1` right after starting the server gives the cold-cache first pass |
@@ -133,6 +134,12 @@ B=/tmp/bench-ledger/bench; $B rewind-sources -ledger psp -prefix psp:tx: && for 
 
 ```bash
 B=/tmp/bench-ledger/bench; $B silent -ledger silent-d1 -keyless-drain 0 && $B silent -ledger silent-d2 -keyless-drain 0 -keyed-other && $B silent -ledger silent-d3 -keyless-drain 10
+```
+
+**Resolving the cut: bounded or open date filter** (§7.12). About 3 min of load on a fresh ledger:
+
+```bash
+B=/tmp/bench-ledger/bench; $B cut-cost -load -ledger cut10m -n 10000000
 ```
 
 **Daily stock: list and rewind, or forward** (§7.10). On the `psp` scope, the first pass right after

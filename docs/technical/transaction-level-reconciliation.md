@@ -375,7 +375,7 @@ yesterday's capture.
   (ADR-005 decision 24): the ledger materializes the whole range of a date filter before it pages
   it (`internal/query/compile.go:1382-1416`, `materializeIterator` at `:1913`, at `7dd615dba`), so
   an open filter would cost everything written since the cut-off, the whole history on an old
-  day's replay. `S` works the same
+  day's replay: 0.84 s at 10M entries after the cut-off, against 11–20 ms bounded (§7.12). `S` works the same
   way on the log-date index. **Both indexes are mandatory**: the rule is rejected without them, a
   run waits while they build, as for the key's index, and an index missing at run time is an engine
   error (`incomplete`), never a silent fallback. `formancepayments` creates neither today,
@@ -1265,6 +1265,48 @@ range first and in 32 ms membership first.
   since.
 - These figures come from one node on a laptop, with no concurrent writes, and a flow of 99,000
   transactions.
+
+### 7.12 Resolving the cut: bounded or open date filter
+
+**Question.** The cut resolves `S` and `T` with one page of one row on a date index (§3). The ledger
+materializes a date range before it pages it, so an open filter `date > cut-off` should cost every
+entry written since the cut-off. How much, and does the bound of ADR-005 decision 24 remove it?
+
+**Setup** (`cut-cost`). The ledger of §7.8, with a fresh ledger of 10M light transactions, 1,000
+per `Apply` batch. The log-date (`lldt`) and `inserted_at` (`txiat`) indexes were created after the
+load, on the existing history. For cut-offs with a growing number of entries after them, `S` is the
+first log dated after the cut-off, minus one, and `T` is the first transaction inserted after it
+(`reverse = true`), minus one. The bounded read starts about 1,000 entries wide and doubles while
+the range is empty, as §3 prescribes: the transactions of one batch share a date, so a narrow range
+can be empty. Best of three runs; every answer was checked against the dates on either side of it.
+
+| Entries after the cut-off | `S`, open | `S`, bounded | `T`, open | `T`, bounded |
+|---|---|---|---|---|
+| 1,000 to 100,000 | 10 ms | 2–10 ms | 10 ms | 3–10 ms |
+| 1M | 90 ms | 6 ms | 68 ms | 5 ms |
+| 5M | 422 ms | 4 ms | 440 ms | 8 ms |
+| 10M | 842 ms | 20 ms | 805 ms | 11 ms |
+
+On the 10M existing transactions, the log-date index served after 18 s and the `inserted_at` index
+after 60 s.
+
+**Why** (ledger `7dd615dba`). Both indexes compile through `compileTimestampRangeCondition`
+(`internal/query/compile.go:1382-1416`), which drains the whole range: `materializeEntities` copies
+every entry, then sorts them (`:1927-1960`), before the first row is returned.
+
+**Reading.**
+
+- Open, the cut costs about 80–85 ns per entry written since the cut-off, on both indexes. For
+  today's run that is negligible. For a replay a year later at 1M transactions a day, about 365M
+  entries, it would be about 30 s per read and several GB of copied keys on the server
+  (extrapolated, not measured: the node's memory was dominated by its caches).
+- Bounded and widened while empty, the read stays at a few milliseconds whatever the age of the
+  cut-off. This confirms ADR-005 decision 24.
+- Adding both indexes to a ledger that already holds 10M transactions takes about a minute on one
+  node (checklist row 10).
+- From one node on a laptop, with no concurrent writes; the ledger's query path at `7dd615dba` is
+  unchanged at the tip of `release/v3.0` (`5405f7c46`), whose three later commits touch the audit
+  index only.
 
 ## 8. Ledger findings and asks
 
