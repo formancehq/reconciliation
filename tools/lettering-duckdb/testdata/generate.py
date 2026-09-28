@@ -297,7 +297,9 @@ class Engine:
         if incomplete:
             m = {"schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
                  "runId": run_id, "period": self.period(day), "verdict": "incomplete",
-                 "incomplete": {"reason": incomplete, "detail": "a transaction range came back short"}}
+                 "incomplete": {"reason": incomplete,
+                                "kind": "transient" if incomplete in ('missing_index', 'short_range') else "structural",
+                                "detail": "a transaction range came back short"}}
             write(os.path.join(run_dir, 'manifest.json'), (dump(m) + '\n').encode())
             self.runs.append({'day': day, 'run': run_id, 'verdict': 'incomplete', 'reason': incomplete,
                               'complete': False})

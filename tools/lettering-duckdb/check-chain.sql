@@ -126,6 +126,12 @@ FROM m_payment_accounts c FULL JOIN prev p USING (account, asset)
 WHERE c.account IS NULL
    OR c.inputPrev <> coalesce(p.input, 0) OR c.outputPrev <> coalesce(p.output, 0);
 
+-- A re-seed run (results doc §2) recomputes its openPrev values and rebuilds its carried items, so
+-- the rules that pick up the earlier run's balances do not apply to it.
+DELETE FROM chain_violations
+WHERE rule IN ('suspense_open_prev', 'books_open_prev', 'book_prev', 'carried_in', 'carried_drift', 'from_lookups')
+  AND (SELECT (m->'reseed') IS NOT NULL FROM manifest);
+
 SELECT rule, key, detail FROM chain_violations ORDER BY rule, key;
 
 SELECT CASE WHEN count(*) = 0 THEN 'ok: the run chains onto the earlier one'

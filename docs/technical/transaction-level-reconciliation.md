@@ -240,11 +240,33 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
     not as their own payment reference; row 7, as a `fees` account is declared (`:82`) but no
     mapping posts to it; row 10, as the profile indexes `timestamp` but neither `inserted_at` nor
     the log date; row 12, as payouts and fees on `…:account:{acct}:main` would need a key of
-    their own. Whether the profile credits anything but payment finals to that account (row 11)
-    is still to check.
+    their own. Row 11 does not hold today: see the open question below.
 - The Stripe plugin, in [`formancehq/connectivity`](https://github.com/formancehq/connectivity)
   (`plugins/stripe` @ `e7ca3e29`), does not model holds. It books balance transactions keyed by
   `stripe_txn_id`, so rows 1–3 and 8 need a lettering mapping first.
+
+**Open question for the Connectivity team: the payment account with `formancepayments`.** No
+decision is taken here; the table is for that review.
+
+- **The facts** (`formancepayments.yaml` @ `9df05c5b`):
+  - `fpay:{conn}:account:{acct}:main` is credited by `PAYIN_SUCCEEDED` (`:191`), and also by
+    `OUTFLOW_PENDING` (`:279`), `PAYOUT_SUCCEEDED` (`:329`), `TRANSFER_SUCCEEDED` (`:376`,
+    `:381`), `OUTFLOW_COMPENSATE` (`:418`, `:422`), `PAYIN_REFUND_REVERSED` (`:503`) and
+    `PAYOUT_REFUNDED` (`:548`);
+  - every payment event, payins, payouts, transfers and refunds, sets
+    `payments.formance.com/payment-id`, with its own `formance.com/observation.event-type`
+    (`:157-701`); `CONVERSION` and `ORDER_FILL` set no payment id (`:743`, `:788`), and whether
+    they touch the payment account is to check.
+- **What follows, with the rule as specified today:** the flow read returns these transactions,
+  since they carry the key. Their states are in no set, so they are `unclassified`, which caps
+  every day at `reconciled_with_warnings`. And they post on the payment account, so row 11 fails
+  and the book of decision 23 cannot close.
+
+| Option | What changes | Trade-off |
+|---|---|---|
+| A. The connector mapping gives every movement kind its own key | The mapping, per customer | Clean, but depends on Connectivity and on each implementation |
+| B. The rule declares a set of **movement states** (payout, transfer, refund and outflow event types): transactions with the key in those states feed the payment-account book, not the matching nor `unclassified` | The rule contract (EN-2316) | Works with the connector as it is and keeps the book strict; conversions and order fills still need a key or to stay off the account |
+| C. The book becomes a warning instead of a P1 break | Decision 23 | Loses the only check that sees a final with no pending and no reference |
 
 The product side is the customer's own Numscript. Its conventions are in the booking table above,
 and the booking guide ([EN-2335](https://formance-team.atlassian.net/browse/EN-2335)) will turn both
@@ -771,9 +793,13 @@ Azure, under a prefix that is a sibling of `backups/`.
 **Integrity.** The manifest's SHA-256 is written into the Ed25519-signed capture, so the signature
 covers every file transitively.
 
-**A run that cannot conclude** writes its manifest only, and the next run chains on the last
-complete one ([results reference
-§2](./transaction-level-results.md#2-where-the-files-are-and-which-run-counts)).
+**A run that cannot conclude** writes its manifest and no data file, and the next run chains on
+the last complete one ([results reference
+§2](./transaction-level-results.md#2-where-the-files-are-and-which-run-counts)). A transient cause
+(`missing_index`, `short_range`) clears on the next run. A structural one (`continuity`,
+`residual`, `purge_check`, `stored_file_mismatch`) repeats until it is fixed: the run then also
+writes `diagnostic.json`, and after the fix an operator re-seeds the chain with a run that rewinds
+the stock from the head and rebuilds the carried items by key lookups (ADR-005 decision 26).
 The carried items, the stored stock and the break history therefore never come from a run that
 failed its checks.
 

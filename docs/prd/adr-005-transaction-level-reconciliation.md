@@ -664,7 +664,9 @@ checkpoint's listing.
       file differs from its signed capture: `incomplete.reason` is `missing_index`, `short_range`,
       `continuity`, `residual`, `purge_check` or `stored_file_mismatch` (results doc §4). No
       conclusion can be drawn, and the run is never green. The payment-account book is the
-      exception: its residual is a P1 break, not an `incomplete` run (decision 23).
+      exception: its residual is a P1 break, not an `incomplete` run (decision 23). A transient
+      cause (`missing_index`, `short_range`) clears on the next run; a structural one repeats
+      until an operator fixes it, and the chain resumes with a re-seed (decision 26).
     - The **gross** Σ|drift| of the open flow breaks next to the net, with an explicit
       *offsetting* flag: open flow breaks of both signs exist.
     - The breaks in **priority order**, each with new versus persisting.
@@ -719,8 +721,9 @@ checkpoint's listing.
      - The same cut, rule version, engine version and previous run give byte-identical data files,
        as long as no identifying metadata changed since, so a replay proves itself by reproducing
        their SHA-256.
-     - An `incomplete` run writes its manifest only, and the next run chains on the last complete
-       one, over every day since.
+     - An `incomplete` run writes its manifest, and no data file; a structural cause adds
+       `diagnostic.json`. The next run chains on the last complete one, over every day since, and a
+       re-seed restarts the chain after a structural cause is fixed (decision 26).
      - The latest complete run of a day is its current run.
    - The prefix **must stay outside `{bucketID}/backups/`**. The ledger's post-manifest orphan prune
      lists and deletes every unreferenced object under `{bucketID}/backups/data/` and
@@ -969,6 +972,13 @@ for the Ledger team to weigh against its own users:
 | 23 | The PSP payment account | A booking convention (§8, rule 10): one payment account per payment kind, every credit a keyed payment final, and a declared key on every debit (`psp.movementKeys`, §6). It turns the book of `psp.paymentAccount` into a strict check, the only one that sees a final with no pending and no reference. **A residual is a P1 break**, `unkeyed_payment_movement`, on the leg `book`, one per account, direction and asset. It was preferred to an `incomplete` run, so that one keyless final cannot hide the rest of the day (results doc §5, §6). |
 | 24 | Bounded date filters in the cut | The cut resolves `S` and `T` with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it: an open filter costs the whole history after the cut-off on a replay (§5). |
 | 25 | How the metadata watch is read | Two options, both in the design: a **full read at run time** (`--lettering-watch-interval=0`: nothing stored, the run pays the watch in full) and an **incremental read, the default** (`--lettering-watch-interval=1h`: the watch reads each watched ledger's logs in slices during the day, one chain per ledger shared by its rules, stored with their SHA-256 in the watched ledger's own backup destination; the run reads only the last stretch and re-reads any missing or damaged slice) (§5, §7). Measured end to end, the watch was about 95 % of a 2 min 20 – 2 min 43 run (design doc §7.15); read incrementally, the run's critical path should fall to its other steps, measured at 15–25 s (the slices themselves are not measured yet). Both give the same result. A Ledger filter on the logs the watch keeps (L10, [EN-2369](https://formance-team.atlassian.net/browse/EN-2369), §9) stays the ask that would shrink the read under either option (owner, 2026-09-28). |
+| 26 | A run that fails every day | Some `incomplete` causes clear by themselves, others repeat on every run while each window grows, and a run that writes its manifest only leaves nothing to diagnose. The reasons split in two, in `incomplete.kind`: **transient** (`missing_index`, `short_range`), which the next run retries, and **structural** (`continuity`, `residual`, `purge_check`, `stored_file_mismatch`), which repeat until fixed. A structural run also writes **`diagnostic.json`**, outside the chain: the books, holds, applications or files at fault, with their transactions. Its engine-error alert says that an operator must act. After the fix, a **re-seed** run trusts nothing stored: it rewinds the stock from the head, rebuilds the carried items by key lookups on both ledgers, recomputes `openPrev` and records the gap with the last complete run (results doc §2, §6). |
+
+**Open, to review with the Connectivity team (no decision):** decision 23 assumes that the payment
+account is credited only by payment finals. `formancepayments` also credits it from payouts,
+transfers, compensations and reversed refunds, and every one of these carries the payment key.
+The facts and the options are in the [design doc
+§2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation).
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.

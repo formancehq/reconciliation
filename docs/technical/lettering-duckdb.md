@@ -130,7 +130,7 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
 - **Variable.** `rule` is the rule's directory.
 - **Runs.** `runs` reads every manifest under `day=*/run=*`.
 - **Current runs.** `current_runs` keeps, per day, the latest run that is not incomplete. Run ids
-  sort by start instant, and an incomplete run writes its manifest only, so this is the results
+  sort by start instant, and an incomplete run writes no data file, so this is the results
   doc's current run (§2), even when a failed run came last.
 - **Day views.** `flow_days`, `carried_days`, `stock_days`, `breaks_days` and `unclassified_days`
   keep only the current runs' rows, with `day`, `run` and `rule` from the path.
@@ -187,7 +187,8 @@ The wrapper is a POSIX `sh` script. It concatenates the SQL layers and pipes the
 CLI. It also handles what SQL cannot:
 
 - **Directory checks.** Before running anything, it refuses a directory that is not a run's or a
-  rule's, and it checks an incomplete run on its own: it must hold a manifest only.
+  rule's, and it checks an incomplete run on its own: no data file, an `incomplete.kind` that
+  follows the reason, and `diagnostic.json` exactly when the cause is structural.
 - **Path escaping.** A trailing slash is removed, a quote is escaped, and the glob characters `[`,
   `*` and `?` are taken literally.
 - **Init file.** It runs `LETTERING_INIT` first, for example an object-storage secret, and
@@ -290,8 +291,11 @@ Invalid Input Error: 4 violation(s) of the lettering/1 rules
 One fault usually breaks several rules. Read the rows by key: the rules named together point to
 the fault, and `file_sha256` says whether the file was changed after the manifest was written.
 
-- **Incomplete run.** `check` prints its reason (`short_range`, `residual`…) and checks only
-  that it holds no data file. The data is in the day's current run, which `current-runs` names.
+- **Incomplete run.** `check` prints its reason and kind (`short_range, transient`, `residual,
+  structural`…), and checks the run's shape only: no data file (`incomplete_files`), a kind that
+  follows the reason (`incomplete_kind`), and `diagnostic.json` exactly when the cause is
+  structural (`incomplete_diagnostic`). The data is in the day's current run, which `current-runs`
+  names.
 - **Missing file.** A data file that is absent is reported as `file_missing`: a complete run writes
   every data file, even empty.
 
@@ -312,7 +316,10 @@ recent earlier day, which is not always the day before. The command checks:
 - the lifecycle of every break and hold: new, persisting, resolved or cleared, with `openedOn`,
   `previousClass` and the cleared balance.
 
-It refuses an incomplete run on either side: an incomplete run is not a link in the chain.
+It refuses an incomplete run on either side: an incomplete run is not a link in the chain. A
+re-seed run (`reseed` in its manifest) recomputes what it would pick up, so the pick-up rules
+(`suspense_open_prev`, `books_open_prev`, `book_prev`, `carried_in`, `carried_drift`,
+`from_lookups`) do not apply to it; the other chain rules do.
 
 ### Answer a reconciliation question
 
