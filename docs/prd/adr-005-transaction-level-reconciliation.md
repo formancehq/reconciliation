@@ -8,7 +8,7 @@ filters (§10).
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
 to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9 period summary), EN-2334 (R10 rewind oracle test) and
 EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
-L2 EN-2327, L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L5 EN-2331; EN-2336 tracks the checkpoint read
+L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L5 EN-2331; EN-2336 tracks the checkpoint read
 penalty, which this design does not depend on.
 **Date:** 2026-09-24, updated 2026-09-25 and 2026-09-28
 **Decision owners:** Reconciliation maintainers
@@ -20,6 +20,8 @@ penalty, which this design does not depend on.
 - ledger branch `codex/en-2036-purge-ephemeral-accounts` @ `92b378e4b`, then @ `20a5595d6`;
 - ledger `release/v3.0` @ `7dd615dba` for the rewind source and the payment-account book
   (2026-09-28);
+- ledger `release/v3.0` @ `03d8792b5` for the EPHEMERAL purge, the account listing and the
+  index-building error (2026-09-28): unchanged for readers, and L2 delivered;
 - Pebble `v2.1.4`;
 - Connectivity: `formancehq/connectivity` @ `e7ca3e29` and `formancehq/connectivity-plugins-poc` @
   `9df05c5b` (re-checked 2026-09-24; first read at `89f4eb72`).
@@ -143,6 +145,9 @@ current accounts:
 
 A purged hold is therefore reachable by address again, and a prefix over the holds scales with every
 hold ever created (§7.6 of the design doc). EN-2331 is closed. The key stays indexed metadata.
+The ACCOUNTS target is unaffected, re-checked at `03d8792b5`: an address prefix lists the current
+volume and metadata rows (`NewPebbleAccountPrefixIterator`), and a purge deletes both
+(`PrepareEphemeralAccountPurge`), so the stock listing stays bounded to the open holds.
 
 **Fixed later in the same PR** (head `20a5595d6`, still open, not merged): address filters on
 transactions now read the mappings (`MappedAccountPrefixIterator`), and the probe returns both
@@ -396,7 +401,9 @@ Three caveats come with this choice, and each has a counter-measure:
    - The logs remain the immutable path for re-deriving any past day exactly.
    - The structural fix is **immutable transaction labels** (ask **L8**).
 2. **The `payment_ref` index becomes mandatory** (declared type plus metadata index). While it
-   builds, the read returns a retryable `Unavailable` ("index is still building").
+   builds, the read returns a retryable `Unavailable` ("index is still building"), with the reason
+   `INDEX_BUILDING` in its error info since EN-2081 (`f73eae1f3`): recon matches the reason, not the
+   message.
 3. **No free count-based completeness check**, because a filtered range has gaps by design.
    Completeness rests on the index, whose reads are aligned to the main-store horizon (ledger
    EN-1748), and on the continuity identity (§2.3).
@@ -873,7 +880,7 @@ connector change is required.
 
 | Ask | Why | Size |
 |---|---|---|
-| **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths (`internal/application/ctrl/store.go:189-195`) | A listing of 1M accounts writes 1M log lines (this bench: 3.86M lines, 970 MB) | XS |
+| **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths (`internal/application/ctrl/store.go:189-195`). **Done 2026-09-28** with formancehq/ledger#2128 (`199bee364`): the line is logged at TRACE | A listing of 1M accounts writes 1M log lines (this bench: 3.86M lines, 970 MB) | XS |
 | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. EN-2331 also covers the Ledger-side part, which this design does not need: resolve an exact address from the account→tx mappings (the query currently checks that the account exists, `internal/query/compile.go:1069-1110`), keep the address prefix limited to current accounts, and fix EN-2036's READMEs. **Closed 2026-09-26** with formancehq/ledger#2058 (`38c6eef55`): the exact address was fixed, but the prefix was extended to purged accounts, the indexer README contradicts the code, and no ledger test pins the metadata and `reference` paths. Those paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the logs | The flow leg finds lettered items through indexed transaction metadata (`payment_ref EXISTS`, then a join on its value), and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–7× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream). At `7dd615dba` the gap holds (×5.4 on 8 ranges, ×9 on one stream), except in one session of the node where the same reads ran 4 to 9 times faster; that variance is part of the ask (design doc §7.13) | Only the metadata watch and exact re-derivations still read logs, the rewind having moved to the transactions (§5); the watch is the largest step of a daily run, so the gap deserves an explanation | S–M |
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
