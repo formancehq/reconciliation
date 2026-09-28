@@ -150,7 +150,7 @@ violation in any client, and the wrapper turns that failure into exit status 1.
   statement. The books are compared with the stock rows, and the verdict is derived from the files.
 - **Rule names.** Every rule name contains an underscore (`bridge_net`, `triage_count`). The test
   suite uses this to find the rule names and to check that each one fires on at least one corrupted
-  copy (§4).
+  copy (see [Tests](#tests-testsh)).
 - **What the files cannot show.** The checks read the files, not the ledgers. They cannot tell
   that a transaction is missing from both the flow and the books. Recon's continuity and residual
   checks cover that, when it computes the run (results doc §5).
@@ -183,13 +183,10 @@ The wrapper is a POSIX `sh` script. It concatenates the SQL layers and pipes the
 CLI. It also handles what SQL cannot:
 
 - **Directory checks.** Before running anything, it refuses a directory that is not a run's or a
-  rule's, and it checks an incomplete run on its own: no data file, an `incomplete.kind` that
-  follows the reason, and `diagnostic.json` exactly when the cause is structural.
+  rule's, and it checks an incomplete run's shape on its own (§4, "Incomplete run").
 - **Quoting.** A trailing slash is removed from a directory, and a quote in a value is escaped.
-- **Init file.** It runs `LETTERING_INIT` first, for example an object-storage secret, and
-  discards what it prints.
-- **Exit status.** 0 for a sound run or an answered query, 1 for a violation, 2 for wrong
-  arguments, 3 for an unreadable file or a SQL error.
+- **Init file and exit status.** It runs `LETTERING_INIT` first and maps each outcome to an exit
+  status (§6).
 - **CSV output.** `LETTERING_MODE=csv` goes through `COPY … TO '/dev/stdout'`. The CLI's own CSV
   mode drops the header of an empty result and writes `NULL` for a missing value.
 
@@ -230,10 +227,7 @@ The two qa rules come from a small reference engine in `generate.py` that follow
 It also writes `expected/`, the CSV each query must return, computed in Python. A per-day query
 is computed for three chosen days: two of `qa-scenarios` and the replayed day of `qa-verdicts`. The Python engine
 and the SQL are two independent readings of the doc, so a test passes only when they agree. A
-disagreement found this way is fixed in the doc first, then in the side that was wrong. For
-example, S22 found that the doc did not say whether a bridge line is `earlierDay` on a row with no
-`firstSeen`: the engine wrote false, and `check.sql` computed NULL, which matched no line. The doc
-now says false, and both sides follow it. Once
+disagreement found this way is fixed in the doc first, then in the side that was wrong. Once
 EN-2322 writes result files from the same scenarios, they are compared with this data.
 
 ### Tests (`test.sh`)
@@ -302,15 +296,8 @@ tools/lettering-duckdb/lettering check-chain <earlier-run-dir> <run-dir>
 ```
 
 The earlier run is the one the later manifest's `previousRun` names: the current run of the most
-recent earlier day, which is not always the day before. The command checks:
-
-- `previousRun` itself: run id, day and manifest SHA-256;
-- that the window starts at the earlier run's cut;
-- that every carried item shows up again, and its drift moves only by this window's impact;
-- that `fromLookups` equals the drift of the rows not carried in;
-- that the open items and the books pick up where the earlier run left them;
-- the lifecycle of every break and hold: new, persisting, resolved or cleared, with `openedOn`,
-  `previousClass` and the cleared balance.
+recent earlier day, which is not always the day before. The command checks the
+[rules of `check-chain`](#rules-of-check-chain) (§6).
 
 It refuses an incomplete run on either side: an incomplete run is not a link in the chain. A
 re-seed run (`reseed` in its manifest) recomputes what it would pick up, so the pick-up rules
@@ -341,9 +328,7 @@ nothing.
 | Which holds did a credit note or a write-off letter to zero? | `lettered-other` | |
 | Which applications were booked on the day? | `applications` | `day` |
 
-Results on the worked example, 24 September, printed with `LETTERING_MODE=markdown`:
-
-`open-breaks`: what to do first.
+`open-breaks` on the worked example, 24 September, printed with `LETTERING_MODE=markdown`:
 
 | priority | class | lifecycle | amount | ref | hold | opened_on | days_open | detail |
 |---:|---|---|---:|---|---|---|---:|---|
@@ -351,37 +336,6 @@ Results on the worked example, 24 September, printed with `LETTERING_MODE=markdo
 | 3 | unapplied_payment | persisting | 50000 | PAY-39 | | 2026-09-21 | 3 | |
 | 4 | stuck | persisting | 120000 | | main:hold:invoice:INV-3 | 2026-09-14 | 10 | 41 days old |
 | 4 | wrong_sign | persisting | -10000 | | main:hold:invoice:INV-14 | 2026-09-21 | 3 | 6 days old |
-
-`bridge`: the day's net, −150.00, explained line by line. PAY-40 was paid on the 23rd and applied
-on the 24th, hence the `matched` line from an earlier day.
-
-| class | outcome | earlier_day | amount | payments |
-|---|---|---|---:|---:|
-| unapplied_payment | pending | false | 80000 | 1 |
-| under_applied | break | false | 5000 | 1 |
-| applied_before_final | pending | false | -30000 | 1 |
-| matched | ok | true | -70000 | 1 |
-
-`business-id id=INV-11`: the invoice across files and days. It was open for 1,200.00 on the 23rd.
-On the 24th, PAY-44 brought 1,200.00 but only 1,150.00 was applied to the invoice, which keeps
-50.00 open: an `under_applied` break of 50.00.
-
-| day | file | class | outcome | ref | hold | amount | detail |
-|---|---|---|---|---|---|---:|---|
-| 2026-09-23 | stock | open | ok | | main:hold:invoice:INV-11 | 120000 | persisting, 19 days old |
-| 2026-09-24 | breaks | under_applied | break | PAY-44 | | 5000 | P2 new since 2026-09-24 |
-| 2026-09-24 | flow | under_applied | break | PAY-44 | | 5000 | psp 120000, product 115000 |
-| 2026-09-24 | stock | open | ok | | main:hold:invoice:INV-11 | 5000 | persisting, 20 days old |
-
-`current-runs` on `rule=qa-verdicts`: on 6 October the first run was incomplete, and the retry is
-the current run. On 9 October no run completed, so the 10th's window covers two days.
-
-| day | run | verdict | current | reason |
-|---|---|---|---:|---|
-| 2026-10-06 | r-20261007T000003Z | incomplete | false | short_range |
-| 2026-10-06 | r-20261007T001503Z | reconciled_with_pending | true | |
-| 2026-10-09 | r-20261010T000004Z | incomplete | false | short_range |
-| 2026-10-10 | r-20261011T000004Z | reconciled_with_warnings | true | |
 
 Amounts are in minor units of their asset: `EUR/2` 5000 is 50.00 EUR.
 
@@ -481,15 +435,6 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
   must stay byte for byte the results doc's.
 
 ## 6. Reference
-
-### Commands
-
-| Command | Effect |
-|---|---|
-| `lettering check <run-dir>` | Checks one run's files against the rules below |
-| `lettering check-chain <earlier-run-dir> <run-dir>` | Checks that a run chains onto the earlier one |
-| `lettering query <name> <rule-dir> [variable=value ...]` | Runs one query over every day of a rule |
-| `lettering queries` | Lists the queries and their questions |
 
 ### Exit status
 

@@ -1,9 +1,8 @@
 # Technical Documentation
 
 Engineering reference for the reconciliation service. There is one API surface, mounted
-unversioned at `/rules` and `/alerts`; the V1 contract and its three positional templates were
-retired once `balance_bounds` gave the last of them a target, and the `/v2` prefix went with it. Start with the architecture doc if you're new to the project; use the
-topical docs as reference once you have the shape.
+unversioned at `/rules` and `/alerts`. Start with the architecture doc if you're new to the
+project; use the topical docs as reference once you have the shape.
 
 ## Documents
 
@@ -20,9 +19,9 @@ topical docs as reference once you have the shape.
 | [audit-chain-v3.md](./audit-chain-v3.md) | ⏳ Planned. Reviews the abandoned Postgres audit journal (PR #94) against the Ledger V3-native architecture — what the ledger subsumes, what stays reconciliation's (external Ed25519 attestation + `/verify` + closures), and the proposed workstreams. |
 | [color-of-money.md](./color-of-money.md) | Why every balance this module reads is the sum across Ledger `(account, asset, color)` buckets, which controls that makes inexpressible, and what a bucket-aware source would take. |
 | [stale-holds.md](./stale-holds.md) | The `stale_holds` time-based control: where an age signal can come from now that ledger reads are live-only, why the clock stays out of the kernel, and the hold-modelling assumptions the template rests on. |
-| [transaction-level-reconciliation.md](./transaction-level-reconciliation.md) | ⏳ Planned. Transaction-level (lettering) reconciliation of a PSP ledger against a product ledger, per PSP payment reference. Covers the booking it relies on (EPHEMERAL holds, an indexed write-once key), the cut per ledger at the business cut-off, the flow read with filtered `ListTransactions`, the *rewind* that makes a live listing of open holds exact at the cut without a query checkpoint, the reconciliation statement shown to the controller, what Pebble can and cannot do, and the measured cost of every read path. Decision record: [ADR-005](../prd/adr-005-transaction-level-reconciliation.md). |
-| [transaction-level-results.md](./transaction-level-results.md) | ⏳ Planned. **Source of truth for the result files** of a transaction-level rule (`lettering/1`): where they are and which run counts, every field of the manifest, flow, carried, stock, breaks, unclassified and period files, the verdict, how to read the statement (bridge, open items, open books), ready-to-run DuckDB and jq queries, and a complete worked day. |
-| [lettering-duckdb.md](./lettering-duckdb.md) | 🚧 Internal tool. How `tools/lettering-duckdb` is built and how to use it: the DuckDB checks that validate a run's result files and the chain between runs, the query pack that answers reconciliation questions from them, the reference engine and test data, and how to extend it. |
+| [transaction-level-reconciliation.md](./transaction-level-reconciliation.md) | ⏳ Planned. How transaction-level (lettering) reconciliation works, per PSP payment reference, and what each read costs. Decisions: [ADR-005](../prd/adr-005-transaction-level-reconciliation.md). |
+| [transaction-level-results.md](./transaction-level-results.md) | ⏳ Planned. **Source of truth for the result files** of a transaction-level rule (`lettering/1`), with queries and a worked day. |
+| [lettering-duckdb.md](./lettering-duckdb.md) | 🚧 Internal tool. `tools/lettering-duckdb`: the DuckDB checks and queries over the result files, and how to extend them. |
 | [ADR-004](../prd/adr-004-multi-source-comparisons.md) | Why V2 is additive, how equations and exchange rates are defined, and why arithmetic never uses floating point. |
 
 ## Status legend used throughout

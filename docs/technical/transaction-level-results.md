@@ -83,25 +83,20 @@
   - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
     (`engine` in the manifest), replaying forward from the nearest anchor, whose stock and carried
     files seed the chain.
-- **Size.** A day of 1M payments writes about 80 to 155 MB of gzipped files, most of it the flow
-  file (74 to 142 bytes per row, depending on the length of the payment reference): about 7 to
-  14 GB per rule over the default 90 days (design doc §7.14).
-- **Watch slices** (ADR-005 decision 25). When the metadata watch is read incrementally, the
-  default, its slices are not under a rule. They sit in the **watched ledger's own** backup
-  destination, one chain per ledger, shared by every rule that reads that ledger:
+- **Watch slices** (ADR-005 decision 25; contents: §6). They are not under a rule, and never under
+  `{bucketID}/backups/`. They sit in the **watched ledger's own** backup destination:
 
   ```text
   {backup bucket}/{bucketID}/reconciliation/watch/ledger={name}/
-    from={logFrom}-to={logTo}.ndjson.gz   the slice: every transaction-metadata change and purge of its log range
-    from={logFrom}-to={logTo}.json        its seal: range, row count and SHA-256
+    from={logFrom}-to={logTo}.ndjson.gz   the slice
+    from={logFrom}-to={logTo}.json        its seal
   ```
 
   `{bucketID}` is the watched ledger's bucket, so a PSP ledger's slices sit in the PSP ledger's
-  destination even though the rule's files sit in the product ledger's. The path is never under
-  `{bucketID}/backups/`. A slice is kept as long as a manifest that lists it is kept (the rule's
-  `retention`, or `anchorRetention` for an anchor's manifest), through the same object tag as the
-  anchors; a slice that no manifest lists is swept after 7 days. With the watch read in full at run
-  time (`--lettering-watch-interval=0`), no slice is written.
+  destination even though the rule's files sit in the product ledger's. A slice is kept as long as a
+  manifest that lists it is kept (the rule's `retention`, or `anchorRetention` for an anchor's
+  manifest), through the same object tag as the anchors; a slice that no manifest lists is swept
+  after 7 days.
 
 ## 3. Conventions
 
@@ -362,12 +357,13 @@ left to letter. The row still lists every transaction.
 | `failed` | PSP `failed`, nothing applied | `ok` |
 | `applied_before_final` | An application whose reference the PSP has not finalised yet (`pending`, or not seen at all) | `pending` within `psp.grace`, then becomes `orphan_application` |
 | `orphan_application` | An application whose reference is still not final past `psp.grace`, or was already `failed` | `break` (**1**) |
-| `reversed_after_application` | The PSP reports `failed` after the product applied the reference. A refund or chargeback is not this: it has its own reference | `break` (**1**) |
+| `reversed_after_application` | The PSP reports `failed` after the product applied the reference, within `psp.grace` or not. A refund or chargeback is not this: it has its own reference | `break` (**1**) |
 
 ### `carried.ndjson.gz`
 
 The flow rows whose `drift` is not 0, without `impact`, which describes only their own day's
-window. The next run joins them with its window. The sum of their `drift` is
+window. The next run joins them with its window; they are a separate file so that it reads a small
+file, not the whole flow. The sum of their `drift` is
 `statement.{asset}.suspense.open`, and their count is `suspense.count`.
 
 ### `stock.ndjson.gz`
@@ -472,10 +468,12 @@ manifest's; `items` lists at most 1,000 entries, and `more` counts the others.
 
 ### Watch slices
 
-Written by the watch job, not by a run, when the metadata watch is read incrementally (ADR-005
-decision 25; where they are: §2). A slice covers the logs `(logFrom, logTo]` of one ledger, and the
-next slice starts at its `logTo`. It keeps every transaction-metadata change and every purge of its
-range, not only the fields of one rule, so every rule on the ledger reads the same chain.
+Written by the watch job, not by a run, when the metadata watch is read incrementally, the default
+(ADR-005 decision 25; where they are: §2). With the watch read in full at run time
+(`--lettering-watch-interval=0`), no slice is written. A slice covers the logs `(logFrom, logTo]` of
+one ledger, and the next slice starts at its `logTo`: one chain per ledger. It keeps every
+transaction-metadata change and every purge of its range, not only the fields of one rule, so every
+rule on the ledger reads the same chain.
 
 `from={logFrom}-to={logTo}.ndjson.gz`, in `logId` order, one row per:
 
@@ -545,22 +543,7 @@ overlap; otherwise it reads that range from the logs itself. The manifest's `wat
 ## 9. Queries
 
 **Internal tooling.** The team validates and analyses result files with
-[`tools/lettering-duckdb`](./lettering-duckdb.md), an internal tool in the
-reconciliation repository. It holds ready-made queries, one file per question:
-- the daily flow and the day's reconciled payments;
-- the bridge;
-- the breaks to act on;
-- the pending items;
-- everything about one invoice;
-- the open items and books day after day;
-- stock ageing;
-- letterings outside matching;
-- one row per application or PSP event.
-
-It also holds `check`, which verifies a run's files against the rules of this page that the files
-themselves can show, and `check-chain`, which verifies that one run chains onto the previous one.
-They are plain SQL run by the DuckDB CLI, usable from any DuckDB client, and tested on the worked
-example of §10. [Its doc](./lettering-duckdb.md) describes them, with their variables.
+[`tools/lettering-duckdb`](./lettering-duckdb.md): ready-made queries and checks, tested on §10.
 
 A few standalone examples follow, on the worked example; the paths are relative to the rule's
 prefix.

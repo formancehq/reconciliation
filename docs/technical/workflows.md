@@ -329,7 +329,7 @@ flowchart LR
     Cut --> Flow["Phase 2 — flow: ListTransactions (T_prev, T]<br/>∧ key present (PSP: payment_ref or a psp.movementKeys field;<br/>product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · first run from backfillFrom (product side psp.grace earlier)"]
     Cut --> Stock["Phase 2 — stock: live ListAccounts of open holds<br/>rewound with the unfiltered ListTransactions (T, head_tx]"]
     Cut --> Watch["Phase 2 — metadata watch: ListLogs (head_prev, head]<br/>(in slices during the day by default)"]
-    Flow --> Join["Join on the PSP payment reference<br/>(+ references carried from earlier days: drift ≠ 0, grace per side;<br/>references missing from both looked up by key)<br/>+ continuity per side, hold prefix and asset: open(S) = open(S_prev) + opened − lettered<br/>+ payment-account book: its movements against the flow's credits and debits<br/>+ open items: Σ carried drift(S) = Σ carried drift(S_prev) + net + drift entered by lookup"]
+    Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, payment-account book and open-items identities"]
     Stock --> Join
     Watch --> Join
     Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: manifest only)"]
