@@ -9,7 +9,7 @@ L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L10 EN-2369, 
 penalty, which this design does not depend on.
 **Date:** 2026-09-28
 **Decision owners:** Reconciliation maintainers
-**Related:** [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [design, measurements and evidence](../technical/transaction-level-reconciliation.md)
+**Related:** [feature inventory](./adr-005-feature-inventory.md) (V1 scope review) · [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [design, measurements and evidence](../technical/transaction-level-reconciliation.md)
 **Upstream facts verified at:** ledger `release/v3.0` @ `7dd615dba` (rewind source, date filters,
 `And` order, `ListLogs`) and @ `03d8792b5` (EPHEMERAL purge, account listing, index-building
 error); Connectivity `formancehq/connectivity-plugins-poc` @ `9df05c5b` and
