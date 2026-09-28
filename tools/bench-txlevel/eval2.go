@@ -180,7 +180,7 @@ func lookups(ctx context.Context, args []string) {
 	fmt.Printf("ledger %s: %d lookups by payment_ref, id ≤ %d, %d at a time\n", *ledger, *n, T, *k)
 	for _, bs := range strings.Split(*batchesArg, ",") {
 		var size int
-		fmt.Sscan(bs, &size)
+		scanFlag(bs, &size)
 		for _, order := range []string{"key first", "id first"} {
 			if size == 1 && order == "id first" {
 				continue

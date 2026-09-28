@@ -84,7 +84,7 @@ func purgeList(ctx context.Context, args []string) {
 	purged := uint64(0)
 	for _, st := range strings.Split(*stagesArg, ",") {
 		var target uint64
-		fmt.Sscan(st, &target)
+		scanFlag(st, &target)
 		if target > purged {
 			t0 := time.Now()
 			book(purged, target-purged, true, "p-")
@@ -130,7 +130,7 @@ func watchCmd(ctx context.Context, args []string) {
 	fmt.Printf("ledger %s, logs (%d,%d], best of %d\n", *ledger, lo, head, *reps)
 	for _, ks := range strings.Split(*rangesArg, ",") {
 		var k int
-		fmt.Sscan(ks, &k)
+		scanFlag(ks, &k)
 		var best time.Duration
 		var counts map[string]uint64
 		for r := 0; r < *reps; r++ {

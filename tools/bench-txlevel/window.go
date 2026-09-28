@@ -936,7 +936,7 @@ func crossover(ctx context.Context, args []string) {
 	fmt.Printf("\nfold of the unfiltered transactions (head-X, head], reverse=true, K=%d:\n", *ranges)
 	for _, f := range strings.Split(*sizesArg, ",") {
 		var x uint64
-		fmt.Sscan(f, &x)
+		scanFlag(f, &x)
 		if x > head {
 			x = head
 		}
@@ -1019,7 +1019,7 @@ func crossover(ctx context.Context, args []string) {
 	fmt.Printf("\ncrossover (the run starts after %.0f%% of the next day is written):\n", *since*100)
 	for _, d := range strings.Split(*days, ",") {
 		var x float64
-		fmt.Sscan(d, &x)
+		scanFlag(d, &x)
 		w := *since * x
 		fmt.Printf("  X_day=%.0f, w=%.0f:\n", x, w)
 		var prevN, prevDiff float64

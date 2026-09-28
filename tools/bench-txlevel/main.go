@@ -1235,3 +1235,10 @@ func retag(ctx context.Context, args []string) {
 	}
 	fmt.Printf("transaction %d on %s now has kind=%q\n", *txID, *ledger, *kind)
 }
+
+// scanFlag parses one element of a comma-separated flag, and stops on a bad one.
+func scanFlag(s string, v any) {
+	if _, err := fmt.Sscan(s, v); err != nil {
+		log.Fatalf("bad flag value %q: %v", s, err)
+	}
+}
