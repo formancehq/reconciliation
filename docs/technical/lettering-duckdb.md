@@ -163,7 +163,7 @@ checks that the later run picks up exactly where the earlier one stopped.
 Each query starts with three comment lines, which the wrapper reads:
 
 ```sql
--- What must be done today? The open breaks that are not accepted, most urgent first.
+-- What must be done today? The open breaks, most urgent first.
 -- Variables: rule, day (optional, default the latest day).
 -- Columns: priority, class, lifecycle, asset, amount, ref, hold, opened_on, ...
 ```
@@ -202,8 +202,8 @@ python3 tools/lettering-duckdb/testdata/generate.py
 - **`rule=psp-vs-billing`** is the results doc's worked example (§10). Its NDJSON lines are the
   doc's, byte for byte. The run of 23 September holds only what `check-chain` reads.
 - **`rule=qa-scenarios`** is seven days in two assets, one scripted story per case. It covers every
-  flow and stock class, lookups on both ledgers, `fromLookups`, a split payment, a lapsed
-  acceptance, a credit note, an unclassified transaction and refunds. Three stories undo an
+  flow and stock class, lookups on both ledgers, `fromLookups`, a split payment, a credit
+  note, an unclassified transaction and refunds. Three stories undo an
   application with its reference, which the class must read on net amounts (results doc §6):
 
   | Story | What happens | Rows |

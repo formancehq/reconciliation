@@ -465,7 +465,7 @@ checkpoint's listing.
   - All four are rule parameters.
 - **`breakId`.** Ageing compares with the previous run's artifact, matched by a `breakId` that
   hashes the rule, leg, key (`ref`, or `side` + `hold`) and asset, not the class: a break that
-  changes class stays the same break, with its comments. Lifecycle, acceptance and reopening are in
+  changes class stays the same break, with its comments. Lifecycle and reopening are in
   the [results reference
   §7](../technical/transaction-level-results.md#7-how-rows-move-from-day-to-day).
 - **Arithmetic.** Exact integer minor units, colors collapsed per asset, and multi-asset through
@@ -484,7 +484,9 @@ checkpoint's listing.
     and [§5](../technical/transaction-level-results.md#5-the-statement)). An `incomplete` run is
     never green. The payment-account book's residual is a P1 break, not an `incomplete` run
     (decision 23); a run that fails every day is decision 26.
-  - **What opens the alert:** at least one open break that is not accepted. The net alone never
+  - **What opens the alert:** at least one open break. A known break stays one until it is booked;
+    the controller acknowledges or accepts the alert itself, as for any rule
+    ([alert-period-model.md](../technical/alert-period-model.md)). The net alone never
     opens it, since pending items move it and offsetting breaks cancel in it. An `incomplete` run
     opens the engine-error alert instead.
   - There is never one alert per payment (the reasoning of the ADR-004 2026-09-08 amendment).

@@ -150,7 +150,7 @@ fresh "$day24"; edit "$work/run/$m" 's/"flowOutcome":{"ok":4/"flowOutcome":{"ok"
 expect_violation "a flow outcome count" counts_flow_outcome "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"product":{"open":4,"wrong_sign"/"product":{"open":5,"wrong_sign"/'
 expect_violation "a stock count" counts_stock "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"resolved":1,"accepted":0/"resolved":1,"accepted":1/'
+fresh "$day24"; edit "$work/run/$m" 's/"persisting":3,"resolved":1/"persisting":3,"resolved":2/'
 expect_violation "a break count" counts_breaks "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"unclassified":{"psp":1,"product":0}/"unclassified":{"psp":2,"product":0}/'
 expect_violation "an unclassified count" counts_unclassified "$lettering" check "$work/run"

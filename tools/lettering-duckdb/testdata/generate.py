@@ -272,14 +272,12 @@ def bucket(age, bounds):
 class Engine:
     """Runs a rule day by day, as the results doc specifies, and writes every run's files."""
 
-    def __init__(self, rule, book, out, acceptances=None, anomalies=None):
+    def __init__(self, rule, book, out, anomalies=None):
         self.rule = rule
         self.book = book
         self.out = os.path.join(out, f'rule={rule.id}')
-        self.acceptances = acceptances or {}  # break key -> day accepted
         self.anomalies = anomalies or {}      # day -> [(side, tx)]
         self.prev = None                      # the last complete run's state
-        self.accepted_state = {}              # break key -> (class, amount) when accepted
         self.runs = []                        # every run, for the expected query results
         self.business_ids = []                # the ids expected/ holds a business-id result for
         self.query_days = []                  # the days expected/ holds the per-day query results for
@@ -599,19 +597,12 @@ class Engine:
             was = prev_open.get(bid)
             amount = {'flow': lambda: r['drift'], 'stock': lambda: OPEN_SIGN[r['prefix']] * r['balance'],
                       'book': lambda: r[r['direction'] + 'Residual']}[leg]()
-            accepted = None
-            acc_day = self.acceptances.get(key)
-            if acc_day and dt.date.fromisoformat(acc_day) <= day:
-                # an acceptance records the class and amount of its day, and lapses when either changes
-                at_accept = self.accepted_state.setdefault(key, (r['class'], amount))
-                if at_accept == (r['class'], amount):
-                    accepted = dt.date.fromisoformat(acc_day)
             out.append({'breakId': bid, 'leg': leg, 'key': key, 'asset': asset, 'row': r,
                         'priority': PRIORITY[r['class']], 'lifecycle': 'persisting' if was else 'new',
                         'openedOn': was['openedOn'] if was else day, 'resolvedOn': None, 'amount': amount,
                         'class': r['class'],
                         'previousClass': was['class'] if was and was['class'] != r['class'] else None,
-                        'acceptedOn': accepted, 'open': True})
+                        'open': True})
         for bid, was in prev_open.items():
             if bid in seen:
                 continue
@@ -625,7 +616,7 @@ class Engine:
             out.append({'breakId': bid, 'leg': was['leg'], 'key': was['key'], 'asset': was['asset'], 'row': row,
                         'priority': was['priority'], 'lifecycle': 'resolved', 'openedOn': was['openedOn'],
                         'resolvedOn': day, 'amount': was['amount'], 'class': was['class'],
-                        'previousClass': None, 'acceptedOn': None, 'open': False})
+                        'previousClass': None, 'open': False})
         out.sort(key=lambda b: (0 if b['open'] else 1, b['priority'], -abs(b['amount']), b['breakId']))
         return out
 
@@ -704,8 +695,6 @@ class Engine:
         o['amount'] = str(b['amount'])
         if b['previousClass']:
             o['previousClass'] = b['previousClass']
-        if b['acceptedOn']:
-            o['acceptedOn'] = day_str(b['acceptedOn'])
         if b['leg'] == 'flow':
             row = self.flow_json(b['row'])
         elif b['leg'] == 'book':
@@ -852,7 +841,6 @@ class Engine:
         breaks_counts = {'new': sum(1 for b in breaks if b['lifecycle'] == 'new'),
                          'persisting': sum(1 for b in breaks if b['lifecycle'] == 'persisting'),
                          'resolved': sum(1 for b in breaks if b['lifecycle'] == 'resolved'),
-                         'accepted': sum(1 for b in open_breaks if b['acceptedOn']),
                          'openByLeg': {leg: sum(1 for b in open_breaks if b['leg'] == leg) for leg in ('flow', 'stock', 'book')},
                          'openByPriority': {str(p): sum(1 for b in open_breaks if b['priority'] == p) for p in (1, 2, 3, 4)}}
         verdict = st['verdict']
@@ -879,8 +867,6 @@ class Engine:
                     o['firstSeen'] = day_str(b['row']['firstSeen'])
             else:
                 o['ageDays'] = b['row']['ageDays']
-            if b['acceptedOn']:
-                o['acceptedOn'] = day_str(b['acceptedOn'])
             return o
 
         pending = sorted([r for r in rows if r['outcome'] == 'pending'], key=lambda r: (r['breakOn'], -abs(r['drift']), r['ref']))
@@ -981,8 +967,8 @@ def scenarios():
     psp.append(Psp(at(D[1], '20:00'), 'S03', 'EUR/2', 'pending', 0, 7000))
     psp.append(Psp(at(D[2], '09:00'), 'S03', 'EUR/2', 'final', 7000, -7000))
     apply(D[2], '10:00', 'S03', [(INVOICE, 'INV-S03', 'EUR/2', 7000)])
-    # S04: unapplied (paired with its invoice), accepted on day 3, applied short on day 4
-    # (class changes, the acceptance lapses), completed on day 5 (resolved, earlier day)
+    # S04: unapplied (paired with its invoice), applied short on day 4 (the class changes),
+    # completed on day 5 (resolved, earlier day)
     opening(D[1], '07:03', inv('INV-S04', 8000))
     pay(D[1], '09:00', 'S04', 8000, merchant='INV-S04', t_final='09:05')
     apply(D[4], '10:00', 'S04', [(INVOICE, 'INV-S04', 'EUR/2', 5000)])
@@ -1085,8 +1071,7 @@ def scenarios():
 
     rule = Rule('qa-scenarios', psp_grace=3, product_grace=1, psp_max_age=3, product_max_age=5,
                 backfill_from=dt.date(2026, 10, 1))
-    acceptances = {'S04': '2026-10-03', 'PU': '2026-10-04'}
-    return rule, Book(psp, prod), D[1:], acceptances, {}
+    return rule, Book(psp, prod), D[1:], {}
 
 
 def verdicts():
@@ -1166,7 +1151,7 @@ def expected(engine, out):
                                         [list(k) + list(v) for k, v in lines.items()])
         ob = []
         for b in st['breaks']:
-            if b['open'] and not b['acceptedOn']:
+            if b['open']:
                 r = b['row']
                 if b['leg'] == 'flow':
                     detail = ', '.join(sorted({hid for e in r['app_ev'] for (_, hid, _, _) in e.moves})) or None
@@ -1266,8 +1251,6 @@ def business_id(current, days, bid):
             if hit:
                 detail = f"P{b['priority']}" + (f" resolved on {b['resolvedOn']}" if not b['open']
                                                 else f" {b['lifecycle']} since {b['openedOn']}")
-                if b['acceptedOn']:
-                    detail += f", accepted on {b['acceptedOn']}"
                 out.append([tag, 'breaks', b['class'], 'break' if b['open'] else 'ok', ref, hold, b['amount'], detail])
         for u in st['unclassified']:
             if u['ref'] == bid:
@@ -1284,8 +1267,8 @@ def main():
             shutil.rmtree(os.path.join(out, name))
     worked_example(out)
 
-    rule, book, days, acceptances, anomalies = scenarios()
-    engine = Engine(rule, book, out, acceptances, anomalies)
+    rule, book, days, anomalies = scenarios()
+    engine = Engine(rule, book, out, anomalies)
     engine.business_ids = ['INV-S06B', 'PU']
     engine.query_days = ['2026-10-02', '2026-10-05']
     for d in days:

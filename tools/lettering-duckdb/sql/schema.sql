@@ -38,7 +38,7 @@ CREATE OR REPLACE MACRO breaks_file(path, hive) AS TABLE
 SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip', filename = true, hive_partitioning = hive, columns = {
     breakId: 'VARCHAR', leg: 'VARCHAR', priority: 'INTEGER', lifecycle: 'VARCHAR',
     openedOn: 'DATE', resolvedOn: 'DATE', amount: 'HUGEINT', previousClass: 'VARCHAR',
-    acceptedOn: 'DATE', class: 'VARCHAR', outcome: 'VARCHAR', asset: 'VARCHAR',
+    class: 'VARCHAR', outcome: 'VARCHAR', asset: 'VARCHAR',
     ref: 'VARCHAR', pspAmount: 'HUGEINT', productAmount: 'HUGEINT', drift: 'HUGEINT',
     impact: 'HUGEINT', firstSeen: 'DATE', firstSide: 'VARCHAR', breakOn: 'DATE',
     merchantRef: 'VARCHAR', pairedHold: 'VARCHAR',

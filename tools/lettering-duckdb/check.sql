@@ -100,12 +100,10 @@ WITH c AS (SELECT m->'counts'->'breaks' AS b FROM manifest),
         SELECT 'new' AS k, (b->>'new')::BIGINT AS n FROM c
         UNION ALL SELECT 'persisting', (b->>'persisting')::BIGINT FROM c
         UNION ALL SELECT 'resolved', (b->>'resolved')::BIGINT FROM c
-        UNION ALL SELECT 'accepted', (b->>'accepted')::BIGINT FROM c
         UNION ALL SELECT 'openByLeg.' || k, (b->'openByLeg'->>k)::BIGINT FROM c, unnest(json_keys(b->'openByLeg')) t(k)
         UNION ALL SELECT 'openByPriority.' || k, (b->'openByPriority'->>k)::BIGINT FROM c, unnest(json_keys(b->'openByPriority')) t(k)),
      found AS (
         SELECT lifecycle AS k, count(*) AS n FROM breaks GROUP BY ALL
-        UNION ALL SELECT 'accepted', count(*) FROM breaks WHERE outcome = 'break' AND acceptedOn IS NOT NULL
         UNION ALL SELECT 'openByLeg.' || leg, count(*) FROM breaks WHERE outcome = 'break' GROUP BY ALL
         UNION ALL SELECT 'openByPriority.' || priority, count(*) FROM breaks WHERE outcome = 'break' GROUP BY ALL)
 SELECT 'counts_breaks', coalesce(l.k, f.k), 'manifest ' || coalesce(l.n, 0) || ', breaks file ' || coalesce(f.n, 0)

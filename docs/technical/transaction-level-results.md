@@ -27,7 +27,7 @@
 | Question | Where to look |
 |---|---|
 | Is the day reconciled? | `manifest.json` → `verdict` |
-| What must be done today? | `triage.breaks`, then `breaks.ndjson.gz` with `outcome = 'break'` and no `acceptedOn`, by `priority` |
+| What must be done today? | `triage.breaks`, then `breaks.ndjson.gz` with `outcome = 'break'`, by `priority` |
 | What turns into a break soon? | `triage.pending`, with each item's `breakOn`; all of them: `flow.ndjson.gz` with `outcome = 'pending'` |
 | Why is the day's net not zero? | `statement.{asset}.lines` |
 | How much is still unmatched, all days together? | `statement.{asset}.suspense.open`, which is the sum of `drift` in `carried.ndjson.gz` |
@@ -138,9 +138,9 @@ The verdict is evaluated in this order, and the first condition that holds wins:
 | `reconciled_with_pending` | No break and no warning, but unapplied payments within `product.grace` or applications within `psp.grace` | "OK for now". Each pending item comes with the day it becomes a break |
 | `reconciled` | None of the above | The only green state |
 
-**What opens the alert:** at least one open break that is not accepted. An accepted break stays a
-break, in the files and in the verdict, but no longer opens the alert. A resolved break does not
-open it, and neither does the net alone, since pending items move the net without being breaks and
+**What opens the alert:** at least one open break. A break is never accepted one by one: a known
+break stays open until it is booked, and the controller acknowledges or accepts the alert itself,
+as for any rule. A resolved break does not open it, and neither does the net alone, since pending items move the net without being breaks and
 offsetting breaks net to zero. An `incomplete` run opens the engine-error alert instead.
 
 ## 5. The statement
@@ -260,8 +260,8 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 
 ### Around the three parts
 
-- **Triage**, in priority order, then by amount: each open break new or persisting, with its
-  acceptance, then the pending items with their `breakOn`, then the breaks resolved since the
+- **Triage**, in priority order, then by amount: each open break new or persisting, then the
+  pending items with their `breakOn`, then the breaks resolved since the
   previous run. Each list shows at most `topK` items, then "and N more", N taken from `counts`.
 - **A merchant reference.** When the rule names `psp.merchantRef`, every unapplied payment is
   paired with the open business hold it names.
@@ -289,13 +289,13 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `counts.flow` | Flow rows per class; adds up to the flow file's row count |
 | `counts.flowOutcome` | Flow rows per outcome |
 | `counts.stock` | Stock rows per side and class |
-| `counts.breaks` | `new`, `persisting`, `resolved`, `accepted`, and open breaks `openByLeg` (`flow`, `stock`, `book`) and `openByPriority` |
+| `counts.breaks` | `new`, `persisting`, `resolved`, and open breaks `openByLeg` (`flow`, `stock`, `book`) and `openByPriority` |
 | `counts.unclassified` | Unclassified transactions per side |
 | `anomalies.key_metadata_mutated` | The transactions (`side`, `tx`) whose key, state, business-id or merchant-reference metadata was changed or deleted after insertion, seen since the previous run's head. Empty in a sound booking |
 | `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`, `offsetting`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `S_prev` values here |
-| `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`; `acceptedOn`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
+| `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
 | `files` | One entry per file: `name`, `rows`, `sha256`, and `part` when the file comes in parts |
 | `expiresAt` | When the run's files expire (§2) |
 
@@ -389,7 +389,6 @@ plus these fields:
 | `openedOn`, `resolvedOn` | The day the break opened, and the day it was resolved |
 | `amount` | Signed. On a flow break it is the `drift` (`psp − product`); on a stock break, the balance in the open direction; on a book break, the residual of its direction (the account's movement minus the flow's) |
 | `previousClass` | On the day the class changes only |
-| `acceptedOn` | The day of the acceptance, while it holds |
 
 | `priority` | Classes | Why |
 |---|---|---|
@@ -426,13 +425,11 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
   booking brings the drift to 0: the PSP finalises it, or the product books the difference or
   reverses the application. There is no write-off state:
   a systematic difference, such as a fee never booked on every payment, is fixed by booking it.
-  Until then, accepting the breaks keeps them out of the alert.
 - **A hold** becomes `stuck` at `maxAge`, and is listed once as `cleared` by the run whose window
   lettered it.
 - **A break keeps its `breakId` for life.**
   - When its class changes (an orphan later reported `failed`, an unapplied payment later applied
     short), it stays the same break, `persisting`, with `previousClass` on that day.
-  - An acceptance records the class and amount it accepted, and lapses when either changes.
   - A resolved break that opens again is `new` again, with a new `openedOn`, and keeps its history.
 
 ## 8. Rules a reader can rely on
@@ -579,7 +576,7 @@ and was lettered on the same day.
     "flowOutcome": {"ok": 4, "pending": 2, "break": 2},
     "stock": {"psp":     {"open": 2, "wrong_sign": 0, "stuck": 0, "cleared": 0},
               "product": {"open": 4, "wrong_sign": 1, "stuck": 1, "cleared": 1}},
-    "breaks": {"new": 1, "persisting": 3, "resolved": 1, "accepted": 0,
+    "breaks": {"new": 1, "persisting": 3, "resolved": 1,
                "openByLeg": {"flow": 2, "stock": 2, "book": 0}, "openByPriority": {"1": 0, "2": 1, "3": 1, "4": 2}},
     "unclassified": {"psp": 1, "product": 0}
   },
@@ -732,7 +729,7 @@ break, which keeps its last open class and amount.
 
 ```text
 psp-vs-billing — 24 Sep 2026 (cut-off 23:59:59 Europe/Paris) — BREAKS
-4 open breaks (2 flow, 2 stock), 0 at P1, 0 accepted, 1 resolved · open flow breaks 550.00 EUR gross, net −150.00 EUR
+4 open breaks (2 flow, 2 stock), 0 at P1, 1 resolved · open flow breaks 550.00 EUR gross, net −150.00 EUR
 
 EUR
   PSP — finalised payments in the window                           4,000.00  (4)

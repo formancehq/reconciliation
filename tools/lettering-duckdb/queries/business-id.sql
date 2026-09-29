@@ -20,7 +20,6 @@ SELECT day, 'breaks', class, outcome, ref, hold, amount,
        'P' || priority
        || CASE WHEN lifecycle = 'resolved' THEN ' resolved on ' || resolvedOn
                ELSE ' ' || lifecycle || ' since ' || openedOn END
-       || CASE WHEN acceptedOn IS NOT NULL THEN ', accepted on ' || acceptedOn ELSE '' END
 FROM breaks_days
 WHERE ref = getvariable('id') OR holdId = getvariable('id') OR merchantRef = getvariable('id')
    OR list_contains(list_transform(product, p -> p.businessId), getvariable('id'))

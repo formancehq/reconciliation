@@ -630,7 +630,7 @@ never green. A residual of the payment-account book is a P1 break instead, so th
 movement does not hide the rest of the day (decision 23).
 Otherwise the verdict is `breaks`, `reconciled_with_warnings` (an unclassified transaction, or
 identifying metadata changed after insertion), `reconciled_with_pending` or `reconciled`. The alert
-opens on an open break that is not accepted, never on the net alone. The verdicts, every line of
+opens on an open break, never on the net alone. The verdicts, every line of
 the statement and how to read them are defined in the [results
 reference](./transaction-level-results.md#4-the-verdict).
 
