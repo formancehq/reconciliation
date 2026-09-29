@@ -75,14 +75,13 @@
   - Its `openPrev` values are therefore recomputed, not picked up. The manifest's `reseed` records
     the gap with the last complete run, per asset and per book.
   - It is a complete run, and the chain's next link.
-- **Expiry.** Each file has its own `expiresAt` in the manifest's `files`. The daily files are kept
-  for the rule's `retention`, 90 days by default.
-  - The last run of each month keeps its manifest, stock file and carried file for
-    `anchorRetention` (13 months by default).
-  - The last run of a period keeps its manifest and `period.json` for as long.
+- **Expiry.** A run's files, `period.json` included, are kept for the rule's `retention`, 90 days
+  by default, and the manifest's `expiresAt` says until when. A customer bound to a longer legal
+  retention raises `retention`.
   - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
-    (`engine` in the manifest), replaying forward from the nearest anchor, whose stock and carried
-    files seed the chain.
+    (`engine` in the manifest). Its stock is rewound from the head; its carried items, with the
+    previous day's files expired, are rebuilt from a backfill window, as on a first run (ADR-005 §7,
+    item 7).
 
 ## 3. Conventions
 
@@ -286,7 +285,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt`, `timingsMs` | When the run ran and how long each phase took: `cut`, `flow`, `lookup`, `stock`, `watch`, `join`, `write` |
 | `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead` and `logHead`, the heads the run read up to (the rewind reads the transactions `(txTo, txHead]`, the metadata watch the logs up to `logHead`), and `logSha256`, the SHA-256 of the deterministic protobuf encoding of the `Log` message at `S` as `GetLog` returns it (sequence, payload and response signature). Anyone can re-read that log and compare. It is stable for one ledger protocol version; the ledger's own chain hash is not exposed on the log |
-| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `daily`, `anchor` or `head` for a replay), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (the logs of `(head_prev, logHead]` the metadata watch read, `head_prev` being the previous run's `logHead`) |
+| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `head` for a replay or a re-seed), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (the logs of `(head_prev, logHead]` the metadata watch read, `head_prev` being the previous run's `logHead`) |
 | `verdict` | §4 |
 | `incomplete` | Only when `verdict` is `incomplete`: `reason`, `kind` (`transient` or `structural`, §4) and a human-readable `detail` |
 | `reseed` | Only on a re-seed run (§2): `adjustment`, per asset the recomputed `suspense.openPrev` minus the last complete run's `suspense.open`, and per book the recomputed `openPrev` minus that run's `open` |
@@ -300,9 +299,8 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `S_prev` values here |
 | `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`; `acceptedOn`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
-| `files` | One entry per file: `name`, `rows`, `sha256`, `expiresAt`, and `part` when the file comes in parts |
-| `anchor` | `true` on the last run of a month |
-| `expiresAt` | The manifest's own expiry |
+| `files` | One entry per file: `name`, `rows`, `sha256`, and `part` when the file comes in parts |
+| `expiresAt` | When the run's files expire (§2) |
 
 ### `flow.ndjson.gz`
 
@@ -482,7 +480,8 @@ manifest's; `items` lists at most 1,000 entries, and `more` counts the others.
   reproduces every data file's SHA-256, provided four things hold:
   - the same engine version;
   - the same rule version;
-  - the same previous run, whose carried and stock files seed the day;
+  - the same previous run, whose carried and stock files seed the day, so a replay while that run's
+    files are kept (`retention`);
   - no key, state, business-id or merchant-reference metadata changed since the original run
     (`key_metadata_mutated`), because the ledger serves the current metadata.
 
@@ -576,7 +575,7 @@ and was lettered on the same day.
   "engine": "reconciliation v1.4.0",
   "rule": {
     "id": "psp-vs-billing", "version": 7, "sha256": "4c1d…",
-    "buckets": ["1d", "7d", "30d"], "retention": "90d", "anchorRetention": "13mo",
+    "buckets": ["1d", "7d", "30d"], "retention": "90d",
     "backfillFrom": "2026-08-01",
     "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id",
                 "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
@@ -668,13 +667,12 @@ and was lettered on the same day.
     ]
   },
   "files": [
-    {"name": "flow.ndjson.gz",         "rows": 8, "sha256": "e41d…", "expiresAt": "2026-12-23"},
-    {"name": "carried.ndjson.gz",      "rows": 4, "sha256": "7a02…", "expiresAt": "2026-12-23"},
-    {"name": "stock.ndjson.gz",        "rows": 9, "sha256": "c9b8…", "expiresAt": "2026-12-23"},
-    {"name": "breaks.ndjson.gz",       "rows": 5, "sha256": "15fe…", "expiresAt": "2026-12-23"},
-    {"name": "unclassified.ndjson.gz", "rows": 1, "sha256": "90b3…", "expiresAt": "2026-12-23"}
+    {"name": "flow.ndjson.gz",         "rows": 8, "sha256": "e41d…"},
+    {"name": "carried.ndjson.gz",      "rows": 4, "sha256": "7a02…"},
+    {"name": "stock.ndjson.gz",        "rows": 9, "sha256": "c9b8…"},
+    {"name": "breaks.ndjson.gz",       "rows": 5, "sha256": "15fe…"},
+    {"name": "unclassified.ndjson.gz", "rows": 1, "sha256": "90b3…"}
   ],
-  "anchor": false,
   "expiresAt": "2026-12-23"
 }
 ```

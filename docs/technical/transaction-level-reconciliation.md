@@ -409,7 +409,7 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Resolve `S` from the cut-off | `ListLogs`, filter `cut-off < log_builtin_uint(DATE) ≤ cut-off + δ` (bounded, widened while empty: the range is materialized before paging), page 1 → `S = id − 1` | **log-date index** (`LOG_BUILTIN_INDEX_DATE`, Pebble `lldt`): **mandatory** (checklist row 10) |
 | Resolve `T` (transaction-id cut) | `ListTransactions`, filter `cut-off < builtin_uint(INSERTED_AT) ≤ cut-off + δ`, page 1, `reverse = true` → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
 | **Flow window** | `ListTransactions`, filter `And(membership, builtin_uint(ID) ∈ (lo, hi])`, **membership first** ([above](#the-cut-from-a-business-time-to-id-ranges), §7.11), `reverse = true`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, or `Or(<psp.key> EXISTS, <psp.movementKeys> EXISTS…)` when the rule declares movement keys (decision 23), and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
-| Rewind window `(T, head_tx]`, replays and forward stocks | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **`reverse = true`** (the API lists newest first; `reverse` gives id order), page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
+| Rewind window `(T, head_tx]`, and replays | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **newest first** (the default order; §4), in chunks, page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
 | Metadata watch `(head_prev, head]`, purge check, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
 | Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch. On a released v3.0 it is the only lookup left once a hold is purged (§2) |
@@ -457,9 +457,10 @@ improves (§7.7).
 ## 4. The rewind: an exact state at `S` with no checkpoint
 
 After a live, possibly torn, listing of the scope has finished, read the transactions
-`(T, head_tx]`, unfiltered and in id order (`reverse = true`). For each scope account touched
-there, **discard the listed value**. Replace it with the account's balance *just before its first
-touch after the cut*:
+`(T, head_tx]`, unfiltered, **newest first** (the API's default order). For each scope account
+touched there, **discard the listed value**. Replace it with the account's balance *just before its
+first touch after the cut*: each touch overwrites the account's value with its balance just before
+that touch, so the last value written is the one before the first touch.
 
 ```text
 pre = post_commit_volumes[account] − Σ(this transaction's postings on account)
@@ -467,6 +468,11 @@ pre = post_commit_volumes[account] − Σ(this transaction's postings on account
 
 - Touched accounts that are missing from the listing are added back when `pre ≠ 0`.
 - Accounts created after the cut have `pre = 0` and drop out.
+- An account back at `pre = 0` is dropped as soon as it is read, unless the listing holds it (then
+  0 overrides the listed value). So the fold holds only the accounts open at the point it has read
+  down to, whatever the window's length: 1M accounts for a 20M-transaction window that touched
+  10M, where an id-order fold that keeps each first touch holds all 10M (§7.16). The window is
+  read in chunks by K workers and applied chunk by chunk, newest first.
 - An account untouched in the window held one value for the whole listing, so the listed value is
   its value at the cut.
 
@@ -534,7 +540,8 @@ metadata-only writes (§7.8).
 ### Replaying an old day
 
 Any past day can be replayed: the logs are permanent, and the day's cut (`S`, `T`, `logSha256`) is in
-the signed capture (ADR-005 §7, item 7).
+the signed capture (ADR-005 §7, item 7). A replay runs the daily algorithm as of that day; no stock
+is stored for it.
 
 **The flow costs the same at any age.** The cut of an old day resolves in one index page per
 ledger, and the day is its id range `(T_prev, T]`, read filtered on the key:
@@ -542,45 +549,30 @@ O(payments of that day), a day or a year later. It matches the original run as l
 state metadata stayed write-once. The exact variant reads that day's logs `(S_prev, S]`, which is
 slower but still one day's worth.
 
-**The rewind from head grows with the day's age.** It reads every transaction since the day's cut,
-and it keeps the first touch of every hold touched since. With 1M transactions written a day, at the
-measured ~330k/s with the fold of `post_commit_volumes` over 8 ranges (§7.8, 3.0 s per 1M):
+**The stock is the live listing, rewound from head** (§4). The window `(T, head_tx]` grows with the
+day's age, and the fold's memory does not: it holds the open book, since it reads newest first and
+drops a hold back at zero. Measured at 236k–261k transactions/s over 8 workers, holding at most the
+1M open holds, 426 MiB of heap, on a window that touched 10M holds (§7.16):
 
-| Replay | Transactions in `(T, head_tx]` | Read time | From the logs, for comparison |
-|---|---|---|---|
-| A replay the next day | ~1M | ~3 s | ~16–25 s |
-| A week later | ~7M | ~20 s | ~2–3 min |
-| A month later | ~30M | ~1 min 30 | ~8–12 min |
-| A year later | ~365M | **~18 min**, with close to a year of holds to track | ~1 h 40 – 2 h 30 |
-
-The logs column spans the two measured rates: 61k/s at `7dd615dba` (§7.8) and 41k/s at `a08f99bc3`
-(§7.2).
-
-**So a replay starts from the nearest stored stock, not from head.** Each run stores its stock at
-its cut (`stock.ndjson.gz`), and the stock is additive over time:
-
-```text
-stock(S_D) = stock(S_A) + hold movements in (S_A, S_D]
-```
-
-- **Forward** from an earlier stock `A`: read the transactions `(T_A, T_D]`, unfiltered. Each
-  touched hold takes its balance after its last touch at or before `T_D` (`post_commit_volumes`),
-  and a hold at zero drops out. Untouched holds keep their stored balance.
-- **Backward** from a later stock `A`: the rewind above, with that stored stock in place of the live
-  listing, over `(T_D, T_A]`.
-- The stored stock and carried files are verified against the SHA-256 in their signed capture
-  before they are used.
-
-| Age of the replayed day | Starting point | Cost |
+| Replay, at 1M transactions a day | Transactions in `(T, head_tx]` | Rewind |
 |---|---|---|
-| Within the 90-day retention | the previous day's stored stock | one day of transactions, whatever the age |
-| Beyond it | the nearest monthly anchor (`anchorRetention`) | at most about half a month of transactions |
-| No stored stock at all (anchors expired, rule created later) | the live listing, rewound from head | O(transactions since the day), as in the table above |
+| The next day | ~1M | ~4 s |
+| A month later | ~30M | ~2 min |
+| At the end of the 90-day retention | ~90M | ~6 min |
+| A year later | ~365M | ~26 min |
 
-A monthly anchor holds only the open book and the carried items, which lettering keeps small, so
-keeping one per month for a year costs a few files per rule. The flow and break files can still
-expire at 90 days. They are recomputed forward from the anchor, one day's flow read per day
-replayed.
+A product ledger of 1M payments a day writes about 4M transactions (§7.15), so its rewind takes about
+four times as long: ~25 min at the end of the retention. An id-order fold that keeps each first
+touch would hold every hold created since the day, about
+760 bytes each (7.6 GB of heap for 10M, §7.16): about 70 GB for a 90-day-old day.
+
+**The carried items come from the previous run while it is kept.** Within the rule's `retention`,
+the previous day's carried and stock files seed the replay, and it reproduces the day's files byte
+for byte (results reference §8). Beyond it, those files have expired: the replay rebuilds its
+carried items from a backfill window, as a first run does (ADR-005 §7, item 6), which costs about
+`psp.grace` + 1 days of flow reads. An item carried for longer than that window is missed, the
+statement says "backfilled since …", and the files are no longer byte-identical to the original.
+A customer who must reproduce older days raises `retention`.
 
 ## 5. Matching semantics
 
@@ -639,7 +631,7 @@ reference](./transaction-level-results.md#4-the-verdict).
 
 ### Result artifacts, retention and the period view
 
-The files and every field, retention, the monthly anchors, the period summary and the file sizes are
+The files and every field, retention, the period summary and the file sizes are
 specified in the [results reference](./transaction-level-results.md), the source of truth for the
 format; its [worked example](./transaction-level-results.md#10-worked-example-one-day-of-output)
 shows a complete day. Why the format is what it is: ADR-005 §7, item 3. Two points of mechanics
@@ -650,8 +642,7 @@ Azure, under `{bucketID}/reconciliation/`, a sibling of `backups/`. The product 
 the rule answers for, and one PSP ledger may feed several products. The ledger's orphan prune only
 deletes unreferenced objects under `{bucketID}/backups/data/` and `{bucketID}/backups/exports/`
 (`internal/infra/backup/manager.go:229-235`, `segment.go:54-61`), so `{bucketID}/reconciliation/`
-is never touched. Monthly stock anchors are kept in place by an object tag the lifecycle rule
-filters on (S3 object tags, Azure blob index tags).
+is never touched.
 
 **A run that cannot conclude** writes its manifest and no data file, and the next run chains on
 the last complete one ([results reference
@@ -922,8 +913,9 @@ listing exactly (`fold -compare`, 0 of 1,000,460 rows).
 
 **Order.** `ListTransactions` lists **newest first** by default: `reverse = true` gives id order
 (`internal/application/ctrl/controller_default.go:375`, "API: reverse=false → newest-first"). A fold
-that keeps each account's first touch after the cut is silently wrong without it. The flow's merge
-"in transaction-id order" (§3) needs the same flag.
+that keeps each account's first touch after the cut is silently wrong without it. The rewind reads
+newest first and lets each touch overwrite instead, which gives the same stock and bounds its
+memory (§4, §7.16). The flow's merge "in transaction-id order" (§3) needs `reverse = true`.
 
 **Reading.**
 
@@ -1307,6 +1299,42 @@ and the run took as long: 2 min 39 s. The writers kept their 50 transactions/s t
   Ledger side, L10 (§8, F-j, [EN-2369](https://formance-team.atlassian.net/browse/EN-2369)) and L6
   ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) would remove or shorten the read.
 
+### 7.16 Replaying an old day from head
+
+**Question.** With no stored stock, a replay rewinds the live listing over every transaction since
+the day (§4). Does it hold at months of transactions, in time and in memory?
+
+**Setup** (`replay-rewind`). A single-node ledger at `7dd615dba`. A ledger `replay` with 1M holds
+opened before the cut `T` (`load`), then 10M payments after it (`load-lettering`, `EPHEMERAL` holds:
+each opened and lettered, then purged), the first 1M of which touch the holds opened before the cut:
+a window `(T, head]` of 20M transactions touching 10M holds, whose stock at `T` is the 1M open holds.
+The window is folded two ways, over 8 workers: in id order keeping each first touch, as §7.8 did,
+and newest first in chunks of 100,000, dropping a hold back at zero (§4).
+
+| Fold | Time | Rate | Holds held | Peak heap | Max RSS |
+|---|---|---|---|---|---|
+| Id order, first touch | 1 min 7 s | 298k tx/s | 10M | 7.6 GB | 9.5 GB |
+| Newest first, drop at zero | 1 min 25 s | 236k tx/s | 1M | 426 MiB | 670 MB |
+
+Both give the same 1M-row stock: **0 rows differ**, over the whole window and over its first 2M
+transactions, where the 1M holds opened before the cut are touched. The count check held on both.
+
+**A degraded node.** Right after the load (21M transactions in 13 min), the same reads ran at 11k
+to 15k transactions/s, and an idle node served each page of 1,000 transactions in 2.6 s, while its
+data directory held 19 GB of Raft snapshot checkpoints. A reference fold of 1M transactions varied
+from 11 s to more than 8 min on that process. After a restart, the same fold took 10.6 s on one
+stream and 2.8 s on 8 (95k and 356k/s, as in §7.8), and the rewinds above were measured.
+
+**Reading.**
+
+- The replay from head holds at months: about 6 min for a 90-day-old day and 26 min for a year at
+  1M transactions a day, both extrapolated from 20M at the measured rate. A replay is rare, so no
+  stored stock or anchor is needed to bound it (ADR-005 decision 14).
+- The newest-first fold is what makes it possible: its memory is the open book. The id-order fold
+  grows by about 760 bytes per hold created since the day.
+- The degraded node is worth the Ledger team's attention next to F-e: after a sustained write load,
+  unfiltered reads ran 20 to 100 times slower until the process restarted (F-k).
+
 ## 8. Ledger findings and asks
 
 | # | Finding | Evidence | Ask |
@@ -1322,6 +1350,7 @@ and the run took as long: 2 min 39 s. The writers kept their 50 transactions/s t
 | F-h | Checkpoints carry no owner and no TTL | `bucket.proto:326` | For information only: not needed here |
 | F-i | An `And` is driven by its first term, in the order given. Led by a dense id range, it seeks its membership once per row, and seeking an `Or` seeks every one of its terms: the product `Or` of three keys read 2.7 to 3.4 times slower than membership first, for the same rows | §7.11; `internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_and.go:128-146`, `combinator_or.go:69-85` at `7dd615dba` | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), Ledger v3.1): order an `And`'s terms at compile time, or leave an `Or` child alone when it is already past the target. Until then recon writes the membership first (EN-2318) |
 | F-j | `ListLogs` cannot be filtered on what the metadata watch keeps: the `SavedMetadata` and `DeletedMetadata` that target a transaction, and the logs with a non-empty `purged_accounts`. `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS`, so the watch reads every log to keep a few | §7.15: 4.1M logs in 134–158 s, about 95 % of a run; `misc/proto/common.proto` (`QueryFilter`) at `7dd615dba` | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), Ledger v3.1): a log filter on those payloads, so the watch reads only the logs it keeps. Not blocking: the full read costs about two minutes a run, which a nightly batch affords (ADR-005 decision 25) |
+| F-k | After a sustained write load (21M transactions in 13 min on one node), unfiltered `ListTransactions` pages of 1,000 took 2.6 s each on an idle node, 20 to 100 times slower than §7.8, until the process restarted; the data directory then held 19 GB of Raft snapshot checkpoints | §7.16 | For information, not filed: a regression test of read speed after a write burst, next to L6 |
 
 ## Cross-links
 

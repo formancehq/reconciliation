@@ -304,17 +304,20 @@ Three caveats come with this choice, and each has a counter-measure:
 **Stock leg (rewind).** The steps:
 
 1. List the open holds under each of the side's hold prefixes (§6), live. The listing may tear.
-2. When the listing ends, read the transactions `(T, head_tx]`, **unfiltered**, in id order. The
-   head is `GetLedgerStats.transaction_count`. `ListTransactions` lists newest first by default, so
-   the read sets `reverse = true`. This window runs from the cut-off to the run, so it is short. It
-   has the three properties the rewind needs:
+2. When the listing ends, read the transactions `(T, head_tx]`, **unfiltered**, **newest first**
+   (`ListTransactions`'s default order). The head is `GetLedgerStats.transaction_count`. For a daily
+   run this window runs from the cut-off to the run, so it is short. It has the three properties the
+   rewind needs:
    - it is **complete**: transaction ids are contiguous, so the count check `hi − lo` holds;
    - it is **immutable**: postings and `post_commit_volumes` never change;
    - it is **independent of any metadata convention**, because it is unfiltered. A hold touched by
      a transaction that forgot its key is still corrected.
 3. For every hold touched in that window, discard the listed value and use its balance **just before
    its first touch after `T`**. That balance is the transaction's `post_commit_volumes` minus the
-   transaction's own net posting on the hold.
+   transaction's own net posting on the hold. Read newest first, each touch overwrites the hold's
+   value, so the last one written is the right one, and a hold back at zero is dropped at once
+   unless the listing holds it. The fold then holds only the open book, however long the window
+   ([design doc §7.16](../technical/transaction-level-reconciliation.md#716-replaying-an-old-day-from-head)).
 4. Holds touched but absent from the listing are added back if that balance is non-zero. Holds
    created after the cut have a pre-balance of 0 and drop out.
 
@@ -527,22 +530,16 @@ checkpoint's listing.
      lifecycle management). Recon's own sweep, driven by the `expiresAt` in each manifest, is the
      fallback.
    - Expiry loses nothing irrecoverable. The logs are permanent, so any past day can be recomputed
-     from the ledgers with the same cut and engine version, which each manifest records. A
-     customer bound to a longer legal retention raises `retention`.
-   - **Stock anchors are kept longer.** The last run of each month keeps its `manifest.json`,
-     `stock.ndjson.gz` and `carried.ndjson.gz` in place, flagged by an object tag the lifecycle
-     rule filters on, for `anchorRetention`, a rule parameter (proposed default 13 months, to
-     calibrate with the design partner). An anchor holds only the open book and the carried items,
-     which are small by construction, so keeping it costs little. It is what keeps the replay of an
-     old day cheap (item 7), and the carried file lets that replay reproduce the day's bytes.
+     from the ledgers with the same cut and engine version, which each manifest records (item 7). A
+     customer bound to a longer legal retention raises `retention`: the files themselves are kept.
 5. **A period points at each day's diffs.**
    - The period is the rule's `periodType`, calendar-based in the rule's timezone. There is no
      separate accounting-period model.
    - The period's alert, and a period summary built from the period's **daily manifests** rather
      than from the ledgers, list each day with its counts, its net and gross, its breaks and the
      link to its files. A closed period is never rewritten.
-   - **The summary is a file of the period's last run**, `period.json`, kept like a monthly stock
-     anchor (`anchorRetention`), so it outlives the daily files. A `daily` rule writes none
+   - **The summary is a file of the period's last run**, `period.json`, kept for the rule's
+     `retention` like the run's other files. A `daily` rule writes none
      ([results reference](../technical/transaction-level-results.md#periodjson)).
    - The 90-day default retention covers a monthly period plus a review margin.
 6. **First run: bounded backfill.** A rule's first run has no previous day, so no carried items.
@@ -566,14 +563,17 @@ checkpoint's listing.
    - Re-running with an earlier `backfillFrom` is idempotent per (rule, period, cut). It only costs
      a longer window read.
 7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
-   (`S`, `T`, `logSha256`) is in the signed capture. The flow costs the same at any age, one day's
-   id range `(T_prev, T]`. The rewind from head does not: it reads every transaction since the
-   day's cut, ~18 min a year later.
-   - **So a replay starts from the nearest stored stock instead of from head**, forward or backward
-     over the transactions between the two cuts: the previous day's stock within the 90 days, the
-     nearest monthly anchor beyond. The stored stock is checked against its signed capture first.
-   - With no stored stock at all, the rewind from head remains the fallback. Mechanics and costs:
-     [design doc](../technical/transaction-level-reconciliation.md#replaying-an-old-day).
+   (`S`, `T`, `logSha256`) is in the signed capture. A replay runs the daily algorithm as of that
+   day, and no stock is stored for it.
+   - The flow costs the same at any age, one day's id range `(T_prev, T]`.
+   - The stock is the live listing rewound from head: about 6 min at the end of the 90-day retention
+     and 26 min a year later, at 1M transactions a day, in the memory of the open book (measured on
+     20M transactions, [design doc
+     §7.16](../technical/transaction-level-reconciliation.md#716-replaying-an-old-day-from-head)).
+   - Within `retention`, the previous day's carried and stock files seed the replay, which
+     reproduces the day's files byte for byte. Beyond it, the carried items are rebuilt from a
+     backfill window, as on a first run (item 6), and the statement says so. Mechanics: [design
+     doc](../technical/transaction-level-reconciliation.md#replaying-an-old-day).
 8. **Execution settings are operator settings, not rule parameters.** They are `serve` flags (with
    the matching environment variables), like `scheduler-interval`, absent from the rule contract
    and the API. The team running the deployment tunes them through Helm or the Operator:
@@ -659,7 +659,7 @@ for the Ledger team to weigh against its own users:
 | 1 | The shared key | The **PSP payment reference**, carried by the transactions on both ledgers. Authorization/capture, where both sides share the authorization number, is the special case (§2.1, §6). |
 | 2 | The state vocabulary | **Parameterised per side** in the rule, because it depends on how external payment states are modelled on the PSP ledger (§6). |
 | 3 | Grace and ageing | `grace` is per side: `product.grace` 1 day and `psp.grace` 7 days by default (decisions 16, 20). Age buckets 0–1, 2–7, 8–30 and > 30 days; all are rule parameters, to calibrate (§6). |
-| 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`: **90 days** by default, and **monthly stock anchors** kept for `anchorRetention` (proposed 13 months) (§7). |
+| 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`, kept **90 days** by default (`retention`); a longer legal retention raises it. No longer-kept monthly anchors (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**, never a reversal of the original payment (§6). |
@@ -669,7 +669,7 @@ for the Ledger team to weigh against its own users:
 | 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
 | 12 | The cut's indexes | The **`inserted_at` and log-date indexes are mandatory** on both ledgers, and bisection is dropped. An index missing at run time is an engine error (§5). |
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
-| 14 | Replaying an old day | From the **nearest stored stock**: daily within `retention`, monthly anchors for `anchorRetention`. The rewind from head is the fallback (§7). |
+| 14 | Replaying an old day | The **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, measured). Beyond `retention`, the carried items are rebuilt from a backfill window (§7). |
 | 15 | Result files | For the customer first: gzipped NDJSON under `rule=/day=/run=`, a stable `breakId`, drifts carried to the next run, byte-identical files for a given cut ([results reference](../technical/transaction-level-results.md)). |
 | 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break: `applied_before_final` stays pending within `psp.grace`, unknown references included, then becomes `orphan_application` (P1). Missing references are looked up by key, and the alert opens on a break, never on the net alone (§6). |
 | 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern), not on the hold, which a final event with no `pending` before it moves by 0 (§6). |
@@ -677,7 +677,7 @@ for the Ledger team to weigh against its own users:
 | 19 | Simplifications | The bridge does not group by `firstSide`, which stays on flow rows for analysis only. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` (§6, §7). |
 | 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**; a business that applies later or by hand raises it. A payment-to-apply hold is an option outside the V1 rule contract ([design doc](../technical/transaction-level-reconciliation.md#when-application-is-deferred-or-manual-a-payment-to-apply-hold)). |
 | 21 | Result files, statement and triage | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a write-off state, a flat transactions file, a separate alert threshold. |
-| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`** (`reverse = true`), not the logs, and so do replays and forward stocks. The logs keep the metadata watch and the optional purge check (§5, §7). |
+| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, newest first, not the logs, and so do replays. The logs keep the metadata watch and the optional purge check (§5, §7). |
 | 23 | The PSP payment account | A booking convention (§8, rule 10), with the debit keys in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
 | 24 | Bounded date filters in the cut | `S` and `T` are resolved with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it (§5). |
 | 25 | How the metadata watch is read | **In full, by the run**, over K ranges: about 95 % of a run, 134–158 s at 1M payments a day, which a nightly batch affords. An incremental read in slices during the day is **deferred after V1**: it would save about two minutes a run for a job per ledger and a stored slice chain. Revisit if a run grows too long and L10 ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), §9), which would shrink the read, is not delivered ([design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)). |
@@ -710,8 +710,9 @@ new `periodType` without changing this design.
   10 s drain grace does not apply to it ([scheduler.md](../technical/scheduler.md)).
 - **Recon starts reading `ListTransactions` in bulk, and `ListLogs`.**
   - From the transactions, it reads every one that moves a balance: created transactions and revert
-    transactions, which carry their own id. The flow reads them filtered, and the rewind and the
-    replays unfiltered, always with `reverse = true`, since the API lists newest first.
+    transactions, which carry their own id. The flow reads them filtered, in id order
+    (`reverse = true`, since the API lists newest first); the rewind and the replays read them
+    unfiltered, newest first.
   - From the logs, it reads only `SavedMetadata` and `DeletedMetadata` on transactions, for the
     `key_metadata_mutated` monitoring, and `purged_accounts` for the optional purge check. It
     ignores the rest.

@@ -121,10 +121,10 @@ def worked_example(out):
         # the day 24 run reads its payment-account S_prev volumes here
         "paymentAccounts": [{"account": "fpay:stripe:account:acct_eu:main", "asset": "EUR/2",
                              "input": "9120000", "output": "310000"}],
-        "files": [{"name": "carried.ndjson.gz", "rows": 2, "sha256": sha(carried23), "expiresAt": "2026-12-22"},
-                  {"name": "stock.ndjson.gz", "rows": 6, "sha256": sha(stock23_gz), "expiresAt": "2026-12-22"},
-                  {"name": "breaks.ndjson.gz", "rows": 4, "sha256": sha(breaks23_gz), "expiresAt": "2026-12-22"}],
-        "anchor": False, "expiresAt": "2026-12-22",
+        "files": [{"name": "carried.ndjson.gz", "rows": 2, "sha256": sha(carried23)},
+                  {"name": "stock.ndjson.gz", "rows": 6, "sha256": sha(stock23_gz)},
+                  {"name": "breaks.ndjson.gz", "rows": 4, "sha256": sha(breaks23_gz)}],
+        "expiresAt": "2026-12-22",
     }
     b23 = (dump(m23) + '\n').encode()
     write(os.path.join(day23, 'manifest.json'), b23)
@@ -216,7 +216,7 @@ class Rule:
     def as_json(self):
         return {
             "id": self.id, "version": 1, "sha256": None,
-            "buckets": [f"{b}d" for b in self.buckets], "retention": "90d", "anchorRetention": "13mo",
+            "buckets": [f"{b}d" for b in self.buckets], "retention": "90d",
             "backfillFrom": day_str(self.backfill_from),
             "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
                     "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
@@ -725,8 +725,7 @@ class Engine:
         def data_file(name, lines):
             data = gz([dump(l) for l in lines])
             write(os.path.join(run_dir, name), data)
-            files.append({'name': name, 'rows': len(lines), 'sha256': sha(data),
-                          'expiresAt': day_str(day + dt.timedelta(days=90))})
+            files.append({'name': name, 'rows': len(lines), 'sha256': sha(data)})
 
         data_file('flow.ndjson.gz', [self.flow_json(r) for r in st['rows']])
         data_file('carried.ndjson.gz', [self.flow_json(r, with_impact=False) for r in st['carried']])
@@ -741,8 +740,7 @@ class Engine:
         if period_file is not None:  # listed in the manifest, which therefore cannot be in it
             data = (dump(period_file) + '\n').encode()
             write(os.path.join(run_dir, 'period.json'), data)
-            files.append({'name': 'period.json', 'rows': len(period_file['days']), 'sha256': sha(data),
-                          'expiresAt': day_str(day + dt.timedelta(days=395))})
+            files.append({'name': 'period.json', 'rows': len(period_file['days']), 'sha256': sha(data)})
         data = (dump(m) + '\n').encode()
         write(os.path.join(run_dir, 'manifest.json'), data)
         st['manifest'] = m
@@ -945,7 +943,6 @@ class Engine:
                                             if b['leg'] == 'stock' and b['row'].get('clearedBy') else {}))
                                     for b in resolved][:10]},
             "files": files,
-            "anchor": False,
             "expiresAt": day_str(day + dt.timedelta(days=90)),
         })
         return m

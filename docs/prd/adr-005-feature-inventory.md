@@ -19,6 +19,7 @@ below still hold.
 | Feature | Decision | Recorded in |
 |---|---|---|
 | B12 + G8, incremental watch and slice retention (and the `--lettering-watch-interval` flag) | Deferred after V1: the run reads the watch in full | ADR-005 decision 25 |
+| G5 + G3, replay from the nearest stored stock and monthly anchors (`anchorRetention`, the anchor tag, per-file `expiresAt`) | Removed from V1: a replay rewinds the live listing from head, newest first; beyond `retention` its carried items are rebuilt from a backfill window | ADR-005 decisions 4 and 14 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -156,9 +157,9 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 |---|---|---|---|---|---|---|---|
 | G1 | Retention: 90 days per rule (`retention`) through the storage lifecycle rule | ADR §7.4, D4 | Expiry done by S3/Azure lifecycle on the prefix | Bounded storage (7–14 GB per rule over 90 d) | NEC | S | Unbounded storage |
 | G2 | Recon's own `expiresAt` sweep (fallback) | ADR §7.4; RD §2 | Recon deletes expired files itself | Deployments without a lifecycle rule | OPT | M | Saves a deletion job (and its risk). Requires the lifecycle rule at setup |
-| G3 | Monthly stock anchors (`anchor`, object tag, `anchorRetention` 13 mo; keep manifest + stock + carried) + per-file `expiresAt` | ADR §7.4, D4, D14 | The last run of each month outlives the 90 d | Keeps an old replay cheap | OPT | M | Saves tagging, two retentions per run, and per-file expiry. An old replay then rewinds from head (G4). Depended on by G5 and I4's retention |
+| G3 | Monthly stock anchors (`anchor`, object tag, `anchorRetention` 13 mo; keep manifest + stock + carried) + per-file `expiresAt` | ADR §7.4, D4, D14 | The last run of each month outlives the 90 d | Keeps an old replay cheap | **Removed from V1** | M | Saves tagging, two retentions per run, and per-file expiry. An old replay then rewinds from head (G4). Depended on by G5 and I4's retention |
 | G4 | Replay of a past day from head (the rewind generalised) | ADR §7.7; DD §4 | Any day recomputed from the permanent logs | Audit, recovery | OPT (keep: nearly free) | S | Cost grows with age (~18 min a year later at 1M tx/day) |
-| G5 | Replay from the nearest stored stock (forward or backward; `stockFrom` `daily`/`anchor`/`head`) | ADR §7.7, D14; DD §4 | Starts a replay from a stored stock instead of head | Bounds an old replay to ~½ month of txs | OPT | M/L | Saves two fold directions, a start-point selection and the stored-stock verification. Old replays fall back to G4 (minutes, rare) |
+| G5 | Replay from the nearest stored stock (forward or backward; `stockFrom` `daily`/`anchor`/`head`) | ADR §7.7, D14; DD §4 | Starts a replay from a stored stock instead of head | Bounds an old replay to ~½ month of txs | **Removed from V1** | M/L | Saves two fold directions, a start-point selection and the stored-stock verification. Old replays fall back to G4 (minutes, rare) |
 | G6 | Exact replay variant through the logs `(S_prev, S]` | ADR §7.7; DD §4 | Re-derives a day from the logs, not the mutable metadata | Exactness if the metadata changed | OPT | S (doc) | Drop the mention; nothing implemented |
 | G7 | Forward stock as a daily mode (open book > ~14 % of daily traffic) | DD §7.10 | Previous stock + the day's txs instead of list + rewind | Faster for huge open books | OPT (already "not needed in V1") | S (doc) | Keep as a measurement only |
 | G8 | Watch slice retention (kept while a manifest lists it, unlisted swept after 7 d) | ADR §7.4; RD §2 | Lifecycle of the slices | Storage | **Deferred after V1** | S | Goes with B12 |
@@ -182,7 +183,7 @@ feature's interest unless the row says otherwise.
 | `psp.maxAge`, `product.maxAge` | rule | ADR §6 | C6 | OPT | No `stuck` |
 | `buckets` | rule | ADR §6 | C7 | OPT | Hard-code the 4 buckets, or drop them |
 | `retention` | rule | ADR §7.4 | G1 | NEC (default 90 d) | Could be fixed per deployment |
-| `anchorRetention` | rule | ADR §7.4, D14 | G3 | OPT | Goes with the anchors |
+| `anchorRetention` | rule | ADR §7.4, D14 | G3 | **Removed with G3** | Goes with the anchors |
 | `backfillFrom` | rule | ADR §7.6, D9 | B17 | NEC (a default exists) | Keep the default, drop the knob? The knob is also the re-seed substitute (D10) |
 | `periodType` (`daily`/`weekly`/`monthly`), timezone, cut-off | rule | ADR §6, D8 | I1/I4 | NEC (daily, tz, cut-off); OPT (weekly/monthly) | — |
 | `asset` (`"*"` fan-out) | rule | ADR §6 | A12 | NEC | — |

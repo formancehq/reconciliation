@@ -54,6 +54,7 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 | `cut-cost [-load] [-ledger cut] [-n 10000000] [-reps 3]` | With `-load`, books `-n` light transactions on a fresh ledger, then creates the log-date and `inserted_at` indexes on that history and times how long each takes to serve. Resolves `S` and `T` for cut-offs with 1k to `-n` entries after them, with an open `date > cut-off` and with a bounded range widened while empty, and checks every answer |
 | `rewind-sources [-ledger psp] [-prefix psp:tx:] [-writers 8] [-ranges 8]` | The rewind proof with two window sources side by side: the logs `(S, head]` and the unfiltered transactions `(T, head_tx]`, each read on 1 and on `-ranges` streams. The writers also revert transactions older and newer than the cut and write metadata only. Every rewound row is compared with a checkpoint taken at the cut |
 | `fold [-ledger psp] [-prefix psp:tx:] [-source txs\|logs] [-from X] [-to Y] [-ranges 8] [-compare]` | Folds the balance-moving transactions of `(X, Y]` (default: the whole history), from the logs or from the unfiltered transactions. `-compare` checks the forward fold against the live listing (run it with no writes) |
+| `replay-rewind [-ledger replay] [-prefix psp:hold:] -from T [-to Y] [-ranges 8] [-chunk 100000] [-mode asc\|desc\|both]` | Rewinds the live listing to the transaction id `T` over `(T, Y]` (default: the head), as the replay of an old day does: in id order keeping each first touch (`asc`), or newest first in chunks, dropping a hold back at zero (`desc`). Reports each fold's time, the holds it held and its peak heap, and with `both` compares the two stocks |
 | `crossover [-ledger psp] [-prefix psp:tx:] [-ranges 8] [-sizes …] [-days 100000,1000000] [-since 0.083] [-reps 2]` | Times the two ways to get a day's stock: live listings of growing hex sub-prefixes (the open book), folds of the last `X` transactions, and the decode and merge of a stored stock of `N` rows (gzipped NDJSON, in memory). Prints where forward from the stored stock overtakes list and rewind. Run it with no writes; `-reps 1` right after starting the server gives the cold-cache first pass |
 | `load-product [-ledger product] [-n 50000] [-noise 1]` | Books a product ledger as the design doc §2 recommends: invoices opened on `EPHEMERAL` holds with `invoice_no`, 9 in 10 applied with `payment_ref` and `invoice_no` (plus an unkeyed revenue recognition), 1 in 25 refunded with `refund_no`, and `-noise` unkeyed transactions per invoice. Declares and indexes the three keys |
 | `product-or [-ledger product] [-from X] [-ranges 8] [-reps 3]` | Reads the window `(X, head]` with each key alone, with the product `Or` of the three written id range first, membership first and as an `Or` of `And`s, and with the three reads merged client-side. Checks that every `Or` returns exactly the union of its terms |
@@ -183,6 +184,18 @@ ledger:
 
 ```bash
 B=/tmp/bench-ledger/bench; $B load-product -ledger product-n1 -noise 1 && $B load-product -ledger product-n9 -noise 9 && $B product-or -ledger product-n1 && $B product-or -ledger product-n9 && $B product-or -ledger product-n9 -from 534600
+```
+
+**Replaying an old day from head** (§7.16). About 14 min of load: 1M holds open before the cut,
+then 10M lettered payments after it. Restart the server after the load: right after it, reads ran
+20 to 100 times slower (§8, F-k).
+
+```bash
+B=/tmp/bench-ledger/bench; $B load-lettering -ledger replay -prefix psp:hold: -persistence EPHEMERAL -n 0 && $B load -ledger replay -prefix psp:hold: -n 1000000 -batch 1000 && $B load-lettering -ledger replay -prefix psp:hold: -persistence EPHEMERAL -n 10000000
+```
+
+```bash
+B=/tmp/bench-ledger/bench; $B replay-rewind -ledger replay -prefix psp:hold: -from 1000000 -mode both && $B replay-rewind -ledger replay -prefix psp:hold: -from 1000000 -to 3000000 -mode both
 ```
 
 Stop the server and delete `/tmp/bench-ledger` when you are done. At 1M accounts per scope the
