@@ -293,7 +293,8 @@ strictly ledger↔ledger and reads the data ledgers directly over gRPC.
   PSP ledger and the product ledger, cut at the business cut-off on each ledger.
   - The flow leg reads the window's transactions with `ListTransactions`, filtered server-side on
     the reference's presence.
-  - The stock leg rewinds a live listing of open holds to the cut through the short log window.
+  - The stock leg rewinds a live listing of open holds to the cut through the transactions
+    `(T, head_tx]`, newest first.
 
   So **no query checkpoint** is taken, and ADR-003 stands. It adds an async job, bulk
   `ListTransactions` and `ListLogs` reads, and recon's first

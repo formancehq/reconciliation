@@ -53,12 +53,16 @@
 - **Access.** Recon's API lists a run's files with a pre-signed URL for each. A deployment that owns
   the storage can also read the prefix directly. The `key=value` path segments let DuckDB, Spark or
   Athena read `rule`, `day` and `run` as columns.
-- **An `incomplete` run writes its manifest, and no data file.** It is not a link in the chain, so
-  a run that has data files is always complete.
-- **The day's current run is its latest complete run.** A `runId` is `r-` followed by the run's
-  start instant in UTC (`r-20260925T000004Z`), so run ids sort in time order. Replaying or retrying
-  a day writes a new run, which replaces the earlier ones once it completes. A reader that globs the
-  data files and keeps the latest run of each day gets exactly the current runs (§9).
+- **A run exists once its manifest is written.** The manifest is the run's last file, written
+  after the data files and the signed capture that holds its SHA-256 (ADR-005 §7, item 2). A run
+  directory with no manifest is a run that stopped: no reader counts it, and its files expire under
+  the prefix's lifecycle rule.
+- **An `incomplete` run writes its manifest, and no data file.** It is not a link in the chain.
+- **The day's current run is its latest complete run**: the latest run whose manifest exists and
+  whose `verdict` is not `incomplete`. A `runId` is `r-` followed by the run's start instant in UTC
+  (`r-20260925T000004Z`), so run ids sort in time order. Replaying or retrying a day writes a new
+  run, which replaces the earlier ones once its manifest is written. A reader picks the current runs
+  from the manifests, then reads their data files (§9).
 - **Runs are chained.** `previousRun` names the current run of the most recent earlier day that has
   one, with its day and its manifest's SHA-256. When that day is not the day before (a day missed or
   incomplete), this run's window starts at that run's cut and covers every day since. The statement
@@ -74,6 +78,9 @@
     signed check (`stored_file_mismatch`), the operator gives `backfillFrom`. The statement says
     "backfilled since …".
   - Its breaks start `new`: their `breakId` is unchanged, their history is not carried over.
+  - The restart takes an optional `backfillFrom`, rejected when it is later than the next run's
+    cut. Nothing else is stored: the next run's manifest, a first run with no `previousRun` and
+    "backfilled since …", is the trace of the restart.
 - **Expiry.** A run's files are kept for the rule's `retention`, 90 days by default, and the manifest's `expiresAt` says until when. A customer bound to a longer legal
   retention raises `retention`.
   - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
@@ -281,7 +288,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `runId` | `r-{UTC start instant}`; run ids sort in time order |
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
-| `startedAt`, `finishedAt`, `timingsMs` | When the run ran and how long each phase took: `cut`, `flow`, `lookup`, `stock`, `watch`, `join`, `write` |
+| `startedAt`, `finishedAt`, `timingsMs` | When the run ran and how long each step took: `cut`, `flow`, `lookup`, `stock`, `watch`, `join`, `write` |
 | `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead` and `logHead`, the heads the run read up to (the rewind reads the transactions `(txTo, txHead]`, the metadata watch the logs up to `logHead`), and `logSha256`, the SHA-256 of the deterministic protobuf encoding of the `Log` message at `S` as `GetLog` returns it (sequence, payload and response signature). Anyone can re-read that log and compare. It is stable for one ledger protocol version; the ledger's own chain hash is not exposed on the log |
 | `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `head` for a replay), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (the logs of `(head_prev, logHead]` the metadata watch read, `head_prev` being the `logHead` of `previousRun`, or `S_prev` when there is none, as on a first run) |
 | `verdict` | §4 |
@@ -382,7 +389,7 @@ plus these fields:
 
 | Field | Meaning |
 |---|---|
-| `breakId` | A hash of rule, leg, key and asset, **not the class**. The key is `ref` for a flow break, `side` + `hold` for a stock break, and `side` + `account` + `direction` for a book break. It stays the same from day to day, and comments, assignments and acceptances attach to it |
+| `breakId` | A hash of rule, leg, key and asset, **not the class**. The key is `ref` for a flow break, `side` + `hold` for a stock break, and `side` + `account` + `direction` for a book break. It stays the same from day to day, and comments and assignments attach to it |
 | `leg` | `flow`, `stock` or `book` |
 | `priority` | 1 to 4, below |
 | `lifecycle` | `new`, `persisting` or `resolved` |
@@ -472,14 +479,19 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
 A few standalone examples follow, on the worked example; the paths are relative to the rule's
 prefix.
 
-**The current run of each day.** Keep the latest run per day before anything else, with DuckDB. An
-incomplete run has no data file, so it never shows up here; the pack decides from the manifests
-instead, which also covers a day whose latest complete run has an empty flow file.
+**The current run of each day.** Pick it from the manifests before anything else, with DuckDB,
+then read only its data files. A run that stopped before its manifest, or an `incomplete` one, is
+never picked.
 
 ```sql
+CREATE VIEW current_runs AS
+SELECT day, run FROM read_json_objects('rule=psp-vs-billing/day=*/run=*/manifest.json', hive_partitioning = true)
+WHERE json->>'verdict' <> 'incomplete'
+QUALIFY run = max(run) OVER (PARTITION BY day);
+
 CREATE VIEW flow AS
 SELECT * FROM read_json_auto('rule=psp-vs-billing/day=*/run=*/flow.ndjson.gz', hive_partitioning = true)
-QUALIFY run = max(run) OVER (PARTITION BY day);
+SEMI JOIN current_runs USING (day, run);
 ```
 
 **Rebuild the bridge** from the flow file alone:

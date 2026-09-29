@@ -24,7 +24,7 @@ below still hold.
 | D10 + E17 + D11, re-seed, `diagnostic.json`, `incomplete.kind` | Simplified: a stuck chain restarts as a first run, backfilled from the oldest open item of the last complete run; `incomplete.detail` names the first 20 items at fault; no `kind` field | ADR-005 decision 26 |
 | D9, acceptance of breaks one by one | Removed from V1: the alert opens on any open break; the controller acknowledges or accepts the alert itself (existing alert model), and a known break is fixed by booking it | ADR-005 §6 |
 | B14, phase-1 synchronous aggregate capture | Removed from V1: the run is one asynchronous job that resolves the cut, reads, joins, writes the files and one signed capture; the tick only enqueues it | ADR-005 §7 items 1 and 2 |
-| B16, resumable job | Removed from V1: no progress is recorded; writes are ordered (files, manifest, capture, alert) and a run that did not finish is started again from the beginning with a new `runId` | ADR-005 §7 item 2 |
+| B16, resumable job | Removed from V1: no progress is recorded; writes are ordered (data files, capture, manifest last, alert), a run exists once its manifest is written, and a run that did not finish is started again from the beginning with a new `runId` | ADR-005 §7 item 2 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -63,7 +63,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 |---|---|---|---|---|---|---|---|
 | B1 | Cut = log id `S` + tx id `T` per ledger at the business cut-off (insertion date, not `timestamp`) | ADR §5 decision A, §4 option C | Converts the cut-off into id ranges `(T_prev, T]` | A day is frozen once cut; no checkpoint; both ledgers cut at the same business time | NEC | M | No deterministic window |
 | B2 | Cut resolved on the log-date and `inserted_at` indexes, both mandatory; bisection dropped | ADR §5, D12; DD §3 | One page per ledger: the first entry after the cut-off, minus 1 | One read, one code path | NEC | S | Needs bisection instead (a 2nd path) |
-| B3 | Bounded date filter, widened while empty (δ) | D24; DD §7.12 | `cut-off < date ≤ cut-off + δ` instead of an open filter | The ledger materializes a date range before paging it | OPT | S | Nothing for the daily run (ms). An old replay or a long backfill costs ~85 ns per entry since the cut-off (~30 s a year later). Needed only if old replays stay (G5) |
+| B3 | Bounded date filter, widened while empty (δ) | D24; DD §7.12 | `cut-off < date ≤ cut-off + δ` instead of an open filter | The ledger materializes a date range before paging it | OPT | S | Nothing for the daily run (ms). An old replay or a long backfill costs ~85 ns per entry since the cut-off (~30 s a year later). Needed only if old replays stay (G4) |
 | B4 | Flow read: `ListTransactions` `And(membership, id ∈ (T_prev, T])`, membership first, `reverse = true` | ADR §5, D10; DD §3, §7.11 | Reads only the keyed txs of the day | O(payments), whatever the other traffic | NEC | M | O(all traffic) through the logs, 5–7× slower |
 | B5 | Product membership `Or(payment_ref, business_ref per kind)` | ADR §5; DD §7.11 | The product flow also returns hold openings | Continuity needs `opened(W)` | NEC | S | Continuity breaks (see D4) |
 | B6 | Parallel id ranges K (`--lettering-read-ranges`, default 8), merged in id order | ADR §7.8, D13; DD §7.7 | Every window is split into K ranges read concurrently | About ×4 on reads | OPT (keep) | M | One stream: a run ~4× slower (the watch ~9 min at 1M payments). Correctness unchanged |
@@ -72,10 +72,10 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | B9 | Count check `hi − lo` on unfiltered windows → `incomplete` (`short_range`) | ADR §5; DD §3 | An unfiltered window must return exactly `hi − lo` rows | Detects a lagging replica or a failed read | NEC | S | A short read shrinks the window silently |
 | B10 | Key lookups by reference (unknown applied refs on the PSP side; the history of refs found final; failed refs of the window on the product side), grouped `Or` of 100 | ADR §6, D16, D18; DD §5, §7.13 | References missing from the window and from the carried items are read by key, up to `T` | Otherwise a 2nd application reads as an orphan, and a payment matched earlier then failed today is missed | NEC | M | False P1 orphans, and a missed `reversed_after_application`. The grouping itself is optional (1.3 ms per lookup one by one) |
 | B11 | Metadata watch, full read at run time (`key_metadata_mutated`) | ADR §5 caveat 1, D25; DD §3 | Reads every log since the previous run's head for metadata changes on txs | Monitors the write-once convention | OPT | M | Saves the only log read, **~95 % of the run** (134–158 s at 1M payments). Loses the `key_metadata_mutated` warning and the check behind the replay byte-identity condition. Continuity, the payment-account book and the residual still catch mutations that change today's result. L8 (immutable labels) removes the need by construction |
-| B12 | Incremental watch job with slices (the default, `--lettering-watch-interval=1h`) | D25; ADR §7.3; RD §2, §6 "Watch slices" | A job per watched ledger writes sealed slices; the run assembles, verifies and re-reads missing ranges | Takes the watch off the run's critical path | **Deferred after V1** | **L** | Saves a job type, slice and seal files, one chain per ledger in *another* ledger's bucket, the manifest `watch` block (`slices`, `reread` with 5 reasons), slice tagging and the 7-day sweep. Loses a run of ~20 s: it stays ~2.5 min, which is fine for a daily batch. The slices are not measured yet. Depends on B11 |
-| B13 | Purge consistency check from `purged_accounts` (`purge_check`) | ADR §5; DD §4 | A hold open at `S`, touched, missing from the listing, must be named in some `purged_accounts` | Detects a listing that missed a live account | OPT | S/M | DD: "the rewind is exact without it". Saves a reason, a `diagnostic.json` item kind and a batch-boundary subtlety. Depends on B11 for its logs |
-| B14 | Phase 1: synchronous aggregate capture (`AggregateVolumes` per prefix, signed by `openSign`, labelled with the run instant) | ADR §7.1; DD §3 | A capture of the live exposure, in seconds, before the detail | Early figure | **Removed from V1** | M | Saves a 2nd capture kind, a code path and L7's motivation. Loses an inexact "now" figure available ~20 s to 2.5 min earlier. Phase 2 gives the exact aggregates anyway |
-| B15 | Phase 2: async job, idempotent per (rule, period, cut), own execution path, no 10 s drain grace | ADR §7.2, §11 | The per-key computation runs off the scheduler tick | Minutes of work, 1M rows | NEC | M | Cannot fit in the scheduler's synchronous path |
+| B12 | Incremental watch job with slices (the default, `--lettering-watch-interval=1h`) | D25; DD §3 | A job per watched ledger writes sealed slices; the run assembles, verifies and re-reads missing ranges | Takes the watch off the run's critical path | **Deferred after V1** | **L** | Saves a job type, slice and seal files, one chain per ledger in *another* ledger's bucket, the manifest `watch` block (`slices`, `reread` with 5 reasons), slice tagging and the 7-day sweep. Loses a run of ~20 s: it stays ~2.5 min, which is fine for a daily batch. The slices are not measured yet. Depends on B11 |
+| B13 | Purge consistency check from `purged_accounts` (`purge_check`) | ADR §5; DD §4 | A hold open at `S`, touched, missing from the listing, must be named in some `purged_accounts` | Detects a listing that missed a live account | OPT | S/M | DD: "the rewind is exact without it". Saves a reason and a batch-boundary subtlety. Depends on B11 for its logs |
+| B14 | Phase 1: synchronous aggregate capture (`AggregateVolumes` per prefix, signed by `openSign`, labelled with the run instant) | ADR §7.1; DD §3 | A capture of the live exposure, in seconds, before the detail | Early figure | **Removed from V1** | M | Saves a 2nd capture kind, a code path and one of L7's two reasons (the rewind skip stays). Loses an inexact "now" figure available ~20 s to 2.5 min earlier. Phase 2 gives the exact aggregates anyway |
+| B15 | The run's async job, idempotent per (rule, period, cut), own execution path, no 10 s drain grace | ADR §7.2, §11 | The per-key computation runs off the scheduler tick | Minutes of work, 1M rows | NEC | M | Cannot fit in the scheduler's synchronous path |
 | B16 | Resumable phase-2 job | ADR §7.2 | A run resumes after a crash | Avoid redoing work | **Removed from V1** | M | A crashed run restarts from scratch (~20 s to 2.5 min): no loss |
 | B17 | First-run bounded backfill (`backfillFrom`, default cut-off − max(grace) − 1 d; product window `psp.grace` earlier; "backfilled since …"; `open(S_prev)` rebuilt by the rewind) | ADR §7.6, D9, D19 | The first run reads a longer window to seed the carried items | Otherwise a payment finalised before the rule and never applied is never seen | NEC | M | Old unapplied payments are invisible forever. The product-side offset is a refinement: without it, the first day shows false `unapplied_payment` rows |
 | B18 | Follower reads (`x-consistency: stale`), enabled by the count check | DD §3 "Parallel reads" | Could offload the leader | Load | OPT (mentioned, not decided) | S | Drop the mention: nothing lost |
@@ -103,16 +103,16 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | # | Feature | Where | Description | Why | Interest | Cost | If removed |
 |---|---|---|---|---|---|---|---|
 | D1 | Carried items: every reference with drift ≠ 0 goes to the next run | ADR §2.3, D15 | Reconciliation's own open-items book, day to day | Unapplied payments and pending applications span days | NEC | S/M | Every cross-day item is lost or misclassified |
-| D2 | Separate `carried.ndjson.gz` (instead of filtering the flow file) | DD §5; RD §6 | A small file with the carried rows, without `impact` | The next run reads ~5 MB, not the 75–140 MB flow; anchors keep it | OPT | S | The next run filters the flow file (a few seconds). Needed by G3 |
+| D2 | Separate `carried.ndjson.gz` (instead of filtering the flow file) | DD §5; RD §6 | A small file with the carried rows, without `impact` | The next run reads ~5 MB, not the 75–140 MB flow | OPT | S | The next run filters the flow file (a few seconds) |
 | D3 | Chain: `previousRun` (runId, day, `manifestSha256`); a window over missed or incomplete days ("window since …") | RD §2 | Each run names its predecessor and starts at its cut | Continuity and carry across gaps | NEC | S | No way to find the carried items and `openPrev` |
 | D4 | Books continuity per side, prefix and asset: `open = openPrev + opened − lettered`, `openPrev` from the stored stock | ADR §2.3; RD §5 | Ties the window's hold movements to the rewound stock | The only completeness proof of the filtered flow read | NEC | M | A dropped event silently shrinks the universe |
 | D5 | Open-items (suspense) identity: `open = openPrev + net + fromLookups` → `incomplete` (`continuity`) | D21; RD §5 | Ties carried(S_prev) + the window's net to carried(S) | Detects a carried item lost or counted twice | OPT | S | An engine self-check on the engine's own file. `suspense.open` (the sum of carried drift) can stay as a figure. Needs E8's `impact` |
 | D6 | Lifecycle: `new`/`persisting`/`resolved` (breaks), `new`/`persisting`/`cleared` (holds) | ADR §6; RD §7 | Compares with the previous run's artifacts | "What changed since yesterday" | OPT | M | Saves the diff against the previous breaks and stock files, the `resolved` rows and part of `check-chain`. Loses new-vs-persisting in triage and the alert |
-| D7 | Stable `breakId` (hash of rule, leg, key, asset; not the class) | ADR §6, D16 | A break keeps its id when its class changes | Comments, acceptances, lifecycle | OPT | S | Cheap. Required by D6, D8, D9 |
+| D7 | Stable `breakId` (hash of rule, leg, key, asset; not the class) | ADR §6, D16 | A break keeps its id when its class changes | Comments, lifecycle | OPT | S | Cheap. Required by D6, D8 |
 | D8 | `previousClass` on the day the class changes | ADR §6; RD §6 | Records the old class | Audit trail | OPT | S | Nothing functional lost |
 | D9 | Acceptance (`acceptedOn`; lapses when the class or amount changes; excluded from the alert trigger) | ADR §6, D21; RD §4, §7 | A known break stays in the files but stops opening the alert | Systematic known gaps (e.g. an unbooked fee) until they are booked | **Removed from V1** | M | Saves an acceptance store and API, the lapse rules and `counts.breaks.accepted`. Loses the means to silence known breaks: the alert stays open until booked. Depends on D7 |
-| D10 | Re-seed run (`reseed`: stock from head, carried rebuilt by key lookups on both ledgers, `reseed.adjustment`) | D26; RD §2 | Restarts the chain after a structural `incomplete` is fixed | A structural cause repeats every day and the window grows | **Replaced by a restart as a first run** | M/L | Replace it with "restart the rule like a first run" (B17, new `backfillFrom`). Loses carried items older than the backfill and the recorded gap |
-| D11 | `incomplete.kind` transient/structural | D26; RD §4 | Classes the 6 reasons in 2 kinds | Tells the operator whether to wait or act | **Removed from V1** | S | The alert text maps the reason directly. Needed by D10 and E18 |
+| D10 | Re-seed run (`reseed`: stock from head, carried rebuilt by key lookups on both ledgers, `reseed.adjustment`) | D26; RD §2 | Restarts the chain after a structural `incomplete` is fixed | A structural cause repeats every day and the window grows | **Replaced by a restart as a first run** | M/L | Replace it with "restart the rule like a first run" (B17, new `backfillFrom`). Loses nothing: the backfill starts at the oldest open item, except after a `stored_file_mismatch`, when the operator gives `backfillFrom` |
+| D11 | `incomplete.kind` transient/structural | D26; RD §4 | Classes the 6 reasons in 2 kinds | Tells the operator whether to wait or act | **Removed from V1** | S | The alert text maps the reason directly. Needed by D10 and E17 |
 
 ## 5. Outputs and files
 
@@ -129,7 +129,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | E9 | `carriedOutside` lines | RD §5 | Carried items with no movement today, per class | Complete statement | OPT | S | Derivable from the carried file |
 | E10 | `flowGross` + `offsetting` flag | ADR §6; RD §5 | Σ\|drift\| of the open flow breaks, and whether both signs exist | A net of 0 can hide breaks | OPT | S | The alert already opens on breaks, never on the net: nothing lost |
 | E11 | `books` block (`openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk`) | RD §5, §6 | One entry per side, prefix and asset | Carries continuity | NEC | S | D4 has no carrier. `buckets` goes with C7, `letteredOther` with C10 |
-| E12 | Payment-account **credit** book → P1 `unkeyed_payment_movement` on leg `book` (`paymentAccounts` block) | D23; ADR §8 rule 10; DD §7.9; RD §5 | `input(S) − input(S_prev)` must equal the flow's credits | The only check that sees a final with no pending and no key (100 silent finals left every other check green) | NEC | M | A silent hole in completeness. **Blocked today** by `formancepayments`, which credits the account from other flows (ADR §10 open question) |
+| E12 | Payment-account **credit** book → P1 `unkeyed_payment_movement` on leg `book` (`paymentAccounts` block) | D23; ADR §8 rule 10; DD §7.9; RD §5 | `input(S) − input(S_prev)` must equal the flow's credits | The only check that sees a final with no pending and no key (100 silent finals left every other check green) | NEC | M | A silent hole in completeness. With `formancepayments`, blocked by conversions and order fills, which need A9 (ADR §10 open question, DD §2) |
 | E13 | Payment-account **debit** book (`output`, `flowDebits`, `debitResidual`) + `psp.movementKeys` | D23; DD §7.9 | Debits must be keyed payouts, fees, refunds | Unkeyed payouts and fees are a residual | OPT | M | Payouts and fees are outside payment lettering. Saves the debit direction; A9 stays needed for `formancepayments` conversions, and the Connectivity question is unchanged (DD §2) |
 | E14 | Triage in the manifest: top-K open breaks (NEC for the alert) + top-K `pending` and `resolved` lists | ADR §7.3, D21; RD §5 | The manifest renders the statement alone | The alert and a dashboard need no other file | NEC (breaks) / OPT (pending, resolved) | S | The pending and resolved lists come from the files. **Gap:** where `topK` is configured is not specified |
 | E15 | `execution` + `timingsMs` blocks (`readRanges`, `stockFrom`, `rewindTxs`, `lookups`, `watchLogs`) | ADR §7.8; RD §6 | Run telemetry in the manifest | Comparable run durations | OPT | S | Move to logs and metrics. No reader loss |
@@ -148,8 +148,8 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | F1 | Detail capture on `_recon`, Ed25519-signed (counts, drifts, `S`/`T` per ledger, artifact URI + manifest SHA-256) | ADR §7.2.4 (EN-1930) | Reuses the signed capture | The run's status and anchor | NEC | S | No status record (reuses existing infra) |
 | F2 | File SHA-256 in the manifest; manifest hash in the capture (transitive signature) | ADR §7.3; DD §5 | Tamper evidence over every file | Audit | OPT (keep: cheap) | S | Loses tamper evidence. Underpins F4, F5 and `check`'s `file_sha256` |
 | F3 | `logSha256` of the log at `S` in `cuts` | ADR §5; RD §6 | Hash of the protobuf `Log` at the cut | Re-identify the cut exactly | OPT | S | `S` and `T` suffice to replay; logs are immutable. The hash is stable for one protocol version only |
-| F4 | `stored_file_mismatch`: stored stock and carried files checked against the signed capture before use | ADR §6, §7.7; RD §4 | Refuses a tampered or corrupted previous file | Chain integrity | OPT | S/M | Saves a verification step and an `incomplete` reason. A corrupted file would propagate, but the next continuity check would likely fail anyway |
-| F5 | Byte-identical data files for the same cut, rule, engine and previous run (fixed key and row order, gzip level 6, no name, no timestamp) | ADR §7.3; RD §8 | A replay proves itself by its SHA-256 | Audit reproducibility | OPT | M | Deterministic row order is cheap and still useful for tests. The "proves itself" guarantee and its 4 conditions can go. Depends on B11 (condition 4) and G5 |
+| F4 | `stored_file_mismatch`: stored stock and carried files checked against the signed capture before use | RD §2, §4 | Refuses a tampered or corrupted previous file | Chain integrity | OPT | S/M | Saves a verification step and an `incomplete` reason. A corrupted file would propagate, but the next continuity check would likely fail anyway |
+| F5 | Byte-identical data files for the same cut, rule, engine and previous run (fixed key and row order, gzip level 6, no name, no timestamp) | ADR §7.3; RD §8 | A replay proves itself by its SHA-256 | Audit reproducibility | OPT | M | Deterministic row order is cheap and still useful for tests. The "proves itself" guarantee and its 4 conditions can go. Depends on B11 (condition 4) |
 | F6 | `missing_index` → `incomplete`, never a silent fallback | DD §3 | An index missing at run time is an engine error | No wrong window | NEC | S | Silent wrong result |
 | F7 | `incomplete` = no conclusion: manifest only, engine-error alert, not a chain link | ADR §7.3; RD §2, §4 | A failed run never feeds the next | Bad data never carries forward | NEC | S | Wrong carried items and stock propagate |
 | F8 | Recon it-tests pinning purged-hold reachability through metadata and `reference` (L5; EN-2318, EN-2319) | ADR §9 L5 | Pins the Ledger contract the design relies on | The Ledger closed EN-2331 without that test | NEC | S | A Ledger change could break the flow silently |
@@ -163,7 +163,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | G1 | Retention: 90 days per rule (`retention`) through the storage lifecycle rule | ADR §7.4, D4 | Expiry done by S3/Azure lifecycle on the prefix | Bounded storage (7–14 GB per rule over 90 d) | NEC | S | Unbounded storage |
 | G2 | Recon's own `expiresAt` sweep (fallback) | ADR §7.4; RD §2 | Recon deletes expired files itself | Deployments without a lifecycle rule | OPT | M | Saves a deletion job (and its risk). Requires the lifecycle rule at setup |
 | G3 | Monthly stock anchors (`anchor`, object tag, `anchorRetention` 13 mo; keep manifest + stock + carried) + per-file `expiresAt` | ADR §7.4, D4, D14 | The last run of each month outlives the 90 d | Keeps an old replay cheap | **Removed from V1** | M | Saves tagging, two retentions per run, and per-file expiry. An old replay then rewinds from head (G4). Depended on by G5 and I4's retention |
-| G4 | Replay of a past day from head (the rewind generalised) | ADR §7.7; DD §4 | Any day recomputed from the permanent logs | Audit, recovery | OPT (keep: nearly free) | S | Cost grows with age (~18 min a year later at 1M tx/day) |
+| G4 | Replay of a past day from head (the rewind generalised) | ADR §7.7; DD §4 | Any day recomputed from the permanent logs | Audit, recovery | OPT (keep: nearly free) | S | Cost grows with age (~6 min at 90 days, ~26 min a year later at 1M tx/day, DD §7.16) |
 | G5 | Replay from the nearest stored stock (forward or backward; `stockFrom` `daily`/`anchor`/`head`) | ADR §7.7, D14; DD §4 | Starts a replay from a stored stock instead of head | Bounds an old replay to ~½ month of txs | **Removed from V1** | M/L | Saves two fold directions, a start-point selection and the stored-stock verification. Old replays fall back to G4 (minutes, rare) |
 | G6 | Exact replay variant through the logs `(S_prev, S]` | ADR §7.7; DD §4 | Re-derives a day from the logs, not the mutable metadata | Exactness if the metadata changed | OPT | S (doc) | Drop the mention; nothing implemented |
 | G7 | Forward stock as a daily mode (open book > ~14 % of daily traffic) | DD §7.10 | Previous stock + the day's txs instead of list + rewind | Faster for huge open books | OPT (already "not needed in V1") | S (doc) | Keep as a measurement only |
@@ -203,7 +203,7 @@ feature's interest unless the row says otherwise.
 | # | Feature | Where | Description | Why | Interest | Cost | If removed |
 |---|---|---|---|---|---|---|---|
 | I1 | One aggregate alert per (rule, fingerprint, period), existing alert-period model, daily schedule by default | ADR §6, D8 | Reuses the existing alerting | Never one alert per payment | NEC | S | No notification (reuses existing infra) |
-| I2 | Alert trigger: an open, non-accepted break; never the net; `incomplete` → engine-error alert | ADR §6, D16; RD §4 | Opening rule | Pending items and offsetting breaks move the net | NEC | S | Noisy or missed alerts. "non-accepted" goes with D9 |
+| I2 | Alert trigger: an open break; never the net; `incomplete` → engine-error alert | ADR §6, D16; RD §4 | Opening rule | Pending items and offsetting breaks move the net | NEC | S | Noisy or missed alerts |
 | I3 | Alert evidence = the full rendered statement (bridge, open items, books, triage text, lookup hints) | ADR §6; RD §10 "The statement" | A text *état de rapprochement* in the alert | Controller-readable | OPT | M | Minimal evidence (verdict, counts per class, top-K breaks, link) is enough for V1. Rendering follows E8–E10 |
 | I4 | Weekly/monthly periods for lettering rules (the monthly alert opened by the first failing daily run) | ADR §6, §7.5, D8 | Reuses `periodType` | Monthly close | OPT | S | Daily-only lettering rules in V1 |
 | I5 | `period.json` summary (one entry per day from the daily manifests, gaps, expired links, never rewritten, kept like an anchor) | ADR §7.5; RD §6 | A file of the period's last run | A period view that outlives the daily files | **Removed from V1** | M | Saves a file format, "last run of the period" detection, the anchor-like retention and the self-reference rule (no `manifestSha256` for the last day). The same view is a query over the daily manifests. Depends on G3 for its retention |
@@ -215,8 +215,10 @@ feature's interest unless the row says otherwise.
 - **Features:** 104 numbered rows in §1–§7 and §9. §8 lists 20 configuration knobs, which map to
   those rows and are not counted again.
 - **NEC:** 49, E14 included (its top-K breaks list).
-- **OPT:** 55, E14's pending and resolved lists not counted separately. Of these, 5 are doc-only,
+- **OPT:** 44, E14's pending and resolved lists not counted separately. Of these, 5 are doc-only,
   proposed, or already outside V1: A14, A15, B18, G6, G7.
+- **Removed, deferred or replaced on 2026-09-29:** 11, B12, B14, B16, D9, D10, D11, E17, G3, G5,
+  G8 and I5 (see "Decisions taken").
 
 ## Candidates to remove
 
@@ -231,21 +233,24 @@ judgement.
    dropped.
 2. **G5 + G3 (+ per-file `expiresAt`), replay from stored stock and monthly anchors.** M/L saved.
    An old-day replay falls back to the rewind from head (G4), which takes minutes and is rare.
-   `anchorRetention` goes too.
+   `anchorRetention` goes too. Decided (D4, D14).
 3. **I5, `period.json`.** M saved. A query over the daily manifests gives the same view. With G3
-   gone, it would need its own retention anyway.
+   gone, it would need its own retention anyway. Decided (ADR §7 item 5).
 4. **D10 + E17 + D11, re-seed, `diagnostic.json`, transient/structural kinds.** M/L saved. Recovery
    becomes "fix, then restart the rule like a first run" (B17). Diagnose from engine logs.
+   Decided (D26).
 5. **D9, acceptance.** M saved, including an acceptance store and API that are not designed. A
    known break keeps the alert open until it is booked, which matches "fix by booking, no
-   write-off".
-6. **B14, phase-1 synchronous aggregate capture.** M saved, plus a capture kind and L7's reason to
-   exist. It only yields an inexact "now" figure a few minutes early.
+   write-off". Decided (ADR §6).
+6. **B14, phase-1 synchronous aggregate capture.** M saved, plus a capture kind and one of L7's
+   two reasons. It only yields an inexact "now" figure a few minutes early. Decided (ADR §7 items
+   1–2).
 7. **E13 + A9, the debit book and `psp.movementKeys`.** M saved, plus +31 % on the PSP flow read.
    Payouts and fees are outside payment lettering. Keep the credit book (E12). On hold for the
    Connectivity review: `formancepayments` conversions and order fills need A9 on both sides of
    the book (DD §2).
 8. **B16, the resumable phase-2 job.** M saved. A run takes seconds to minutes; restart it.
+   Decided (ADR §7 item 2).
 
 **Tier 2: small or medium saving, near-zero loss.**
 

@@ -638,7 +638,7 @@ under concurrent writes: 2,233 rows differed from the exact state at the cut.
 - The artifact should still record the read horizon, the log head before and after the listing.
 - If an exact as-of view is ever required, ADR-005's rewind (R4,
   [EN-2319](https://formance-team.atlassian.net/browse/EN-2319)) applies unchanged: this is the
-  same prefix listing, corrected through the log window.
+  same prefix listing, rewound through the transactions `(T, head_tx]`.
 
 **Not changing:**
 

@@ -321,7 +321,7 @@ Ledger transaction-address index and expose one ordered feed.
 
 ---
 
-## 9. Transaction-level (lettering) reconciliation (⏳ planned) — aggregate now, detail later
+## 9. Transaction-level (lettering) reconciliation (⏳ planned) — one asynchronous job
 
 ```mermaid
 flowchart LR

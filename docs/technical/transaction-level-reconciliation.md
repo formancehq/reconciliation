@@ -174,7 +174,7 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
 | 9 | set `reference = {payment_ref}:{state}` | Re-delivery of an event is idempotent |
 | 10 | have the **`inserted_at` and log-date indexes** created on the ledger | Each resolves the cut-off in one read. The rule is rejected without them (EN-2316) |
 | 11 | credit the **payment amount of a final event to one account per payment kind**, which the rule names as `psp.paymentAccount` (an address pattern), and **credit nothing else to it** | The PSP amount is read there; the hold alone misses a final event with no `pending` before it, or one whose amount differs. The book of that account is then the only check that sees a final with no `pending` and no key (§7.9, ADR-005 §8 rule 10) |
-| 12 | carry a **declared key on every debit of that account**: `payment_ref` for a refund, the reference of its own object for a payout or a fee, declared in the rule as `psp.movementKeys` | The debit book of the payment account then closes at 0; an unkeyed debit is a P1 break, `unkeyed_payment_movement` (§7.9) |
+| 12 | carry a **declared, indexed key on every other movement of that account**, debits included: `payment_ref` for a refund, the reference of its own object for a payout, a fee or a conversion, declared in the rule as `psp.movementKeys` | The book of the payment account then closes at 0; an unkeyed movement is a P1 break, `unkeyed_payment_movement` (§7.9) |
 
 **Where two existing mappings stand**, as a starting point:
 
@@ -278,8 +278,9 @@ sequenceDiagram
     J->>P: ListTransactions(key = ref, id ≤ T_P) · applied refs in neither window nor carried
     J->>Q: ListTransactions(key = ref, id ≤ T_Q) · history of refs found final, window refs failed
     J->>J: join on the PSP reference (+ carried, + lookups) · age both stock books · continuity
-    J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ manifest + flow / carried / stock / breaks / unclassified
-    J->>C: capture(counts, drifts, S and T per ledger, artifact sha256) — Ed25519
+    J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ flow / carried / stock / breaks / unclassified
+    J->>C: capture(counts, drifts, S and T per ledger, manifest sha256) — Ed25519
+    J->>O: manifest.json, last: the run exists once it is written
     J->>C: open / update / resolve the aggregate alert (top-K breaks)
 ```
 
@@ -1047,9 +1048,9 @@ On the second pass, the crossover moves to 23–26 %.
 - A lettering book is far below it: 10k holds open against 1M transactions a day is 1 %. **List and
   rewind stays the daily mode.** It reads the ledger's current state, so an error in a stored stock
   never carries from one day to the next, and continuity stays independent of the flow read.
-- Forward is the replay mode (§4) and, for a rule whose open book exceeds ~15 % of its daily
-  traffic, the faster daily read. Its error then carries from day to day, so it needs the periodic
-  proof. It is not needed in V1.
+- Forward is not used in V1: a replay rewinds from head (§7.16). For a rule whose open book
+  exceeds ~15 % of its daily traffic it would be the faster daily read, but its error then carries
+  from day to day, so it would need the periodic proof.
 - Either way, the stock step is small next to the metadata watch (134–158 s for the 4.1M logs of a
   1M-payment product ledger, §7.15).
 - No write ran, which would slow both modes. Each account has one transaction.
@@ -1321,7 +1322,8 @@ and the run took as long: 2 min 39 s. The writers kept their 50 transactions/s t
   read per side.
 - Two recon-side levers follow, with no Ledger change: an **incremental** watch, deferred after V1
   (§3, ADR-005 decision 25), which would bring the critical path to about the 20 s of the other
-  steps, and **reserving slots** for the short steps, so they never queue behind a watch. On the
+  steps, and **reserving slots** for the short steps, so they never queue behind a watch (not in
+  V1: it shortens no single run). On the
   Ledger side, L10 (§8, F-j, [EN-2369](https://formance-team.atlassian.net/browse/EN-2369)) and L6
   ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) would remove or shorten the read.
 
