@@ -238,7 +238,7 @@ sequenceDiagram
 
     J->>P: S_P, T_P = last log id / tx id inserted ≤ cut-off
     J->>Q: S_Q, T_Q = last log id / tx id inserted ≤ cut-off
-    Note over J,O: one asynchronous job, resumable
+    Note over J,O: one asynchronous job, restarted from the beginning if it stops
     par flow window, K transaction-id ranges each (default 8)
         J->>P: ListTransactions((payment_ref EXISTS ∨ movementKeys EXISTS…) ∧ id ∈ (T_P_prev, T_P])  (membership first)
         J->>Q: ListTransactions((payment_ref EXISTS ∨ business_ref EXISTS) ∧ id ∈ (T_Q_prev, T_Q])

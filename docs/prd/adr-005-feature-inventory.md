@@ -24,6 +24,7 @@ below still hold.
 | D10 + E17 + D11, re-seed, `diagnostic.json`, `incomplete.kind` | Simplified: a stuck chain restarts as a first run, backfilled from the oldest open item of the last complete run; `incomplete.detail` names the first 20 items at fault; no `kind` field | ADR-005 decision 26 |
 | D9, acceptance of breaks one by one | Removed from V1: the alert opens on any open break; the controller acknowledges or accepts the alert itself (existing alert model), and a known break is fixed by booking it | ADR-005 §6 |
 | B14, phase-1 synchronous aggregate capture | Removed from V1: the run is one asynchronous job that resolves the cut, reads, joins, writes the files and one signed capture; the tick only enqueues it | ADR-005 §7 items 1 and 2 |
+| B16, resumable job | Removed from V1: no progress is recorded; writes are ordered (files, manifest, capture, alert) and a run that did not finish is started again from the beginning with a new `runId` | ADR-005 §7 item 2 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -75,7 +76,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | B13 | Purge consistency check from `purged_accounts` (`purge_check`) | ADR §5; DD §4 | A hold open at `S`, touched, missing from the listing, must be named in some `purged_accounts` | Detects a listing that missed a live account | OPT | S/M | DD: "the rewind is exact without it". Saves a reason, a `diagnostic.json` item kind and a batch-boundary subtlety. Depends on B11 for its logs |
 | B14 | Phase 1: synchronous aggregate capture (`AggregateVolumes` per prefix, signed by `openSign`, labelled with the run instant) | ADR §7.1; DD §3 | A capture of the live exposure, in seconds, before the detail | Early figure | **Removed from V1** | M | Saves a 2nd capture kind, a code path and L7's motivation. Loses an inexact "now" figure available ~20 s to 2.5 min earlier. Phase 2 gives the exact aggregates anyway |
 | B15 | Phase 2: async job, idempotent per (rule, period, cut), own execution path, no 10 s drain grace | ADR §7.2, §11 | The per-key computation runs off the scheduler tick | Minutes of work, 1M rows | NEC | M | Cannot fit in the scheduler's synchronous path |
-| B16 | Resumable phase-2 job | ADR §7.2 | A run resumes after a crash | Avoid redoing work | OPT | M | A crashed run restarts from scratch (~20 s to 2.5 min): no loss |
+| B16 | Resumable phase-2 job | ADR §7.2 | A run resumes after a crash | Avoid redoing work | **Removed from V1** | M | A crashed run restarts from scratch (~20 s to 2.5 min): no loss |
 | B17 | First-run bounded backfill (`backfillFrom`, default cut-off − max(grace) − 1 d; product window `psp.grace` earlier; "backfilled since …"; `open(S_prev)` rebuilt by the rewind) | ADR §7.6, D9, D19 | The first run reads a longer window to seed the carried items | Otherwise a payment finalised before the rule and never applied is never seen | NEC | M | Old unapplied payments are invisible forever. The product-side offset is a refinement: without it, the first day shows false `unapplied_payment` rows |
 | B18 | Follower reads (`x-consistency: stale`), enabled by the count check | DD §3 "Parallel reads" | Could offload the leader | Load | OPT (mentioned, not decided) | S | Drop the mention: nothing lost |
 

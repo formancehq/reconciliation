@@ -494,7 +494,7 @@ checkpoint's listing.
 1. **The scheduler tick only enqueues the run.** There is no synchronous capture: an aggregate
    read live at the tick would give the exposure at the run instant, not at the cut, and the job
    computes the exact aggregates at `S` anyway, as sums over the rewound rows.
-2. **The run is one asynchronous job**, idempotent per (rule, period, cut) and resumable.
+2. **The run is one asynchronous job**, idempotent per (rule, period, cut).
    1. Resolve `S` and `T` on each ledger, then read the flow window and join, including the
       previous run's carried items and a key lookup of the references missing from both.
    2. Stock rewind and ageing.
@@ -502,6 +502,11 @@ checkpoint's listing.
    4. Write the run's **capture**: counts, drifts, `S` and `T` per ledger, and the artifact URI and
       SHA-256, signed with Ed25519 (EN-1930).
    5. Update the alert.
+
+   The writes follow that order, so a job that stops before the capture leaves no complete run
+   and the day's current run is unchanged. A run that did not finish is started again from the
+   beginning, with a new `runId`, when the process restarts or at the next tick; nothing records
+   its progress, since a run takes minutes and the same cut gives the same result.
 3. **Where the files go: the backup object storage, under a recon prefix.**
    - Recon writes to the S3 or Azure destination the rule's **product ledger** backs up to, under
      `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. Files and paths:
@@ -705,7 +710,8 @@ new `periodType` without changing this design.
   in the capture and the retention are generic by construction.
 - **ADR-003 stands.** Evaluations never take query checkpoints; one is used only as a test oracle
   and for an optional proof run.
-- **A new template kind, with its own async execution path** and resumable jobs. The scheduler's
+- **A new template kind, with its own async execution path**; a job that stops is started again
+  from the beginning. The scheduler's
   10 s drain grace does not apply to it ([scheduler.md](../technical/scheduler.md)).
 - **Recon starts reading `ListTransactions` in bulk, and `ListLogs`.**
   - From the transactions, it reads every one that moves a balance: created transactions and revert
