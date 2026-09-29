@@ -197,7 +197,7 @@ provide point-in-time queries" (ledger backup README).
 
 | # | Option | Verdict |
 |---|---|---|
-| **C** | **A cut at the business cut-off, plus a rewind.** The cut is `S` (the last log id with `date ≤ cut-off`) and `T` (the last transaction id with `inserted_at ≤ cut-off`), on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the unfiltered transactions `(T, head_tx]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible, because logs are permanent. Cost ∝ the day's payments plus the open items, plus the metadata watch, which reads every log of the ledger since the previous run (in slices during the day by default, decision 25). |
+| **C** | **A cut at the business cut-off, plus a rewind.** The cut is `S` (the last log id with `date ≤ cut-off`) and `T` (the last transaction id with `inserted_at ≤ cut-off`), on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the unfiltered transactions `(T, head_tx]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible, because logs are permanent. Cost ∝ the day's payments plus the open items, plus the metadata watch, which reads every log of the ledger since the previous run (decision 25). |
 | A | Shared, short-lived query checkpoint per (cluster, run): extract, then delete | **Fallback and oracle only.** Used to validate the rewind (§5) and possibly for a periodic or on-demand full proof. Too slow and too scarce as the steady-state path (§3). |
 | B | Ledger-side consistent export (Pebble `NewSnapshot()` at a Raft-ordered trigger, streamed or written through `backup.Storage`) | **Not needed for this use case.** Still the right primitive for a frozen listing of a large *non-lettered* universe (EN-1480 generalised). Passed on to the Ledger team for information, not asked (§9). |
 | D | Store the checkpoint in S3/Azure through backup | **Rejected** (§3). |
@@ -505,9 +505,8 @@ checkpoint's listing.
    5. Update the alert.
 3. **Where the files go: the backup object storage, under a recon prefix.**
    - Recon writes to the S3 or Azure destination the rule's **product ledger** backs up to, under
-     `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. The metadata watch's
-     slices (decision 25) sit instead in the backup destination of **the ledger they watch**, one
-     chain per ledger shared by every rule that reads it. Files and paths: [results reference
+     `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. Files and paths:
+     [results reference
      §2](../technical/transaction-level-results.md#2-where-the-files-are-and-which-run-counts).
    - **The customer is the first reader.** They analyse the files with their own tools (jq, DuckDB,
      pandas); recon's API and UI read them too. So the format stays simple: gzipped NDJSON, a JSON
@@ -536,8 +535,6 @@ checkpoint's listing.
      calibrate with the design partner). An anchor holds only the open book and the carried items,
      which are small by construction, so keeping it costs little. It is what keeps the replay of an
      old day cheap (item 7), and the carried file lets that replay reproduce the day's bytes.
-   - **A watch slice is kept as long as a manifest that lists it**, through the same object tag;
-     a slice that no manifest lists is swept after 7 days.
 5. **A period points at each day's diffs.**
    - The period is the rule's `periodType`, calendar-based in the rule's timezone. There is no
      separate accounting-period model.
@@ -582,10 +579,8 @@ checkpoint's listing.
    and the API. The team running the deployment tunes them through Helm or the Operator:
    - `--lettering-read-ranges` (default 8): the number of id ranges read concurrently, for the
      flow, the rewind window and the metadata watch;
-   - `--lettering-max-concurrent-reads` (default 16): caps the readers across every run and watch
-     job of the process; a read that would exceed it waits for a slot;
-   - `--lettering-watch-interval` (default `1h`, `0` for a full read at run time): how often the
-     watch job reads each watched ledger's logs (decision 25).
+   - `--lettering-max-concurrent-reads` (default 16): caps the readers across every run
+     of the process; a read that would exceed it waits for a slot.
 
    The manifest records the K a run used, so run durations stay comparable. How K was chosen: [design doc
    §7.7](../technical/transaction-level-reconciliation.md#77-concurrent-readers-choosing-k).
@@ -640,7 +635,7 @@ No connector change is required.
 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–7× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream). At `7dd615dba` the gap holds (×5.4 on 8 ranges, ×9 on one stream), except in one session of the node where the same reads ran 4 to 9 times faster; that variance is part of the ask (design doc §7.13) | Only the metadata watch and exact re-derivations still read logs, the rewind having moved to the transactions (§5); the watch is the largest step of a daily run, so the gap deserves an explanation | S–M |
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), epic EN-1336, Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
-| **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), epic EN-1336, Ledger v3.1): a `ListLogs` filter on the logs the metadata watch needs, the `SavedMetadata` and `DeletedMetadata` that target a transaction and the logs with a non-empty `purged_accounts`. Today `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS` (`misc/proto/common.proto` at `7dd615dba`) | The watch reads every log of the ledger to find a few: 4.1M logs in 134–158 s for a 1M-payment product ledger, about 95 % of the run (design doc §7.15). Filtered, it would read only the rare logs it keeps, under either option of decision 25. Not blocking: the incremental watch spreads the cost over the day | M |
+| **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), epic EN-1336, Ledger v3.1): a `ListLogs` filter on the logs the metadata watch needs, the `SavedMetadata` and `DeletedMetadata` that target a transaction and the logs with a non-empty `purged_accounts`. Today `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS` (`misc/proto/common.proto` at `7dd615dba`) | The watch reads every log of the ledger to find a few: 4.1M logs in 134–158 s for a 1M-payment product ledger, about 95 % of the run (design doc §7.15). Filtered, it would read only the rare logs it keeps. Not blocking: the full read costs about two minutes a run, which a nightly batch affords (decision 25) | M |
 | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the snapshot horizon (the per-ledger log id the read saw) on `AggregateVolumes` and `ListAccounts` | Makes the phase-1 aggregate exact at `S` (`agg(S) = agg − Σ net(S, horizon]`) and lets the rewind skip the untouched part of the window; it is already part of EN-1480's scope (`log_sequence`) | S |
 
 Only these are asked, because only these serve this design. L2 is done and L5 is closed.
@@ -685,7 +680,7 @@ for the Ledger team to weigh against its own users:
 | 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`** (`reverse = true`), not the logs, and so do replays and forward stocks. The logs keep the metadata watch and the optional purge check (§5, §7). |
 | 23 | The PSP payment account | A booking convention (§8, rule 10), with the debit keys in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
 | 24 | Bounded date filters in the cut | `S` and `T` are resolved with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it (§5). |
-| 25 | How the metadata watch is read | Two options, same result: a **full read at run time** (`--lettering-watch-interval=0`) or, by default, an **incremental read** in slices during the day, one chain per watched ledger ([design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)). Read in full, the watch is about 95 % of a run; L10 ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), §9) would shrink it under either option. |
+| 25 | How the metadata watch is read | **In full, by the run**, over K ranges: about 95 % of a run, 134–158 s at 1M payments a day, which a nightly batch affords. An incremental read in slices during the day is **deferred after V1**: it would save about two minutes a run for a job per ledger and a stored slice chain. Revisit if a run grows too long and L10 ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), §9), which would shrink the read, is not delivered ([design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)). |
 | 26 | A run that fails every day | Some `incomplete` causes clear by themselves, others repeat on every run while each window grows, and a run that writes its manifest only leaves nothing to diagnose. The reasons split in two, in `incomplete.kind`: **transient** (`missing_index`, `short_range`), which the next run retries, and **structural** (`continuity`, `residual`, `purge_check`, `stored_file_mismatch`), which repeat until fixed. A structural run also writes **`diagnostic.json`**, outside the chain: the books, holds, applications or files at fault, with their transactions. Its engine-error alert says that an operator must act. After the fix, a **re-seed** run trusts nothing stored: it rewinds the stock from the head, rebuilds the carried items by key lookups on both ledgers, recomputes `openPrev` and records the gap with the last complete run (results doc §2, §6). |
 
 **Open, to review with the Connectivity team (no decision):** decision 23 assumes that the payment
@@ -713,10 +708,6 @@ new `periodType` without changing this design.
   and for an optional proof run.
 - **A new template kind, with its own async execution path** and resumable jobs. The scheduler's
   10 s drain grace does not apply to it ([scheduler.md](../technical/scheduler.md)).
-- **A watch job per watched ledger** (decision 25), besides the runs, unless the operator sets
-  `--lettering-watch-interval=0`. Its slices are recon's only files outside a rule's prefix. They
-  can be recomputed from the logs like everything else: a run that finds one missing or damaged
-  reads that range itself.
 - **Recon starts reading `ListTransactions` in bulk, and `ListLogs`.**
   - From the transactions, it reads every one that moves a balance: created transactions and revert
     transactions, which carry their own id. The flow reads them filtered, and the rewind and the

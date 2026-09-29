@@ -128,7 +128,7 @@ useful single field in the design.
 
 **Unrelated traffic costs (almost) nothing.** The filtered flow read returns only the payments
 (§7.2). Only the rewind and the metadata watch see all the traffic; the watch grows with the
-ledger's logs, which is why it is read in slices during the day by default (§3, §7.15). A dedicated
+ledger's logs, and it is the longest step of a run (§3, §7.15). A dedicated
 receivables ledger is therefore not needed for performance. Metadata-only writes are still best
 avoided: each one is a log the watch reads.
 
@@ -249,10 +249,9 @@ sequenceDiagram
     and stock rewind
         J->>P: ListAccounts(each hold prefix, live) then ListTransactions((T_P, head_tx], unfiltered) (rewind to the cut)
         J->>Q: ListAccounts(each hold prefix, live) then ListTransactions((T_Q, head_tx], unfiltered) (rewind to the cut)
-    and metadata watch (incremental by default: the day's slices, then the last stretch)
-        J->>O: watch slices covering (head_prev, head], each checked against its SHA-256
-        J->>P: ListLogs(last stretch, and any range with no usable slice)  (key_metadata_mutated)
-        J->>Q: ListLogs(last stretch, and any range with no usable slice)
+    and metadata watch, K log-id ranges each
+        J->>P: ListLogs((head_P_prev, head_P])  (key_metadata_mutated)
+        J->>Q: ListLogs((head_Q_prev, head_Q])
     end
     J->>O: previous run's stock (open(S_prev), cleared), carried items (drift ≠ 0) and breaks
     J->>P: ListTransactions(key = ref, id ≤ T_P) · applied refs in neither window nor carried
@@ -389,21 +388,16 @@ transactions `(T, head_tx]`, unfiltered (§4).
 **`S` serves the metadata watch.** Only the logs carry the metadata changes recon monitors
 (`key_metadata_mutated`). So every log in `(head_prev, head]`, the logs since the previous run's
 head, is watched, and no log goes unwatched. That is a day of logs: it grows with the ledger's logs
-per day, not with its payments, and it is the largest step of a run (§7.13, §7.15). Two ways
-to read it are on the table, both in the design (ADR-005 decision 25):
+per day, not with its payments, and it is the largest step of a run (§7.13, §7.15). The run reads
+`(head_prev, head]` itself, over K ranges: 134–158 s for the 4.1M logs of a 1M-payment product
+ledger (§7.15), with no job and no stored state (ADR-005 decision 25).
 
-| | Full read at run time | Incremental (the default) |
-|---|---|---|
-| How | The run reads `(head_prev, head]` itself, over K ranges | A watch job reads each watched ledger's logs in slices during the day, every `--lettering-watch-interval` (1 h), and stores them; the run assembles the slices, checks that they are contiguous and match their SHA-256, and reads only the last stretch itself |
-| Run's critical path | The watch: 134–158 s for the 4.1M logs of a 1M-payment product ledger (§7.15) | Expected to fall to the other steps, measured at 15–25 s. Not measured yet: an hourly slice of about 170,000 logs is estimated at a few seconds from the logs' rate (§7.13) |
-| What it adds | Nothing: no job, no stored state | A job per ledger, slice files with their seals in the watched ledger's own backup destination (`{bucketID}/reconciliation/watch/ledger={name}/`, results doc §2), and `watch.slices[]` in the manifest (EN-2319, EN-2322, EN-2323) |
-| When a slice is missing or damaged | — | The run reads that range itself: never an error, never a gap |
-| Set by | `--lettering-watch-interval=0` | `--lettering-watch-interval=1h` |
-
-A slice keeps every transaction-metadata change and every `purged_accounts` entry of its range, not
-only the fields of today's rules, so one chain per ledger serves every rule on it, including a rule
-added later. Both options give the same anomalies and the same purge set; the incremental one only
-moves the reading out of the run.
+**Deferred after V1: an incremental watch.** A job per watched ledger would read its logs in slices
+during the day and store them, sealed, in that ledger's backup destination; the run would check the
+slices and read only the last stretch. That would bring the run's critical path to the other steps'
+15–25 s, for a job, a slice chain per ledger and their retention. An hourly slice of about 170,000
+logs is estimated at a few seconds from the logs' rate (§7.13), not measured. L10 would shrink the
+full read instead (§8, F-j).
 
 ### Reads and indexes
 
@@ -495,7 +489,7 @@ at `7dd615dba`), so the unfiltered transactions of the window hold every balance
 EN-2036 (ledger `38c6eef55`, protocol 13), each log carries `LedgerLog.purged_accounts`, the
 addresses whose `EPHEMERAL` current state it removed. `ListLogs` exposes it at
 `Log.payload.apply.log.purged_accounts`. The metadata watch reads the logs `(head_prev, head]`,
-which include `(S, head]`, in slices or at run time (§3), so the run already has it. The field explains the one legitimate way an account open at `S` can be missing from the live listing:
+which include `(S, head]`, so the run already has it. The field explains the one legitimate way an account open at `S` can be missing from the live listing:
 
 - a touched hold with `pre ≠ 0` that the listing does not contain must be named in the
   `purged_accounts` of some log in `(S, head]`. Otherwise the listing missed a live account, which
@@ -1307,12 +1301,11 @@ and the run took as long: 2 min 39 s. The writers kept their 50 transactions/s t
   are not where a run spends its time.
 - The cap only reorders the waits. A larger cap does not shorten a run whose critical path is one
   read per side.
-- Two recon-side levers follow, with no Ledger change: the **incremental** watch (§3, ADR-005
-  decision 25, the default), which would bring the critical path to about the 20 s of the other
+- Two recon-side levers follow, with no Ledger change: an **incremental** watch, deferred after V1
+  (§3, ADR-005 decision 25), which would bring the critical path to about the 20 s of the other
   steps, and **reserving slots** for the short steps, so they never queue behind a watch. On the
   Ledger side, L10 (§8, F-j, [EN-2369](https://formance-team.atlassian.net/browse/EN-2369)) and L6
-  ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) would remove or shorten the read
-  under either option.
+  ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)) would remove or shorten the read.
 
 ## 8. Ledger findings and asks
 
@@ -1328,7 +1321,7 @@ and the run took as long: 2 min 39 s. The writers kept their 50 transactions/s t
 | F-g | No point-in-time read, and no single-snapshot multi-page listing | `ReadOptions`, `common.proto:1880-1885` at `03d8792b5`; `controller_default.go:436-438` | For information only (consistent export): not needed here |
 | F-h | Checkpoints carry no owner and no TTL | `bucket.proto:326` | For information only: not needed here |
 | F-i | An `And` is driven by its first term, in the order given. Led by a dense id range, it seeks its membership once per row, and seeking an `Or` seeks every one of its terms: the product `Or` of three keys read 2.7 to 3.4 times slower than membership first, for the same rows | §7.11; `internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_and.go:128-146`, `combinator_or.go:69-85` at `7dd615dba` | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), Ledger v3.1): order an `And`'s terms at compile time, or leave an `Or` child alone when it is already past the target. Until then recon writes the membership first (EN-2318) |
-| F-j | `ListLogs` cannot be filtered on what the metadata watch keeps: the `SavedMetadata` and `DeletedMetadata` that target a transaction, and the logs with a non-empty `purged_accounts`. `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS`, so the watch reads every log to keep a few | §7.15: 4.1M logs in 134–158 s, about 95 % of a run; `misc/proto/common.proto` (`QueryFilter`) at `7dd615dba` | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), Ledger v3.1): a log filter on those payloads, so the watch reads only the logs it keeps, under either option of ADR-005 decision 25. Not blocking: the incremental watch spreads the read over the day |
+| F-j | `ListLogs` cannot be filtered on what the metadata watch keeps: the `SavedMetadata` and `DeletedMetadata` that target a transaction, and the logs with a non-empty `purged_accounts`. `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS`, so the watch reads every log to keep a few | §7.15: 4.1M logs in 134–158 s, about 95 % of a run; `misc/proto/common.proto` (`QueryFilter`) at `7dd615dba` | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), Ledger v3.1): a log filter on those payloads, so the watch reads only the logs it keeps. Not blocking: the full read costs about two minutes a run, which a nightly batch affords (ADR-005 decision 25) |
 
 ## Cross-links
 

@@ -328,7 +328,7 @@ flowchart LR
     Cut["Cut per ledger at the business cut-off<br/>log id S · transaction id T"] --> Agg["Phase 1 — AggregateVolumes on hold prefixes<br/>(live exposure) → capture"]
     Cut --> Flow["Phase 2 — flow: ListTransactions (T_prev, T]<br/>∧ key present (PSP: payment_ref or a psp.movementKeys field;<br/>product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · first run from backfillFrom (product side psp.grace earlier)"]
     Cut --> Stock["Phase 2 — stock: live ListAccounts of open holds<br/>rewound with the unfiltered ListTransactions (T, head_tx]"]
-    Cut --> Watch["Phase 2 — metadata watch: ListLogs (head_prev, head]<br/>(in slices during the day by default)"]
+    Cut --> Watch["Phase 2 — metadata watch: ListLogs (head_prev, head]"]
     Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, payment-account book and open-items identities"]
     Stock --> Join
     Watch --> Join

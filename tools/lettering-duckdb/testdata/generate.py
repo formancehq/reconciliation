@@ -911,7 +911,7 @@ class Engine:
             m["previousRun"] = {"runId": self.prev['run'], "day": day_str(self.prev['day']),
                                 "manifestSha256": self.prev['manifest_sha']}
         start = cutoff(day) + dt.timedelta(hours=2, seconds=5)
-        # The watch is read in full at run time here: no slice, the whole window re-read (decision 25).
+        # The metadata watch reads the logs since the previous run's head (decision 25).
         watch_from = {c['side']: self.prev['heads'][c['side']] if self.prev else c['logFrom'] for c in cuts}
         m.update({
             "period": self.period(day),
@@ -920,11 +920,7 @@ class Engine:
             "cuts": cuts,
             "execution": {"readRanges": 8, "maxConcurrentReads": 16, "stockFrom": "live",
                           "rewindTxs": {c['side']: c['txHead'] - c['txTo'] for c in cuts}, "lookups": st['lookups'],
-                          "watchLogs": {c['side']: {"fromSlices": 0, "readByRun": c['logHead'] - watch_from[c['side']]}
-                                        for c in cuts}},
-            "watch": {c['side']: {"mode": "full", "slices": [],
-                                  "reread": [{"logFrom": watch_from[c['side']], "logTo": c['logHead'], "reason": "full"}]}
-                      for c in cuts},
+                          "watchLogs": {c['side']: c['logHead'] - watch_from[c['side']] for c in cuts}},
             "verdict": verdict,
             "counts": {"flow": flow_counts, "flowOutcome": outcomes, "stock": stock_counts, "breaks": breaks_counts,
                        "unclassified": {side: sum(1 for u in st['unclassified'] if u['side'] == side)

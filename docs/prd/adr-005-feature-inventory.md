@@ -14,6 +14,12 @@ below still hold.
 - the workflows doc, §9: `docs/technical/workflows.md`
 - the DuckDB tool doc: `docs/technical/lettering-duckdb.md`
 
+## Decisions taken
+
+| Feature | Decision | Recorded in |
+|---|---|---|
+| B12 + G8, incremental watch and slice retention (and the `--lettering-watch-interval` flag) | Deferred after V1: the run reads the watch in full | ADR-005 decision 25 |
+
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
 The strict test for **NEC** (necessary): if the feature goes, the V1 result is wrong, is incomplete,
@@ -60,7 +66,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | B9 | Count check `hi − lo` on unfiltered windows → `incomplete` (`short_range`) | ADR §5; DD §3 | An unfiltered window must return exactly `hi − lo` rows | Detects a lagging replica or a failed read | NEC | S | A short read shrinks the window silently |
 | B10 | Key lookups by reference (unknown applied refs on the PSP side; the history of refs found final; failed refs of the window on the product side), grouped `Or` of 100 | ADR §6, D16, D18; DD §5, §7.13 | References missing from the window and from the carried items are read by key, up to `T` | Otherwise a 2nd application reads as an orphan, and a payment matched earlier then failed today is missed | NEC | M | False P1 orphans, and a missed `reversed_after_application`. The grouping itself is optional (1.3 ms per lookup one by one) |
 | B11 | Metadata watch, full read at run time (`key_metadata_mutated`) | ADR §5 caveat 1, D25 (`--lettering-watch-interval=0`); DD §3 | Reads every log since the previous run's head for metadata changes on txs | Monitors the write-once convention | OPT | M | Saves the only log read, **~95 % of the run** (134–158 s at 1M payments). Loses the `key_metadata_mutated` warning and the check behind the replay byte-identity condition. Continuity, the payment-account book and the residual still catch mutations that change today's result. L8 (immutable labels) removes the need by construction |
-| B12 | Incremental watch job with slices (the default, `--lettering-watch-interval=1h`) | D25; ADR §7.3; RD §2, §6 "Watch slices" | A job per watched ledger writes sealed slices; the run assembles, verifies and re-reads missing ranges | Takes the watch off the run's critical path | OPT | **L** | Saves a job type, slice and seal files, one chain per ledger in *another* ledger's bucket, the manifest `watch` block (`slices`, `reread` with 5 reasons), slice tagging and the 7-day sweep. Loses a run of ~20 s: it stays ~2.5 min, which is fine for a daily batch. The slices are not measured yet. Depends on B11 |
+| B12 | Incremental watch job with slices (the default, `--lettering-watch-interval=1h`) | D25; ADR §7.3; RD §2, §6 "Watch slices" | A job per watched ledger writes sealed slices; the run assembles, verifies and re-reads missing ranges | Takes the watch off the run's critical path | **Deferred after V1** | **L** | Saves a job type, slice and seal files, one chain per ledger in *another* ledger's bucket, the manifest `watch` block (`slices`, `reread` with 5 reasons), slice tagging and the 7-day sweep. Loses a run of ~20 s: it stays ~2.5 min, which is fine for a daily batch. The slices are not measured yet. Depends on B11 |
 | B13 | Purge consistency check from `purged_accounts` (`purge_check`) | ADR §5; DD §4 | A hold open at `S`, touched, missing from the listing, must be named in some `purged_accounts` | Detects a listing that missed a live account | OPT | S/M | DD: "the rewind is exact without it". Saves a reason, a `diagnostic.json` item kind and a batch-boundary subtlety. Depends on B11/B12 for its logs |
 | B14 | Phase 1: synchronous aggregate capture (`AggregateVolumes` per prefix, signed by `openSign`, labelled with the run instant) | ADR §7.1; DD §3 | A capture of the live exposure, in seconds, before the detail | Early figure | OPT | M | Saves a 2nd capture kind, a code path and L7's motivation. Loses an inexact "now" figure available ~20 s to 2.5 min earlier. Phase 2 gives the exact aggregates anyway |
 | B15 | Phase 2: async job, idempotent per (rule, period, cut), own execution path, no 10 s drain grace | ADR §7.2, §11 | The per-key computation runs off the scheduler tick | Minutes of work, 1M rows | NEC | M | Cannot fit in the scheduler's synchronous path |
@@ -155,7 +161,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | G5 | Replay from the nearest stored stock (forward or backward; `stockFrom` `daily`/`anchor`/`head`) | ADR §7.7, D14; DD §4 | Starts a replay from a stored stock instead of head | Bounds an old replay to ~½ month of txs | OPT | M/L | Saves two fold directions, a start-point selection and the stored-stock verification. Old replays fall back to G4 (minutes, rare) |
 | G6 | Exact replay variant through the logs `(S_prev, S]` | ADR §7.7; DD §4 | Re-derives a day from the logs, not the mutable metadata | Exactness if the metadata changed | OPT | S (doc) | Drop the mention; nothing implemented |
 | G7 | Forward stock as a daily mode (open book > ~14 % of daily traffic) | DD §7.10 | Previous stock + the day's txs instead of list + rewind | Faster for huge open books | OPT (already "not needed in V1") | S (doc) | Keep as a measurement only |
-| G8 | Watch slice retention (kept while a manifest lists it, unlisted swept after 7 d) | ADR §7.4; RD §2 | Lifecycle of the slices | Storage | OPT | S | Goes with B12 |
+| G8 | Watch slice retention (kept while a manifest lists it, unlisted swept after 7 d) | ADR §7.4; RD §2 | Lifecycle of the slices | Storage | **Deferred after V1** | S | Goes with B12 |
 | G9 | Result store generic for `stale_holds` (EN-2324) | ADR §11 | Layout, manifest, hash and retention made template-agnostic | Reuse | OPT | S/M | Build it for lettering first and generalise when `stale_holds` needs it |
 
 ## 8. Configuration knobs
@@ -184,7 +190,7 @@ feature's interest unless the row says otherwise.
 | `topK` | unspecified (10 in the example) | RD §5, §6 | E14 | — | **Gap:** say whether it is a rule parameter or a constant (prefer a constant) |
 | `--lettering-read-ranges` | operator | ADR §7.8, D13 | B6 | OPT | K fixed at 8 |
 | `--lettering-max-concurrent-reads` | operator | ADR §7.8, D13 | B7 | OPT | No cap |
-| `--lettering-watch-interval` | operator | ADR §7.8, D25 | B11/B12 | OPT | Only the full read remains, or no watch at all |
+| `--lettering-watch-interval` | operator | ADR §7.8, D25 | B11/B12 | **Removed with B12** | Only the full read remains, or no watch at all |
 
 ## 9. Periods, aggregation and alerting
 

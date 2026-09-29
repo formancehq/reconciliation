@@ -83,20 +83,6 @@
   - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
     (`engine` in the manifest), replaying forward from the nearest anchor, whose stock and carried
     files seed the chain.
-- **Watch slices** (ADR-005 decision 25; contents: §6). They are not under a rule, and never under
-  `{bucketID}/backups/`. They sit in the **watched ledger's own** backup destination:
-
-  ```text
-  {backup bucket}/{bucketID}/reconciliation/watch/ledger={name}/
-    from={logFrom}-to={logTo}.ndjson.gz   the slice
-    from={logFrom}-to={logTo}.json        its seal
-  ```
-
-  `{bucketID}` is the watched ledger's bucket, so a PSP ledger's slices sit in the PSP ledger's
-  destination even though the rule's files sit in the product ledger's. A slice is kept as long as a
-  manifest that lists it is kept (the rule's `retention`, or `anchorRetention` for an anchor's
-  manifest), through the same object tag as the anchors; a slice that no manifest lists is swept
-  after 7 days.
 
 ## 3. Conventions
 
@@ -300,8 +286,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt`, `timingsMs` | When the run ran and how long each phase took: `cut`, `flow`, `lookup`, `stock`, `watch`, `join`, `write` |
 | `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead` and `logHead`, the heads the run read up to (the rewind reads the transactions `(txTo, txHead]`, the metadata watch the logs up to `logHead`), and `logSha256`, the SHA-256 of the deterministic protobuf encoding of the `Log` message at `S` as `GetLog` returns it (sequence, payload and response signature). Anyone can re-read that log and compare. It is stable for one ledger protocol version; the ledger's own chain hash is not exposed on the log |
-| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `daily`, `anchor` or `head` for a replay), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (logs of `(head_prev, logHead]` watched for the metadata check, `head_prev` being the previous run's `logHead`, as `{fromSlices, readByRun}`: the logs covered by the slices, and those the run read itself) |
-| `watch` | How the metadata watch was read (ADR-005 decision 25), per side: `mode` (`full` or `incremental`); `slices`, the slices the run used, in log order, each with `logFrom`, `logTo`, `rows` and `sha256` (empty on a full read); `reread`, the log ranges the run read itself, each with `logFrom`, `logTo` and `reason` (`full` for the whole window of a full read; `last_stretch` for the logs after the last slice; `missing`, `sha256_mismatch` or `overlap` for a range whose slice could not be used). Together they cover `(head_prev, logHead]` exactly once |
+| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `daily`, `anchor` or `head` for a replay), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (the logs of `(head_prev, logHead]` the metadata watch read, `head_prev` being the previous run's `logHead`) |
 | `verdict` | §4 |
 | `incomplete` | Only when `verdict` is `incomplete`: `reason`, `kind` (`transient` or `structural`, §4) and a human-readable `detail` |
 | `reseed` | Only on a re-seed run (§2): `adjustment`, per asset the recomputed `suspense.openPrev` minus the last complete run's `suspense.open`, and per book the recomputed `openPrev` minus that run's `open` |
@@ -466,32 +451,6 @@ manifest's; `items` lists at most 1,000 entries, and `more` counts the others.
 | `purge_check` | hold open at the cut, missing from the listing, and named in no `purged_accounts` | `side`, `hold`, `asset`, `balance` |
 | `stored_file_mismatch` | stored file whose SHA-256 differs from its signed capture | `run`, `name`, `signed`, `found` |
 
-### Watch slices
-
-Written by the watch job, not by a run, when the metadata watch is read incrementally, the default
-(ADR-005 decision 25; where they are: §2). With the watch read in full at run time
-(`--lettering-watch-interval=0`), no slice is written. A slice covers the logs `(logFrom, logTo]` of
-one ledger, and the next slice starts at its `logTo`: one chain per ledger. It keeps every
-transaction-metadata change and every purge of its range, not only the fields of one rule, so every
-rule on the ledger reads the same chain.
-
-`from={logFrom}-to={logTo}.ndjson.gz`, in `logId` order, one row per:
-
-| Row | Fields |
-|---|---|
-| Transaction-metadata change | `logId`, `tx`, `op` (`saved` or `deleted`), `keys` (the keys it set or deleted) |
-| Purged account | `logId`, `address`, one row per entry of the log's `purged_accounts` |
-
-A slice with no row is still written, so the chain has no hole. A slice is written only once its
-ranges returned exactly `logTo − logFrom` logs.
-
-`from={logFrom}-to={logTo}.json`, the seal beside it: `logFrom`, `logTo`, `logsRead`
-(`logTo − logFrom`), `rows`, `sha256` (of the gzipped slice), `writtenAt` and `engine`.
-
-A run uses a slice only if it matches its seal and follows the previous one without a gap or an
-overlap; otherwise it reads that range from the logs itself. The manifest's `watch` lists both
-(§6, `manifest.json`), and its SHA-256 in the signed capture covers them.
-
 ## 7. How rows move from day to day
 
 - **A pending flow row becomes a break on its `breakOn` day.** `unapplied_payment` goes from
@@ -643,9 +602,7 @@ and was lettered on the same day.
   ],
   "execution": {"readRanges": 8, "maxConcurrentReads": 16, "stockFrom": "live",
                 "rewindTxs": {"psp": 2106, "product": 1750}, "lookups": {"psp": 0, "product": 0},
-                "watchLogs": {"psp": {"fromSlices": 0, "readByRun": 228321}, "product": {"fromSlices": 0, "readByRun": 44373}}},
-  "watch": {"psp":     {"mode": "full", "slices": [], "reread": [{"logFrom": 2416007, "logTo": 2644328, "reason": "full"}]},
-            "product": {"mode": "full", "slices": [], "reread": [{"logFrom": 1531800, "logTo": 1576173, "reason": "full"}]}},
+                "watchLogs": {"psp": 228321, "product": 44373}},
   "verdict": "breaks",
   "counts": {
     "flow": {"matched": 3, "under_applied": 1, "over_applied": 0, "unapplied_payment": 2,
