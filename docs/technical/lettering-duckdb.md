@@ -281,11 +281,8 @@ Invalid Input Error: 4 violation(s) of the lettering/1 rules
 One fault usually breaks several rules. Read the rows by key: the rules named together point to
 the fault, and `file_sha256` says whether the file was changed after the manifest was written.
 
-- **Incomplete run.** `check` prints its reason and kind (`short_range, transient`, `residual,
-  structural`…), and checks the run's shape only: no data file (`incomplete_files`), a kind that
-  follows the reason (`incomplete_kind`), and `diagnostic.json` exactly when the cause is
-  structural (`incomplete_diagnostic`). The data is in the day's current run, which `current-runs`
-  names.
+- **Incomplete run.** `check` prints its reason and checks the run's shape only: no data file
+  (`incomplete_files`). The data is in the day's current run, which `current-runs` names.
 - **Missing file.** A data file that is absent is reported as `file_missing`: a complete run writes
   every data file, even empty.
 
@@ -300,9 +297,7 @@ recent earlier day, which is not always the day before. The command checks the
 [rules of `check-chain`](#rules-of-check-chain) (§6).
 
 It refuses an incomplete run on either side: an incomplete run is not a link in the chain. A
-re-seed run (`reseed` in its manifest) recomputes what it would pick up, so the pick-up rules
-(`suspense_open_prev`, `books_open_prev`, `book_prev`, `carried_in`, `carried_drift`,
-`from_lookups`) do not apply to it; the other chain rules do.
+restarted rule's first run has no `previousRun`, so there is no chain to check.
 
 ### Answer a reconciliation question
 

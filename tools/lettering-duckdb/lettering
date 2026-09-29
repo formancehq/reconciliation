@@ -120,18 +120,16 @@ check)
         echo "no manifest.json in $1: pass a run's directory, …/rule=<id>/day=<YYYY-MM-DD>/run=<runId>" >&2
         exit 2
     fi
-    # One query reads the verdict, the reason and kind of an incomplete run, the number of data
-    # files, whether a diagnostic.json exists, and the kinds of data file that are missing:
-    # verdict|reason|kind|files|diagnostic|missing kinds.
+    # One query reads the verdict, the reason of an incomplete run, the number of data files, and
+    # the kinds of data file that are missing: verdict|reason|files|missing kinds.
     missing=""
     for kind in flow carried stock breaks unclassified; do
         missing="$missing, CASE WHEN (SELECT count(*) FROM glob($(quote "$run/$kind*.ndjson.gz"))) = 0 THEN '$kind' END"
     done
     state=$(sql_value "SELECT concat_ws('|', coalesce(m->>'verdict', '-'), coalesce(m->'incomplete'->>'reason', '-'),
-        coalesce(m->'incomplete'->>'kind', '-'), (SELECT count(*) FROM glob($(quote "$run/*.ndjson.gz"))),
-        (SELECT count(*) FROM glob($(quote "$run/diagnostic.json"))), concat_ws(' ' $missing))
+        (SELECT count(*) FROM glob($(quote "$run/*.ndjson.gz"))), concat_ws(' ' $missing))
         FROM (SELECT content::JSON AS m FROM read_text($(quote "$run/manifest.json")));")
-    IFS='|' read -r verdict reason kind files diagnostic missing <<EOF
+    IFS='|' read -r verdict reason files missing <<EOF
 $state
 EOF
     if [ "$verdict" = incomplete ]; then
@@ -139,24 +137,7 @@ EOF
             echo "violation: incomplete_files: incomplete run ($reason) with $files data file(s); an incomplete run writes no data file" >&2
             exit 1
         fi
-        # Results doc §4: two reasons are transient, the other four structural.
-        case $reason in
-        missing_index | short_range) expected=transient ;;
-        *) expected=structural ;;
-        esac
-        if [ "$kind" != "$expected" ]; then
-            echo "violation: incomplete_kind: reason $reason is $expected, but incomplete.kind is $kind" >&2
-            exit 1
-        fi
-        if [ "$kind" = structural ] && [ "$diagnostic" = 0 ]; then
-            echo "violation: incomplete_diagnostic: a structural incomplete run ($reason) writes diagnostic.json" >&2
-            exit 1
-        fi
-        if [ "$kind" = transient ] && [ "$diagnostic" != 0 ]; then
-            echo "violation: incomplete_diagnostic: a transient incomplete run ($reason) writes its manifest only" >&2
-            exit 1
-        fi
-        echo "incomplete run ($reason, $kind): it writes no data file, so there is nothing else to check"
+        echo "incomplete run ($reason): it writes no data file, so there is nothing else to check"
         exit 0
     fi
     if [ -n "$missing" ]; then

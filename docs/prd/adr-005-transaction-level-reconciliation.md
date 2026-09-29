@@ -483,7 +483,7 @@ checkpoint's listing.
     in priority order ([results reference §4](../technical/transaction-level-results.md#4-the-verdict)
     and [§5](../technical/transaction-level-results.md#5-the-statement)). An `incomplete` run is
     never green. The payment-account book's residual is a P1 break, not an `incomplete` run
-    (decision 23); transient and structural `incomplete` causes are decision 26.
+    (decision 23); a run that fails every day is decision 26.
   - **What opens the alert:** at least one open break that is not accepted. The net alone never
     opens it, since pending items move it and offsetting breaks cancel in it. An `incomplete` run
     opens the engine-error alert instead.
@@ -563,6 +563,9 @@ checkpoint's listing.
      any past cut, from the live listing and the transactions `(T_prev, head_tx]`.
    - Re-running with an earlier `backfillFrom` is idempotent per (rule, period, cut). It only costs
      a longer window read.
+   - The same first run restarts a rule whose chain is stuck on a cause that cannot be fixed inside
+     its window; `backfillFrom` then defaults to the oldest `firstSeen` of the last complete run's
+     carried items (decision 26).
 7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
    (`S`, `T`, `logSha256`) is in the signed capture. A replay runs the daily algorithm as of that
    day, and no stock is stored for it.
@@ -682,7 +685,7 @@ for the Ledger team to weigh against its own users:
 | 23 | The PSP payment account | A booking convention (§8, rule 10), with the debit keys in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
 | 24 | Bounded date filters in the cut | `S` and `T` are resolved with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it (§5). |
 | 25 | How the metadata watch is read | **In full, by the run**, over K ranges: about 95 % of a run, 134–158 s at 1M payments a day, which a nightly batch affords. An incremental read in slices during the day is **deferred after V1**: it would save about two minutes a run for a job per ledger and a stored slice chain. Revisit if a run grows too long and L10 ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), §9), which would shrink the read, is not delivered ([design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)). |
-| 26 | A run that fails every day | Some `incomplete` causes clear by themselves, others repeat on every run while each window grows, and a run that writes its manifest only leaves nothing to diagnose. The reasons split in two, in `incomplete.kind`: **transient** (`missing_index`, `short_range`), which the next run retries, and **structural** (`continuity`, `residual`, `purge_check`, `stored_file_mismatch`), which repeat until fixed. A structural run also writes **`diagnostic.json`**, outside the chain: the books, holds, applications or files at fault, with their transactions. Its engine-error alert says that an operator must act. After the fix, a **re-seed** run trusts nothing stored: it rewinds the stock from the head, rebuilds the carried items by key lookups on both ledgers, recomputes `openPrev` and records the gap with the last complete run (results doc §2, §6). |
+| 26 | A run that fails every day | Some `incomplete` causes repeat on every run while each window grows, until they are fixed. `incomplete.detail` names the first 20 items at fault, and the engine-error alert says whether the next run retries (`missing_index`, `short_range`) or an operator must act. When the fix cannot enter the window, the operator **restarts the rule**: its next run is a first run, with its stock rewound and its flow backfilled from the oldest open item of the last complete run, so nothing stored is trusted and the open items are found again (results doc §2). No re-seed run type, no `diagnostic.json`, no `incomplete.kind`. |
 
 **Open, to review with the Connectivity team (no decision):** decision 23 assumes that the payment
 account is credited only by payment finals. `formancepayments` also credits it from payouts,

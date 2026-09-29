@@ -15,8 +15,8 @@
 
 1. **Find the day's current run** (§2) and open its `manifest.json`.
 2. **Read `verdict`** (§4). `incomplete` means no conclusion can be drawn: the manifest says why in
-   `incomplete.reason`, and whether the cause is `transient` or `structural` in `incomplete.kind`.
-   The run wrote no data file; a structural cause adds `diagnostic.json`.
+   `incomplete.reason` and names the first items at fault in `incomplete.detail`. The run wrote no
+   data file.
 3. **Read the statement** (§5), which is the manifest's `statement`, `books` and `triage` blocks,
    and the text the alert carries. The bridge explains the day's net difference, the open items
    give the running total still unmatched, and the triage says what to do first.
@@ -54,8 +54,7 @@
   the storage can also read the prefix directly. The `key=value` path segments let DuckDB, Spark or
   Athena read `rule`, `day` and `run` as columns.
 - **An `incomplete` run writes its manifest, and no data file.** It is not a link in the chain, so
-  a run that has data files is always complete. When the cause is structural (§4), it also writes
-  `diagnostic.json` (§6), so that the fault can be found without a complete run.
+  a run that has data files is always complete.
 - **The day's current run is its latest complete run.** A `runId` is `r-` followed by the run's
   start instant in UTC (`r-20260925T000004Z`), so run ids sort in time order. Replaying or retrying
   a day writes a new run, which replaces the earlier ones once it completes. A reader that globs the
@@ -64,16 +63,17 @@
   one, with its day and its manifest's SHA-256. When that day is not the day before (a day missed or
   incomplete), this run's window starts at that run's cut and covers every day since. The statement
   then says "window since …".
-- **Re-seeding a chain.** A structural cause comes back on every run until it is fixed, and each
-  run's window grows. Once the cause is fixed (a booking corrected with its key, for example), an
-  operator re-seeds the rule: a run marked `reseed` that trusts nothing stored.
-  - Its stock is listed and rewound from the head (`stockFrom: head`), not read from the previous
-    stock.
-  - Its carried items are rebuilt by a lookup, on both ledgers, by key and over their whole
-    history, of every reference in the last complete run's carried file and in its own window.
-  - Its `openPrev` values are therefore recomputed, not picked up. The manifest's `reseed` records
-    the gap with the last complete run, per asset and per book.
-  - It is a complete run, and the chain's next link.
+- **Restarting a chain.** Some causes of `incomplete` come back on every run until they are fixed,
+  and each run's window grows (§4). When the fix cannot enter the window (a booking corrected by a
+  new transaction leaves the faulty one in it, or a stored file was altered), an operator restarts
+  the rule: its next run is a first run, with no `previousRun`.
+  - Its stock is rewound to the cut before its window, so its `openPrev` values are recomputed from
+    the ledger, not picked up.
+  - It reads the flow from `backfillFrom`, which defaults to the oldest `firstSeen` of the last
+    complete run's carried items, so it finds the items still open. When that file fails its
+    signed check (`stored_file_mismatch`), the operator gives `backfillFrom`. The statement says
+    "backfilled since …".
+  - Its breaks start `new`: their `breakId` is unchanged, their history is not carried over.
 - **Expiry.** A run's files are kept for the rule's `retention`, 90 days by default, and the manifest's `expiresAt` says until when. A customer bound to a longer legal
   retention raises `retention`.
   - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
@@ -132,7 +132,7 @@ The verdict is evaluated in this order, and the first condition that holds wins:
 
 | `verdict` | Condition | What it tells the controller |
 |---|---|---|
-| `incomplete` | A required index is missing, a transaction or log range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, a hold open at the cut is missing from the listing without having been purged, or a stored file differs from the SHA-256 in its signed capture. `incomplete.reason` says which: `missing_index`, `short_range`, `continuity`, `residual`, `purge_check`, `stored_file_mismatch`. `missing_index` and `short_range` are **transient**: the next scheduled run retries and normally concludes. The other four are **structural**: they come back on every run until the cause is fixed, the run also writes `diagnostic.json`, the engine-error alert says that an operator must act, and the chain resumes with a re-seed (§2) | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes no data file and opens the engine-error alert, never a green one |
+| `incomplete` | A required index is missing, a transaction or log range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, a hold open at the cut is missing from the listing without having been purged, or a stored file differs from the SHA-256 in its signed capture. `incomplete.reason` says which: `missing_index`, `short_range`, `continuity`, `residual`, `purge_check`, `stored_file_mismatch`. `missing_index` and `short_range` usually clear on the next scheduled run. The other four come back on every run until the cause is fixed: the engine-error alert then says that an operator must act, and when the fix cannot enter the window the operator restarts the rule (§2). `incomplete.detail` names the first 20 items at fault (the books and holds that do not close with the transactions that moved them, the applications no flow row attributes, the holds missing from the listing, or the altered files), and the engine's logs list them all | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes no data file and opens the engine-error alert, never a green one |
 | `breaks` | At least one open break | The breaks, by priority, new or persisting |
 | `reconciled_with_warnings` | No break, but at least one unclassified transaction, or a key, state, business-id or merchant-reference metadata changed after insertion (`anomalies`) | Money moved that the rule does not classify, or a transaction's identity changed after the fact: the rule, the connector mapping or the booking needs attention |
 | `reconciled_with_pending` | No break and no warning, but unapplied payments within `product.grace` or applications within `psp.grace` | "OK for now". Each pending item comes with the day it becomes a break |
@@ -283,10 +283,9 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt`, `timingsMs` | When the run ran and how long each phase took: `cut`, `flow`, `lookup`, `stock`, `watch`, `join`, `write` |
 | `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead` and `logHead`, the heads the run read up to (the rewind reads the transactions `(txTo, txHead]`, the metadata watch the logs up to `logHead`), and `logSha256`, the SHA-256 of the deterministic protobuf encoding of the `Log` message at `S` as `GetLog` returns it (sequence, payload and response signature). Anyone can re-read that log and compare. It is stable for one ledger protocol version; the ledger's own chain hash is not exposed on the log |
-| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `head` for a replay or a re-seed), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (the logs of `(head_prev, logHead]` the metadata watch read, `head_prev` being the `logHead` of `previousRun`, or `S_prev` when there is none, as on a first run) |
+| `execution` | `readRanges`, `maxConcurrentReads`, `stockFrom` (`live` for a daily run; `head` for a replay), and per side `rewindTxs` (transactions read in `(txTo, txHead]` to rewind the stock), `lookups` (references read by key) and `watchLogs` (the logs of `(head_prev, logHead]` the metadata watch read, `head_prev` being the `logHead` of `previousRun`, or `S_prev` when there is none, as on a first run) |
 | `verdict` | §4 |
-| `incomplete` | Only when `verdict` is `incomplete`: `reason`, `kind` (`transient` or `structural`, §4) and a human-readable `detail` |
-| `reseed` | Only on a re-seed run (§2): `adjustment`, per asset the recomputed `suspense.openPrev` minus the last complete run's `suspense.open`, and per book the recomputed `openPrev` minus that run's `open` |
+| `incomplete` | Only when `verdict` is `incomplete`: `reason` and a human-readable `detail`, which names the first 20 items at fault (§4) |
 | `counts.flow` | Flow rows per class; adds up to the flow file's row count |
 | `counts.flowOutcome` | Flow rows per outcome |
 | `counts.stock` | Stock rows per side and class |
@@ -418,19 +417,6 @@ prefixes on the PSP side, the hold prefixes on the product side. Such a transact
 matching.
 A typical cause is a connector booking refunds on the original payment's id ([connector
 checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation), row 6).
-
-### `diagnostic.json`
-
-Written only by an `incomplete` run with a structural cause (§4), next to its manifest. It says
-where the fault is, so that it can be fixed before a re-seed. `reason` and `kind` repeat the
-manifest's; `items` lists at most 1,000 entries, and `more` counts the others.
-
-| `reason` | One item per | Fields |
-|---|---|---|
-| `continuity` | book (side, prefix, asset) that does not close, then each of its holds whose rewound balance differs from the previous stock plus the window's movements | `side`, `prefix` or `hold`, `asset`, `expected`, `found`, and `txs`, the transactions of the window that moved the hold without the key or a business id |
-| `residual` | application of the window that no flow row attributes | `tx`, `hold`, `asset`, `amount` |
-| `purge_check` | hold open at the cut, missing from the listing, and named in no `purged_accounts` | `side`, `hold`, `asset`, `balance` |
-| `stored_file_mismatch` | stored file whose SHA-256 differs from its signed capture | `run`, `name`, `signed`, `found` |
 
 ## 7. How rows move from day to day
 

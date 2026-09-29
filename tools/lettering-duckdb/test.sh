@@ -242,8 +242,6 @@ fresh "$day24"; edit "$work/run/$m" 's/"manifestSha256":"[0-9a-f]*"/"manifestSha
 expect_violation "a broken chain" previous_run "$lettering" check-chain "$day23" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"120000"/"openPrev":"120001"/'
 expect_violation "open items that do not pick up" suspense_open_prev "$lettering" check-chain "$day23" "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"120000"/"openPrev":"120001"/; s/"verdict":"breaks"/"reseed":{"adjustment":[]},"verdict":"breaks"/'
-expect_ok "a re-seed run, which recomputes its open items" "$lettering" check-chain "$day23" "$work/run"
 fresh "$qa5"; edit "$work/run/$m" 's/"inputPrev":"79100"/"inputPrev":"79000"/; s/"flowCredits":"0","flowDebits":"2800","creditResidual":"0"/"flowCredits":"100","flowDebits":"2800","creditResidual":"0"/'
 expect_violation "a payment-account book that does not pick up" book_prev "$lettering" check-chain "$qa4" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"430000"/"openPrev":"430001"/'
@@ -274,21 +272,11 @@ edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-42"/s/"drift":"0",/"drift":"0","new
 reseal "$work/run/flow.ndjson.gz"
 expect_ok "a row with a field unknown to lettering/1" "$lettering" check "$work/run"
 rm -rf "$work/run" && mkdir -p "$work/run"
-printf '%s\n' '{"schemaVersion":"lettering/1","runId":"r-20260925T060000Z","period":{"type":"daily","day":"2026-09-24"},"verdict":"incomplete","incomplete":{"reason":"short_range","kind":"transient","detail":"test"}}' > "$work/incomplete.json"
+printf '%s\n' '{"schemaVersion":"lettering/1","runId":"r-20260925T060000Z","period":{"type":"daily","day":"2026-09-24"},"verdict":"incomplete","incomplete":{"reason":"short_range","detail":"test"}}' > "$work/incomplete.json"
 cp "$work/incomplete.json" "$work/run/manifest.json"
 expect_ok "an incomplete run with its manifest only" "$lettering" check "$work/run"
 cp "$day24/flow.ndjson.gz" "$work/run/"
 expect_violation "an incomplete run with a data file" incomplete_files "$lettering" check "$work/run"
-mkdir -p "$work/inc-transient" "$work/inc-structural"
-cp "$work/incomplete.json" "$work/inc-transient/manifest.json"
-printf '%s\n' '{"reason":"short_range","kind":"transient","items":[]}' > "$work/inc-transient/diagnostic.json"
-expect_violation "a transient incomplete run with a diagnostic" incomplete_diagnostic "$lettering" check "$work/inc-transient"
-printf '%s\n' '{"schemaVersion":"lettering/1","runId":"r-20260925T060000Z","period":{"type":"daily","day":"2026-09-24"},"verdict":"incomplete","incomplete":{"reason":"continuity","kind":"structural","detail":"test"}}' > "$work/inc-structural/manifest.json"
-expect_violation "a structural incomplete run without its diagnostic" incomplete_diagnostic "$lettering" check "$work/inc-structural"
-printf '%s\n' '{"reason":"continuity","kind":"structural","items":[{"side":"product","prefix":"main:hold:invoice:","asset":"EUR/2","expected":"245000","found":"244000","txs":[]}]}' > "$work/inc-structural/diagnostic.json"
-expect_ok "a structural incomplete run with its diagnostic" "$lettering" check "$work/inc-structural"
-edit "$work/inc-structural/manifest.json" 's/"kind":"structural"/"kind":"transient"/'
-expect_violation "an incomplete run whose kind does not follow its reason" incomplete_kind "$lettering" check "$work/inc-structural"
 
 expect_fail "an unknown query" "$lettering" query no-such-query "$data/rule=qa-scenarios"
 expect_fail "a query given a run's directory instead of a rule's" "$lettering" query bridge "$day24"
@@ -310,7 +298,7 @@ status=0; "$lettering" check "$worked" > "$work/out" 2>&1 || status=$?
 printf '%s\n' "SELECT true AS Success;" > "$work/noisy.sql"
 expect_ok "an init file that prints a row, like CREATE SECRET" env LETTERING_INIT="$work/noisy.sql" "$lettering" check "$day24"
 if [ "$(LETTERING_INIT="$work/noisy.sql" "$lettering" check "$data/rule=qa-verdicts/day=2026-10-09/run=r-20261010T000004Z")" \
-    = "incomplete run (short_range, transient): it writes no data file, so there is nothing else to check" ]; then
+    = "incomplete run (short_range): it writes no data file, so there is nothing else to check" ]; then
     pass "  and its row reaches neither the parsing nor the output"
 else
     : > "$work/out"

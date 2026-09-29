@@ -651,11 +651,11 @@ is never touched.
 
 **A run that cannot conclude** writes its manifest and no data file, and the next run chains on
 the last complete one ([results reference
-§2](./transaction-level-results.md#2-where-the-files-are-and-which-run-counts)). A transient cause
-(`missing_index`, `short_range`) clears on the next run. A structural one (`continuity`,
-`residual`, `purge_check`, `stored_file_mismatch`) repeats until it is fixed: the run then also
-writes `diagnostic.json`, and after the fix an operator re-seeds the chain with a run that rewinds
-the stock from the head and rebuilds the carried items by key lookups (ADR-005 decision 26).
+§2](./transaction-level-results.md#2-where-the-files-are-and-which-run-counts)). `missing_index`
+and `short_range` usually clear on the next run. `continuity`, `residual`, `purge_check` and
+`stored_file_mismatch` repeat until the cause is fixed; `incomplete.detail` names the first items at
+fault. When the fix cannot enter the window, an operator restarts the rule: its next run is a first
+run, backfilled from the oldest open item of the last complete run (ADR-005 decision 26).
 The carried items, the stored stock and the break history therefore never come from a run that
 failed its checks.
 

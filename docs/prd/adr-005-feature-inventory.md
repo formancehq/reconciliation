@@ -21,6 +21,7 @@ below still hold.
 | B12 + G8, incremental watch and slice retention (and the `--lettering-watch-interval` flag) | Deferred after V1: the run reads the watch in full | ADR-005 decision 25 |
 | G5 + G3, replay from the nearest stored stock and monthly anchors (`anchorRetention`, the anchor tag, per-file `expiresAt`) | Removed from V1: a replay rewinds the live listing from head, newest first; beyond `retention` its carried items are rebuilt from a backfill window | ADR-005 decisions 4 and 14 |
 | I5, `period.json` | Removed from V1: the period's alert lists each day, and any other period view is a query over the daily manifests | ADR-005 §7 item 5 |
+| D10 + E17 + D11, re-seed, `diagnostic.json`, `incomplete.kind` | Simplified: a stuck chain restarts as a first run, backfilled from the oldest open item of the last complete run; `incomplete.detail` names the first 20 items at fault; no `kind` field | ADR-005 decision 26 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -107,8 +108,8 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | D7 | Stable `breakId` (hash of rule, leg, key, asset; not the class) | ADR §6, D16 | A break keeps its id when its class changes | Comments, acceptances, lifecycle | OPT | S | Cheap. Required by D6, D8, D9 |
 | D8 | `previousClass` on the day the class changes | ADR §6; RD §6 | Records the old class | Audit trail | OPT | S | Nothing functional lost |
 | D9 | Acceptance (`acceptedOn`; lapses when the class or amount changes; excluded from the alert trigger) | ADR §6, D21; RD §4, §7 | A known break stays in the files but stops opening the alert | Systematic known gaps (e.g. an unbooked fee) until they are booked | OPT | M | Saves an acceptance store and API, the lapse rules and `counts.breaks.accepted`. Loses the means to silence known breaks: the alert stays open until booked. Depends on D7 |
-| D10 | Re-seed run (`reseed`: stock from head, carried rebuilt by key lookups on both ledgers, `reseed.adjustment`) | D26; RD §2 | Restarts the chain after a structural `incomplete` is fixed | A structural cause repeats every day and the window grows | OPT | M/L | Replace it with "restart the rule like a first run" (B17, new `backfillFrom`). Loses carried items older than the backfill and the recorded gap |
-| D11 | `incomplete.kind` transient/structural | D26; RD §4 | Classes the 6 reasons in 2 kinds | Tells the operator whether to wait or act | OPT | S | The alert text maps the reason directly. Needed by D10 and E18 |
+| D10 | Re-seed run (`reseed`: stock from head, carried rebuilt by key lookups on both ledgers, `reseed.adjustment`) | D26; RD §2 | Restarts the chain after a structural `incomplete` is fixed | A structural cause repeats every day and the window grows | **Replaced by a restart as a first run** | M/L | Replace it with "restart the rule like a first run" (B17, new `backfillFrom`). Loses carried items older than the backfill and the recorded gap |
+| D11 | `incomplete.kind` transient/structural | D26; RD §4 | Classes the 6 reasons in 2 kinds | Tells the operator whether to wait or act | **Removed from V1** | S | The alert text maps the reason directly. Needed by D10 and E18 |
 
 ## 5. Outputs and files
 
@@ -130,7 +131,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | E14 | Triage in the manifest: top-K open breaks (NEC for the alert) + top-K `pending` and `resolved` lists | ADR §7.3, D21; RD §5 | The manifest renders the statement alone | The alert and a dashboard need no other file | NEC (breaks) / OPT (pending, resolved) | S | The pending and resolved lists come from the files. **Gap:** where `topK` is configured is not specified |
 | E15 | `execution` + `timingsMs` blocks (`readRanges`, `stockFrom`, `rewindTxs`, `lookups`, `watchLogs`) | ADR §7.8; RD §6 | Run telemetry in the manifest | Comparable run durations | OPT | S | Move to logs and metrics. No reader loss |
 | E16 | File parts beyond 250,000 rows (`flow-00000…`, `part` in `files`) | ADR §7.3; RD §8; DD §7.14 | Splits a data file into parts | Parallel compression and upload | OPT | S/M | One gzip of 75–142 MB: ~5 s on one thread; DuckDB reads it as fast. Saves the part logic in the writer, reader, checks and API |
-| E17 | `diagnostic.json` for structural `incomplete` (≤ 1,000 items per reason) | D26; RD §6 | Lists the books, holds, applications or files at fault | Debug a run that writes no data file | OPT | M | Saves a file format with 4 item shapes. The operator debugs from logs or a debug run. Depends on D11 |
+| E17 | `diagnostic.json` for structural `incomplete` (≤ 1,000 items per reason) | D26; RD §6 | Lists the books, holds, applications or files at fault | Debug a run that writes no data file | **Removed from V1** | M | Saves a file format with 4 item shapes. The operator debugs from logs or a debug run. Depends on D11 |
 | E18 | `schemaVersion` `lettering/1`, a JSON Schema per file, compatibility rules | ADR §7.3; RD §8 | Versioned, documented format | The customer reads the files directly | NEC | S | The format cannot evolve safely |
 | E19 | Every data file written on every complete run, even empty | RD §8 | No missing file on a quiet day | Globs never break | NEC | S | Readers special-case missing files |
 | E20 | Result API: lists a run's files with pre-signed URLs; run status from the capture | ADR §7.9 | Customers read without bucket access | Access control | NEC | M | Customers need raw bucket credentials |
