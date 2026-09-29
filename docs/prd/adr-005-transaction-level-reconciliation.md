@@ -35,9 +35,8 @@ reconciles two legs:
 **Query checkpoints are not used.** The control reads filtered transactions for the flow, and live
 listings corrected by the short window of transactions since the cut-off for the stock.
 
-The synchronous path reports aggregate figures. The per-key
-detail is computed asynchronously and stored in object storage, and its hash is anchored in the
-signed `_recon` capture.
+Each run is one asynchronous job. The per-key detail is stored in object storage, and its hash is
+anchored in the signed `_recon` capture, which also carries the run's aggregates.
 
 ---
 
@@ -151,8 +150,7 @@ event breaks the identity, so the loss is detected instead of silently shrinking
 ### 2.4 Why the shipped templates cannot express it
 
 - **Aggregate only.** Every shipped template aggregates ([templates.md](../technical/templates.md)).
-  A `balance_equation` over the two hold prefixes gives the **net open exposure**, which is phase 1
-  below. But offsetting breaks cancel out, and settled items are not in any account set at all.
+  A `balance_equation` over the two hold prefixes gives the **net open exposure**. But offsetting breaks cancel out, and settled items are not in any account set at all.
 - **No per-item mode left.** Per-account fan-out was dropped for want of an alignment key,
   missing-row semantics and bounded evidence
   ([ADR-004 amendment](./adr-004-multi-source-comparisons.md)). This ADR supplies all three.
@@ -491,22 +489,17 @@ checkpoint's listing.
     opens the engine-error alert instead.
   - There is never one alert per payment (the reasoning of the ADR-004 2026-09-08 amendment).
 
-## 7. Decision C — two-phase workflow, detail kept 90 days in the backup storage
+## 7. Decision C — one asynchronous job, detail kept 90 days in the backup storage
 
-1. **Phase 1: synchronous, seconds.**
-   - Resolve `S` and `T` on each ledger.
-   - Take one live `AggregateVolumes` per hold prefix, each signed by its `openSign` so that holds
-     of opposite signs do not cancel. This is the open exposure *now*, labelled with the run
-     instant, because the call does not say which log id its snapshot saw.
-   - Write an aggregate capture. The exact aggregates at `S` and the continuity check come with
-     phase 2, as sums over the rewound rows. That is cheap, because the open book is small by
-     construction. Ask **L7** would make phase 1 exact too.
-2. **Phase 2: an asynchronous job**, idempotent per (rule, period, cut) and resumable.
-   1. Flow window read and join, including the previous run's carried items and a key lookup of
-      the references missing from both.
+1. **The scheduler tick only enqueues the run.** There is no synchronous capture: an aggregate
+   read live at the tick would give the exposure at the run instant, not at the cut, and the job
+   computes the exact aggregates at `S` anyway, as sums over the rewound rows.
+2. **The run is one asynchronous job**, idempotent per (rule, period, cut) and resumable.
+   1. Resolve `S` and `T` on each ledger, then read the flow window and join, including the
+      previous run's carried items and a key lookup of the references missing from both.
    2. Stock rewind and ageing.
    3. Write the artifacts.
-   4. Write the **detail capture**: counts, drifts, `S` and `T` per ledger, and the artifact URI and
+   4. Write the run's **capture**: counts, drifts, `S` and `T` per ledger, and the artifact URI and
       SHA-256, signed with Ed25519 (EN-1930).
    5. Update the alert.
 3. **Where the files go: the backup object storage, under a recon prefix.**
@@ -642,7 +635,7 @@ No connector change is required.
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), epic EN-1336, Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
 | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), epic EN-1336, Ledger v3.1): a `ListLogs` filter on the logs the metadata watch needs, the `SavedMetadata` and `DeletedMetadata` that target a transaction and the logs with a non-empty `purged_accounts`. Today `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS` (`misc/proto/common.proto` at `7dd615dba`) | The watch reads every log of the ledger to find a few: 4.1M logs in 134–158 s for a 1M-payment product ledger, about 95 % of the run (design doc §7.15). Filtered, it would read only the rare logs it keeps. Not blocking: the full read costs about two minutes a run, which a nightly batch affords (decision 25) | M |
-| **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the snapshot horizon (the per-ledger log id the read saw) on `AggregateVolumes` and `ListAccounts` | Makes the phase-1 aggregate exact at `S` (`agg(S) = agg − Σ net(S, horizon]`) and lets the rewind skip the untouched part of the window; it is already part of EN-1480's scope (`log_sequence`) | S |
+| **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the snapshot horizon (the per-ledger log id the read saw) on `AggregateVolumes` and `ListAccounts` | Lets the rewind skip the untouched part of the window, and would make a live aggregate exact at `S` (`agg(S) = agg − Σ net(S, horizon]`); it is already part of EN-1480's scope (`log_sequence`) | S |
 
 Only these are asked, because only these serve this design. L2 is done and L5 is closed.
 

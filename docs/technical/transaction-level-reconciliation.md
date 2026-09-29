@@ -238,11 +238,7 @@ sequenceDiagram
 
     J->>P: S_P, T_P = last log id / tx id inserted ≤ cut-off
     J->>Q: S_Q, T_Q = last log id / tx id inserted ≤ cut-off
-    Note over J,C: Phase 1 — synchronous, seconds
-    J->>P: AggregateVolumes(each hold prefix)  (live exposure, signed by openSign)
-    J->>Q: AggregateVolumes(each hold prefix)
-    J->>C: capture(phase=aggregate, S_P, S_Q, T_P, T_Q, live exposure)
-    Note over J,O: Phase 2 — async, resumable
+    Note over J,O: one asynchronous job, resumable
     par flow window, K transaction-id ranges each (default 8)
         J->>P: ListTransactions((payment_ref EXISTS ∨ movementKeys EXISTS…) ∧ id ∈ (T_P_prev, T_P])  (membership first)
         J->>Q: ListTransactions((payment_ref EXISTS ∨ business_ref EXISTS) ∧ id ∈ (T_Q_prev, T_Q])
@@ -258,7 +254,7 @@ sequenceDiagram
     J->>Q: ListTransactions(key = ref, id ≤ T_Q) · history of refs found final, window refs failed
     J->>J: join on the PSP reference (+ carried, + lookups) · age both stock books · continuity
     J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ manifest + flow / carried / stock / breaks / unclassified
-    J->>C: capture(phase=detail, counts, drifts, S and T per ledger, artifact sha256) — Ed25519
+    J->>C: capture(counts, drifts, S and T per ledger, artifact sha256) — Ed25519
     J->>C: open / update / resolve the aggregate alert (top-K breaks)
 ```
 
