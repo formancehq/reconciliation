@@ -425,8 +425,8 @@ Each `ListTransactions` call is a server stream of at most 1,000 `Transaction`, 
 its postings, its metadata and its `post_commit_volumes`.
 
 **Parallel reads, completeness and replay: what the id ranges give for free.** A window `(lo, hi]`
-splits into K disjoint id ranges, read concurrently and merged in id order: transaction ids for the
-flow `(T_prev, T]` and the rewind `(T, head_tx]`, log ids for the watch `(head_prev, head]`. K is an
+splits into K disjoint id ranges, read concurrently: transaction ids for the flow `(T_prev, T]` and
+the rewind `(T, head_tx]`, log ids for the watch `(head_prev, head]`. K is an
 **operator setting**, not a rule parameter: `--lettering-read-ranges` (default 8), capped
 process-wide by `--lettering-max-concurrent-reads` (default 16), so that several rules running at
 once do not multiply the readers on one ledger. Eight readers read about 4× faster than one; up to
@@ -440,8 +440,10 @@ improves (§7.7).
   therefore return what one frozen read would have returned. An account listing does not have this
   property: its pages see moving balances.
 - **Merging the ranges.** For the flow, each range keeps its per-reference facts, and the facts are
-  combined in transaction-id order. For the rewind, each account keeps its *first* touch after `T`,
-  taken from the lowest range that touched it.
+  combined in transaction-id order. The rewind reads its window newest first, in chunks read by K
+  workers and applied newest first: each touch overwrites the account's value, so what is left is
+  its balance just before its first touch after `T`, and an account back at zero is dropped (§4,
+  §7.16).
 - Scaling is sub-linear (§7.2, §7.15): the service sets the limit, not the client.
 - **Completeness is checkable for free on unfiltered ranges.** Log and transaction ids are both
   contiguous per ledger, so an unfiltered range `(lo, hi]` must return exactly `hi − lo` rows:
