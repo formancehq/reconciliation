@@ -634,7 +634,7 @@ opens on an open break that is not accepted, never on the net alone. The verdict
 the statement and how to read them are defined in the [results
 reference](./transaction-level-results.md#4-the-verdict).
 
-### Result artifacts, retention and the period view
+### Result artifacts and retention
 
 The files and every field, retention and the file sizes are
 specified in the [results reference](./transaction-level-results.md), the source of truth for the
