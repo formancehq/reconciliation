@@ -634,7 +634,7 @@ reference](./transaction-level-results.md#4-the-verdict).
 
 ### Result artifacts, retention and the period view
 
-The files and every field, retention, the period summary and the file sizes are
+The files and every field, retention and the file sizes are
 specified in the [results reference](./transaction-level-results.md), the source of truth for the
 format; its [worked example](./transaction-level-results.md#10-worked-example-one-day-of-output)
 shows a complete day. Why the format is what it is: ADR-005 §7, item 3. Two points of mechanics

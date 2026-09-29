@@ -12,7 +12,7 @@ Three rules come out:
 - rule=qa-scenarios: seven days, two assets, one scripted story per class and edge case, including
   unkeyed movements of the PSP payment account (book breaks: new, persisting, resolved).
 - rule=qa-verdicts: a week that walks through every verdict, an empty day, an incomplete run
-  followed by a two-day window, a retry, and the week's period.json.
+  followed by a two-day window and a retry.
 
 The two qa rules are produced by a small reference engine that follows the results doc, and that
 asserts the doc's identities (books, bridge, residual, open items) on every day it writes. Next to
@@ -734,13 +734,7 @@ class Engine:
         data_file('unclassified.ndjson.gz', [
             {'side': u['side'], 'tx': u['tx'], 'ref': u['ref'], 'asset': u['asset'], 'outcome': 'warning',
              'state': u['state'], 'amount': str(u['amount']), 'insertedAt': iso(u['t'])} for u in st['unclassified']])
-        st['path'] = os.path.relpath(run_dir, self.out)
         m = self.manifest(day, run_id, st, files)
-        period_file = self.period_summary(day, st, m)
-        if period_file is not None:  # listed in the manifest, which therefore cannot be in it
-            data = (dump(period_file) + '\n').encode()
-            write(os.path.join(run_dir, 'period.json'), data)
-            files.append({'name': 'period.json', 'rows': len(period_file['days']), 'sha256': sha(data)})
         data = (dump(m) + '\n').encode()
         write(os.path.join(run_dir, 'manifest.json'), data)
         st['manifest'] = m
@@ -946,36 +940,6 @@ class Engine:
             "expiresAt": day_str(day + dt.timedelta(days=90)),
         })
         return m
-
-    def period_summary(self, day, st, current_manifest):
-        """The last day of a weekly period writes period.json, built from the period's manifests."""
-        if self.rule.period_type != 'weekly' or day.weekday() != 6:
-            return None
-        start = day - dt.timedelta(days=6)
-        days = []
-        for i in range(7):
-            d = start + dt.timedelta(days=i)
-            done = [r for r in self.runs if r['day'] == d and r['complete']]
-            if d == day:
-                done = [st]
-            if not done:
-                gap = 'incomplete' if any(r['day'] == d for r in self.runs) else 'no_run'
-                days.append({'day': day_str(d), 'gap': gap})
-                continue
-            r = done[-1]
-            m = current_manifest if d == day else r['manifest']
-            entry = {'day': day_str(d), 'runId': r['run']}
-            if d != day:  # the last day's manifest lists period.json, so its hash cannot be here
-                entry['manifestSha256'] = r['manifest_sha']
-            entry.update({'verdict': m['verdict'],
-                          'counts': {k: m['counts'][k] for k in ('flow', 'flowOutcome', 'stock', 'breaks')},
-                          'statement': {a: {'net': s['net'], 'flowGross': s['flowGross'], 'suspense': s['suspense']['open']}
-                                        for a, s in m['statement'].items()},
-                          'path': r['path'], 'expiresAt': m['expiresAt']})
-            days.append(entry)
-        return {"schemaVersion": "lettering/1", "rule": {"id": self.rule.id, "version": 1},
-                "period": {"type": "weekly", "from": day_str(start), "to": day_str(day), "tz": "Europe/Paris"},
-                "days": days}
 
 
 # --- Scenarios ------------------------------------------------------------------------------

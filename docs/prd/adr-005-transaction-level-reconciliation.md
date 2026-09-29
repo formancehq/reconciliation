@@ -3,7 +3,7 @@
 **Status:** Proposed. The design is under evaluation and nothing is implemented. The decisions
 taken so far are in §10.
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
-to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9 period summary), EN-2334 (R10 rewind oracle test) and
+to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9, the period alert's day list), EN-2334 (R10 rewind oracle test) and
 EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
 L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L10 EN-2369, L5 EN-2331 (closed); EN-2336 tracks the checkpoint read
 penalty, which this design does not depend on.
@@ -536,12 +536,12 @@ checkpoint's listing.
 5. **A period points at each day's diffs.**
    - The period is the rule's `periodType`, calendar-based in the rule's timezone. There is no
      separate accounting-period model.
-   - The period's alert, and a period summary built from the period's **daily manifests** rather
-     than from the ledgers, list each day with its counts, its net and gross, its breaks and the
-     link to its files. A closed period is never rewritten.
-   - **The summary is a file of the period's last run**, `period.json`, kept for the rule's
-     `retention` like the run's other files. A `daily` rule writes none
-     ([results reference](../technical/transaction-level-results.md#periodjson)).
+   - The period's alert, built from the period's **daily manifests** rather than from the ledgers,
+     lists each day with its counts, its net and gross, its breaks and the link to its files. A
+     closed period's alert is never rewritten.
+   - **No period file.** Any other view of a period is a query over its daily manifests, which are
+     kept for as long ([results reference
+     §9](../technical/transaction-level-results.md#9-queries)).
    - The 90-day default retention covers a monthly period plus a review margin.
 6. **First run: bounded backfill.** A rule's first run has no previous day, so no carried items.
    Left alone, a payment the PSP finalised before the rule existed, and that the product never

@@ -221,7 +221,7 @@ python3 tools/lettering-duckdb/testdata/generate.py
   | K02 | Payouts without their movement key debit it 7.00 on 5 Oct and 3.00 on 6 Oct | `unkeyed_payment_movement` on `debit`, new on 5 Oct, persisting on 6 Oct with 3.00, resolved on 7 Oct |
 
 - **`rule=qa-verdicts`** is one week through every verdict, with an empty day, an incomplete run
-  followed by a two-day window, a retry and the week's `period.json`.
+  followed by a two-day window and a retry.
 
 The two qa rules come from a small reference engine in `generate.py` that follows the results doc.
 It also writes `expected/`, the CSV each query must return, computed in Python. A per-day query

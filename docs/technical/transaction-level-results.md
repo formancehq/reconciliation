@@ -46,7 +46,6 @@
   stock.ndjson.gz         one row per open hold at the cut, plus the holds cleared since the previous run
   breaks.ndjson.gz        every break of the three legs, open or resolved since the previous run
   unclassified.ndjson.gz  the transactions whose state is in none of the rule's sets
-  period.json             weekly and monthly rules only, on the period's last run: the period summary
 ```
 
 - **The bucket** is the backup destination of the rule's **product ledger**, under a prefix next to
@@ -75,8 +74,7 @@
   - Its `openPrev` values are therefore recomputed, not picked up. The manifest's `reseed` records
     the gap with the last complete run, per asset and per book.
   - It is a complete run, and the chain's next link.
-- **Expiry.** A run's files, `period.json` included, are kept for the rule's `retention`, 90 days
-  by default, and the manifest's `expiresAt` says until when. A customer bound to a longer legal
+- **Expiry.** A run's files are kept for the rule's `retention`, 90 days by default, and the manifest's `expiresAt` says until when. A customer bound to a longer legal
   retention raises `retention`.
   - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
     (`engine` in the manifest). Its stock is rewound from the head; its carried items, with the
@@ -420,21 +418,6 @@ prefixes on the PSP side, the hold prefixes on the product side. Such a transact
 matching.
 A typical cause is a connector booking refunds on the original payment's id ([connector
 checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation), row 6).
-
-### `period.json`
-
-Written once, by the last run of a weekly or monthly period. It is built from the period's daily
-manifests and never rewritten afterwards.
-
-| Field | Meaning |
-|---|---|
-| `schemaVersion`, `rule` (`id`, `version`) | As in the manifest |
-| `period` | `type`, `from`, `to`, `tz` |
-| `days[]` | One entry per day. For a completed day: `day`, `runId`, `manifestSha256`, `verdict`, `counts` (as in the manifest: `flow`, `flowOutcome`, `stock`, `breaks`), `statement` per asset (`net`, `flowGross`, and `suspense`, the open items `suspense.open`), the run's `path` and its `expiresAt`. The last day's entry has no `manifestSha256`: that manifest lists `period.json` with its SHA-256, so it cannot be in it. For a day with no complete run: `day` and `gap` (`no_run` or `incomplete`) |
-
-A break still open at the period's end keeps the day it first appeared. A break resolved after the
-period closed shows up in the next period. A day replayed later changes its own files, not a
-closed summary.
 
 ### `diagnostic.json`
 

@@ -40,8 +40,7 @@ SELECT parse_filename(filename) AS name, sha256(content) AS sha256 FROM read_blo
 UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('carried'))
 UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('stock'))
 UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('breaks'))
-UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('unclassified'))
-UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(getvariable('run') || '/period*.json');
+UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('unclassified'));
 
 CREATE OR REPLACE TEMP TABLE actual_rows AS
 SELECT file AS name, count(*) AS rows FROM flow GROUP BY file

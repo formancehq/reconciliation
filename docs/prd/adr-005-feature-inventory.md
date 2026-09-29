@@ -20,6 +20,7 @@ below still hold.
 |---|---|---|
 | B12 + G8, incremental watch and slice retention (and the `--lettering-watch-interval` flag) | Deferred after V1: the run reads the watch in full | ADR-005 decision 25 |
 | G5 + G3, replay from the nearest stored stock and monthly anchors (`anchorRetention`, the anchor tag, per-file `expiresAt`) | Removed from V1: a replay rewinds the live listing from head, newest first; beyond `retention` its carried items are rebuilt from a backfill window | ADR-005 decisions 4 and 14 |
+| I5, `period.json` | Removed from V1: the period's alert lists each day, and any other period view is a query over the daily manifests | ADR-005 §7 item 5 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -201,7 +202,7 @@ feature's interest unless the row says otherwise.
 | I2 | Alert trigger: an open, non-accepted break; never the net; `incomplete` → engine-error alert | ADR §6, D16; RD §4 | Opening rule | Pending items and offsetting breaks move the net | NEC | S | Noisy or missed alerts. "non-accepted" goes with D9 |
 | I3 | Alert evidence = the full rendered statement (bridge, open items, books, triage text, lookup hints) | ADR §6; RD §10 "The statement" | A text *état de rapprochement* in the alert | Controller-readable | OPT | M | Minimal evidence (verdict, counts per class, top-K breaks, link) is enough for V1. Rendering follows E8–E10 |
 | I4 | Weekly/monthly periods for lettering rules (the monthly alert opened by the first failing daily run) | ADR §6, §7.5, D8 | Reuses `periodType` | Monthly close | OPT | S | Daily-only lettering rules in V1 |
-| I5 | `period.json` summary (one entry per day from the daily manifests, gaps, expired links, never rewritten, kept like an anchor) | ADR §7.5; RD §6 | A file of the period's last run | A period view that outlives the daily files | OPT | M | Saves a file format, "last run of the period" detection, the anchor-like retention and the self-reference rule (no `manifestSha256` for the last day). The same view is a query over the daily manifests. Depends on G3 for its retention |
+| I5 | `period.json` summary (one entry per day from the daily manifests, gaps, expired links, never rewritten, kept like an anchor) | ADR §7.5; RD §6 | A file of the period's last run | A period view that outlives the daily files | **Removed from V1** | M | Saves a file format, "last run of the period" detection, the anchor-like retention and the self-reference rule (no `manifestSha256` for the last day). The same view is a query over the daily manifests. Depends on G3 for its retention |
 
 ---
 
