@@ -387,7 +387,9 @@ transactions `(T, head_tx]`, unfiltered (§4).
 
 **`S` serves the metadata watch.** Only the logs carry the metadata changes recon monitors
 (`key_metadata_mutated`). So every log in `(head_prev, head]`, the logs since the previous run's
-head, is watched, and no log goes unwatched. That is a day of logs: it grows with the ledger's logs
+head, is watched, and no log goes unwatched. `head_prev` is the `logHead` of `previousRun`, the last
+complete run; with no previous run (a first run), it is `S_prev`, the cut the first run already
+resolves for continuity. That is a day of logs: it grows with the ledger's logs
 per day, not with its payments, and it is the largest step of a run (§7.13, §7.15). The run reads
 `(head_prev, head]` itself, over K ranges: 134–158 s for the 4.1M logs of a 1M-payment product
 ledger (§7.15), with no job and no stored state (ADR-005 decision 25).
@@ -492,7 +494,8 @@ at `7dd615dba`), so the unfiltered transactions of the window hold every balance
 | INV-3 | none | — | — | listed value | untouched: the listing is right |
 
 **Consistency check from `purged_accounts`** (optional; the rewind is exact without it). Since
-EN-2036 (ledger `38c6eef55`, protocol 13), each log carries `LedgerLog.purged_accounts`, the
+EN-2036 (ledger `38c6eef55`; the field came without a protocol bump, `grpcprotocol.Version` is
+`13` before and after it), each log carries `LedgerLog.purged_accounts`, the
 addresses whose `EPHEMERAL` current state it removed. `ListLogs` exposes it at
 `Log.payload.apply.log.purged_accounts`. The metadata watch reads the logs `(head_prev, head]`,
 which include `(S, head]`, so the run already has it. The field explains the one legitimate way an account open at `S` can be missing from the live listing:
@@ -1198,7 +1201,7 @@ ledger has no `IN`), lookups cost about a hundredth. The id range first falls in
 
 - **Plan with the slow regime.** Reading balances from the logs is 5.4 times slower than from the
   transactions on 8 ranges, and 9 times on one stream, as §7.8 measured. Decision 22 stands on speed
-  as well as on exactness and on never waiting for the index. The watch costs 14–25 s per 1M logs
+  as well as on exactness and on never waiting for the index. The watch costs 16–25 s per 1M logs
   on 8 ranges.
 - **The same `ListLogs` read varied 4 to 9 times across sessions** of one node, on identical data,
   while the transactions did not. This is worth the Ledger team's attention (L6,

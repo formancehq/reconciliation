@@ -292,9 +292,10 @@ Three caveats come with this choice, and each has a counter-measure:
 
 1. **Transaction metadata is mutable, and logs are not.** The key and state metadata are never
    rewritten (a correction is a new transaction), and the metadata watch over every log since the
-   previous run's head, `(head_prev, head]`, reports any change to a transaction's key, state,
-   business-id or merchant-reference field as `key_metadata_mutated`. How the watch is read is
-   decision 25; the structural fix is immutable transaction labels (ask **L8**).
+   previous run's head, `(head_prev, head]` (`S_prev` on a first run), reports any change to a
+   transaction's key, state, business-id or merchant-reference field as `key_metadata_mutated`.
+   How the watch is read is decision 25; the structural fix is immutable transaction labels (ask
+   **L8**).
 2. **The `payment_ref` index becomes mandatory.** While it builds, the read returns a retryable
    `Unavailable` with the reason `INDEX_BUILDING` (EN-2081, `f73eae1f3`), which recon matches on the reason, never on the message.
 3. **No free count-based completeness check**, because a filtered range has gaps by design.
