@@ -48,7 +48,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | A6 | `psp.paymentAccount`: PSP amount = net posting on an account pattern (`*` = one segment) | ADR §6, D17 | The PSP amount is read on the account a final credits, not on the hold | The hold shows 0 or the wrong amount when no pending came first, or when the amounts differ | NEC | S | Wrong PSP amounts, so false or missed breaks |
 | A7 | Application amount = net posting on the side's hold prefixes, in the settling direction | ADR §6 | Revenue recognition in the same batch counts for 0 | Defines "applied" without a `kind` tag | NEC | S | No definition of an application |
 | A8 | `psp.merchantRef` pairing (`merchantRef`, `pairedHold`, `pairedRef`, "apply invoice X") | ADR §6, §8 rule 3; DD §2 | An unapplied payment is paired with the open hold its merchant ref names | Turns "money arrived, PAY-42" into an action item | OPT | S/M | Saves a pairing pass, 3 fields and triage text. Loses the most actionable hint the design has (DD: "the most useful single field"). `formancepayments` does not carry it today |
-| A9 | `psp.movementKeys` (payout/fee keys added to the PSP flow membership) | ADR §6, D23, §8 rule 10 | One extra `EXISTS` term per declared field; those txs feed the payment-account book only | Lets the **debit** book close at 0 | OPT | S | See E13. Saves a contract field and about +31 % on the PSP flow read |
+| A9 | `psp.movementKeys` (payout/fee keys added to the PSP flow membership) | ADR §6, D23, §8 rule 10 | One extra `EXISTS` term per declared field; those txs feed the payment-account book only | Lets the book close at 0 on movements with a key of their own, on both sides: payouts and fees, and with `formancepayments` its conversions and order fills | OPT | S | See E13. Saves a contract field and about +31 % on the PSP flow read, but `formancepayments` conversions then leave a residual (DD §2) |
 | A10 | Refunds and chargebacks as their own 1-to-1 pairs | ADR §6, D7 | A refund is its own reference and a refund hold, never a reversal | Keeps one generic model | NEC | S | Nothing to save: already the simplest option |
 | A11 | Exact comparison, no tolerance | ADR §6, D6 | Any fee or FX difference is a break | Fees must be booked explicitly | NEC | S | Nothing to save: already the simplest option |
 | A12 | Per-asset arithmetic: exact minor units, colors collapsed, `asset: "*"` fan-out | ADR §6 | Every figure and row is keyed by asset | Multi-currency correctness | NEC | S | Mixed-asset sums are wrong |
@@ -130,7 +130,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | E10 | `flowGross` + `offsetting` flag | ADR §6; RD §5 | Σ\|drift\| of the open flow breaks, and whether both signs exist | A net of 0 can hide breaks | OPT | S | The alert already opens on breaks, never on the net: nothing lost |
 | E11 | `books` block (`openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk`) | RD §5, §6 | One entry per side, prefix and asset | Carries continuity | NEC | S | D4 has no carrier. `buckets` goes with C7, `letteredOther` with C10 |
 | E12 | Payment-account **credit** book → P1 `unkeyed_payment_movement` on leg `book` (`paymentAccounts` block) | D23; ADR §8 rule 10; DD §7.9; RD §5 | `input(S) − input(S_prev)` must equal the flow's credits | The only check that sees a final with no pending and no key (100 silent finals left every other check green) | NEC | M | A silent hole in completeness. **Blocked today** by `formancepayments`, which credits the account from other flows (ADR §10 open question) |
-| E13 | Payment-account **debit** book (`output`, `flowDebits`, `debitResidual`) + `psp.movementKeys` | D23; DD §7.9 | Debits must be keyed payouts, fees, refunds | Unkeyed payouts and fees are a residual | OPT | M | Payouts and fees are outside payment lettering. Saves A9, the debit direction, +31 % flow read, and half the Connectivity question |
+| E13 | Payment-account **debit** book (`output`, `flowDebits`, `debitResidual`) + `psp.movementKeys` | D23; DD §7.9 | Debits must be keyed payouts, fees, refunds | Unkeyed payouts and fees are a residual | OPT | M | Payouts and fees are outside payment lettering. Saves the debit direction; A9 stays needed for `formancepayments` conversions, and the Connectivity question is unchanged (DD §2) |
 | E14 | Triage in the manifest: top-K open breaks (NEC for the alert) + top-K `pending` and `resolved` lists | ADR §7.3, D21; RD §5 | The manifest renders the statement alone | The alert and a dashboard need no other file | NEC (breaks) / OPT (pending, resolved) | S | The pending and resolved lists come from the files. **Gap:** where `topK` is configured is not specified |
 | E15 | `execution` + `timingsMs` blocks (`readRanges`, `stockFrom`, `rewindTxs`, `lookups`, `watchLogs`) | ADR §7.8; RD §6 | Run telemetry in the manifest | Comparable run durations | OPT | S | Move to logs and metrics. No reader loss |
 | E16 | File parts beyond 250,000 rows (`flow-00000…`, `part` in `files`) | ADR §7.3; RD §8; DD §7.14 | Splits a data file into parts | Parallel compression and upload | OPT | S/M | One gzip of 75–142 MB: ~5 s on one thread; DuckDB reads it as fast. Saves the part logic in the writer, reader, checks and API |
@@ -241,9 +241,10 @@ judgement.
    write-off".
 6. **B14, phase-1 synchronous aggregate capture.** M saved, plus a capture kind and L7's reason to
    exist. It only yields an inexact "now" figure a few minutes early.
-7. **E13 + A9, the debit book and `psp.movementKeys`.** M saved, plus +31 % on the PSP flow read
-   and half of the open Connectivity question. Payouts and fees are outside payment lettering. Keep
-   the credit book (E12).
+7. **E13 + A9, the debit book and `psp.movementKeys`.** M saved, plus +31 % on the PSP flow read.
+   Payouts and fees are outside payment lettering. Keep the credit book (E12). On hold for the
+   Connectivity review: `formancepayments` conversions and order fills need A9 on both sides of
+   the book (DD §2).
 8. **B16, the resumable phase-2 job.** M saved. A run takes seconds to minutes; restart it.
 
 **Tier 2: small or medium saving, near-zero loss.**
@@ -280,5 +281,6 @@ judgement.
 - **`topK`:** where it is configured is unspecified.
 - **`openedAt`:** its source for holds opened before the first run, or after a purge restarted
   their metadata, is unspecified.
-- **E12, the credit book:** marked NEC, but it cannot close with `formancepayments` today (ADR §10
-  open question). V1 must pick option A or C before the book ships.
+- **E12, the credit book:** marked NEC. With `formancepayments` it closes on the payment events,
+  which carry the key, but not on conversions and order fills without A9 (ADR §10 open question,
+  DD §2). V1 must settle that review before the book ships.

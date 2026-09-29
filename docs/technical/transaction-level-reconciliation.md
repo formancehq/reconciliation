@@ -192,8 +192,9 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
     (`PAYIN_REFUNDED` and five siblings, `:430-704`) but as deltas **on the original payment id**,
     not as their own payment reference; row 7, as a `fees` account is declared (`:82`) but no
     mapping posts to it; row 10, as the profile indexes `timestamp` but neither `inserted_at` nor
-    the log date; row 12, as payouts and fees on `…:account:{acct}:main` would need a key of
-    their own. Row 11 does not hold today: see the open question below.
+    the log date; row 12, as conversions and order fills post on `…:account:{acct}:main` under
+    `payments.formance.com/conversion-id` and `order-id`, declared but not indexed (`:1073-1078`,
+    `:1143-1147`). Row 11 does not hold today: see the open question below.
 - The Stripe plugin, in [`formancehq/connectivity`](https://github.com/formancehq/connectivity)
   (`plugins/stripe` @ `e7ca3e29`), does not model holds. It books balance transactions keyed by
   `stripe_txn_id`, so rows 1–3 and 8 need a lettering mapping first.
@@ -208,18 +209,42 @@ decision is taken here; the table is for that review.
     `PAYOUT_REFUNDED` (`:548`);
   - every payment event, payins, payouts, transfers and refunds, sets
     `payments.formance.com/payment-id`, with its own `formance.com/observation.event-type`
-    (`:157-701`); `CONVERSION` and `ORDER_FILL` set no payment id (`:743`, `:788`), and whether
-    they touch the payment account is to check.
-- **What follows, with the rule as specified today:** the flow read returns these transactions,
-  since they carry the key. Their states are in no set, so they are `unclassified`, which caps
-  every day at `reconciled_with_warnings`. And they post on the payment account, so row 11 fails
-  and the book of decision 23 cannot close.
+    (`:157-701`);
+  - `CONVERSION` and `ORDER_FILL` debit `…:account:{src}:main` and credit `…:account:{dst}:main`
+    (`:736-741`, `:781-786`) with no payment id: they set `payments.formance.com/conversion-id`
+    and `order-id` (`:745`, `:790`), which are declared but not indexed.
+- **What follows, with the rule as specified today:**
+  - the flow read returns the payment events, since they carry the key. Their states are in no
+    set, so they are `unclassified`, which caps every day at `reconciled_with_warnings`;
+  - row 11 fails as written, but the book still closes on them: it counts every transaction the
+    flow read returns, unclassified ones included ([results reference
+    §5](transaction-level-results.md#5-the-statement));
+  - a conversion or an order fill is not returned, so it leaves a residual on both sides of the
+    book, a P1 `unkeyed_payment_movement` on every day that has one.
 
 | Option | What changes | Trade-off |
 |---|---|---|
 | A. The connector mapping gives every movement kind its own key | The mapping, per customer | Clean, but depends on Connectivity and on each implementation |
-| B. The rule declares a set of **movement states** (payout, transfer, refund and outflow event types): transactions with the key in those states feed the payment-account book, not the matching nor `unclassified` | The rule contract (EN-2316) | Works with the connector as it is and keeps the book strict; conversions and order fills still need a key or to stay off the account |
+| B. The rule declares a set of **movement states** (payout, transfer, refund and outflow event types): transactions with the key in those states feed the payment-account book, not the matching nor `unclassified` | The rule contract (EN-2316) | Works with the connector as it is and keeps the book strict; conversions and order fills still need their ids in `psp.movementKeys`, indexed |
 | C. The book becomes a warning instead of a P1 break | Decision 23 | Loses the only check that sees a final with no pending and no reference |
+
+**What this means for the debit book and `psp.movementKeys`** (decision 23, feature inventory E13
+and A9), for the same review:
+
+- **With `formancepayments`, the payment events need neither.** They carry the payment key on
+  both sides of the account, so the book closes on them whichever option is taken.
+- **Conversions and order fills need `psp.movementKeys` on both sides**, not only on the debit
+  side: the rule would name `conversion-id` and `order-id`, and the ledger would index them
+  (row 10). Dropping the debit book alone therefore leaves the credit residual of every
+  conversion, and keeps the need for `psp.movementKeys`.
+- **The cost stays where the rule declares movement keys:** one `EXISTS` term per field in the PSP
+  flow membership, +31 % on its read in §7.9.
+- **What only the debit book sees:** a payout, a fee or a refund booked on the account without its
+  key. The debit book is not needed for payment lettering; it is a treasury check. A refund with
+  its own hold is still checked by that hold (ADR-005 decision 7).
+- **Questions for the Connectivity team:** do conversions and order fills post on the same
+  `…:main` accounts as payins in production mappings; can the two ids be indexed; does any mapping
+  debit the account without a key (fees are declared at `:82` but not posted today)?
 
 The product side is the customer's own Numscript. Its conventions are in the booking table above,
 and the booking guide ([EN-2335](https://formance-team.atlassian.net/browse/EN-2335)) will turn both

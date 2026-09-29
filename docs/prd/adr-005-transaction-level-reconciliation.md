@@ -689,8 +689,10 @@ for the Ledger team to weigh against its own users:
 
 **Open, to review with the Connectivity team (no decision):** decision 23 assumes that the payment
 account is credited only by payment finals. `formancepayments` also credits it from payouts,
-transfers, compensations and reversed refunds, and every one of these carries the payment key.
-The facts and the options are in the [design doc
+transfers, compensations and reversed refunds. These carry the payment key, so the book closes on
+them, but they are `unclassified` every day. Its conversions and order fills post on the account
+under ids of their own, which only `psp.movementKeys` would bring into the book. The facts, the
+options and what they mean for the debit book are in the [design doc
 §2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation).
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
