@@ -207,11 +207,11 @@ feature's interest unless the row says otherwise.
 | `buckets` | rule | ADR §6 | C7 | OPT, **kept** | Hard-code the 4 buckets, or drop them |
 | `--lettering-retention` | operator | ADR §7.4, §7.8, D4 | G1 | NEC (default 90 d) | Fixed at 90 d; the lifecycle rule must match it |
 | `anchorRetention` | rule | ADR §7.4, D14 | G3 | **Removed with G3** | Goes with the anchors |
-| `backfillFrom` | rule | ADR §7.6, D9 | B17 | NEC (a default exists) | Keep the default, drop the knob? The knob is also the re-seed substitute (D10) |
+| `backfillFrom` | rule | ADR §7.6, D9 | B17 | NEC (a default exists) | The knob is also the restart's override after a `stored_file_mismatch` (B17, D26) |
 | `periodType` (`daily`/`weekly`/`monthly`), timezone, cut-off | rule | ADR §6, D8 | I1/I4 | NEC (daily, tz, cut-off); OPT (weekly/monthly) | — |
 | `asset` (`"*"` fan-out) | rule | ADR §6 | A12 | NEC | — |
 | `severity` | rule | RD §3 | I1 (reused) | NEC (existing) | — |
-| `topK` | unspecified (10 in the example) | RD §5, §6 | E14 | — | **Gap:** say whether it is a rule parameter or a constant (prefer a constant) |
+| `topK` | rule (default 10, at most 100) | ADR §6; RD §5, §6 | E14 | NEC (a default exists) | — |
 | `--lettering-read-ranges` | operator | ADR §7.8, D13 | B6 | OPT | K fixed at 8 |
 | `--lettering-max-concurrent-reads` | operator | ADR §7.8, D13 | B7 | OPT | No cap |
 | `--lettering-watch-interval` | operator | ADR §7.8, D25 | B11/B12 | **Removed with B12** | No watch in V1: B11 is deferred too |
