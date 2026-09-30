@@ -661,8 +661,9 @@ and the statement.
   `reversed_after_application`. That holds even when the product also books on it today (an
   application undone the same day): the window alone would miss the earlier final state and
   application, and report a false orphan. Failures are rare, so this costs little.
-- Lookups are grouped, 100 to 500 references per `Or` of equalities on the key, key first (the
-  ledger has no `IN`): each then costs about a hundredth of a lookup alone (§7.13, EN-2318). The
+- Lookups are grouped, **100 references** per `Or` of equalities on the key, key first (the
+  ledger has no `IN`), a constant of the engine at the low end of the measured 100 to 500: each
+  then costs about a hundredth of a lookup alone (§7.13, EN-2318). The
   run's metrics count them. A first run's seed adds none on the product side: its product side
   starts `psp.grace` before `backfillFrom` (ADR-005 §7, item 6).
 

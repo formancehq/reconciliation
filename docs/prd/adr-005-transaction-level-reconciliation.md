@@ -240,7 +240,7 @@ ledger's HLC insertion date, which follows the id order) is at or before the cut
   `inserted_at > cut-off` costs a memory spike the size of the history for an old day's replay or a
   long backfill.
 - **The `inserted_at` index is mandatory on both ledgers** (decision 12; §8 rule 8). The rule's
-  validation rejects a ledger without it, and a run waits while it builds, exactly as for the key's
+  validation rejects a ledger without it, and a run waits while it builds (§7 item 8), exactly as for the key's
   metadata index.
 - **Bisection was considered and dropped.** Halving the contiguous id range would find the cut
   without the index, in about 20 reads for 1M rows. It is no faster, was never benched, and would
@@ -678,6 +678,12 @@ V1 runs no periodic proof against a checkpoint.
    - `--lettering-retention` (default 90 days): how long a run's files are kept. It sets the
      manifest's `expiresAt` and bounds the byte-identical replays (item 7); the storage's lifecycle
      rule, set to the same age, deletes the files (item 4).
+
+   Two more values are **constants of the engine**, not settings: key lookups go by groups of
+   **100** references (§6), and a failed read is tried **5 times**, waiting 1, 2, 4 and 8 s between
+   tries. Past the fifth failure the job stops without writing its manifest, so the run is
+   unfinished and starts again from the beginning at the next tick (item 2). An index still
+   building (`INDEX_BUILDING`) is therefore waited for from tick to tick.
 
    K, the per-step durations and the read counts are exported as metrics and logs, not written to
    the manifest. How K was chosen: [design doc
