@@ -236,6 +236,8 @@ fresh "$qa3"; edit "$work/run/$m" 's/"fromLookups":"5000"/"fromLookups":"0"/'
 expect_violation "fromLookups" from_lookups "$lettering" check-chain "$qa2" "$work/run"
 fresh "$qa3"; edit "$work/run/breaks.ndjson.gz" '/"ref":"S11"/s/"lifecycle":"persisting"/"lifecycle":"new"/'
 expect_violation "a persisting break called new" break_lifecycle "$lettering" check-chain "$qa2" "$work/run"
+fresh "$qa4"; edit "$work/run/breaks.ndjson.gz" '/"ref":"S04"/s/"breakId":"[0-9a-f]*"/"breakId":"0000000000000000"/'
+expect_violation "a break that changes class under a new breakId" break_lifecycle "$lettering" check-chain "$qa3" "$work/run"
 fresh "$qa2"; edit "$work/run/stock.ndjson.gz" '/INV-S04/s/"lifecycle":"persisting"/"lifecycle":"new"/'
 expect_violation "a persisting hold called new" stock_lifecycle "$lettering" check-chain "$qa1" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"manifestSha256":"[0-9a-f]*"/"manifestSha256":"00"/'

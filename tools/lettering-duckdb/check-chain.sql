@@ -43,21 +43,18 @@ SELECT 'from_lookups', s.asset,
 FROM m_statement s LEFT JOIN found f USING (asset)
 WHERE coalesce((s.s->'suspense'->>'fromLookups')::HUGEINT, 0) <> coalesce(f.from_lookups, 0);
 
--- A break is new when it was not open before, and otherwise keeps its openedOn; its
--- previousClass names the class it had; an open break never vanishes without being resolved.
+-- A break is new when it was not open before, and otherwise keeps its openedOn, whatever its
+-- class now; an open break never vanishes without being resolved.
 INSERT INTO chain_violations
 WITH was AS (SELECT * FROM prev_breaks WHERE outcome = 'break')
 SELECT 'break_lifecycle', b.breakId,
        CASE WHEN w.breakId IS NULL AND b.lifecycle <> 'new' THEN b.lifecycle || ', but it was not open before'
             WHEN w.breakId IS NOT NULL AND b.lifecycle = 'new' THEN 'new, but it was open before'
-            WHEN w.breakId IS NOT NULL AND b.openedOn <> w.openedOn THEN 'openedOn ' || b.openedOn || ', was ' || w.openedOn
-            ELSE 'previousClass ' || coalesce(b.previousClass, 'none') || ', earlier class ' || w.class END
+            ELSE 'openedOn ' || b.openedOn || ', was ' || w.openedOn END
 FROM breaks b LEFT JOIN was w USING (breakId)
 WHERE (w.breakId IS NULL AND b.lifecycle <> 'new')
    OR (w.breakId IS NOT NULL AND b.lifecycle = 'new')
    OR (w.breakId IS NOT NULL AND b.openedOn <> w.openedOn)
-   OR (w.breakId IS NOT NULL AND b.lifecycle = 'persisting'
-       AND b.previousClass IS DISTINCT FROM CASE WHEN b.class <> w.class THEN w.class END)
 UNION ALL
 SELECT 'break_lifecycle', w.breakId, 'open before, and neither persisting nor resolved now'
 FROM (SELECT * FROM prev_breaks WHERE outcome = 'break') w ANTI JOIN breaks b USING (breakId);

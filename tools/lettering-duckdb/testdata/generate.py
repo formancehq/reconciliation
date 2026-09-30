@@ -75,7 +75,7 @@ def worked_example(out):
     pay39 = [l for l in blocks['carried.ndjson.gz'].strip().splitlines() if '"PAY-39"' in l][0]
     pay40 = ('{"ref":"PAY-40","asset":"EUR/2","class":"unapplied_payment","outcome":"pending",'
              '"pspAmount":"70000","productAmount":"0","drift":"70000","firstSeen":"2026-09-23",'
-             '"firstSide":"psp","breakOn":"2026-09-24","psp":[{"tx":1160874,"state":"payin.succeeded",'
+             '"breakOn":"2026-09-24","psp":[{"tx":1160874,"state":"payin.succeeded",'
              '"amount":"70000","insertedAt":"2026-09-23T15:03:12Z"}],"product":[]}')
     carried23 = gz([pay39, pay40])
     write(os.path.join(day23, 'carried.ndjson.gz'), carried23)
@@ -334,7 +334,6 @@ class Engine:
         for e in applies:
             w_app_by_ref.setdefault(e.ref, []).append(e)
         refs = set(carried_in) | set(w_psp_by_ref) | set(w_app_by_ref)
-        lookups = {'psp': 0, 'product': 0}
         rows = []
         for ref in sorted(refs):
             w_psp = w_psp_by_ref.get(ref, [])
@@ -345,16 +344,15 @@ class Engine:
             else:
                 psp_items, app_items = list(w_psp), list(w_app)
                 if w_app and not w_psp:
-                    lookups['psp'] += 1
+                    # an application of a reference not carried in: a PSP lookup, then a product one
+                    # when it finds a final state
                     psp_items = [e for e in book.psp_by_ref.get(ref, []) if e.tx <= t_psp]
                     if any(e.kind == 'final' for e in psp_items):
                         app_items = [e for e in book.apply_by_ref.get(ref, []) if e.tx <= t_prod]
                 elif any(e.kind == 'failed' for e in w_psp):
                     # a failure on a reference not carried in: its whole history, on both ledgers
-                    lookups['product'] += 1
                     app_items = [e for e in book.apply_by_ref.get(ref, []) if e.tx <= t_prod]
                     if app_items:
-                        lookups['psp'] += 1
                         psp_items = [e for e in book.psp_by_ref.get(ref, []) if e.tx <= t_psp]
             rows.append(self.flow_row(day, ref, psp_items, app_items, f_psp, f_prod, t_prod, ref in carried_in))
 
@@ -383,7 +381,7 @@ class Engine:
             verdict = 'reconciled'
         return {'verdict': verdict, 'day': day, 'run': run_id, 'complete': True, 'rows': rows, 'carried': carried,
                 'stock': stock, 'books': books, 'pay': pay, 'breaks': breaks, 'unclassified': unclassified,
-                'cuts': {'psp': (f_psp, t_psp), 'product': (f_prod, t_prod)}, 'lookups': lookups,
+                'cuts': {'psp': (f_psp, t_psp), 'product': (f_prod, t_prod)},
                 'win_psp': win_psp, 'win_prod': win_prod, 'anomalies': anomalies,
                 'pay_totals': dict(prev['pay_totals'] if prev else {}, **{p['asset']: (p['input'], p['output']) for p in pay})}
 
@@ -408,7 +406,6 @@ class Engine:
         t_app = min((e.t for e in app_items), default=None)
         t_final = min((e.t for e in finals), default=None)
         t_fail = min((e.t for e in fails), default=None)
-        t_terminal = min([t for t in (t_final, t_fail) if t], default=None)
 
         # A class reads the net amounts: applications that sum to 0 count as none (results doc §6).
         applied = product_amount != 0
@@ -442,16 +439,10 @@ class Engine:
                 klass, outcome = 'orphan_application', 'break'
         elif klass in ('under_applied', 'over_applied', 'orphan_application', 'reversed_after_application'):
             outcome = 'break'
-        if klass == 'in_progress':
-            first_side = None
-        elif t_terminal and (t_app is None or t_terminal < t_app):
-            first_side = 'psp'
-        else:
-            first_side = 'product'
         merchant = next((e.merchant for e in finals if e.merchant), None)
         return {'ref': ref, 'asset': asset, 'class': klass, 'outcome': outcome, 'pspAmount': psp_amount,
                 'productAmount': product_amount, 'drift': drift, 'impact': impact, 'firstSeen': first_seen,
-                'firstSide': first_side, 'breakOn': break_on, 'merchant': merchant, 'pairedHold': None,
+                'breakOn': break_on, 'merchant': merchant, 'pairedHold': None,
                 'psp_ev': psp_items, 'app_ev': app_items, 'carried_in': carried,
                 'drift_before': before[0] - before[1], 'psp_before': before[0]}
 
@@ -600,9 +591,7 @@ class Engine:
             out.append({'breakId': bid, 'leg': leg, 'key': key, 'asset': asset, 'row': r,
                         'priority': PRIORITY[r['class']], 'lifecycle': 'persisting' if was else 'new',
                         'openedOn': was['openedOn'] if was else day, 'resolvedOn': None, 'amount': amount,
-                        'class': r['class'],
-                        'previousClass': was['class'] if was and was['class'] != r['class'] else None,
-                        'open': True})
+                        'class': r['class'], 'open': True})
         for bid, was in prev_open.items():
             if bid in seen:
                 continue
@@ -615,8 +604,7 @@ class Engine:
             assert row is not None, ('a resolved break has no row today', was['key'])
             out.append({'breakId': bid, 'leg': was['leg'], 'key': was['key'], 'asset': was['asset'], 'row': row,
                         'priority': was['priority'], 'lifecycle': 'resolved', 'openedOn': was['openedOn'],
-                        'resolvedOn': day, 'amount': was['amount'], 'class': was['class'],
-                        'previousClass': None, 'open': False})
+                        'resolvedOn': day, 'amount': was['amount'], 'class': was['class'], 'open': False})
         out.sort(key=lambda b: (0 if b['open'] else 1, b['priority'], -abs(b['amount']), b['breakId']))
         return out
 
@@ -658,8 +646,6 @@ class Engine:
             o['impact'] = str(r['impact'])
         if r['firstSeen']:
             o['firstSeen'] = day_str(r['firstSeen'])
-        if r['firstSide']:
-            o['firstSide'] = r['firstSide']
         if r['breakOn']:
             o['breakOn'] = day_str(r['breakOn'])
         if r['merchant']:
@@ -693,8 +679,6 @@ class Engine:
         if b['resolvedOn']:
             o['resolvedOn'] = day_str(b['resolvedOn'])
         o['amount'] = str(b['amount'])
-        if b['previousClass']:
-            o['previousClass'] = b['previousClass']
         if b['leg'] == 'flow':
             row = self.flow_json(b['row'])
         elif b['leg'] == 'book':
@@ -823,7 +807,6 @@ class Engine:
                                     "count": len(rs), "top": top(rs, 'drift')}
                                    for (c, o), rs in sorted(outside.items())],
                 "flowGross": str(sum(abs(r['drift']) for r in breaks)),
-                "offsetting": any(r['drift'] > 0 for r in breaks) and any(r['drift'] < 0 for r in breaks),
                 "suspense": {"openPrev": str(open_prev), "countPrev": count_prev, "fromLookups": str(from_lookups),
                              "open": str(open_), "count": len(carried), "continuityOk": True},
                 "unclassified": [{"side": s, "state": t, "amount": str(v[0]), "count": v[1]}
@@ -877,9 +860,7 @@ class Engine:
             events = self.book.psp if side == 'psp' else self.book.prod
             head = Book.last_tx(events, cutoff(day) + dt.timedelta(hours=2))
             cuts.append({'side': side, 'ledger': ledger, 'logFrom': lo, 'logTo': hi, 'txFrom': lo, 'txTo': hi,
-                         'txHead': head, 'logHead': head, 'logSha256': sha(f'{ledger}:{hi}'.encode())})
-        # The next run's metadata watch starts at this run's log heads.
-        st['heads'] = {c['side']: c['logHead'] for c in cuts}
+                         'txHead': head, 'logHead': head})
         m = {
             "schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
             "runId": run_id,
@@ -888,16 +869,10 @@ class Engine:
             m["previousRun"] = {"runId": self.prev['run'], "day": day_str(self.prev['day']),
                                 "manifestSha256": self.prev['manifest_sha']}
         start = cutoff(day) + dt.timedelta(hours=2, seconds=5)
-        # The metadata watch reads the logs since the previous run's head (decision 25).
-        watch_from = {c['side']: self.prev['heads'][c['side']] if self.prev else c['logFrom'] for c in cuts}
         m.update({
             "period": self.period(day),
             "startedAt": iso(start), "finishedAt": iso(start + dt.timedelta(seconds=27)),
-            "timingsMs": {"cut": 400, "flow": 1100, "lookup": 30, "stock": 700, "watch": 650, "join": 90, "write": 100},
             "cuts": cuts,
-            "execution": {"readRanges": 8, "maxConcurrentReads": 16, "stockFrom": "live",
-                          "rewindTxs": {c['side']: c['txHead'] - c['txTo'] for c in cuts}, "lookups": st['lookups'],
-                          "watchLogs": {c['side']: c['logHead'] - watch_from[c['side']] for c in cuts}},
             "verdict": verdict,
             "counts": {"flow": flow_counts, "flowOutcome": outcomes, "stock": stock_counts, "breaks": breaks_counts,
                        "unclassified": {side: sum(1 for u in st['unclassified'] if u['side'] == side)

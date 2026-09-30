@@ -228,8 +228,9 @@ is at or before the cut-off.
 
 - Both ledgers are cut at the **same business time**, whatever their cluster and whenever the run
   starts. This is better than a checkpoint's cross-cluster semantics.
-- `S` and `logSha256`, the SHA-256 of the log at `S` (results doc §6), go into the capture, so the
-  cut is identified exactly and can be re-derived later.
+- `S` and `T` go into the capture, so the cut is identified exactly and can be re-derived later:
+  the logs are immutable. There is no `logSha256`, a hash of the log at `S`: it would hold for one
+  ledger protocol version only.
 - **Resolving `S`.** `ListLogs` rejects `reverse`, so `S` is **(the first log with
   `date > cut-off`) − 1**: one ascending page of size 1 on the log-date index. `T` is resolved the
   same way on the `inserted_at` index.
@@ -430,10 +431,8 @@ checkpoint's listing.
   when that finds a final state, on the product ledger too; a window reference with a `failed`
   event that is not carried is looked up on both ledgers, even when the product books on it the same
   day. So `over_applied` and `reversed_after_application` are caught across days. The cost is
-  O(looked-up references), counted in the manifest ([design doc
+  O(looked-up references), counted in the run's metrics ([design doc
   §5](../technical/transaction-level-reconciliation.md#5-matching-semantics)).
-- **Which came first** is recorded on every flow row as `firstSide`. It is informative: it changes
-  no priority and no bridge line.
 - **Classes.** The flow classes (`matched`, `under_applied` / `over_applied`, `unapplied_payment`,
   `in_progress`, `failed`, `applied_before_final`, `orphan_application`,
   `reversed_after_application`) and the stock classes (`open` with its age bucket, `wrong_sign`,
@@ -463,7 +462,8 @@ checkpoint's listing.
   - All four are rule parameters.
 - **`breakId`.** Ageing compares with the previous run's artifact, matched by a `breakId` that
   hashes the rule, leg, key (`ref`, or `side` + `hold`) and asset, not the class: a break that
-  changes class stays the same break, with its comments. Lifecycle and reopening are in
+  changes class stays the same break, with its comments, and its earlier class is on the previous
+  run's row with the same `breakId`. Lifecycle and reopening are in
   the [results reference
   §7](../technical/transaction-level-results.md#7-how-rows-move-from-day-to-day).
 - **Arithmetic.** Exact integer minor units, colors collapsed per asset, and multi-asset through
@@ -580,8 +580,8 @@ checkpoint's listing.
      oldest `firstSeen` of the last complete run's carried items, which is the first-run default
      when nothing was carried (decision 26).
 7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
-   (`S`, `T`, `logSha256`) is in the signed capture. A replay runs the daily algorithm as of that
-   day, and no stock is stored for it.
+   (`S` and `T` on each ledger) is in the signed capture. A replay runs the daily algorithm as of
+   that day, and no stock is stored for it.
    - The flow costs the same at any age, one day's id range `(T_prev, T]`.
    - The stock is the live listing rewound from head: about 6 min at the end of the 90-day retention
      and 26 min a year later, at 1M transactions a day, in the memory of the open book (measured on
@@ -599,7 +599,8 @@ checkpoint's listing.
    - `--lettering-max-concurrent-reads` (default 16): caps the readers across every run
      of the process; a read that would exceed it waits for a slot.
 
-   The manifest records the K a run used, so run durations stay comparable. How K was chosen: [design doc
+   K, the per-step durations and the read counts are exported as metrics and logs, not written to
+   the manifest. How K was chosen: [design doc
    §7.7](../technical/transaction-level-reconciliation.md#77-concurrent-readers-choosing-k).
 9. **Reads.** The run's status comes from its capture, for a run whose manifest is written.
    Breaks are paged from the artifact by the API, and the API lists every file of a run with a pre-signed URL, so a customer reads them
@@ -691,9 +692,9 @@ for the Ledger team to weigh against its own users:
 | 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break: `applied_before_final` stays pending within `psp.grace`, unknown references included, then becomes `orphan_application` (P1). Missing references are looked up by key, and the alert opens on a break, never on the net alone (§6). |
 | 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern), not on the hold, which a final event with no `pending` before it moves by 0 (§6). |
 | 18 | Cases across days | A PSP `failed` never applied is `failed` (ok), and window references with a `failed` event that are not carried are looked up on both ledgers every run, so `reversed_after_application` is caught. The rest (a `businessId` per `holds` entry, `psp.merchantRef`, the previous stock read from storage, the watch since the previous head) is in §5 and §6. |
-| 19 | Simplifications | The bridge does not group by `firstSide`, which stays on flow rows for analysis only. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` (§6, §7). |
+| 19 | Simplifications | Flow rows carry no `firstSide`: which side came first follows from `firstSeen` and the row's `psp` and `product` events. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` (§6, §7). |
 | 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**; a business that applies later or by hand raises it. A payment-to-apply hold is an option outside the V1 rule contract ([design doc](../technical/transaction-level-reconciliation.md#when-application-is-deferred-or-manual-a-payment-to-apply-hold)). |
-| 21 | Result files, statement and triage | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a write-off state, a flat transactions file, a separate alert threshold. |
+| 21 | Result files, statement and triage | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a write-off state, a flat transactions file, a separate alert threshold, a break's `previousClass` (the previous run's row with the same `breakId` has it) and an `offsetting` flag next to `flowGross`. |
 | 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, newest first, not the logs, and so do replays. The logs keep only the metadata watch (§5, §7). |
 | 23 | The PSP payment account | A booking convention (§8, rule 10), with the keys of the account's other movements in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
 | 24 | Bounded date filters in the cut | `S` and `T` are resolved with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it (§5). |

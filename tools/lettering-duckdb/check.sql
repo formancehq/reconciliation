@@ -173,14 +173,11 @@ FROM m_carried_outside l FULL JOIN found f USING (asset, class, outcome)
 WHERE coalesce(l.amount, 0) <> coalesce(f.amount, 0) OR coalesce(l.count, 0) <> coalesce(f.n, 0);
 
 INSERT INTO violations
-WITH found AS (SELECT asset, sum(abs(drift)) AS gross, bool_or(drift > 0) AND bool_or(drift < 0) AS offsetting
-               FROM flow WHERE outcome = 'break' GROUP BY asset)
+WITH found AS (SELECT asset, sum(abs(drift)) AS gross FROM flow WHERE outcome = 'break' GROUP BY asset)
 SELECT 'bridge_gross', s.asset,
-       'statement flowGross ' || (s.s->>'flowGross') || ' offsetting ' || (s.s->>'offsetting')
-       || ', flow ' || coalesce(f.gross, 0) || ' offsetting ' || coalesce(f.offsetting, false)
+       'statement flowGross ' || coalesce(s.s->>'flowGross', 'missing') || ', flow ' || coalesce(f.gross, 0)
 FROM m_statement s LEFT JOIN found f USING (asset)
-WHERE v_int(s.s->>'flowGross') <> coalesce(f.gross, 0)
-   OR (s.s->>'offsetting')::BOOLEAN IS DISTINCT FROM coalesce(f.offsetting, false);
+WHERE v_int(s.s->>'flowGross') <> coalesce(f.gross, 0);
 
 INSERT INTO violations
 WITH listed AS (SELECT asset, unnest(from_json(s->'unclassified', '[{"side":"VARCHAR","state":"VARCHAR","amount":"HUGEINT","count":"BIGINT"}]'), recursive := true)

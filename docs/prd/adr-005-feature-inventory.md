@@ -27,6 +27,11 @@ below still hold.
 | E16, file parts | Removed from V1: one gzip per data file, whatever its size (~4 s of one thread for the 75–142 MB flow file of a 1M day); readers follow `files` or glob `flow*`, so parts can come back without breaking them | RD §8; DD §7.14 |
 | B13, purge consistency check (`purge_check`) | Removed from V1: the rewind adds a purged hold back from its first touch anyway, and an untouched hold missing from the listing breaks the books' continuity; no `purge_check` reason, no `purged_accounts` read, and L10 no longer needs a filter on it | DD §4; ADR §9 (L10) |
 | B16, resumable job | Removed from V1: no progress is recorded; writes are ordered (data files, capture, manifest last, alert), a run exists once its manifest is written, and a run that did not finish is started again from the beginning with a new `runId` | ADR-005 §7 item 2 |
+| C4, `firstSide` on flow rows | Removed from V1: analytics only; `firstSeen` and the row's `psp[]` and `product[]` events give which side came first | ADR-005 decision 19 |
+| D8, `previousClass` on break rows | Removed from V1: a class change stays the same break (same `breakId`, `persisting`), and the previous run's breaks file, joined on `breakId`, gives the old class; `check-chain` still checks that an open break is never lost | ADR-005 decision 21; RD §7 |
+| E10, `flowGross` + `offsetting` flag | Simplified: the `offsetting` flag is removed; `flowGross` stays, since the alert's headline shows it first | ADR-005 decision 21; RD §5 |
+| E15, the manifest's `execution` and `timingsMs` blocks | Removed from V1: K, the per-step durations and the read counts are exported as OTel metrics and engine logs; `startedAt` and `finishedAt` stay | ADR-005 §7 item 8 |
+| F3, `logSha256` in `cuts` and in the capture | Removed from V1: `S` and `T` per ledger suffice to replay, the logs are immutable, and the hash is stable for one protocol version only | ADR-005 §5 and §7 item 7 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -89,7 +94,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | C1 | Join per reference, applications summed per reference (split, partial) | ADR §6 "Cardinality" | One payment may be applied by several txs | Split payments are common | NEC | S | False under- or over-applications |
 | C2 | 9 flow classes (`matched`, `under_applied`, `over_applied`, `unapplied_payment`, `in_progress`, `failed`, `applied_before_final`, `orphan_application`, `reversed_after_application`), read on net amounts | ADR §6, D18, D21; RD §6 | Classifies every reference | The core output | NEC | M | No result. Minor merges are possible (`reversed_after_application` into `orphan_application`, both P1; `in_progress`/`failed` rows kept only "so every ref has a row"), for little saving |
 | C3 | Per-side grace (`product.grace` 1 d, `psp.grace` 7 d), `pending` outcome, `firstSeen`, `breakOn`, promotion to a break | ADR §6, D16, D20 | Lets each side lag the other before it is a break | Cross-midnight lag; SEPA/ACH apply at pending | NEC | S/M | Every cross-cut lag is a break. One shared grace would be simpler, but loses the 1 d vs 7 d asymmetry |
-| C4 | `firstSide` on flow rows | ADR §6, D16, D19 | Which side came first (PSP terminal state or first application) | Analytics only; "changes no priority and no bridge line" | OPT | S | Nothing functional lost |
+| C4 | `firstSide` on flow rows | ADR §6, D16, D19 | Which side came first (PSP terminal state or first application) | Analytics only; "changes no priority and no bridge line" | **Removed from V1** | S | Nothing functional lost: `firstSeen` and the row's events give it |
 | C5 | Stock classes `open` + `wrong_sign` (P4) | ADR §6, D21 | Open hold, or balance of the wrong sign | `wrong_sign` is the only signal for an invoice paid twice by two separately matched payments | NEC | S | A double payment of one invoice goes unseen (both flows are `matched`) |
 | C6 | `stuck` via `maxAge` (no default, per side) | ADR §6 | Open past `maxAge` → P4 break | Per-key `stale_holds` signal | OPT | S | Overlaps the `stale_holds` template. Without a `maxAge` it never fires anyway |
 | C7 | Ageing: `openedAt`, `ageDays`, `bucket`, `buckets` param (0–1, 2–7, 8–30, > 30 d) | ADR §6; RD §6 stock | Age of every open hold and bucket counts per book | Credit-management view | OPT | S | Saves the bucket counts in `books` and a rule param. `ageDays` is still needed by C6 and triage. **Gap:** the source of `openedAt` for a hold opened before the first run, or re-listed after metadata purge, is not specified |
@@ -110,8 +115,8 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | D4 | Books continuity per side, prefix and asset: `open = openPrev + opened − lettered`, `openPrev` from the stored stock | ADR §2.3; RD §5 | Ties the window's hold movements to the rewound stock | The only completeness proof of the filtered flow read | NEC | M | A dropped event silently shrinks the universe |
 | D5 | Open-items (suspense) identity: `open = openPrev + net + fromLookups` → `incomplete` (`continuity`) | D21; RD §5 | Ties carried(S_prev) + the window's net to carried(S) | Detects a carried item lost or counted twice | OPT | S | An engine self-check on the engine's own file. `suspense.open` (the sum of carried drift) can stay as a figure. Needs E8's `impact` |
 | D6 | Lifecycle: `new`/`persisting`/`resolved` (breaks), `new`/`persisting`/`cleared` (holds) | ADR §6; RD §7 | Compares with the previous run's artifacts | "What changed since yesterday" | OPT | M | Saves the diff against the previous breaks and stock files, the `resolved` rows and part of `check-chain`. Loses new-vs-persisting in triage and the alert |
-| D7 | Stable `breakId` (hash of rule, leg, key, asset; not the class) | ADR §6, D16 | A break keeps its id when its class changes | Comments, lifecycle | OPT | S | Cheap. Required by D6, D8 |
-| D8 | `previousClass` on the day the class changes | ADR §6; RD §6 | Records the old class | Audit trail | OPT | S | Nothing functional lost |
+| D7 | Stable `breakId` (hash of rule, leg, key, asset; not the class) | ADR §6, D16 | A break keeps its id when its class changes | Comments, lifecycle | OPT | S | Cheap. Required by D6; with D8 gone, it is also how a reader finds a break's earlier class |
+| D8 | `previousClass` on the day the class changes | ADR §6; RD §6 | Records the old class | Audit trail | **Removed from V1** | S | Nothing functional lost: the previous run's breaks file, joined on `breakId` (D7), has the old class |
 | D9 | Acceptance (`acceptedOn`; lapses when the class or amount changes; excluded from the alert trigger) | ADR §6, D21; RD §4, §7 | A known break stays in the files but stops opening the alert | Systematic known gaps (e.g. an unbooked fee) until they are booked | **Removed from V1** | M | Saves an acceptance store and API, the lapse rules and `counts.breaks.accepted`. Loses the means to silence known breaks: the alert stays open until booked. Depends on D7 |
 | D10 | Re-seed run (`reseed`: stock from head, carried rebuilt by key lookups on both ledgers, `reseed.adjustment`) | D26; RD §2 | Restarts the chain after a structural `incomplete` is fixed | A structural cause repeats every day and the window grows | **Replaced by a restart as a first run** | M/L | Replace it with "restart the rule like a first run" (B17, new `backfillFrom`). Loses nothing: the backfill starts at the oldest open item, except after a `stored_file_mismatch`, when the operator gives `backfillFrom` |
 | D11 | `incomplete.kind` transient/structural | D26; RD §4 | Classes the 6 reasons in 2 kinds | Tells the operator whether to wait or act | **Removed from V1** | S | The alert text maps the reason directly. Needed by D10 and E17 |
@@ -129,12 +134,12 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | E7 | `unclassified.ndjson.gz` | RD §6 | One row per unclassified tx | Fixing the mapping | OPT | S | `statement.unclassified` in the manifest already gives side, state, amount and count. Low saving |
 | E8 | Statement bridge: A (payment account) − B (from books) = net, lines by class/outcome/`earlierDay`, `residual` = 0 else `incomplete`, `impact` field | ADR §6; RD §5 | The classic *état de rapprochement* for the window | Explains the net; the residual ties the join to the books | OPT | M | The lines are a `GROUP BY` over the flow file (DuckDB `bridge` query). Loses the residual self-check (the join attributed every lettering), `impact`, and C10/D5/E9 with it. Continuity (D4) still guards completeness |
 | E9 | `carriedOutside` lines | RD §5 | Carried items with no movement today, per class | Complete statement | OPT | S | Derivable from the carried file |
-| E10 | `flowGross` + `offsetting` flag | ADR §6; RD §5 | Σ\|drift\| of the open flow breaks, and whether both signs exist | A net of 0 can hide breaks | OPT | S | The alert already opens on breaks, never on the net: nothing lost |
+| E10 | `flowGross` + `offsetting` flag | ADR §6; RD §5 | Σ\|drift\| of the open flow breaks, and whether both signs exist | A net of 0 can hide breaks | **Simplified** (OPT): `offsetting` removed, `flowGross` kept | S | The alert already opens on breaks, never on the net: nothing lost. `flowGross` stays, since the alert's headline shows it first |
 | E11 | `books` block (`openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk`) | RD §5, §6 | One entry per side, prefix and asset | Carries continuity | NEC | S | D4 has no carrier. `buckets` goes with C7, `letteredOther` with C10 |
 | E12 | Payment-account **credit** book → P1 `unkeyed_payment_movement` on leg `book` (`paymentAccounts` block) | D23; ADR §8 rule 10; DD §7.9; RD §5 | `input(S) − input(S_prev)` must equal the flow's credits | The only check that sees a final with no pending and no key (100 silent finals left every other check green) | NEC | M | A silent hole in completeness. With `formancepayments`, blocked by conversions and order fills, which need A9 (ADR §10 open question, DD §2) |
 | E13 | Payment-account **debit** book (`output`, `flowDebits`, `debitResidual`) + `psp.movementKeys` | D23; DD §7.9 | Debits must be keyed payouts, fees, refunds | Unkeyed payouts and fees are a residual | OPT | M | Payouts and fees are outside payment lettering. Saves the debit direction; A9 stays needed for `formancepayments` conversions, and the Connectivity question is unchanged (DD §2) |
 | E14 | Triage in the manifest: top-K open breaks (NEC for the alert) + top-K `pending` and `resolved` lists | ADR §7.3, D21; RD §5 | The manifest renders the statement alone | The alert and a dashboard need no other file | NEC (breaks) / OPT (pending, resolved) | S | The pending and resolved lists come from the files. **Gap:** where `topK` is configured is not specified |
-| E15 | `execution` + `timingsMs` blocks (`readRanges`, `stockFrom`, `rewindTxs`, `lookups`, `watchLogs`) | ADR §7.8; RD §6 | Run telemetry in the manifest | Comparable run durations | OPT | S | Move to logs and metrics. No reader loss |
+| E15 | `execution` + `timingsMs` blocks (`readRanges`, `stockFrom`, `rewindTxs`, `lookups`, `watchLogs`) | ADR §7.8; RD §6 | Run telemetry in the manifest | Comparable run durations | **Removed from V1** | S | Moved to OTel metrics and engine logs. No reader loss |
 | E16 | File parts beyond 250,000 rows (`flow-00000…`, `part` in `files`) | ADR §7.3; RD §8; DD §7.14 | Splits a data file into parts | Parallel compression and upload | **Removed from V1** | S/M | One gzip of 75–142 MB: ~5 s on one thread; DuckDB reads it as fast. Saves the part logic in the writer, reader, checks and API |
 | E17 | `diagnostic.json` for structural `incomplete` (≤ 1,000 items per reason) | D26; RD §6 | Lists the books, holds, applications or files at fault | Debug a run that writes no data file | **Removed from V1** | M | Saves a file format with 4 item shapes. The operator debugs from logs or a debug run. Depends on D11 |
 | E18 | `schemaVersion` `lettering/1`, a JSON Schema per file, compatibility rules | ADR §7.3; RD §8 | Versioned, documented format | The customer reads the files directly | NEC | S | The format cannot evolve safely |
@@ -149,7 +154,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 |---|---|---|---|---|---|---|---|
 | F1 | Detail capture on `_recon`, Ed25519-signed (counts, drifts, `S`/`T` per ledger, artifact URI + manifest SHA-256) | ADR §7.2.4 (EN-1930) | Reuses the signed capture | The run's status and anchor | NEC | S | No status record (reuses existing infra) |
 | F2 | File SHA-256 in the manifest; manifest hash in the capture (transitive signature) | ADR §7.3; DD §5 | Tamper evidence over every file | Audit | OPT (keep: cheap) | S | Loses tamper evidence. Underpins F4, F5 and `check`'s `file_sha256` |
-| F3 | `logSha256` of the log at `S` in `cuts` | ADR §5; RD §6 | Hash of the protobuf `Log` at the cut | Re-identify the cut exactly | OPT | S | `S` and `T` suffice to replay; logs are immutable. The hash is stable for one protocol version only |
+| F3 | `logSha256` of the log at `S` in `cuts` | ADR §5; RD §6 | Hash of the protobuf `Log` at the cut | Re-identify the cut exactly | **Removed from V1** | S | `S` and `T` suffice to replay; logs are immutable. The hash is stable for one protocol version only |
 | F4 | `stored_file_mismatch`: stored stock and carried files checked against the signed capture before use | RD §2, §4 | Refuses a tampered or corrupted previous file | Chain integrity | OPT | S/M | Saves a verification step and an `incomplete` reason. A corrupted file would propagate, but the next continuity check would likely fail anyway |
 | F5 | Byte-identical data files for the same cut, rule, engine and previous run (fixed key and row order, gzip level 6, no name, no timestamp) | ADR §7.3; RD §8 | A replay proves itself by its SHA-256 | Audit reproducibility | OPT | M | Deterministic row order is cheap and still useful for tests. The "proves itself" guarantee and its 4 conditions can go. Depends on B11 (condition 4) |
 | F6 | `missing_index` → `incomplete`, never a silent fallback | DD §3 | An index missing at run time is an engine error | No wrong window | NEC | S | Silent wrong result |
@@ -217,10 +222,11 @@ feature's interest unless the row says otherwise.
 - **Features:** 104 numbered rows in §1–§7 and §9. §8 lists 20 configuration knobs, which map to
   those rows and are not counted again.
 - **NEC:** 49, E14 included (its top-K breaks list).
-- **OPT:** 42, E14's pending and resolved lists not counted separately. Of these, 5 are doc-only,
-  proposed, or already outside V1: A14, A15, B18, G6, G7.
-- **Removed, deferred or replaced:** 13, B12, B13, B14, B16, D9, D10, D11, E16, E17, G3, G5, G8 and
-  I5 (see "Decisions taken").
+- **OPT:** 38, E14's pending and resolved lists not counted separately, and E10 counted here since
+  it is simplified, not removed. Of these, 5 are doc-only, proposed, or already outside V1: A14,
+  A15, B18, G6, G7.
+- **Removed, deferred or replaced:** 17, B12, B13, B14, B16, C4, D8, D9, D10, D11, E15, E16, E17, F3,
+  G3, G5, G8 and I5 (see "Decisions taken").
 
 ## Candidates to remove
 
@@ -260,7 +266,8 @@ judgement.
 10. **B13, the purge consistency check.** The rewind is exact without it, per the design doc.
     Decided (DD §4).
 11. **C4 `firstSide`, D8 `previousClass`, E10 `flowGross`/`offsetting`, E15 `execution`/`timingsMs`,
-    F3 `logSha256`.** Each is S, and none is read by any check or trigger.
+    F3 `logSha256`.** Each is S, and none is read by any check or trigger. Decided (D19, D21,
+    ADR §5 and §7 items 7–8): all go but `flowGross`, which the alert's headline shows first.
 12. **G2, recon's own expiry sweep.** Require the storage lifecycle rule instead.
 13. **B18, G6, G7, A14, F10.** Doc-only mentions or options already outside V1: prune them from the
     docs.

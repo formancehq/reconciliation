@@ -476,8 +476,8 @@ improves (§7.7).
 - That check also makes it possible to read from followers (`x-consistency: stale`) to take load off
   the leader: a follower that has not yet applied up to `hi` returns fewer logs, and the range is
   retried.
-- **Replay.** `S`, `T` and `logSha256`, the SHA-256 of the log at `S`, are written in the signed
-  capture, so a later re-read covers the same window ([Replaying an old day](#replaying-an-old-day)).
+- **Replay.** `S` and `T` are written in the signed capture, so a later re-read covers the same
+  window ([Replaying an old day](#replaying-an-old-day)).
   Both ledgers are cut at the same business time, whenever the job runs.
 
 ## 4. The rewind: an exact state at `S` with no checkpoint
@@ -547,8 +547,8 @@ metadata-only writes (§7.8).
 
 ### Replaying an old day
 
-Any past day can be replayed: the logs are permanent, and the day's cut (`S`, `T`, `logSha256`) is in
-the signed capture (ADR-005 §7, item 7). A replay runs the daily algorithm as of that day; no stock
+Any past day can be replayed: the logs are permanent, and the day's cut (`S` and `T`) is in the
+signed capture (ADR-005 §7, item 7). A replay runs the daily algorithm as of that day; no stock
 is stored for it.
 
 **The flow costs the same at any age.** The cut of an old day resolves in one index page per
@@ -606,13 +606,8 @@ and the statement.
   application, and report a false orphan. Failures are rare, so this costs little.
 - Lookups are grouped, 100 to 500 references per `Or` of equalities on the key, key first (the
   ledger has no `IN`): each then costs about a hundredth of a lookup alone (§7.13, EN-2318). The
-  manifest counts them. The first run adds none: its product window starts `psp.grace` before `backfillFrom`
+  run's metrics count them. The first run adds none: its product window starts `psp.grace` before `backfillFrom`
   (ADR-005 §7).
-
-**Which side came first** (`firstSide`, for analysis only). Between two days the window decides;
-within a day, `insertedAt`, although it compares the clocks of two ledgers. It is `psp` when the
-PSP's first terminal state (`final` or `failed`) came before the first application, `product`
-otherwise; a `failed` after a `final` does not change it.
 
 ### What the controller sees: a reconciliation statement, never a bare drift
 

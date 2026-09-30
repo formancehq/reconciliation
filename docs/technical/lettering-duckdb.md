@@ -454,7 +454,7 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `schema_version` | The manifest's `schemaVersion` is `lettering/1` |
 | `file_missing`, `file_unlisted`, `file_rows`, `file_sha256` | The manifest lists exactly the files present, with their row counts and SHA-256 |
 | `counts_flow`, `counts_flow_outcome`, `counts_stock`, `counts_breaks`, `counts_unclassified` | The manifest's counts match the files |
-| `bridge_net`, `bridge_totals`, `bridge_line`, `bridge_carried_outside`, `bridge_gross` | The net is `SUM(impact)` and `psp − product`; each line matches the flow rows; the carried lines, the gross and the offsetting flag match |
+| `bridge_net`, `bridge_totals`, `bridge_line`, `bridge_carried_outside`, `bridge_gross` | The net is `SUM(impact)` and `psp − product`; each line matches the flow rows; the carried lines and the gross match |
 | `bridge_residual`, `bridge_product_vs_books` | The residual is 0, recomputed from the applications booked in the product window, and the product total equals the books' `lettered − letteredOther` |
 | `statement_unclassified` | The statement's unclassified totals match the file |
 | `carried_vs_flow`, `suspense_open`, `suspense_identity` | The carried file holds exactly the flow rows whose drift is not 0; the open items equal its sum and count, and `open = openPrev + net + fromLookups` |
@@ -480,4 +480,4 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `from_lookups` | `fromLookups` equals the drift of the rows not carried in |
 | `suspense_open_prev`, `books_open_prev` | The open items and the books pick up where the earlier run left them |
 | `book_prev` | The payment-account book picks up too: `inputPrev` and `outputPrev` are the earlier run's `input` and `output`, and an account and asset listed then are still listed |
-| `break_lifecycle`, `stock_lifecycle` | Each break and hold is new, persisting, resolved or cleared as the earlier run implies, with `openedOn`, `previousClass` and the cleared balance |
+| `break_lifecycle`, `stock_lifecycle` | Each break and hold is new, persisting, resolved or cleared as the earlier run implies, with its `openedOn` and the cleared balance; an open break is never lost, even when its class changes |
