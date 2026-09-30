@@ -25,6 +25,7 @@ below still hold.
 | D9, acceptance of breaks one by one | Removed from V1: the alert opens on any open break; the controller acknowledges or accepts the alert itself (existing alert model), and a known break is fixed by booking it | ADR-005 §6 |
 | B14, phase-1 synchronous aggregate capture | Removed from V1: the run is one asynchronous job that resolves the cut, reads, joins, writes the files and one signed capture; the tick only enqueues it | ADR-005 §7 items 1 and 2 |
 | E16, file parts | Removed from V1: one gzip per data file, whatever its size (~4 s of one thread for the 75–142 MB flow file of a 1M day); readers follow `files` or glob `flow*`, so parts can come back without breaking them | RD §8; DD §7.14 |
+| B13, purge consistency check (`purge_check`) | Removed from V1: the rewind adds a purged hold back from its first touch anyway, and an untouched hold missing from the listing breaks the books' continuity; no `purge_check` reason, no `purged_accounts` read, and L10 no longer needs a filter on it | DD §4; ADR §9 (L10) |
 | B16, resumable job | Removed from V1: no progress is recorded; writes are ordered (data files, capture, manifest last, alert), a run exists once its manifest is written, and a run that did not finish is started again from the beginning with a new `runId` | ADR-005 §7 item 2 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
@@ -74,7 +75,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | B10 | Key lookups by reference (unknown applied refs on the PSP side; the history of refs found final; failed refs of the window on the product side), grouped `Or` of 100 | ADR §6, D16, D18; DD §5, §7.13 | References missing from the window and from the carried items are read by key, up to `T` | Otherwise a 2nd application reads as an orphan, and a payment matched earlier then failed today is missed | NEC | M | False P1 orphans, and a missed `reversed_after_application`. The grouping itself is optional (1.3 ms per lookup one by one) |
 | B11 | Metadata watch, full read at run time (`key_metadata_mutated`) | ADR §5 caveat 1, D25; DD §3 | Reads every log since the previous run's head for metadata changes on txs | Monitors the write-once convention | OPT | M | Saves the only log read, **~95 % of the run** (134–158 s at 1M payments). Loses the `key_metadata_mutated` warning and the check behind the replay byte-identity condition. Continuity, the payment-account book and the residual still catch mutations that change today's result. L8 (immutable labels) removes the need by construction |
 | B12 | Incremental watch job with slices (the default, `--lettering-watch-interval=1h`) | D25; DD §3 | A job per watched ledger writes sealed slices; the run assembles, verifies and re-reads missing ranges | Takes the watch off the run's critical path | **Deferred after V1** | **L** | Saves a job type, slice and seal files, one chain per ledger in *another* ledger's bucket, the manifest `watch` block (`slices`, `reread` with 5 reasons), slice tagging and the 7-day sweep. Loses a run of ~20 s: it stays ~2.5 min, which is fine for a daily batch. The slices are not measured yet. Depends on B11 |
-| B13 | Purge consistency check from `purged_accounts` (`purge_check`) | ADR §5; DD §4 | A hold open at `S`, touched, missing from the listing, must be named in some `purged_accounts` | Detects a listing that missed a live account | OPT | S/M | DD: "the rewind is exact without it". Saves a reason and a batch-boundary subtlety. Depends on B11 for its logs |
+| B13 | Purge consistency check from `purged_accounts` (`purge_check`) | ADR §5; DD §4 | A hold open at `S`, touched, missing from the listing, must be named in some `purged_accounts` | Detects a listing that missed a live account | **Removed from V1** | S/M | DD: "the rewind is exact without it". Saves a reason and a batch-boundary subtlety. Depends on B11 for its logs |
 | B14 | Phase 1: synchronous aggregate capture (`AggregateVolumes` per prefix, signed by `openSign`, labelled with the run instant) | ADR §7.1; DD §3 | A capture of the live exposure, in seconds, before the detail | Early figure | **Removed from V1** | M | Saves a 2nd capture kind, a code path and one of L7's two reasons (the rewind skip stays). Loses an inexact "now" figure available ~20 s to 2.5 min earlier. Phase 2 gives the exact aggregates anyway |
 | B15 | The run's async job, idempotent per (rule, period, cut), own execution path, no 10 s drain grace | ADR §7.2, §11 | The per-key computation runs off the scheduler tick | Minutes of work, 1M rows | NEC | M | Cannot fit in the scheduler's synchronous path |
 | B16 | Resumable phase-2 job | ADR §7.2 | A run resumes after a crash | Avoid redoing work | **Removed from V1** | M | A crashed run restarts from scratch (~20 s to 2.5 min): no loss |
@@ -216,10 +217,10 @@ feature's interest unless the row says otherwise.
 - **Features:** 104 numbered rows in §1–§7 and §9. §8 lists 20 configuration knobs, which map to
   those rows and are not counted again.
 - **NEC:** 49, E14 included (its top-K breaks list).
-- **OPT:** 43, E14's pending and resolved lists not counted separately. Of these, 5 are doc-only,
+- **OPT:** 42, E14's pending and resolved lists not counted separately. Of these, 5 are doc-only,
   proposed, or already outside V1: A14, A15, B18, G6, G7.
-- **Removed, deferred or replaced:** 12, B12, B14, B16, D9, D10, D11, E16, E17, G3, G5, G8 and I5
-  (see "Decisions taken").
+- **Removed, deferred or replaced:** 13, B12, B13, B14, B16, D9, D10, D11, E16, E17, G3, G5, G8 and
+  I5 (see "Decisions taken").
 
 ## Candidates to remove
 
@@ -257,6 +258,7 @@ judgement.
 
 9. **E16, file parts.** A single gzip per file is fine at 75–142 MB. Decided (RD §8).
 10. **B13, the purge consistency check.** The rewind is exact without it, per the design doc.
+    Decided (DD §4).
 11. **C4 `firstSide`, D8 `previousClass`, E10 `flowGross`/`offsetting`, E15 `execution`/`timingsMs`,
     F3 `logSha256`.** Each is S, and none is read by any check or trigger.
 12. **G2, recon's own expiry sweep.** Require the storage lifecycle rule instead.

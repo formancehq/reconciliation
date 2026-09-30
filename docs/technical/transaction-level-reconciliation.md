@@ -434,7 +434,7 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Resolve `T` (transaction-id cut) | `ListTransactions`, filter `cut-off < builtin_uint(INSERTED_AT) ≤ cut-off + δ`, page 1, `reverse = true` → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
 | **Flow window** | `ListTransactions`, filter `And(membership, builtin_uint(ID) ∈ (lo, hi])`, **membership first** ([above](#the-cut-from-a-business-time-to-id-ranges), §7.11), `reverse = true`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, or `Or(<psp.key> EXISTS, <psp.movementKeys> EXISTS…)` when the rule declares movement keys (decision 23), and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
 | Rewind window `(T, head_tx]`, and replays | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **newest first** (the default order; §4), in chunks, page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
-| Metadata watch `(head_prev, head]`, purge check, and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
+| Metadata watch `(head_prev, head]` and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
 | Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch. On a released v3.0 it is the only lookup left once a hold is purged (§2) |
 
@@ -517,38 +517,19 @@ at `7dd615dba`), so the unfiltered transactions of the window hold every balance
 | INV-15 | 01:30, invoice issued | −300 | −300 | **0** | created after `S`: drops out |
 | INV-3 | none | — | — | listed value | untouched: the listing is right |
 
-**Consistency check from `purged_accounts`** (optional; the rewind is exact without it). Since
-EN-2036 (ledger `38c6eef55`; the field came without a protocol bump, `grpcprotocol.Version` is
-`13` before and after it), each log carries `LedgerLog.purged_accounts`, the
-addresses whose `EPHEMERAL` current state it removed. `ListLogs` exposes it at
-`Log.payload.apply.log.purged_accounts`. The metadata watch reads the logs `(head_prev, head]`,
-which include `(S, head]`, so the run already has it. The field explains the one legitimate way an account open at `S` can be missing from the live listing:
-
-- a touched hold with `pre ≠ 0` that the listing does not contain must be named in the
-  `purged_accounts` of some log in `(S, head]`. Otherwise the listing missed a live account, which
-  the run reports as `incomplete` rather than repairing silently;
-- a `NORMAL` hold is never purged, so it can never be absent from the listing with `pre ≠ 0`.
-
-Two properties of the field bound what it can prove (`internal/infra/state/write_set.go:537-551` at
-`7dd615dba`):
-
-- the purge is decided at the batch boundary and emitted **once, on the batch's last log** for that
-  ledger, not on the log that zeroed the hold. A hold zeroed and re-funded within one batch is never
-  purged;
-- a batch that straddles `S` can therefore name a hold that no log after `S` touches: it was zeroed
-  at or before `S`, so its balance at `S` is 0 and it drops out. Being named in `purged_accounts`
-  does not imply being touched in the window.
-
-A purged hold also loses its account metadata, and re-funding the address starts a fresh account
-with none of it. So a hold the rewind adds back takes every field from its address, the logs or the
-previous stored stock, never from account metadata. Its volumes restart too: on `7dd615dba`, a hold
+**A purged hold** is missing from the live listing, and the rewind adds it back from its first
+touch after `S`, so nothing needs to explain its absence. There is no purge consistency check in V1
+(feature inventory B13): a touched hold missing from the listing is repaired by the rewind anyway,
+and an untouched one breaks the books' continuity. A purged hold also loses its account metadata,
+and re-funding the address starts a fresh account with none of it. So a hold the rewind adds back
+takes every field from its address, its transactions or the previous run's stock file, never from
+account metadata. Its volumes restart too: on `7dd615dba`, a hold
 opened with 100, lettered, then re-funded with 100 shows `post_commit_volumes` of `100-0` on the
 re-funding, not a cumulative `200-100`. The balance (input − output) is right on both sides of the
 purge, so the rewind uses balances only on the EPHEMERAL holds, never cumulative input or output
 volumes. The payment-account book is the exception: its account is NORMAL, never purged, so its
 input and output are rewound as they are (decision 23). The lettering
-log itself still carries the purged hold in `post_commit_volumes` (`100-100`) and names it in
-`purged_accounts`.
+transaction itself still carries the purged hold in `post_commit_volumes` (`100-100`).
 
 **Why the unfiltered transactions**, and neither a filtered read nor the logs, for this window:
 
@@ -674,7 +655,7 @@ is never touched.
 **A run that cannot conclude** writes its manifest and no data file, and the next run chains on
 the last complete one ([results reference
 §2](./transaction-level-results.md#2-where-the-files-are-and-which-run-counts)). `missing_index`
-and `short_range` usually clear on the next run. `continuity`, `residual`, `purge_check` and
+and `short_range` usually clear on the next run. `continuity`, `residual` and
 `stored_file_mismatch` repeat until the cause is fixed; `incomplete.detail` names the first items at
 fault. When the fix cannot enter the window, an operator restarts the rule: its next run is a first
 run, backfilled from the oldest open item of the last complete run (ADR-005 decision 26).
@@ -948,8 +929,7 @@ memory (§4, §7.16). The flow's merge "in transaction-id order" (§3) needs `re
 
 - For balances, the unfiltered transactions are as exact as the logs, and 5 to 9 times faster to
   read (for a replay from head, §4). The rewind reads them (ADR-005 decision 22).
-- What only the logs carry is the metadata changes the watch monitors, and `purged_accounts`, which
-  the purge consistency check of §4 uses. The rewind is exact without that check.
+- What only the logs carry is the metadata changes the watch monitors.
 
 ### 7.9 A final with no pending and no key: the payment-account book
 
@@ -1380,7 +1360,7 @@ stream and 2.8 s on 8 (95k and 356k/s, as in §7.8), and the rewinds above were 
 | F-g | No point-in-time read, and no single-snapshot multi-page listing | `ReadOptions`, `common.proto:1880-1885` at `03d8792b5`; `controller_default.go:436-438` | For information only (consistent export): not needed here |
 | F-h | Checkpoints carry no owner and no TTL | `bucket.proto:326` | For information only: not needed here |
 | F-i | An `And` is driven by its first term, in the order given. Led by a dense id range, it seeks its membership once per row, and seeking an `Or` seeks every one of its terms: the product `Or` of three keys read 2.7 to 3.4 times slower than membership first, for the same rows | §7.11; `internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_and.go:128-146`, `combinator_or.go:69-85` at `7dd615dba` | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), Ledger v3.1): order an `And`'s terms at compile time, or leave an `Or` child alone when it is already past the target. Until then recon writes the membership first (EN-2318) |
-| F-j | `ListLogs` cannot be filtered on what the metadata watch keeps: the `SavedMetadata` and `DeletedMetadata` that target a transaction, and the logs with a non-empty `purged_accounts`. `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS`, so the watch reads every log to keep a few | §7.15: 4.1M logs in 134–158 s, about 95 % of a run; `misc/proto/common.proto` (`QueryFilter`) at `7dd615dba` | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), Ledger v3.1): a log filter on those payloads, so the watch reads only the logs it keeps. Not blocking: the full read costs about two minutes a run, which a nightly batch affords (ADR-005 decision 25) |
+| F-j | `ListLogs` cannot be filtered on what the metadata watch keeps: the `SavedMetadata` and `DeletedMetadata` that target a transaction. `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS`, so the watch reads every log to keep a few | §7.15: 4.1M logs in 134–158 s, about 95 % of a run; `misc/proto/common.proto` (`QueryFilter`) at `7dd615dba` | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), Ledger v3.1): a log filter on those payloads, so the watch reads only the logs it keeps. Not blocking: the full read costs about two minutes a run, which a nightly batch affords (ADR-005 decision 25) |
 | F-k | After a sustained write load (21M transactions in 13 min on one node), unfiltered `ListTransactions` pages of 1,000 took 2.6 s each on an idle node, 20 to 100 times slower than §7.8, until the process restarted; the data directory then held 19 GB of Raft snapshot checkpoints | §7.16 | For information, not filed: a regression test of read speed after a write burst, next to L6 |
 
 ## Cross-links
