@@ -327,10 +327,8 @@ Ledger transaction-address index and expose one ordered feed.
 flowchart LR
     Cut["Cut per ledger at the business cut-off<br/>log id S · transaction id T"] --> Flow["Flow: ListTransactions (T_prev, T]<br/>∧ key present (PSP: payment_ref or a psp.movementKeys field;<br/>product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · first run from backfillFrom (product side psp.grace earlier)"]
     Cut --> Stock["Stock: live ListAccounts of open holds<br/>rewound with the unfiltered ListTransactions (T, head_tx]"]
-    Cut --> Watch["Metadata watch: ListLogs (head_prev, head]"]
     Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, payment-account book and open-items identities"]
     Stock --> Join
-    Watch --> Join
     Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: manifest only)"]
     Art --> Cap["Capture on _recon<br/>(counts, drifts, S and T per ledger, artifact hash) — Ed25519"]
     Cap --> Alert["Alert per (rule, fingerprint, period)<br/>reconciliation statement: verdict + bridge + open items<br/>opens on an open break (never on the net alone)<br/>top-K breaks + artifact link"]

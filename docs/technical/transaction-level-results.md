@@ -147,9 +147,9 @@ The verdict is evaluated in this order, and the first condition that holds wins:
 
 | `verdict` | Condition | What it tells the controller |
 |---|---|---|
-| `incomplete` | A required index is missing, a transaction or log range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, or a stored file differs from the SHA-256 in its signed capture. `incomplete.reason` says which: `missing_index`, `short_range`, `continuity`, `residual`, `stored_file_mismatch`. `missing_index` and `short_range` usually clear on the next scheduled run. The other three come back on every run until the cause is fixed: the engine-error alert then says that an operator must act, and when the fix cannot enter the window the operator restarts the rule (§2). `incomplete.detail` names the first 20 items at fault (the books and holds that do not close with the transactions that moved them, the applications no flow row attributes, or the altered files), and the engine's logs list them all | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes no data file and opens the engine-error alert, never a green one |
+| `incomplete` | A required index is missing, a transaction range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, or a stored file differs from the SHA-256 in its signed capture. `incomplete.reason` says which: `missing_index`, `short_range`, `continuity`, `residual`, `stored_file_mismatch`. `missing_index` and `short_range` usually clear on the next scheduled run. The other three come back on every run until the cause is fixed: the engine-error alert then says that an operator must act, and when the fix cannot enter the window the operator restarts the rule (§2). `incomplete.detail` names the first 20 items at fault (the books and holds that do not close with the transactions that moved them, the applications no flow row attributes, or the altered files), and the engine's logs list them all | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes no data file and opens the engine-error alert, never a green one |
 | `breaks` | At least one open break | The breaks, by priority, new or persisting |
-| `reconciled_with_warnings` | No break, but at least one unclassified transaction, or a key, state, business-id or merchant-reference metadata changed after insertion (`anomalies`) | Money moved that the rule does not classify, or a transaction's identity changed after the fact: the rule, the connector mapping or the booking needs attention |
+| `reconciled_with_warnings` | No break, but at least one unclassified transaction | Money moved that the rule does not classify: the rule's state sets or the connector mapping need attention |
 | `reconciled_with_pending` | No break and no warning, but unapplied payments within `product.grace` or applications within `psp.grace` | "OK for now". Each pending item comes with the day it becomes a break |
 | `reconciled` | None of the above | The only green state |
 
@@ -279,9 +279,8 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
   previous run. Each list shows at most `topK` items, then "and N more", N taken from `counts`.
 - **A merchant reference.** When the rule names `psp.merchantRef`, every unapplied payment is
   paired with the open business hold it names.
-- **Warnings**: unclassified transactions per side and state value, and the transactions whose
-  identifying metadata changed after insertion. They make the verdict `reconciled_with_warnings` at
-  best.
+- **Warnings**: unclassified transactions per side and state value. They make the verdict
+  `reconciled_with_warnings` at best.
 
 ## 6. File reference
 
@@ -296,7 +295,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt` | When the run started and finished. Per-step durations and read counts go to the engine's metrics and logs, not to the manifest |
-| `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead` and `logHead`, the heads the run read up to (the rewind reads the transactions `(txTo, txHead]`, the metadata watch the logs up to `logHead`) |
+| `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead`, the transaction head the run read up to: the rewind reads the transactions `(txTo, txHead]` |
 | `verdict` | §4 |
 | `incomplete` | Only when `verdict` is `incomplete`: `reason` and a human-readable `detail`, which names the first 20 items at fault (§4) |
 | `counts.flow` | Flow rows per class; adds up to the flow file's row count |
@@ -304,7 +303,6 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `counts.stock` | Stock rows per side and class |
 | `counts.breaks` | `new`, `persisting`, `resolved`, and open breaks `openByLeg` (`flow`, `stock`, `book`) and `openByPriority` |
 | `counts.unclassified` | Unclassified transactions per side |
-| `anomalies.key_metadata_mutated` | The transactions (`side`, `tx`) whose key, state, business-id or merchant-reference metadata was changed or deleted after insertion, seen since the previous run's head. Empty in a sound booking |
 | `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `S_prev` values here |
@@ -458,10 +456,14 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
   - the same rule version;
   - the same previous run, whose carried and stock files seed the day, so a replay while that run's
     files are kept (the retention, §2);
-  - no key, state, business-id or merchant-reference metadata changed since the original run
-    (`key_metadata_mutated`), because the ledger serves the current metadata.
+  - no key, state, business-id or merchant-reference metadata changed since the original run,
+    because the ledger serves the current metadata. Recon does not watch for such a change
+    (ADR-005 decision 25).
 
-  Only the manifest differs, through its instants.
+  Only the manifest differs, through its instants. So a replay within the retention can be
+  compared with the original by the SHA-256s in their manifests' `files`, a query over the day's
+  manifests. With the same rule version and previous run, a mismatch reveals a metadata change or
+  an engine change, which `engine` shows.
 - **Compatibility.** A new optional field may appear within `lettering/1`, so a reader ignores
   fields it does not know. Removing or renaming a field, changing its meaning, or adding a value to
   an enumeration changes `schemaVersion`.
@@ -576,8 +578,8 @@ and was lettered on the same day.
   "startedAt": "2026-09-25T00:00:04Z",
   "finishedAt": "2026-09-25T00:00:31Z",
   "cuts": [
-    {"side": "psp",     "ledger": "psp",  "logFrom": 2411902, "logTo": 2640118, "txFrom": 1204000, "txTo": 1318500, "txHead": 1320606, "logHead": 2644328},
-    {"side": "product", "ledger": "main", "logFrom": 1530010, "logTo": 1574300, "txFrom": 880400,  "txTo": 902750,  "txHead": 904500,  "logHead": 1576173}
+    {"side": "psp",     "ledger": "psp",  "logFrom": 2411902, "logTo": 2640118, "txFrom": 1204000, "txTo": 1318500, "txHead": 1320606},
+    {"side": "product", "ledger": "main", "logFrom": 1530010, "logTo": 1574300, "txFrom": 880400,  "txTo": 902750,  "txHead": 904500}
   ],
   "verdict": "breaks",
   "counts": {
@@ -591,7 +593,6 @@ and was lettered on the same day.
                "openByLeg": {"flow": 2, "stock": 2, "book": 0}, "openByPriority": {"1": 0, "2": 1, "3": 1, "4": 2}},
     "unclassified": {"psp": 1, "product": 0}
   },
-  "anomalies": {"key_metadata_mutated": []},
   "statement": {
     "EUR/2": {
       "psp":     {"amount": "400000", "count": 4},

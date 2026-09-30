@@ -272,11 +272,10 @@ def bucket(age, bounds):
 class Engine:
     """Runs a rule day by day, as the results doc specifies, and writes every run's files."""
 
-    def __init__(self, rule, book, out, anomalies=None):
+    def __init__(self, rule, book, out):
         self.rule = rule
         self.book = book
         self.out = os.path.join(out, f'rule={rule.id}')
-        self.anomalies = anomalies or {}      # day -> [(side, tx)]
         self.prev = None                      # the last complete run's state
         self.runs = []                        # every run, for the expected query results
         self.business_ids = []                # the ids expected/ holds a business-id result for
@@ -370,10 +369,9 @@ class Engine:
         breaks = self.breaks(day, rows, stock, pay)
         unclassified = self.unclassified(win_psp, win_prod)
         carried = [r for r in rows if r['drift'] != 0]
-        anomalies = self.anomalies.get(day_str(day), [])
         if any(b['open'] for b in breaks):
             verdict = 'breaks'
-        elif unclassified or anomalies:
+        elif unclassified:
             verdict = 'reconciled_with_warnings'
         elif any(r['outcome'] == 'pending' for r in rows):
             verdict = 'reconciled_with_pending'
@@ -382,7 +380,7 @@ class Engine:
         return {'verdict': verdict, 'day': day, 'run': run_id, 'complete': True, 'rows': rows, 'carried': carried,
                 'stock': stock, 'books': books, 'pay': pay, 'breaks': breaks, 'unclassified': unclassified,
                 'cuts': {'psp': (f_psp, t_psp), 'product': (f_prod, t_prod)},
-                'win_psp': win_psp, 'win_prod': win_prod, 'anomalies': anomalies,
+                'win_psp': win_psp, 'win_prod': win_prod,
                 'pay_totals': dict(prev['pay_totals'] if prev else {}, **{p['asset']: (p['input'], p['output']) for p in pay})}
 
     def flow_row(self, day, ref, psp_items, app_items, f_psp, f_prod, t_prod, carried):
@@ -860,7 +858,7 @@ class Engine:
             events = self.book.psp if side == 'psp' else self.book.prod
             head = Book.last_tx(events, cutoff(day) + dt.timedelta(hours=2))
             cuts.append({'side': side, 'ledger': ledger, 'logFrom': lo, 'logTo': hi, 'txFrom': lo, 'txTo': hi,
-                         'txHead': head, 'logHead': head})
+                         'txHead': head})
         m = {
             "schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
             "runId": run_id,
@@ -877,7 +875,6 @@ class Engine:
             "counts": {"flow": flow_counts, "flowOutcome": outcomes, "stock": stock_counts, "breaks": breaks_counts,
                        "unclassified": {side: sum(1 for u in st['unclassified'] if u['side'] == side)
                                         for side in ('psp', 'product')}},
-            "anomalies": {"key_metadata_mutated": [{"side": s, "tx": t} for (s, t) in st['anomalies']]},
             "statement": statement,
             "books": [{"side": b['side'], "prefix": b['prefix'], "asset": b['asset'], "openSign": b['openSign'],
                        "openPrev": str(b['open_prev']), "opened": str(b['opened']), "lettered": str(b['lettered']),
@@ -1046,7 +1043,7 @@ def scenarios():
 
     rule = Rule('qa-scenarios', psp_grace=3, product_grace=1, psp_max_age=3, product_max_age=5,
                 backfill_from=dt.date(2026, 10, 1))
-    return rule, Book(psp, prod), D[1:], {}
+    return rule, Book(psp, prod), D[1:]
 
 
 def verdicts():
@@ -1242,8 +1239,8 @@ def main():
             shutil.rmtree(os.path.join(out, name))
     worked_example(out)
 
-    rule, book, days, anomalies = scenarios()
-    engine = Engine(rule, book, out, anomalies)
+    rule, book, days = scenarios()
+    engine = Engine(rule, book, out)
     engine.business_ids = ['INV-S06B', 'PU']
     engine.query_days = ['2026-10-02', '2026-10-05']
     for d in days:
@@ -1251,7 +1248,7 @@ def main():
     expected(engine, out)
 
     rule, book = verdicts()
-    engine = Engine(rule, book, out, anomalies={'2026-10-10': [('product', 504)]})
+    engine = Engine(rule, book, out)
     engine.query_days = ['2026-10-06']  # replayed after an incomplete run
     engine.run('2026-10-05')
     engine.run('2026-10-06', run_id='r-20261007T000003Z', incomplete='short_range')

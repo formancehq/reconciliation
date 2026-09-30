@@ -297,7 +297,7 @@ strictly ledger↔ledger and reads the data ledgers directly over gRPC.
     `(T, head_tx]`, newest first.
 
   So **no query checkpoint** is taken, and ADR-003 stands. It adds an async job, bulk
-  `ListTransactions` and `ListLogs` reads, and recon's first
+  `ListTransactions` reads, and recon's first
   durable dependency outside the ledger: object storage for the detail. The files go to the backup
   storage under a recon prefix and are kept 90 days, hash-anchored in the signed capture. See [ADR-005](../prd/adr-005-transaction-level-reconciliation.md) and
   [transaction-level-reconciliation.md](./transaction-level-reconciliation.md).

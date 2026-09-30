@@ -498,9 +498,7 @@ INSERT INTO violations
 WITH expected AS (
     SELECT CASE
         WHEN (SELECT count(*) FROM breaks WHERE outcome = 'break') > 0 THEN 'breaks'
-        WHEN (SELECT count(*) FROM unclassified) > 0
-          OR (SELECT coalesce(json_array_length(m->'anomalies'->'key_metadata_mutated'), 0) FROM manifest) > 0
-            THEN 'reconciled_with_warnings'
+        WHEN (SELECT count(*) FROM unclassified) > 0 THEN 'reconciled_with_warnings'
         WHEN (SELECT count(*) FROM flow WHERE outcome = 'pending') > 0 THEN 'reconciled_with_pending'
         ELSE 'reconciled' END AS verdict)
 SELECT 'verdict_mismatch', r.run_id, 'manifest ' || r.verdict || ', files say ' || e.verdict
