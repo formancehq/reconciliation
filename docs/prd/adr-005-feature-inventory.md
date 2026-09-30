@@ -236,7 +236,7 @@ feature's interest unless the row says otherwise.
   those rows and are not counted again.
 - **NEC:** 49, E21 included.
 - **OPT:** 30, E10 and I3 counted here since they are simplified, not removed. A8, C7, C8, C10,
-  D5, D6, E6, E8, E9, F4 and F5 are kept by decision. Of the 31, 3 are doc-only, proposed, or
+  D5, D6, E6, E8, E9, F4 and F5 are kept by decision. Of these, 3 are doc-only, proposed, or
   already outside V1: A14, A15, G7.
 - **Removed, deferred or replaced:** 25, B11, B12, B13, B14, B16, B18, C4, C6, D8, D9, D10, D11, E14,
   E15, E16, E17, F3, F10, G2, G3, G5, G6, G8, G9 and I5 (see "Decisions taken").
