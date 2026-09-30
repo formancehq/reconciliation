@@ -614,7 +614,9 @@ day; a catch-up rewinds once, in two passes:
 - **Alerts.** Caught-up runs raise no alert for a closed period: their files are read through the
   API and DuckDB. The open period's alert is built as usual from its days, caught-up days included.
 - **One job per rule at a time.** The rule's scheduled run waits while a catch-up runs, then chains
-  on the last day the catch-up wrote.
+  on the last day the catch-up wrote; a catch-up asked for while a job runs is refused.
+- **X is at most yesterday.** Day X seeds from its own first-run default `backfillFrom` (X's
+  cut-off − max(`psp.grace`, `product.grace`) − 1 day) unless the action gives one.
 - **Nothing marks a caught-up run** but its `startedAt` and its `runId`, later than its day
   (results reference §2).
 

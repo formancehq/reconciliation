@@ -648,7 +648,9 @@ V1 runs no periodic proof against a checkpoint.
    - Caught-up runs raise no alert for a closed period: their files are read through the API and
      DuckDB. The open period's alert is built as usual from its days, caught-up days included.
    - A rule runs one job at a time: its scheduled run waits while a catch-up runs, then chains on
-     the last day the catch-up wrote.
+     the last day the catch-up wrote, and a catch-up asked for while a job runs is refused.
+   - X is at most yesterday. Day X, as a first run, seeds from its own default `backfillFrom`
+     (X's cut-off − max(`psp.grace`, `product.grace`) − 1 day) unless the action gives one.
    - There is no depth limit, and the cost is documented: at 1M transactions a day, the backward
      pass costs about 4 s per day of distance in all, and each forward day about the 20 s of a
      daily run, so about 40 min for 90 days and 2.5 h for a year (estimates).
