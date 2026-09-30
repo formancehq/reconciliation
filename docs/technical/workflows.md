@@ -331,7 +331,7 @@ flowchart LR
     Stock --> Join
     Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: manifest only)"]
     Art --> Cap["Capture on _recon<br/>(counts, drifts, S and T per ledger, artifact hash) — Ed25519"]
-    Cap --> Alert["Alert per (rule, fingerprint, period)<br/>reconciliation statement: verdict + bridge + open items<br/>opens on an open break (never on the net alone)<br/>top-K breaks + artifact link"]
+    Cap --> Alert["Alert per (rule, fingerprint, period)<br/>structured evidence: statement JSON + headline + counts<br/>opens on an open break (never on the net alone)<br/>top-K breaks + artifact link"]
 ```
 
 No query checkpoint is taken: the log is the immutable cut, and the rewind makes a live listing

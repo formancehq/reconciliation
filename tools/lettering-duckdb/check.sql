@@ -16,8 +16,6 @@ CREATE OR REPLACE TEMP MACRO v_days(x) AS regexp_extract(x, '^([0-9]+)d$', 1)::I
 CREATE OR REPLACE TEMP VIEW v_rule AS
 SELECT v_days(m->'rule'->'psp'->>'grace') AS psp_grace,
        v_days(m->'rule'->'product'->>'grace') AS product_grace,
-       v_days(m->'rule'->'psp'->>'maxAge') AS psp_max_age,
-       v_days(m->'rule'->'product'->>'maxAge') AS product_max_age,
        list_transform(from_json(m->'rule'->'buckets', '["VARCHAR"]'), b -> v_days(b)) AS bounds,
        m->'period'->>'tz' AS tz
 FROM manifest;
@@ -280,7 +278,7 @@ WHERE priority IS DISTINCT FROM CASE
     WHEN class IN ('orphan_application', 'reversed_after_application', 'unkeyed_payment_movement') THEN 1
     WHEN class IN ('under_applied', 'over_applied') THEN 2
     WHEN class = 'unapplied_payment' THEN 3
-    WHEN class IN ('stuck', 'wrong_sign') THEN 4 END;
+    WHEN class = 'wrong_sign' THEN 4 END;
 
 INSERT INTO violations
 WITH t AS (SELECT unnest(from_json(m->'triage'->'breaks', '[{"breakId":"VARCHAR","priority":"INTEGER","class":"VARCHAR","lifecycle":"VARCHAR","amount":"HUGEINT"}]'), recursive := true) FROM manifest
@@ -367,7 +365,6 @@ SELECT 'row_outcome', 'stock ' || side || '/' || hold || '/' || asset,
 FROM stock
 WHERE NOT CASE class
     WHEN 'open' THEN outcome = 'ok' AND open_dir(balance, openSign) > 0
-    WHEN 'stuck' THEN outcome = 'break' AND open_dir(balance, openSign) > 0
     WHEN 'wrong_sign' THEN outcome = 'break' AND open_dir(balance, openSign) < 0
     WHEN 'cleared' THEN outcome = 'ok' AND balance = 0
     ELSE false END;
@@ -400,21 +397,16 @@ WHERE (f.class = 'unapplied_payment' AND f.breakOn IS DISTINCT FROM f.firstSeen 
    OR (f.class = 'applied_before_final' AND f.breakOn IS DISTINCT FROM f.firstSeen + g.psp_grace)
    OR (f.class = 'orphan_application' AND f.breakOn IS NOT NULL AND f.breakOn <> f.firstSeen + g.psp_grace);
 
--- A hold's age is counted in the rule's timezone; it is stuck when older than its side's maxAge,
--- and its bucket follows from its age.
+-- A hold's age is counted in the rule's timezone, and its bucket follows from its age.
 INSERT INTO violations
 WITH aged AS (
-    SELECT s.*, r.day - timezone(g.tz, s.openedAt AT TIME ZONE 'UTC')::DATE AS age,
-           CASE s.side WHEN 'psp' THEN g.psp_max_age ELSE g.product_max_age END AS max_age, g.bounds
+    SELECT s.*, r.day - timezone(g.tz, s.openedAt AT TIME ZONE 'UTC')::DATE AS age, g.bounds
     FROM stock s, m_run r, v_rule g)
 SELECT 'stock_age', side || '/' || hold || '/' || asset,
        class || ', ageDays ' || ageDays || ' (opened ' || age || ' days before the cut), bucket ' || bucket
-       || ', maxAge ' || coalesce(max_age::VARCHAR, 'none')
 FROM aged
 WHERE ageDays <> age
-   OR bucket IS DISTINCT FROM v_bucket(ageDays, bounds)
-   OR (class = 'stuck' AND NOT (max_age IS NOT NULL AND ageDays > max_age))
-   OR (class = 'open' AND max_age IS NOT NULL AND ageDays > max_age);
+   OR bucket IS DISTINCT FROM v_bucket(ageDays, bounds);
 
 INSERT INTO violations
 WITH listed AS (

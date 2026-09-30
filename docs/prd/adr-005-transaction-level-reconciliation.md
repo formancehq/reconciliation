@@ -436,10 +436,10 @@ V1 runs no periodic proof against a checkpoint.
 - **Classes.** The flow classes (`matched`, `under_applied` / `over_applied`, `unapplied_payment`,
   `in_progress`, `failed`, `applied_before_final`, `orphan_application`,
   `reversed_after_application`) and the stock classes (`open` with its age bucket, `wrong_sign`,
-  `stuck`, `cleared`), with their outcomes and priorities, are defined in the [results
+  `cleared`), with their outcomes and priorities, are defined in the [results
   reference](../technical/transaction-level-results.md#flowndjsongz). `orphan_application` and
-  `reversed_after_application` are priority 1; `wrong_sign` and `stuck` are priority 4. The two
-  stock books are aged, never joined to each other.
+  `reversed_after_application` are priority 1; `wrong_sign` is priority 4. The two stock books are
+  aged, never joined to each other.
 - **Each side has its own `grace`: how long it may lag behind the other.** `product.grace` is how
   long the product has to apply a payment the PSP finalised (`unapplied_payment`); `psp.grace` is
   how long the PSP has to finalise a reference the product already applied
@@ -456,10 +456,9 @@ V1 runs no periodic proof against a checkpoint.
   - `psp.grace` = **7 calendar days**: a direct debit (SEPA, ACH) final at D+5 business days spans a
     weekend, and applying at `pending` is common with those debits.
   - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`.
-  - `maxAge` has no default: without one, no hold is ever `stuck`. A rule sets it only where an
-    open hold past it is abnormal. For B2B receivables it stays unset: ageing them is credit
-    management, and the buckets still show it. `stuck` is the `stale_holds` signal per key.
-  - All four are rule parameters.
+  - All three are rule parameters.
+  - An open hold is never a break for its age: the buckets show it, and holds held too long are
+    the [`stale_holds`](../technical/stale-holds.md) template's job. The rule has no age limit.
 - **`breakId`.** Ageing compares with the previous run's artifact, matched by a `breakId` that
   hashes the rule, leg, key (`ref`, or `side` + `hold`) and asset, not the class: a break that
   changes class stays the same break, with its comments, and its earlier class is on the previous
@@ -473,15 +472,16 @@ V1 runs no periodic proof against a checkpoint.
     `weekly` or `monthly`), and the alert identity is `(rule, fingerprint, period)` exactly as in
     [alert-period-model.md](../technical/alert-period-model.md). With `monthly`, the month's alert
     is opened by the first failing daily run and updated by the following ones.
-  - **The alert carries the aggregate comparison.** Its evidence holds the net and the gross
-    per asset, the class counts per leg, the continuity check, the top-K breaks and the link to the
-    day's files.
-  - **What the alert says: a reconciliation statement**, never a bare drift: a verdict, a bridge
-    whose unexplained residual must be 0, the open items, the gross next to the net, and the breaks
-    in priority order ([results reference §4](../technical/transaction-level-results.md#4-the-verdict)
-    and [§5](../technical/transaction-level-results.md#5-the-statement)). An `incomplete` run is
-    never green. The payment-account book's residual is a P1 break, not an `incomplete` run
-    (decision 23); a run that fails every day is decision 26.
+  - **The alert carries a reconciliation statement as structured data**, never a bare drift. Its
+    evidence holds the manifest's `statement` block as JSON (a bridge whose unexplained residual
+    must be 0, the open items, the gross next to the net), a headline (the verdict, the open
+    breaks per leg, the P1 count, the gross and the net), the counts, the top-K breaks in priority
+    order and the link to the run's files ([results reference
+    §4](../technical/transaction-level-results.md#4-the-verdict) and
+    [§5](../technical/transaction-level-results.md#the-alerts-evidence)). The UI renders the
+    statement from it; the engine renders no text.
+  - An `incomplete` run is never green. The payment-account book's residual is a P1 break, not an
+    `incomplete` run (decision 23); a run that fails every day is decision 26.
   - **What opens the alert:** at least one open break. A known break stays one until it is booked;
     the controller acknowledges or accepts the alert itself, as for any rule
     ([alert-period-model.md](../technical/alert-period-model.md)). The net alone never
@@ -696,7 +696,7 @@ for the Ledger team to weigh against its own users:
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**, never a reversal of the original payment (§6). |
-| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries the aggregates, the detail sits in the backup storage (§6, §7). |
+| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries structured evidence (the statement as JSON, a headline, the counts, the top-K breaks and the link to the files) and no rendered text; the detail sits in the backup storage (§6, §7). |
 | 9 | First run | A bounded **backfill** from `backfillFrom` (default: cut-off − the longer `grace` − 1 day), announced in the first statement (§7). |
 | 10 | Read path of the flow | **`ListTransactions` filtered on the key's presence** (product side: `payment_ref` or `business_ref`), membership before the id range, over parallel id ranges: O(payments). The logs stay the immutable record; a run reads no range of them (§5, decision 25). |
 | 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
@@ -709,7 +709,7 @@ for the Ledger team to weigh against its own users:
 | 18 | Cases across days | A PSP `failed` never applied is `failed` (ok), and window references with a `failed` event that are not carried are looked up on both ledgers every run, so `reversed_after_application` is caught. The rest (a `businessId` per `holds` entry, `psp.merchantRef`, the previous stock read from storage) is in §5 and §6. |
 | 19 | Simplifications | Flow rows carry no `firstSide`: which side came first follows from `firstSeen` and the row's `psp` and `product` events. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` (§6, §7). |
 | 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**; a business that applies later or by hand raises it. A payment-to-apply hold is an option outside the V1 rule contract ([design doc](../technical/transaction-level-reconciliation.md#when-application-is-deferred-or-manual-a-payment-to-apply-hold)). |
-| 21 | Result files, statement and triage | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a write-off state, a flat transactions file, a separate alert threshold, a break's `previousClass` (the previous run's row with the same `breakId` has it) and an `offsetting` flag next to `flowGross`. |
+| 21 | Result files, statement and triage | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a write-off state, a flat transactions file, a separate alert threshold, a break's `previousClass` (the previous run's row with the same `breakId` has it), an `offsetting` flag next to `flowGross`, and a `stuck` stock class with its `maxAge` (`stale_holds` covers holds held too long). |
 | 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, newest first, not the logs, and so do replays. With no metadata watch (decision 25), a run reads no range of logs (§5, §7). |
 | 23 | The PSP payment account | A booking convention (§8, rule 10), with the keys of the account's other movements in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
 | 24 | Bounded date filters in the cut | `S` and `T` are resolved with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it (§5). |

@@ -17,9 +17,10 @@
 2. **Read `verdict`** (§4). `incomplete` means no conclusion can be drawn: the manifest says why in
    `incomplete.reason` and names the first items at fault in `incomplete.detail`. The run wrote no
    data file.
-3. **Read the statement** (§5), which is the manifest's `statement`, `books` and `triage` blocks,
-   and the text the alert carries. The bridge explains the day's net difference, the open items
-   give the running total still unmatched, and the triage says what to do first.
+3. **Read the statement** (§5), which is the manifest's `statement`, `books` and `triage` blocks.
+   The alert carries it as data and the UI renders it. The bridge explains the day's net
+   difference, the open items give the running total still unmatched, and the triage says what to
+   do first.
 4. **Open the detail** only for what the statement points at: `breaks.ndjson.gz` for the rows to
    act on, `flow.ndjson.gz` and `stock.ndjson.gz` for the complete picture, and
    `unclassified.ndjson.gz` for the transactions the rule could not classify.
@@ -165,6 +166,10 @@ therefore answers with a reconciliation statement, the classic *état de rapproc
 three parts per asset, each closed by an identity that the engine checks, and a fourth check on the
 PSP payment account, whose residual is a break rather than an `incomplete` run.
 
+The statement is data: the manifest's `statement`, `books`, `paymentAccounts` and `triage` blocks
+(§6). The layouts below show what each part adds up, and §10 shows one way to present a whole
+day.
+
 ### The bridge: why the window's net is what it is
 
 ```text
@@ -276,11 +281,27 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 
 - **Triage**, in priority order, then by amount: each open break new or persisting, then the
   pending items with their `breakOn`, then the breaks resolved since the
-  previous run. Each list shows at most `topK` items, then "and N more", N taken from `counts`.
+  previous run. Each list holds at most `topK` items, and `counts` gives the totals, so a
+  presentation can add "and N more".
 - **A merchant reference.** When the rule names `psp.merchantRef`, every unapplied payment is
   paired with the open business hold it names.
 - **Warnings**: unclassified transactions per side and state value. They make the verdict
   `reconciled_with_warnings` at best.
+
+### The alert's evidence
+
+The alert carries structured data, never rendered text:
+
+- **the headline**: the `verdict`, the open breaks per leg (`counts.breaks.openByLeg`), the open P1
+  breaks (`counts.breaks.openByPriority["1"]`), and per asset the gross (`flowGross`) and the net
+  (`net`);
+- **the statement**: the manifest's `statement` block, as JSON;
+- **the counts**: the manifest's `counts`;
+- **the triage**: `triage.breaks`, the top-K open breaks;
+- **the link** to the run's files, which recon's API lists with pre-signed URLs (§2).
+
+The UI renders the reconciliation statement from this data, and reads the books and the pending
+and resolved lists from the run's manifest. The engine renders no text.
 
 ## 6. File reference
 
@@ -290,7 +311,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 |---|---|
 | `schemaVersion` | `lettering/1` |
 | `engine` | The version of recon that produced the run. A replay reproduces the files only with the same one |
-| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `maxAge`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `buckets` are the age buckets' upper bounds. The retention is not a rule parameter (§2) |
+| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `buckets` are the age buckets' upper bounds. The retention is not a rule parameter (§2) |
 | `runId` | `r-{UTC start instant}`; run ids sort in time order |
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
@@ -306,7 +327,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `S_prev` values here |
-| `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
+| `triage` | What the statement names, so the UI renders it from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
 | `files` | One entry per file: `name`, `rows`, `sha256` |
 | `expiresAt` | For information: the run's `day` plus the deployment's retention. The storage's lifecycle rule deletes the files, counting from their creation (§2) |
 
@@ -377,11 +398,11 @@ One row per hold open at the cut, plus one row per hold cleared since the previo
 |---|---|---|
 | `open` | Open in the direction its prefix expects | `ok` |
 | `wrong_sign` | The balance has the sign opposite `openSign`: an over-application, or a skipped state | `break` (4) |
-| `stuck` | Open past the side's `maxAge`, a rule parameter; without it, no hold is ever `stuck` | `break` (4) |
 | `cleared` | Open at the previous cut, lettered since: listed once, with a balance of 0 | `ok` |
 
 The two stock books are aged, never joined to each other: an unpaid invoice has no PSP counterpart
-by design.
+by design. An open hold is never a break for its age: the buckets show it, and holds held too long
+are the [`stale_holds`](./stale-holds.md) template's job.
 
 ### `breaks.ndjson.gz`
 
@@ -405,7 +426,7 @@ plus these fields:
 | 1 | `unkeyed_payment_movement` | The PSP payment account moved by money no keyed transaction explains: a final with no pending and no reference, or a payout or fee without its key |
 | 2 | `under_applied`, `over_applied` | The amounts disagree |
 | 3 | `unapplied_payment` past `product.grace` | Cash received and still not applied |
-| 4 | `stuck`, `wrong_sign` | An open hold to investigate |
+| 4 | `wrong_sign` | A hold of the wrong sign to investigate |
 
 **Book class.** The leg `book` has one class, `unkeyed_payment_movement`, with `outcome` `break`
 (**1**). A book row carries `side` (`psp`), `account`, `asset`, `direction` (`credit` or
@@ -434,8 +455,8 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
   booking brings the drift to 0: the PSP finalises it, or the product books the difference or
   reverses the application. There is no write-off state:
   a systematic difference, such as a fee never booked on every payment, is fixed by booking it.
-- **A hold** becomes `stuck` at `maxAge`, and is listed once as `cleared` by the run whose window
-  lettered it.
+- **A hold** moves up the age buckets while it stays open, and is listed once as `cleared` by the
+  run whose window lettered it.
 - **A break keeps its `breakId` for life.**
   - When its class changes (an orphan later reported `failed`, an unapplied payment later applied
     short), it stays the same break, `persisting`. Its earlier class is on the previous run's
@@ -527,8 +548,6 @@ September 2026**. The PSP ledger is fed by Connectivity's `formancepayments`.
 
 - The cut-off is 23:59:59 Europe/Paris, and the run starts at 02:00.
 - `product.grace` is 1 day and `psp.grace` 7 days.
-- `maxAge` is 30 days on the product side, where invoices are paid by card at checkout, and 10 days
-  on the PSP side.
 - All figures are EUR, one asset `EUR/2`. The files carry minor units as strings (`"100000"` =
   1,000.00), and the statement shows major units.
 - Ids and hashes are illustrative; the figures agree with each other across the files.
@@ -563,12 +582,12 @@ and was lettered on the same day.
     "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id",
                 "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
                           "final": ["payin.succeeded"], "failed": ["payin.compensate"]},
-                "grace": "7d", "maxAge": "10d", "paymentAccount": "fpay:stripe:account:*:main",
+                "grace": "7d", "paymentAccount": "fpay:stripe:account:*:main",
                 "merchantRef": "merchant_ref",
                 "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}]},
     "product": {"ledger": "main", "key": "psp_payment_ref",
                 "state": {"field": "transition_kind", "final": ["to_final"]},
-                "grace": "1d", "maxAge": "30d",
+                "grace": "1d",
                 "holds": [{"prefix": "main:hold:invoice:", "openSign": "negative", "businessId": "invoice_no"},
                           {"prefix": "main:hold:refund:",  "openSign": "positive", "businessId": "refund_no"}]}
   },
@@ -587,10 +606,10 @@ and was lettered on the same day.
              "applied_before_final": 1, "orphan_application": 0, "reversed_after_application": 0,
              "in_progress": 1, "failed": 0},
     "flowOutcome": {"ok": 4, "pending": 2, "break": 2},
-    "stock": {"psp":     {"open": 2, "wrong_sign": 0, "stuck": 0, "cleared": 0},
-              "product": {"open": 4, "wrong_sign": 1, "stuck": 1, "cleared": 1}},
-    "breaks": {"new": 1, "persisting": 3, "resolved": 1,
-               "openByLeg": {"flow": 2, "stock": 2, "book": 0}, "openByPriority": {"1": 0, "2": 1, "3": 1, "4": 2}},
+    "stock": {"psp":     {"open": 2, "wrong_sign": 0, "cleared": 0},
+              "product": {"open": 5, "wrong_sign": 1, "cleared": 1}},
+    "breaks": {"new": 1, "persisting": 2, "resolved": 0,
+               "openByLeg": {"flow": 2, "stock": 1, "book": 0}, "openByPriority": {"1": 0, "2": 1, "3": 1, "4": 1}},
     "unclassified": {"psp": 1, "product": 0}
   },
   "statement": {
@@ -632,22 +651,19 @@ and was lettered on the same day.
     "breaks": [
       {"breakId": "a93d02e6b7f1c448", "priority": 2, "class": "under_applied",     "lifecycle": "new",        "ref": "PAY-44", "asset": "EUR/2", "amount": "5000",   "holdIds": ["INV-11"]},
       {"breakId": "1c7f3a90d2e84b55", "priority": 3, "class": "unapplied_payment", "lifecycle": "persisting", "ref": "PAY-39", "asset": "EUR/2", "amount": "50000",  "firstSeen": "2026-09-20"},
-      {"breakId": "d4f8a1c3e5b70926", "priority": 4, "class": "stuck",             "lifecycle": "persisting", "side": "product", "hold": "main:hold:invoice:INV-3",  "asset": "EUR/2", "amount": "120000", "ageDays": 41},
       {"breakId": "7b24e1f09c3d6a12", "priority": 4, "class": "wrong_sign",        "lifecycle": "persisting", "side": "product", "hold": "main:hold:invoice:INV-14", "asset": "EUR/2", "amount": "-10000", "ageDays": 6}
     ],
     "pending": [
       {"ref": "PAY-45", "class": "unapplied_payment",    "asset": "EUR/2", "amount": "80000",  "breakOn": "2026-09-25", "pairedHold": "main:hold:invoice:INV-12"},
       {"ref": "PAY-99", "class": "applied_before_final", "asset": "EUR/2", "amount": "-30000", "breakOn": "2026-10-01", "holdIds": ["INV-13"]}
     ],
-    "resolved": [
-      {"breakId": "3a6e9d0b2c8f4171", "class": "stuck", "side": "product", "hold": "main:hold:invoice:INV-5", "asset": "EUR/2", "amount": "70000", "clearedBy": "PAY-40"}
-    ]
+    "resolved": []
   },
   "files": [
     {"name": "flow.ndjson.gz",         "rows": 8, "sha256": "e41d…"},
     {"name": "carried.ndjson.gz",      "rows": 4, "sha256": "7a02…"},
     {"name": "stock.ndjson.gz",        "rows": 9, "sha256": "c9b8…"},
-    {"name": "breaks.ndjson.gz",       "rows": 5, "sha256": "15fe…"},
+    {"name": "breaks.ndjson.gz",       "rows": 3, "sha256": "15fe…"},
     {"name": "unclassified.ndjson.gz", "rows": 1, "sha256": "90b3…"}
   ],
   "expiresAt": "2026-12-23"
@@ -705,7 +721,7 @@ the PSP finalises PAY-99 for 300.00 before 1 October, that day's run classes it 
 {"side":"product","hold":"main:hold:invoice:INV-11","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-11","openSign":"negative","balance":"-5000","class":"open","outcome":"ok","lifecycle":"persisting","openedAt":"2026-09-04T08:30:00Z","ageDays":20,"bucket":"8-30d"}
 {"side":"product","hold":"main:hold:invoice:INV-12","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-12","openSign":"negative","balance":"-80000","class":"open","outcome":"ok","lifecycle":"persisting","openedAt":"2026-09-19T12:05:00Z","ageDays":5,"bucket":"2-7d","pairedRef":"PAY-45"}
 {"side":"product","hold":"main:hold:invoice:INV-14","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-14","openSign":"negative","balance":"10000","class":"wrong_sign","outcome":"break","lifecycle":"persisting","openedAt":"2026-09-18T16:20:00Z","ageDays":6,"bucket":"2-7d"}
-{"side":"product","hold":"main:hold:invoice:INV-3","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-3","openSign":"negative","balance":"-120000","class":"stuck","outcome":"break","lifecycle":"persisting","openedAt":"2026-08-14T10:02:00Z","ageDays":41,"bucket":">30d"}
+{"side":"product","hold":"main:hold:invoice:INV-3","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-3","openSign":"negative","balance":"-120000","class":"open","outcome":"ok","lifecycle":"persisting","openedAt":"2026-08-14T10:02:00Z","ageDays":41,"bucket":">30d"}
 {"side":"product","hold":"main:hold:invoice:INV-5","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-5","openSign":"negative","balance":"0","class":"cleared","outcome":"ok","lifecycle":"cleared","openedAt":"2026-08-21T09:40:00Z","ageDays":34,"bucket":">30d","previousBalance":"-70000","clearedAt":"2026-09-24T06:12:44Z","clearedBy":"PAY-40"}
 {"side":"product","hold":"main:hold:invoice:INV-9","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-9","openSign":"negative","balance":"-50000","class":"open","outcome":"ok","lifecycle":"persisting","openedAt":"2026-09-12T07:45:00Z","ageDays":12,"bucket":"8-30d"}
 {"side":"product","hold":"main:hold:refund:RF-2","asset":"EUR/2","prefix":"main:hold:refund:","holdId":"RF-2","openSign":"positive","balance":"20000","class":"open","outcome":"ok","lifecycle":"new","openedAt":"2026-09-24T14:30:00Z","ageDays":0,"bucket":"0-1d"}
@@ -713,22 +729,20 @@ the PSP finalises PAY-99 for 300.00 before 1 October, that day's run classes it 
 {"side":"psp","hold":"fpay:stripe:payment:hold:pending:PAY-99","asset":"EUR/2","prefix":"fpay:stripe:payment:hold:pending:","holdId":"PAY-99","openSign":"positive","balance":"30000","class":"open","outcome":"ok","lifecycle":"new","openedAt":"2026-09-24T19:55:37Z","ageDays":0,"bucket":"0-1d"}
 ```
 
-INV-14 is positive while invoice holds open negative, hence `wrong_sign`. INV-5, open yesterday at
-−700.00 on the ledger, was lettered by PAY-40 today: it stays in the file once, as `cleared`.
+INV-14 is positive while invoice holds open negative, hence `wrong_sign`. INV-3, open for 41 days,
+is in the `>30d` bucket and is not a break. INV-5, open yesterday at −700.00 on the ledger, was
+lettered by PAY-40 today: it stays in the file once, as `cleared`.
 
-**`breaks.ndjson.gz`**, 4 open and 1 resolved, 5 rows:
+**`breaks.ndjson.gz`**, 3 open, 3 rows:
 
 ```text
 {"breakId":"a93d02e6b7f1c448","leg":"flow","priority":2,"lifecycle":"new","openedOn":"2026-09-24","amount":"5000","ref":"PAY-44","asset":"EUR/2","class":"under_applied","outcome":"break","pspAmount":"120000","productAmount":"115000","drift":"5000","impact":"5000","firstSeen":"2026-09-24","psp":[{"tx":1287004,"state":"payin.pending","holdAmount":"120000","insertedAt":"2026-09-24T11:47:31Z"},{"tx":1288115,"state":"payin.succeeded","amount":"120000","insertedAt":"2026-09-24T11:50:02Z"}],"product":[{"tx":895660,"businessId":"INV-11","holdId":"INV-11","amount":"115000","insertedAt":"2026-09-24T11:55:48Z"}]}
 {"breakId":"1c7f3a90d2e84b55","leg":"flow","priority":3,"lifecycle":"persisting","openedOn":"2026-09-21","amount":"50000","ref":"PAY-39","asset":"EUR/2","class":"unapplied_payment","outcome":"break","pspAmount":"50000","productAmount":"0","drift":"50000","impact":"0","firstSeen":"2026-09-20","breakOn":"2026-09-21","psp":[{"tx":1071229,"state":"payin.succeeded","amount":"50000","insertedAt":"2026-09-20T09:14:55Z"}],"product":[]}
-{"breakId":"d4f8a1c3e5b70926","leg":"stock","priority":4,"lifecycle":"persisting","openedOn":"2026-09-14","amount":"120000","side":"product","hold":"main:hold:invoice:INV-3","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-3","openSign":"negative","balance":"-120000","class":"stuck","outcome":"break","openedAt":"2026-08-14T10:02:00Z","ageDays":41,"bucket":">30d"}
 {"breakId":"7b24e1f09c3d6a12","leg":"stock","priority":4,"lifecycle":"persisting","openedOn":"2026-09-21","amount":"-10000","side":"product","hold":"main:hold:invoice:INV-14","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-14","openSign":"negative","balance":"10000","class":"wrong_sign","outcome":"break","openedAt":"2026-09-18T16:20:00Z","ageDays":6,"bucket":"2-7d"}
-{"breakId":"3a6e9d0b2c8f4171","leg":"stock","priority":4,"lifecycle":"resolved","openedOn":"2026-09-21","resolvedOn":"2026-09-24","amount":"70000","side":"product","hold":"main:hold:invoice:INV-5","asset":"EUR/2","prefix":"main:hold:invoice:","holdId":"INV-5","openSign":"negative","balance":"0","class":"stuck","outcome":"ok","openedAt":"2026-08-21T09:40:00Z","ageDays":34,"bucket":">30d","previousBalance":"-70000","clearedAt":"2026-09-24T06:12:44Z","clearedBy":"PAY-40"}
 ```
 
-A stock break's `amount` reads in the open direction: INV-3 is 1,200.00 still open, and INV-14 is
-100.00 on the wrong side. INV-5 had been `stuck` since 21 September, and its clearing resolves that
-break, which keeps its last open class and amount.
+A stock break's `amount` reads in the open direction: INV-14 is 100.00 on the wrong side. No break
+is resolved today: INV-5, which PAY-40 lettered, was an open hold, not a break.
 
 **`unclassified.ndjson.gz`**, 1 row:
 
@@ -736,11 +750,12 @@ break, which keeps its last open class and amount.
 {"side":"psp","tx":1276330,"ref":"PAY-31","asset":"EUR/2","outcome":"warning","state":"payin.refunded","amount":"20000","insertedAt":"2026-09-24T10:36:14Z"}
 ```
 
-**The statement** the alert carries:
+**The statement**, as a UI may present it from the alert's evidence and the manifest (the engine
+writes no text):
 
 ```text
 psp-vs-billing — 24 Sep 2026 (cut-off 23:59:59 Europe/Paris) — BREAKS
-4 open breaks (2 flow, 2 stock), 0 at P1, 1 resolved · open flow breaks 550.00 EUR gross, net −150.00 EUR
+3 open breaks (2 flow, 1 stock), 0 at P1 · open flow breaks 550.00 EUR gross, net −150.00 EUR
 
 EUR
   PSP — finalised payments in the window                           4,000.00  (4)
@@ -764,16 +779,15 @@ Open items (psp − product)
 
 Open books at S                     total      count   0–1d  2–7d  8–30d  >30d   continuity
   PSP pending holds                  550.00       2       2     —     —      —      ✓
-  Product invoices                 2,450.00       5       —     2     2      1      ✓   1 stuck, 1 wrong_sign
+  Product invoices                 2,450.00       5       —     2     2      1      ✓   1 wrong_sign
   Product refunds                    200.00       1       1     —     —      —      ✓
   Lettered outside matching: none
 
 Triage
   P2  under_applied       PAY-44 → INV-11, short by 50.00   new
   P3  unapplied_payment   PAY-39, 500.00, since 20 Sep      persisting
-  P4  stuck               INV-3, 1,200.00 open, 41 days     persisting
   P4  wrong_sign          INV-14, 100.00 over-applied       persisting
-Resolved: stuck INV-5, lettered by PAY-40.
+Resolved: none.
 Pending (not breaks): PAY-45, 800.00, a break on 25 Sep — its merchant reference names INV-12: apply it.
                       PAY-99 → INV-13, 300.00, applied before the PSP finalised it — an orphan
                       application (P1) on 1 Oct unless the PSP finalises it.

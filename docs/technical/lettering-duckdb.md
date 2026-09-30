@@ -328,7 +328,6 @@ nothing.
 |---:|---|---|---:|---|---|---|---:|---|
 | 2 | under_applied | new | 5000 | PAY-44 | | 2026-09-24 | 0 | INV-11 |
 | 3 | unapplied_payment | persisting | 50000 | PAY-39 | | 2026-09-21 | 3 | |
-| 4 | stuck | persisting | 120000 | | main:hold:invoice:INV-3 | 2026-09-14 | 10 | 41 days old |
 | 4 | wrong_sign | persisting | -10000 | | main:hold:invoice:INV-14 | 2026-09-21 | 3 | 6 days old |
 
 Amounts are in minor units of their asset: `EUR/2` 5000 is 50.00 EUR.
@@ -463,7 +462,7 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `breaks_vs_rows`, `break_vs_row` | Every open break of the flow and stock files, and every non-zero residual of the payment-account book, is in the breaks file, and back, with the same class and amount; a book break, open or resolved, carries its account's `paymentAccounts` entry as it stands |
 | `break_amount`, `break_outcome`, `break_priority` | What `break_vs_row` cannot see: an open book break's amount is its direction's residual and a resolved one's residual is 0 again, and a resolved stock break keeps its hold's last open balance; a break's outcome and priority follow its lifecycle and class |
 | `row_drift`, `row_break_on` | A pending or break row has a drift and a matched, in-progress or failed one has none; `breakOn` is `firstSeen` plus the lagging side's grace |
-| `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone, it is `stuck` exactly when older than its side's `maxAge`, and its bucket and each book's bucket counts follow from the rule's bounds |
+| `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone, and its bucket and each book's bucket counts follow from the rule's bounds |
 | `row_amounts`, `row_impact`, `row_outcome` | A flow row's amounts follow from its transactions, a carried row has no `impact`, and each row's outcome (and a stock row's sign) follows from its class |
 | `row_class` | A flow row's class follows from its net amounts: applications that sum to 0 count as none |
 | `triage_break`, `triage_pending`, `triage_count` | The triage matches the breaks and the pending flow rows, and lists at most `topK` open breaks, pending rows and resolved breaks |

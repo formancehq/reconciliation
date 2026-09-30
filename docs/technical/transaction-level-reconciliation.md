@@ -145,7 +145,7 @@ the team raises `product.grace` to its usual lettering delay.
 **Option, outside the V1 rule contract.** The product books each received payment on its own
 EPHEMERAL hold, the classic "unapplied cash": `main:clearing:{conn}` → `main:hold:payment:PAY-45`
 on receipt, then `main:hold:payment:PAY-45` → `main:hold:invoice:INV-12` on application. An
-unapplied, partial or over-applied payment is then a product stock fact (open, `stuck`, a remainder,
+unapplied, partial or over-applied payment is then a product stock fact (open and aged, a remainder,
 `wrong_sign`), and the join shrinks to *PSP final ↔ product receipt*. The V1 rule would misread it:
 the application moves two holds, and the receipt carries the reference without being an
 application. It needs a `role` per `holds` entry (`business` or `suspense`) and a product-side
@@ -627,6 +627,12 @@ Otherwise the verdict is `breaks`, `reconciled_with_warnings` (an unclassified t
 opens on an open break, never on the net alone. The verdicts, every line of
 the statement and how to read them are defined in the [results
 reference](./transaction-level-results.md#4-the-verdict).
+
+**The statement is data, not text.** The alert's evidence holds the manifest's `statement` block
+as JSON, a headline (the verdict, the open breaks per leg, the P1 count, the gross and the net),
+the counts, the top-K breaks and the link to the run's files ([results
+reference](./transaction-level-results.md#the-alerts-evidence)). The UI renders the statement from
+it; the engine renders no text, so no test pins one.
 
 ### Result artifacts and retention
 

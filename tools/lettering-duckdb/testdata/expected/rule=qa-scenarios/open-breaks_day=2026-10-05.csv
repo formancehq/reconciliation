@@ -10,4 +10,3 @@ priority,class,lifecycle,asset,amount,ref,hold,opened_on,days_open,detail
 3,unapplied_payment,persisting,EUR/2,4500,PU,,2026-10-03,2,
 3,unapplied_payment,new,EUR/2,3000,S20,,2026-10-05,0,INV-S20
 4,wrong_sign,persisting,EUR/2,-4000,,main:hold:invoice:INV-S14,2026-10-04,1,1 days old
-4,stuck,new,EUR/2,2000,,fpay:stripe:payment:hold:pending:S08,2026-10-05,0,4 days old

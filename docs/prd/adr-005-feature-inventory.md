@@ -39,6 +39,9 @@ below still hold.
 | B11, the metadata watch and `anomalies.key_metadata_mutated` | Deferred after V1, until L8: a run reads no range of logs, and its reads take ~20 s instead of ~2.5 min at 1M payments. A change on a transaction of a day already read moves no balance, and one before the run is read at its latest value. The write-once convention (A16) and replay condition 4 (F5) are no longer monitored; `reconciled_with_warnings` means unclassified transactions only | ADR-005 decision 25 and §5 caveat 1; DD §3; RD §4, §8 |
 | E8 + E9 + C10 + D5, the reconciliation statement and its self-checks | Kept: the statement is the deliverable a controller reads (a statement, never a bare drift), and the residual and the open-items identity are sums over rows already in memory that prove the join and the carry-over | ADR §6; RD §5 |
 | E6 + D6 + C8, the breaks file, the lifecycle and the cleared holds | Kept: new, persisting and resolved breaks, and the holds cleared with the transaction that cleared them, answer the controller's daily "what changed since yesterday"; the previous run's files are read anyway, and the API pages breaks from one file | ADR §6, §7 item 9; RD §6, §7 |
+| I3, the full rendered statement in the alert | Simplified: the alert's evidence is structured data, the manifest's `statement` block as JSON, a headline (the verdict, the open breaks per leg, the P1 count, the gross and the net), the counts, the top-K breaks and the link to the run's files; the UI renders the statement from it, the engine renders no text, and no golden test pins one | ADR §6, D8; DD §5; RD §5, §10 |
+| C6, `stuck` via `maxAge` | Removed from V1: no `stuck` stock class (P4) and no `maxAge` rule parameter; the `stale_holds` template covers holds held too long, and the age buckets still show every open hold's age. Stock breaks keep `wrong_sign` (P4) | ADR §6, D21; RD §6, §7 |
+| C7 + A8, ageing and the `psp.merchantRef` pairing | Kept: the age of every open hold is the credit-management view, and triage shows a stock break's `ageDays`; the pairing turns an unapplied payment into "apply it to invoice X" for a few fields | ADR §6; RD §5, §6 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -61,7 +64,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | A5 | `businessId` per product hold kind (`business_ref` on every hold tx, the opening included) | ADR §6, §8 rule 3, D18 | The product side names the business-id field per hold kind | Continuity needs hold openings in the flow read; gives the payment → invoice link | NEC | S | Continuity cannot be computed (no `opened(W)`) |
 | A6 | `psp.paymentAccount`: PSP amount = net posting on an account pattern (`*` = one segment) | ADR §6, D17 | The PSP amount is read on the account a final credits, not on the hold | The hold shows 0 or the wrong amount when no pending came first, or when the amounts differ | NEC | S | Wrong PSP amounts, so false or missed breaks |
 | A7 | Application amount = net posting on the side's hold prefixes, in the settling direction | ADR §6 | Revenue recognition in the same batch counts for 0 | Defines "applied" without a `kind` tag | NEC | S | No definition of an application |
-| A8 | `psp.merchantRef` pairing (`merchantRef`, `pairedHold`, `pairedRef`, "apply invoice X") | ADR §6, §8 rule 3; DD §2 | An unapplied payment is paired with the open hold its merchant ref names | Turns "money arrived, PAY-42" into an action item | OPT | S/M | Saves a pairing pass, 3 fields and triage text. Loses the most actionable hint the design has (DD: "the most useful single field"). `formancepayments` does not carry it today |
+| A8 | `psp.merchantRef` pairing (`merchantRef`, `pairedHold`, `pairedRef`, "apply invoice X") | ADR §6, §8 rule 3; DD §2 | An unapplied payment is paired with the open hold its merchant ref names | Turns "money arrived, PAY-42" into an action item | OPT, **kept** | S/M | Saves a pairing pass, 3 fields and a triage hint. Loses the most actionable hint the design has (DD: "the most useful single field"). `formancepayments` does not carry it today |
 | A9 | `psp.movementKeys` (payout/fee keys added to the PSP flow membership) | ADR §6, D23, §8 rule 10 | One extra `EXISTS` term per declared field; those txs feed the payment-account book only | Lets the book close at 0 on movements with a key of their own, on both sides: payouts and fees, and with `formancepayments` its conversions and order fills | OPT | S | See E13. Saves a contract field and about +31 % on the PSP flow read, but `formancepayments` conversions then leave a residual (DD §2) |
 | A10 | Refunds and chargebacks as their own 1-to-1 pairs | ADR §6, D7 | A refund is its own reference and a refund hold, never a reversal | Keeps one generic model | NEC | S | Nothing to save: already the simplest option |
 | A11 | Exact comparison, no tolerance | ADR §6, D6 | Any fee or FX difference is a break | Fees must be booked explicitly | NEC | S | Nothing to save: already the simplest option |
@@ -103,8 +106,8 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | C3 | Per-side grace (`product.grace` 1 d, `psp.grace` 7 d), `pending` outcome, `firstSeen`, `breakOn`, promotion to a break | ADR §6, D16, D20 | Lets each side lag the other before it is a break | Cross-midnight lag; SEPA/ACH apply at pending | NEC | S/M | Every cross-cut lag is a break. One shared grace would be simpler, but loses the 1 d vs 7 d asymmetry |
 | C4 | `firstSide` on flow rows | ADR §6, D16, D19 | Which side came first (PSP terminal state or first application) | Analytics only; "changes no priority and no bridge line" | **Removed from V1** | S | Nothing functional lost: `firstSeen` and the row's events give it |
 | C5 | Stock classes `open` + `wrong_sign` (P4) | ADR §6, D21 | Open hold, or balance of the wrong sign | `wrong_sign` is the only signal for an invoice paid twice by two separately matched payments | NEC | S | A double payment of one invoice goes unseen (both flows are `matched`) |
-| C6 | `stuck` via `maxAge` (no default, per side) | ADR §6 | Open past `maxAge` → P4 break | Per-key `stale_holds` signal | OPT | S | Overlaps the `stale_holds` template. Without a `maxAge` it never fires anyway |
-| C7 | Ageing: `openedAt`, `ageDays`, `bucket`, `buckets` param (0–1, 2–7, 8–30, > 30 d) | ADR §6; RD §6 stock | Age of every open hold and bucket counts per book | Credit-management view | OPT | S | Saves the bucket counts in `books` and a rule param. `ageDays` is still needed by C6 and triage. **Gap:** the source of `openedAt` for a hold opened before the first run, or re-listed after metadata purge, is not specified |
+| C6 | `stuck` via `maxAge` (no default, per side) | ADR §6 | Open past `maxAge` → P4 break | Per-key `stale_holds` signal | **Removed from V1** | S | Saves a rule parameter per side and a stock class. `stale_holds` covers held-too-long holds, and the buckets (C7) still show the age. Without a `maxAge` it never fired anyway |
+| C7 | Ageing: `openedAt`, `ageDays`, `bucket`, `buckets` param (0–1, 2–7, 8–30, > 30 d) | ADR §6; RD §6 stock | Age of every open hold and bucket counts per book | Credit-management view | OPT, **kept** | S | Saves the bucket counts in `books` and a rule param. `ageDays` is still needed by triage. **Gap:** the source of `openedAt` for a hold opened before the first run, or re-listed after metadata purge, is not specified |
 | C8 | `cleared` stock rows (`previousBalance`, `clearedAt`, `clearedBy`) | ADR §6; RD §6 | A hold open at the previous cut and lettered since is listed once | Shows what the day lettered; resolves stock breaks | OPT, **kept** | S | The stock file shows only open holds. `letteredOther` is still visible in `books`. Depends on D6 |
 | C9 | Unclassified txs: counted per side, state and asset, warning, never dropped | ADR §6; RD §5 | A tx whose state is in no set takes no part in matching but is reported | Catches connector mappings that break the conventions | NEC | S | Silent loss of money movements |
 | C10 | `letteredOther` in the books | D21; RD §5 | Letterings by txs outside matching (credit notes, write-offs, unclassified) | Makes the bridge's B equal the applications; shows manual letterings | OPT, **kept** | S | Needed only by E8 (the residual). Manual write-offs become invisible inside `lettered` |
@@ -145,7 +148,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | E11 | `books` block (`openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk`) | RD §5, §6 | One entry per side, prefix and asset | Carries continuity | NEC | S | D4 has no carrier. `buckets` goes with C7, `letteredOther` with C10 |
 | E12 | Payment-account **credit** book → P1 `unkeyed_payment_movement` on leg `book` (`paymentAccounts` block) | D23; ADR §8 rule 10; DD §7.9; RD §5 | `input(S) − input(S_prev)` must equal the flow's credits | The only check that sees a final with no pending and no key (100 silent finals left every other check green) | NEC | M | A silent hole in completeness. With `formancepayments`, blocked by conversions and order fills, which need A9 (ADR §10 open question, DD §2) |
 | E13 | Payment-account **debit** book (`output`, `flowDebits`, `debitResidual`) + `psp.movementKeys` | D23; DD §7.9 | Debits must be keyed payouts, fees, refunds | Unkeyed payouts and fees are a residual | OPT | M | Payouts and fees are outside payment lettering. Saves the debit direction; A9 stays needed for `formancepayments` conversions, and the Connectivity question is unchanged (DD §2) |
-| E14 | Triage in the manifest: top-K open breaks (NEC for the alert) + top-K `pending` and `resolved` lists | ADR §7.3, D21; RD §5 | The manifest renders the statement alone | The alert and a dashboard need no other file | NEC (breaks) / OPT (pending, resolved) | S | The pending and resolved lists come from the files. **Gap:** where `topK` is configured is not specified |
+| E14 | Triage in the manifest: top-K open breaks (NEC for the alert) + top-K `pending` and `resolved` lists | ADR §7.3, D21; RD §5 | The UI renders the statement from the manifest alone | The alert and a dashboard need no other file | NEC (breaks) / OPT (pending, resolved) | S | The pending and resolved lists come from the files. **Gap:** where `topK` is configured is not specified |
 | E15 | `execution` + `timingsMs` blocks (`readRanges`, `stockFrom`, `rewindTxs`, `lookups`, `watchLogs`) | ADR §7.8; RD §6 | Run telemetry in the manifest | Comparable run durations | **Removed from V1** | S | Moved to OTel metrics and engine logs. No reader loss |
 | E16 | File parts beyond 250,000 rows (`flow-00000…`, `part` in `files`) | ADR §7.3; RD §8; DD §7.14 | Splits a data file into parts | Parallel compression and upload | **Removed from V1** | S/M | One gzip of 75–142 MB: ~5 s on one thread; DuckDB reads it as fast. Saves the part logic in the writer, reader, checks and API |
 | E17 | `diagnostic.json` for structural `incomplete` (≤ 1,000 items per reason) | D26; RD §6 | Lists the books, holds, applications or files at fault | Debug a run that writes no data file | **Removed from V1** | M | Saves a file format with 4 item shapes. The operator debugs from logs or a debug run. Depends on D11 |
@@ -196,11 +199,11 @@ feature's interest unless the row says otherwise.
 | `holds[].prefix`, `holds[].openSign` | rule | ADR §6, D11 | A4 | NEC | — |
 | `holds[].businessId` | rule | ADR §6, D18 | A5 | NEC | — |
 | `psp.paymentAccount` | rule | D17 | A6 | NEC | — |
-| `psp.merchantRef` | rule | ADR §6 | A8 | OPT | Pairing gone |
+| `psp.merchantRef` | rule | ADR §6 | A8 | OPT, **kept** | Pairing gone |
 | `psp.movementKeys` | rule | D23 | A9/E13 | OPT | Debit book gone |
 | `product.grace`, `psp.grace` | rule | D16, D20 | C3 | NEC | One grace would do, but loses the asymmetry |
-| `psp.maxAge`, `product.maxAge` | rule | ADR §6 | C6 | OPT | No `stuck` |
-| `buckets` | rule | ADR §6 | C7 | OPT | Hard-code the 4 buckets, or drop them |
+| `psp.maxAge`, `product.maxAge` | rule | ADR §6 | C6 | **Removed with C6** | `stale_holds` covers holds held too long |
+| `buckets` | rule | ADR §6 | C7 | OPT, **kept** | Hard-code the 4 buckets, or drop them |
 | `--lettering-retention` | operator | ADR §7.4, §7.8, D4 | G1 | NEC (default 90 d) | Fixed at 90 d; the lifecycle rule must match it |
 | `anchorRetention` | rule | ADR §7.4, D14 | G3 | **Removed with G3** | Goes with the anchors |
 | `backfillFrom` | rule | ADR §7.6, D9 | B17 | NEC (a default exists) | Keep the default, drop the knob? The knob is also the re-seed substitute (D10) |
@@ -218,7 +221,7 @@ feature's interest unless the row says otherwise.
 |---|---|---|---|---|---|---|---|
 | I1 | One aggregate alert per (rule, fingerprint, period), existing alert-period model, daily schedule by default | ADR §6, D8 | Reuses the existing alerting | Never one alert per payment | NEC | S | No notification (reuses existing infra) |
 | I2 | Alert trigger: an open break; never the net; `incomplete` → engine-error alert | ADR §6, D16; RD §4 | Opening rule | Pending items and offsetting breaks move the net | NEC | S | Noisy or missed alerts |
-| I3 | Alert evidence = the full rendered statement (bridge, open items, books, triage text, lookup hints) | ADR §6; RD §10 "The statement" | A text *état de rapprochement* in the alert | Controller-readable | OPT | M | Minimal evidence (verdict, counts per class, top-K breaks, link) is enough for V1. Rendering follows E8–E10 |
+| I3 | Alert evidence = the full rendered statement (bridge, open items, books, triage text, lookup hints) | ADR §6; RD §5, §10 "The statement" | A text *état de rapprochement* in the alert | Controller-readable | **Simplified** (OPT): structured evidence, no text rendering | M | The evidence is the `statement` block as JSON, the headline, the counts, the top-K breaks and the link; the UI renders the statement. Saves a server-side renderer and its golden test |
 | I4 | Weekly/monthly periods for lettering rules (the monthly alert opened by the first failing daily run) | ADR §6, §7.5, D8 | Reuses `periodType` | Monthly close | OPT | S | Daily-only lettering rules in V1 |
 | I5 | `period.json` summary (one entry per day from the daily manifests, gaps, expired links, never rewritten, kept like an anchor) | ADR §7.5; RD §6 | A file of the period's last run | A period view that outlives the daily files | **Removed from V1** | M | Saves a file format, "last run of the period" detection, the anchor-like retention and the self-reference rule (no `manifestSha256` for the last day). The same view is a query over the daily manifests. Depends on G3 for its retention |
 
@@ -229,11 +232,11 @@ feature's interest unless the row says otherwise.
 - **Features:** 104 numbered rows in §1–§7 and §9. §8 lists 20 configuration knobs, which map to
   those rows and are not counted again.
 - **NEC:** 49, E14 included (its top-K breaks list).
-- **OPT:** 32, E14's pending and resolved lists not counted separately, and E10 counted here since
-  it is simplified, not removed. C8, C10, D5, D6, E6, E8, E9, F4 and F5 are kept by decision. Of these, 3 are doc-only, proposed,
-  or already outside V1: A14, A15, G7.
-- **Removed, deferred or replaced:** 23, B11, B12, B13, B14, B16, B18, C4, D8, D9, D10, D11, E15, E16,
-  E17, F3, F10, G2, G3, G5, G6, G8, G9 and I5 (see "Decisions taken").
+- **OPT:** 31, E14's pending and resolved lists not counted separately, and E10 and I3 counted here
+  since they are simplified, not removed. A8, C7, C8, C10, D5, D6, E6, E8, E9, F4 and F5 are kept by
+  decision. Of the 31, 3 are doc-only, proposed, or already outside V1: A14, A15, G7.
+- **Removed, deferred or replaced:** 24, B11, B12, B13, B14, B16, B18, C4, C6, D8, D9, D10, D11, E15,
+  E16, E17, F3, F10, G2, G3, G5, G6, G8, G9 and I5 (see "Decisions taken").
 
 ## Candidates to remove
 
@@ -295,10 +298,12 @@ judgement.
     self-checks; D4 remains the completeness proof. Decided (kept).
 18. **E6, the duplicated breaks file**, together with D6, lifecycle, and C8, `cleared` rows. This
     only holds if the alert can live without new-vs-persisting. Decided (kept).
-19. **I3, the full rendered statement in the alert.** Send a minimal alert instead.
-20. **C6 `stuck`/`maxAge` and C7 buckets.** They overlap `stale_holds`.
+19. **I3, the full rendered statement in the alert.** Send a minimal alert instead. Decided
+    (simplified): the evidence is structured data, and the UI renders the statement.
+20. **C6 `stuck`/`maxAge` and C7 buckets.** They overlap `stale_holds`. Decided (C6 removed, C7
+    kept).
 21. **A8, merchantRef pairing.** It is cheap, and the docs call it the single most useful field. Keep
-    it unless the Connectivity mapping cannot provide it.
+    it unless the Connectivity mapping cannot provide it. Decided (kept).
 
 **Gaps found while reading:**
 

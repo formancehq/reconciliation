@@ -140,7 +140,7 @@ fresh "$day24"; rm "$work/run/stock.ndjson.gz"
 expect_violation "a data file missing" file_missing "$lettering" check "$work/run"
 fresh "$day24"; mv "$work/run/flow.ndjson.gz" "$work/run/flow-00000.ndjson.gz"
 expect_violation "a data file under another name" file_unlisted "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"name":"breaks.ndjson.gz","rows":5,"sha256":"[0-9a-f]*"/"name":"breaks.ndjson.gz","rows":5,"sha256":"00"/'
+fresh "$day24"; edit "$work/run/$m" 's/"name":"breaks.ndjson.gz","rows":3,"sha256":"[0-9a-f]*"/"name":"breaks.ndjson.gz","rows":3,"sha256":"00"/'
 expect_violation "a file's SHA-256" file_sha256 "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"name":"stock.ndjson.gz","rows":9/"name":"stock.ndjson.gz","rows":8/'
 expect_violation "a file's row count" file_rows "$lettering" check "$work/run"
@@ -148,9 +148,9 @@ fresh "$day24"; edit "$work/run/$m" 's/"matched":3/"matched":4/'
 expect_violation "a flow count" counts_flow "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"flowOutcome":{"ok":4/"flowOutcome":{"ok":5/'
 expect_violation "a flow outcome count" counts_flow_outcome "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"product":{"open":4,"wrong_sign"/"product":{"open":5,"wrong_sign"/'
+fresh "$day24"; edit "$work/run/$m" 's/"product":{"open":5,"wrong_sign"/"product":{"open":6,"wrong_sign"/'
 expect_violation "a stock count" counts_stock "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"persisting":3,"resolved":1/"persisting":3,"resolved":2/'
+fresh "$day24"; edit "$work/run/$m" 's/"persisting":2,"resolved":0/"persisting":2,"resolved":1/'
 expect_violation "a break count" counts_breaks "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"unclassified":{"psp":1,"product":0}/"unclassified":{"psp":2,"product":0}/'
 expect_violation "an unclassified count" counts_unclassified "$lettering" check "$work/run"
@@ -188,9 +188,9 @@ fresh "$qa4"; edit "$work/run/breaks.ndjson.gz" '/"leg":"book"/s/"amount":"1800"
 expect_violation "a book break whose amount is not its residual" break_amount "$lettering" check "$work/run"
 fresh "$qa5"; edit "$work/run/breaks.ndjson.gz" '/"leg":"book","priority":1,"lifecycle":"resolved"/s/"flowCredits":"0"/"flowCredits":"1"/'
 expect_violation "a resolved book break that is not its entry" break_vs_row "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/breaks.ndjson.gz" 's/"amount":"120000","side":"product","hold":"main:hold:invoice:INV-3"/"amount":"-120000","side":"product","hold":"main:hold:invoice:INV-3"/'
+fresh "$day24"; edit "$work/run/breaks.ndjson.gz" 's/"amount":"-10000","side":"product","hold":"main:hold:invoice:INV-14"/"amount":"10000","side":"product","hold":"main:hold:invoice:INV-14"/'
 expect_violation "a stock break with the wrong sign" break_vs_row "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/breaks.ndjson.gz" '/"lifecycle":"resolved"/s/"outcome":"ok"/"outcome":"break"/'
+fresh "$qa5"; edit "$work/run/breaks.ndjson.gz" '/"lifecycle":"resolved"/s/"outcome":"ok"/"outcome":"break"/'
 expect_violation "a resolved break still marked break" break_outcome "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/breaks.ndjson.gz" 's/"priority":2,"lifecycle":"new"/"priority":1,"lifecycle":"new"/'
 expect_violation "a break's priority" break_priority "$lettering" check "$work/run"
@@ -224,7 +224,7 @@ fresh "$day24"; edit "$work/run/$m" 's/"buckets":{"0-1d":0,"2-7d":2,"8-30d":2,">
 expect_violation "a book's age buckets" books_buckets "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/breaks.ndjson.gz" '/"ref":"PAY-44"/s/"class":"under_applied"/"class":"over_applied"/'
 expect_violation "a break that is not its row" break_vs_row "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"topK":10/"topK":3/'
+fresh "$day24"; edit "$work/run/$m" 's/"topK":10/"topK":2/'
 expect_violation "a triage that lists more than topK" triage_count "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"topK":10/"topK":1/; s/,{"breakId":"[0-9a-f]*","priority":[34][^}]*}//g; s/,{"ref":"PAY-99","class":"applied_before_final"[^}]*}//'
 expect_ok "a triage cut at topK, with more breaks and pending rows in the files" "$lettering" check "$work/run"

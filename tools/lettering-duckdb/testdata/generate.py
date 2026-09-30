@@ -88,8 +88,8 @@ def worked_example(out):
     stock23 = [hold('INV-11', -120000, 'open', '2026-09-04T08:30:00Z', 19, '8-30d'),
                hold('INV-12', -80000, 'open', '2026-09-19T12:05:00Z', 4, '2-7d'),
                hold('INV-14', 10000, 'wrong_sign', '2026-09-18T16:20:00Z', 5, '2-7d'),
-               hold('INV-3', -120000, 'stuck', '2026-08-14T10:02:00Z', 40, '>30d'),
-               hold('INV-5', -70000, 'stuck', '2026-08-21T09:40:00Z', 33, '>30d'),
+               hold('INV-3', -120000, 'open', '2026-08-14T10:02:00Z', 40, '>30d'),
+               hold('INV-5', -70000, 'open', '2026-08-21T09:40:00Z', 33, '>30d'),
                hold('INV-9', -50000, 'open', '2026-09-12T07:45:00Z', 11, '8-30d')]
     stock23_gz = gz(stock23)
     write(os.path.join(day23, 'stock.ndjson.gz'), stock23_gz)
@@ -102,8 +102,6 @@ def worked_example(out):
             b.pop(k, None)
         return b
     breaks23 = [was('1c7f3a90d2e84b55'),
-                was('d4f8a1c3e5b70926', ageDays=40),
-                was('3a6e9d0b2c8f4171', balance="-70000", ageDays=33),
                 was('7b24e1f09c3d6a12', ageDays=5)]
     breaks23_gz = gz([dump(b) for b in breaks23])
     write(os.path.join(day23, 'breaks.ndjson.gz'), breaks23_gz)
@@ -123,7 +121,7 @@ def worked_example(out):
                              "input": "9120000", "output": "310000"}],
         "files": [{"name": "carried.ndjson.gz", "rows": 2, "sha256": sha(carried23)},
                   {"name": "stock.ndjson.gz", "rows": 6, "sha256": sha(stock23_gz)},
-                  {"name": "breaks.ndjson.gz", "rows": 4, "sha256": sha(breaks23_gz)}],
+                  {"name": "breaks.ndjson.gz", "rows": 2, "sha256": sha(breaks23_gz)}],
         "expiresAt": "2026-12-22",
     }
     b23 = (dump(m23) + '\n').encode()
@@ -152,9 +150,9 @@ PAYMENT_ACCOUNT = 'fpay:stripe:account:acct_1:main'  # matches the rules' psp.pa
 PSP_STATES = {'pending': 'payin.pending', 'final': 'payin.succeeded', 'failed': 'payin.compensate'}
 FLOW_CLASSES = ['matched', 'under_applied', 'over_applied', 'unapplied_payment', 'applied_before_final',
                 'orphan_application', 'reversed_after_application', 'in_progress', 'failed']
-STOCK_CLASSES = ['open', 'wrong_sign', 'stuck', 'cleared']
+STOCK_CLASSES = ['open', 'wrong_sign', 'cleared']
 PRIORITY = {'orphan_application': 1, 'reversed_after_application': 1, 'unkeyed_payment_movement': 1, 'under_applied': 2,
-            'over_applied': 2, 'unapplied_payment': 3, 'stuck': 4, 'wrong_sign': 4}
+            'over_applied': 2, 'unapplied_payment': 3, 'wrong_sign': 4}
 
 
 def at(day, hhmm):
@@ -207,8 +205,6 @@ class Rule:
     id: str
     psp_grace: int
     product_grace: int
-    psp_max_age: int
-    product_max_age: int
     backfill_from: dt.date
     period_type: str = 'daily'
     buckets: tuple = (1, 7, 30)
@@ -221,12 +217,12 @@ class Rule:
             "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
                     "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
                               "final": ["payin.succeeded"], "failed": ["payin.compensate"]},
-                    "grace": f"{self.psp_grace}d", "maxAge": f"{self.psp_max_age}d",
+                    "grace": f"{self.psp_grace}d",
                     "paymentAccount": "fpay:stripe:account:*:main", "merchantRef": "merchant_ref",
                     "holds": [{"prefix": PSP_HOLD, "openSign": "positive"}]},
             "product": {"ledger": "main", "key": "psp_payment_ref",
                         "state": {"field": "transition_kind", "final": ["to_final"]},
-                        "grace": f"{self.product_grace}d", "maxAge": f"{self.product_max_age}d",
+                        "grace": f"{self.product_grace}d",
                         "holds": [{"prefix": INVOICE, "openSign": "negative", "businessId": "invoice_no"},
                                   {"prefix": REFUND, "openSign": "positive", "businessId": "refund_no"}]},
         }
@@ -476,15 +472,14 @@ class Engine:
             key = (side, address, asset)
             was = prev_stock.get(key)
             was_open = was is not None and was['class'] != 'cleared'
-            max_age = self.rule.psp_max_age if side == 'psp' else self.rule.product_max_age
             sign = OPEN_SIGN[prefix]
             if h['balance'] != 0:
                 age = (day - local_day(h['opened'])).days
                 od = sign * h['balance']
-                klass = 'wrong_sign' if od < 0 else ('stuck' if age > max_age else 'open')
+                klass = 'wrong_sign' if od < 0 else 'open'
                 s = {'side': side, 'hold': address, 'asset': asset, 'prefix': prefix, 'holdId': hid,
                      'openSign': SIGN_NAME[sign], 'balance': h['balance'], 'class': klass,
-                     'outcome': 'break' if klass in ('wrong_sign', 'stuck') else 'ok',
+                     'outcome': 'break' if klass == 'wrong_sign' else 'ok',
                      'lifecycle': 'persisting' if was_open else 'new', 'openedAt': h['opened'],
                      'ageDays': age, 'bucket': bucket(age, self.rule.buckets)}
                 out.append(s)
@@ -974,7 +969,7 @@ def scenarios():
     pay(D[1], '15:00', 'S15', 2500, t_final='15:05')
     apply(D[1], '15:10', 'S15', [(INVOICE, 'INV-S15', 'EUR/2', 2500)])
     psp.append(Psp(at(D[3], '10:00'), 'S15', 'EUR/2', 'payin.refunded', 2500, 0))
-    # S18: an invoice never paid, stuck once older than maxAge (5 days)
+    # S18: an invoice never paid: it stays open and moves up the age buckets
     opening(D[1], '07:10', inv('INV-S18', 6000))
     # U01, U02: the second asset. U02 is finalised on day 2 and never applied.
     opening(D[1], '07:11', inv('INV-U01', 12000, 'USD/2'))
@@ -1013,7 +1008,7 @@ def scenarios():
     opening(D[2], '07:06', inv('INV-PU', 4500))
     pay(D[2], '14:00', 'PU', 4500, t_final='14:05')
     prod.append(Prod(at(D[2], '14:10'), 'unclassified', [(INVOICE, 'INV-PU', 'EUR/2', 4500)], 'PU'))
-    # S13: pending on day 3, never finalised: its PSP hold is stuck past maxAge (3 days)
+    # S13: pending on day 3, never finalised: its PSP hold stays open and ages
     psp.append(Psp(at(D[3], '15:00'), 'S13', 'EUR/2', 'pending', 0, 2200))
     # S20: matched on day 4, un-applied with its reference on day 5 (a negative application)
     opening(D[1], '07:13', inv('INV-S20', 3000))
@@ -1041,8 +1036,7 @@ def scenarios():
     psp.append(Psp(at(D[5], '17:00'), None, 'EUR/2', 'unkeyed', -700))
     psp.append(Psp(at(D[6], '17:00'), None, 'EUR/2', 'unkeyed', -300))
 
-    rule = Rule('qa-scenarios', psp_grace=3, product_grace=1, psp_max_age=3, product_max_age=5,
-                backfill_from=dt.date(2026, 10, 1))
+    rule = Rule('qa-scenarios', psp_grace=3, product_grace=1, backfill_from=dt.date(2026, 10, 1))
     return rule, Book(psp, prod), D[1:]
 
 
@@ -1063,8 +1057,8 @@ def verdicts():
     # 8 October: nothing at all. 9 October: the run is incomplete.
     matched('2026-10-09', '09:00', 'V5', 7000)
     matched('2026-10-10', '21:00', 'V6', 4000, '07:00', '2026-10-11')
-    rule = Rule('qa-verdicts', psp_grace=3, product_grace=1, psp_max_age=10, product_max_age=30,
-                backfill_from=dt.date(2026, 10, 5), period_type='weekly')
+    rule = Rule('qa-verdicts', psp_grace=3, product_grace=1, backfill_from=dt.date(2026, 10, 5),
+                period_type='weekly')
     return rule, Book(psp, prod)
 
 
@@ -1173,11 +1167,10 @@ def expected(engine, out):
             if s['class'] == 'cleared':
                 continue
             k = (day_str(d), s['side'], s['prefix'], s['asset'], s['bucket'])
-            n, amt, stuck, wrong = sa.get(k, (0, 0, 0, 0))
-            sa[k] = (n + 1, amt + OPEN_SIGN[s['prefix']] * s['balance'], stuck + (s['class'] == 'stuck'),
-                     wrong + (s['class'] == 'wrong_sign'))
-    res['stock-ageing'] = csv_text(['day', 'side', 'prefix', 'asset', 'bucket', 'holds', 'amount', 'stuck',
-                                    'wrong_sign'], [list(k) + list(v) for k, v in sa.items()])
+            n, amt, wrong = sa.get(k, (0, 0, 0))
+            sa[k] = (n + 1, amt + OPEN_SIGN[s['prefix']] * s['balance'], wrong + (s['class'] == 'wrong_sign'))
+    res['stock-ageing'] = csv_text(['day', 'side', 'prefix', 'asset', 'bucket', 'holds', 'amount', 'wrong_sign'],
+                                   [list(k) + list(v) for k, v in sa.items()])
     lo = []
     for d in days:
         for s in current[d]['stock']:
