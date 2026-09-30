@@ -83,8 +83,14 @@
   - The restart takes an optional `backfillFrom`, rejected when it is later than the next run's
     cut. Nothing else is stored: the next run's manifest, a first run with no `previousRun` and
     "backfilled since …", is the trace of the restart.
-- **Expiry.** A run's files are kept for the rule's `retention`, 90 days by default, and the manifest's `expiresAt` says until when. A customer bound to a longer legal
-  retention raises `retention`.
+- **Expiry.** A run's files are kept for the deployment's retention, the operator setting
+  `--lettering-retention`, 90 days by default. A lifecycle rule of the storage on
+  `{bucketID}/reconciliation/` deletes them; recon deletes nothing. The retention is not a rule
+  parameter: it applies to every rule under the product ledger's prefix. The manifest's
+  `expiresAt`, the run's day plus the retention, is for information only, since the storage counts
+  from each file's creation. A customer bound to a longer legal retention has the operator raise
+  both ([design doc
+  §5](./transaction-level-reconciliation.md#result-artifacts-and-retention)).
   - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
     (`engine` in the manifest). Its stock is rewound from the head; its carried items, with the
     previous day's files expired, are rebuilt from a backfill window, as on a first run (ADR-005 §7,
@@ -285,7 +291,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 |---|---|
 | `schemaVersion` | `lettering/1` |
 | `engine` | The version of recon that produced the run. A replay reproduces the files only with the same one |
-| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `maxAge`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `buckets` are the age buckets' upper bounds |
+| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `maxAge`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `buckets` are the age buckets' upper bounds. The retention is not a rule parameter (§2) |
 | `runId` | `r-{UTC start instant}`; run ids sort in time order |
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
@@ -304,7 +310,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `S_prev` values here |
 | `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
 | `files` | One entry per file: `name`, `rows`, `sha256` |
-| `expiresAt` | When the run's files expire (§2) |
+| `expiresAt` | For information: the run's `day` plus the deployment's retention. The storage's lifecycle rule deletes the files, counting from their creation (§2) |
 
 ### `flow.ndjson.gz`
 
@@ -451,7 +457,7 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
   - the same engine version;
   - the same rule version;
   - the same previous run, whose carried and stock files seed the day, so a replay while that run's
-    files are kept (`retention`);
+    files are kept (the retention, §2);
   - no key, state, business-id or merchant-reference metadata changed since the original run
     (`key_metadata_mutated`), because the ledger serves the current metadata.
 
@@ -550,7 +556,7 @@ and was lettered on the same day.
   "engine": "reconciliation v1.4.0",
   "rule": {
     "id": "psp-vs-billing", "version": 7, "sha256": "4c1d…",
-    "buckets": ["1d", "7d", "30d"], "retention": "90d",
+    "buckets": ["1d", "7d", "30d"],
     "backfillFrom": "2026-08-01",
     "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id",
                 "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],

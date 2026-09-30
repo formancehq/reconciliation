@@ -434,7 +434,7 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Resolve `T` (transaction-id cut) | `ListTransactions`, filter `cut-off < builtin_uint(INSERTED_AT) ≤ cut-off + δ`, page 1, `reverse = true` → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory**, same remark |
 | **Flow window** | `ListTransactions`, filter `And(membership, builtin_uint(ID) ∈ (lo, hi])`, **membership first** ([above](#the-cut-from-a-business-time-to-id-ranges), §7.11), `reverse = true`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, or `Or(<psp.key> EXISTS, <psp.movementKeys> EXISTS…)` when the rule declares movement keys (decision 23), and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
 | Rewind window `(T, head_tx]`, and replays | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **newest first** (the default order; §4), in chunks, page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
-| Metadata watch `(head_prev, head]` and exact re-derivation of a past day | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
+| Metadata watch `(head_prev, head]` | `ListLogs`, filter `log_id ∈ (lo, hi]`, page 1000, cursor in the `x-next-cursor` trailer | **none** |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
 | Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch. On a released v3.0 it is the only lookup left once a hold is purged (§2) |
 
@@ -473,9 +473,6 @@ improves (§7.7).
   read that failed, and it makes the run `incomplete` instead of silently shrinking the window. The
   filtered flow read has gaps by design; there, completeness rests on the index and on the
   continuity identity.
-- That check also makes it possible to read from followers (`x-consistency: stale`) to take load off
-  the leader: a follower that has not yet applied up to `hi` returns fewer logs, and the range is
-  retried.
 - **Replay.** `S` and `T` are written in the signed capture, so a later re-read covers the same
   window ([Replaying an old day](#replaying-an-old-day)).
   Both ledgers are cut at the same business time, whenever the job runs.
@@ -554,8 +551,7 @@ is stored for it.
 **The flow costs the same at any age.** The cut of an old day resolves in one index page per
 ledger, and the day is its id range `(T_prev, T]`, read filtered on the key:
 O(payments of that day), a day or a year later. It matches the original run as long as key and
-state metadata stayed write-once. The exact variant reads that day's logs `(S_prev, S]`, which is
-slower but still one day's worth.
+state metadata stayed write-once; V1 has no exact variant through the logs.
 
 **The stock is the live listing, rewound from head** (§4). The window `(T, head_tx]` grows with the
 day's age, and the fold's memory does not: it holds the open book, since it reads newest first and
@@ -566,7 +562,7 @@ drops a hold back at zero. Measured at 236k–261k transactions/s over 8 workers
 |---|---|---|
 | The next day | ~1M | ~4 s |
 | A month later | ~30M | ~2 min |
-| At the end of the 90-day retention | ~90M | ~6 min |
+| At the end of the default 90-day retention | ~90M | ~6 min |
 | A year later | ~365M | ~26 min |
 
 A product ledger of 1M payments a day writes about 4M transactions (§7.15), so its rewind takes about
@@ -574,13 +570,15 @@ four times as long: ~25 min at the end of the retention. An id-order fold that k
 touch would hold every hold created since the day, about
 760 bytes each (7.6 GB of heap for 10M, §7.16): about 70 GB for a 90-day-old day.
 
-**The carried items come from the previous run while it is kept.** Within the rule's `retention`,
-the previous day's carried and stock files seed the replay, and it reproduces the day's files byte
-for byte (results reference §8). Beyond it, those files have expired: the replay rebuilds its
-carried items from a backfill window, as a first run does (ADR-005 §7, item 6), which costs about
-`psp.grace` + 1 days of flow reads. An item carried for longer than that window is missed, the
-statement says "backfilled since …", and the files are no longer byte-identical to the original.
-A customer who must reproduce older days raises `retention`.
+**The carried items come from the previous run while it is kept.** Within the retention, a
+deployment setting (`--lettering-retention`, §5), the previous day's carried and stock files seed
+the replay, and it reproduces the day's files byte for byte (results reference §8). Beyond it,
+those files have expired: the replay rebuilds its carried items from a backfill window, as a first
+run does (ADR-005 §7, item 6), which costs about `psp.grace` + 1 days of flow reads. An item
+carried for longer than that window is missed, the statement says "backfilled since …", and the
+files are no longer byte-identical to the original. Recon knows the retention, so it knows which
+days a replay still reproduces. A customer who must reproduce older days raises the retention and
+the storage's lifecycle rule together.
 
 ## 5. Matching semantics
 
@@ -634,11 +632,10 @@ reference](./transaction-level-results.md#4-the-verdict).
 
 ### Result artifacts and retention
 
-The files and every field, retention and the file sizes are
-specified in the [results reference](./transaction-level-results.md), the source of truth for the
-format; its [worked example](./transaction-level-results.md#10-worked-example-one-day-of-output)
-shows a complete day. Why the format is what it is: ADR-005 §7, item 3. Two points of mechanics
-stay here.
+The files, every field and the file sizes are specified in the [results
+reference](./transaction-level-results.md), the source of truth for the format; its [worked
+example](./transaction-level-results.md#10-worked-example-one-day-of-output) shows a complete day.
+Why the format is what it is: ADR-005 §7, item 3. Three points of mechanics stay here.
 
 **Location.** The files go to the backup object storage of the rule's **product ledger**, S3 or
 Azure, under `{bucketID}/reconciliation/`, a sibling of `backups/`. The product ledger is the book
@@ -646,6 +643,25 @@ the rule answers for, and one PSP ledger may feed several products. The ledger's
 deletes unreferenced objects under `{bucketID}/backups/data/` and `{bucketID}/backups/exports/`
 (`internal/infra/backup/manager.go:229-235`, `segment.go:54-61`), so `{bucketID}/reconciliation/`
 is never touched.
+
+**Expiry is one lifecycle rule of the storage, which the operator must set.** Recon deletes no
+file. At installation, the operator adds a rule on `{bucketID}/reconciliation/` that deletes
+objects older than the deployment's retention, the `serve` flag `--lettering-retention` (90 days
+by default); without it the files are never deleted (ADR-005 §7, item 4). It covers the files of
+every recon rule under that product ledger's prefix, and the leftover files of a stopped run.
+
+- **S3:** a lifecycle rule with `Filter.Prefix` `{bucketID}/reconciliation/` and
+  `Expiration.Days` set to the retention (`aws s3api put-bucket-lifecycle-configuration`). On a
+  versioned bucket, add `NoncurrentVersionExpiration`, or the deleted files stay as noncurrent
+  versions.
+- **Azure:** a lifecycle management rule with `blobTypes` `["blockBlob"]`, `prefixMatch`
+  `["{container}/{bucketID}/reconciliation/"]` (a prefix starts with the container name) and
+  `baseBlob.delete.daysAfterCreationGreaterThan` set to the retention.
+- **`file`:** no expiry, which is fine for local development.
+
+Both stores count the age from each file's creation and delete asynchronously, so a file can
+outlive it by a day or more. The manifest's `expiresAt`, the run's day plus the retention, is for
+information only.
 
 **A run that cannot conclude** writes its manifest and no data file, and the next run chains on
 the last complete one ([results reference
@@ -750,8 +766,7 @@ appears as a new `SavedMetadata` log at the head. This is why the flow filters o
    3.86M lines, a 970 MB log. → ask **L2**, done (§8, F-c): now at TRACE.
 5. **For the same data, logs are 5–7× slower than transactions** (13.8k/s against 94.5k/s on one
    stream). Only `ListTransactions` can filter on metadata server-side, so the flow reads
-   transactions, and so does the rewind (§7.8). The logs serve the metadata watch and exact
-   re-derivation. → asks **L6**, **L8** and **L10**.
+   transactions, and so does the rewind (§7.8). The logs serve the metadata watch only. → asks **L6**, **L8** and **L10**.
 6. **Disk.** A 100k-account checkpoint kept its 169 MB alive after the live store had grown to
    1.9 GB. A checkpoint's cost is churn × lifetime, on every replica.
 
@@ -1238,7 +1253,7 @@ Encoding and compressing the flow file took 4.6 s (5.4 s with the long reference
 
 **Reading.**
 
-- **About 80 to 155 MB a day per rule, 7 to 14 GB over the 90 days of retention**, nearly all of it
+- **About 80 to 155 MB a day per rule, 7 to 14 GB over the default 90-day retention**, nearly all of it
   the flow file. The length of the payment reference doubles it; it is the key the rows are joined
   on, so it cannot be shortened.
 - A self-contained break row weighs 93 to 161 bytes. Breaks remain a small file.

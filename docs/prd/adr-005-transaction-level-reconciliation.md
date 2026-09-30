@@ -218,8 +218,7 @@ depend on read speed:
 - **The flow needs no snapshot.** Transactions at or below `T` are immutable except for their
   metadata.
 
-A fast checkpoint read would only make the rewind's oracle test (R10) and the optional proof run
-cheaper to run more often.
+A fast checkpoint read would only make the rewind's oracle test (R10) cheaper to run more often.
 
 ## 5. Decision A — the cut is a log id, and the stock is rewound to it
 
@@ -344,9 +343,8 @@ The logs keep only the metadata watch; there is no purge consistency check in V1
 was wrong on **0** of 1,000,000 rows ([design doc
 §7.4](../technical/transaction-level-reconciliation.md#74-rewind-proof) and §7.8).
 
-**The checkpoint's role shrinks to an oracle.** It serves the rewind's regression test, and it can
-back an optional periodic proof: the rewound stock at `S = checkpoint.max_sequence` must equal the
-checkpoint's listing.
+**The checkpoint's role shrinks to an oracle.** It serves the rewind's regression test (R10) only;
+V1 runs no periodic proof against a checkpoint.
 
 ## 6. Decision B — matching semantics
 
@@ -535,13 +533,21 @@ checkpoint's listing.
      It also accepts `file` for local development.
    - The manifest's hash sits in the signed capture, so the signature covers the files transitively.
      Readers find runs by their manifests, never by their data files.
-4. **Retention: 90 days by default, per rule.**
-   - The primary mechanism is the storage's lifecycle rule on the recon prefix (S3 lifecycle, Azure
-     lifecycle management). Recon's own sweep, driven by the `expiresAt` in each manifest, is the
-     fallback.
+4. **Retention: a deployment setting, applied by one storage lifecycle rule.**
+   - Recon deletes no file. One lifecycle rule of the storage on `{bucketID}/reconciliation/` (S3
+     lifecycle, Azure lifecycle management) deletes the files once they are older than the
+     retention. The operator sets it at installation, and it is **required**: without it the files
+     are never deleted. How to set it: [design doc
+     §5](../technical/transaction-level-reconciliation.md#result-artifacts-and-retention).
+   - The retention is the `serve` flag `--lettering-retention`, 90 days by default (item 8), and
+     the lifecycle rule carries the same age. It is not a rule parameter: it applies to every rule
+     under the product ledger's prefix. The manifest's `expiresAt`, the run's day plus the
+     retention, is for information only. Recon uses the retention to know up to when a replay
+     reproduces a day's files byte for byte (item 7).
    - Expiry loses nothing irrecoverable. The logs are permanent, so any past day can be recomputed
      from the ledgers with the same cut and engine version, which each manifest records (item 7). A
-     customer bound to a longer legal retention raises `retention`: the files themselves are kept.
+     customer bound to a longer legal retention raises the flag and the lifecycle rule together.
+   - The `file` driver has no expiry, which is fine for local development.
 5. **A period points at each day's diffs.**
    - The period is the rule's `periodType`, calendar-based in the rule's timezone. There is no
      separate accounting-period model.
@@ -583,21 +589,25 @@ checkpoint's listing.
    (`S` and `T` on each ledger) is in the signed capture. A replay runs the daily algorithm as of
    that day, and no stock is stored for it.
    - The flow costs the same at any age, one day's id range `(T_prev, T]`.
-   - The stock is the live listing rewound from head: about 6 min at the end of the 90-day retention
-     and 26 min a year later, at 1M transactions a day, in the memory of the open book (measured on
-     20M transactions, [design doc
+   - The stock is the live listing rewound from head: about 6 min at the end of the default 90-day
+     retention and 26 min a year later, at 1M transactions a day, in the memory of the open book
+     (measured on 20M transactions, [design doc
      §7.16](../technical/transaction-level-reconciliation.md#716-replaying-an-old-day-from-head)).
-   - Within `retention`, the previous day's carried and stock files seed the replay, which
-     reproduces the day's files byte for byte. Beyond it, the carried items are rebuilt from a
+   - Within the retention (item 4), the previous day's carried and stock files seed the replay,
+     which reproduces the day's files byte for byte. Beyond it, the carried items are rebuilt from a
      backfill window, as on a first run (item 6), and the statement says so. Mechanics: [design
      doc](../technical/transaction-level-reconciliation.md#replaying-an-old-day).
-8. **Execution settings are operator settings, not rule parameters.** They are `serve` flags (with
-   the matching environment variables), like `scheduler-interval`, absent from the rule contract
-   and the API. The team running the deployment tunes them through Helm or the Operator:
+8. **Execution and retention settings are operator settings, not rule parameters.** They are
+   `serve` flags (with the matching environment variables), like `scheduler-interval`, absent from
+   the rule contract and the API. The team running the deployment tunes them through Helm or the
+   Operator:
    - `--lettering-read-ranges` (default 8): the number of id ranges read concurrently, for the
      flow, the rewind window and the metadata watch;
    - `--lettering-max-concurrent-reads` (default 16): caps the readers across every run
-     of the process; a read that would exceed it waits for a slot.
+     of the process; a read that would exceed it waits for a slot;
+   - `--lettering-retention` (default 90 days): how long a run's files are kept. It sets the
+     manifest's `expiresAt` and bounds the byte-identical replays (item 7); the storage's lifecycle
+     rule, set to the same age, deletes the files (item 4).
 
    K, the per-step durations and the read counts are exported as metrics and logs, not written to
    the manifest. How K was chosen: [design doc
@@ -650,7 +660,7 @@ No connector change is required.
 |---|---|---|
 | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths. **Done** in formancehq/ledger#2128 (`199bee364`): logged at TRACE | A listing of 1M accounts wrote 1M log lines | XS |
 | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. **Closed** with formancehq/ledger#2058 (`38c6eef55`) without such a test; the paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the logs | The flow leg finds lettered items through indexed transaction metadata, and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
-| **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–9× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream). At `7dd615dba` the gap holds (×5.4 on 8 ranges, ×9 on one stream), except in one session of the node where the same reads ran 4 to 9 times faster; that variance is part of the ask (design doc §7.13) | Only the metadata watch and exact re-derivations still read logs, the rewind having moved to the transactions (§5); the watch is the largest step of a daily run, so the gap deserves an explanation | S–M |
+| **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–9× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream). At `7dd615dba` the gap holds (×5.4 on 8 ranges, ×9 on one stream), except in one session of the node where the same reads ran 4 to 9 times faster; that variance is part of the ask (design doc §7.13) | Only the metadata watch still reads logs, the rewind having moved to the transactions (§5); the watch is the largest step of a daily run, so the gap deserves an explanation | S–M |
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), epic EN-1336, Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2.7 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
 | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), epic EN-1336, Ledger v3.1): a `ListLogs` filter on the logs the metadata watch needs, the `SavedMetadata` and `DeletedMetadata` that target a transaction. Today `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS` (`misc/proto/common.proto` at `7dd615dba`) | The watch reads every log of the ledger to find a few: 4.1M logs in 134–158 s for a 1M-payment product ledger, about 95 % of the run (design doc §7.15). Filtered, it would read only the rare logs it keeps. Not blocking: the full read costs about two minutes a run, which a nightly batch affords (decision 25) | M |
@@ -665,8 +675,7 @@ for the Ledger team to weigh against its own users:
 
 - **Checkpoint reads are about ×20 slower than live reads**: every page reopens both databases.
   Filed at the Ledger team's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336)
-  (ex-L1), theirs to prioritise. The rewind's test oracle and ADR-003's optional proof run can
-  afford the slowdown.
+  (ex-L1), theirs to prioritise. The rewind's test oracle can afford the slowdown.
 - **No consistent export**, meaning no single-snapshot multi-page listing, and **checkpoints have
   no owner and no TTL**. These served options A and B only.
 
@@ -677,7 +686,7 @@ for the Ledger team to weigh against its own users:
 | 1 | The shared key | The **PSP payment reference**, carried by the transactions on both ledgers. Authorization/capture, where both sides share the authorization number, is the special case (§2.1, §6). |
 | 2 | The state vocabulary | **Parameterised per side** in the rule, because it depends on how external payment states are modelled on the PSP ledger (§6). |
 | 3 | Grace and ageing | `grace` is per side: `product.grace` 1 day and `psp.grace` 7 days by default (decisions 16, 20). Age buckets 0–1, 2–7, 8–30 and > 30 days; all are rule parameters, to calibrate (§6). |
-| 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`, kept **90 days** by default (`retention`); a longer legal retention raises it. No longer-kept monthly anchors (§7). |
+| 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`, kept **90 days** by default. The retention is a deployment setting (`--lettering-retention`), not a rule parameter, and one storage lifecycle rule on `{bucketID}/reconciliation/`, required at installation, deletes the files; recon deletes none. A longer legal retention raises both. No longer-kept monthly anchors (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**, never a reversal of the original payment (§6). |
@@ -687,7 +696,7 @@ for the Ledger team to weigh against its own users:
 | 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
 | 12 | The cut's indexes | The **`inserted_at` and log-date indexes are mandatory** on both ledgers, and bisection is dropped. An index missing at run time is an engine error (§5). |
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
-| 14 | Replaying an old day | The **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, extrapolated from 20M measured). Beyond `retention`, the carried items are rebuilt from a backfill window (§7). |
+| 14 | Replaying an old day | The **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, extrapolated from 20M measured). Beyond the retention, the carried items are rebuilt from a backfill window (§7). |
 | 15 | Result files | For the customer first: gzipped NDJSON under `rule=/day=/run=`, a stable `breakId`, drifts carried to the next run, byte-identical files for a given cut ([results reference](../technical/transaction-level-results.md)). |
 | 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break: `applied_before_final` stays pending within `psp.grace`, unknown references included, then becomes `orphan_application` (P1). Missing references are looked up by key, and the alert opens on a break, never on the net alone (§6). |
 | 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern), not on the hold, which a final event with no `pending` before it moves by 0 (§6). |
@@ -718,14 +727,19 @@ new `periodType` without changing this design.
   dependency outside the ledger. It stays stateless in process. The artifacts are outputs, plus the
   previous run's carried items and ageing. Every one of them can be recomputed from the permanent
   logs.
-- **The result store is shared, not ADR-005-specific.** Its first other consumer is `stale_holds`,
-  which should keep its flagged holds as an artifact instead of only a query to re-run
+- **Installing recon includes a lifecycle rule on the storage.** Recon deletes no file: the
+  operator sets one lifecycle rule on `{bucketID}/reconciliation/` for each product ledger's
+  destination, with the age of `--lettering-retention` (§7 item 4). Without it the files are never
+  deleted.
+- **The result store is built for lettering first.** Its first other consumer would be
+  `stale_holds`, which should keep its flagged holds as an artifact instead of only a query to re-run
   ([stale-holds.md
   §9](../technical/stale-holds.md#9-revisit-after-adr-005--keep-the-flagged-holds-as-a-result-artifact-),
-  [EN-2324](https://formance-team.atlassian.net/browse/EN-2324)). The layout, the manifest, the hash
-  in the capture and the retention are generic by construction.
+  [EN-2324](https://formance-team.atlassian.net/browse/EN-2324)). EN-2324 generalises it when it
+  starts; the parts it would reuse are the layout, the manifest, the hash in the capture and the
+  lifecycle rule on the whole prefix.
 - **ADR-003 stands.** Evaluations never take query checkpoints; one is used only as a test oracle
-  and for an optional proof run.
+  (R10).
 - **A new template kind, with its own async execution path**; a job that stops is started again
   from the beginning. The scheduler's
   10 s drain grace does not apply to it ([scheduler.md](../technical/scheduler.md)).

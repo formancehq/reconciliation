@@ -19,7 +19,7 @@ below still hold.
 | Feature | Decision | Recorded in |
 |---|---|---|
 | B12 + G8, incremental watch and slice retention (and the `--lettering-watch-interval` flag) | Deferred after V1: the run reads the watch in full | ADR-005 decision 25 |
-| G5 + G3, replay from the nearest stored stock and monthly anchors (`anchorRetention`, the anchor tag, per-file `expiresAt`) | Removed from V1: a replay rewinds the live listing from head, newest first; beyond `retention` its carried items are rebuilt from a backfill window | ADR-005 decisions 4 and 14 |
+| G5 + G3, replay from the nearest stored stock and monthly anchors (`anchorRetention`, the anchor tag, per-file `expiresAt`) | Removed from V1: a replay rewinds the live listing from head, newest first; beyond the retention its carried items are rebuilt from a backfill window | ADR-005 decisions 4 and 14 |
 | I5, `period.json` | Removed from V1: the period's alert lists each day, and any other period view is a query over the daily manifests | ADR-005 §7 item 5 |
 | D10 + E17 + D11, re-seed, `diagnostic.json`, `incomplete.kind` | Simplified: a stuck chain restarts as a first run, backfilled from the oldest open item of the last complete run; `incomplete.detail` names the first 20 items at fault; no `kind` field | ADR-005 decision 26 |
 | D9, acceptance of breaks one by one | Removed from V1: the alert opens on any open break; the controller acknowledges or accepts the alert itself (existing alert model), and a known break is fixed by booking it | ADR-005 §6 |
@@ -32,6 +32,10 @@ below still hold.
 | E10, `flowGross` + `offsetting` flag | Simplified: the `offsetting` flag is removed; `flowGross` stays, since the alert's headline shows it first | ADR-005 decision 21; RD §5 |
 | E15, the manifest's `execution` and `timingsMs` blocks | Removed from V1: K, the per-step durations and the read counts are exported as OTel metrics and engine logs; `startedAt` and `finishedAt` stay | ADR-005 §7 item 8 |
 | F3, `logSha256` in `cuts` and in the capture | Removed from V1: `S` and `T` per ledger suffice to replay, the logs are immutable, and the hash is stable for one protocol version only | ADR-005 §5 and §7 item 7 |
+| G2, recon's own `expiresAt` sweep, and the rule's `retention` | Removed from V1: one storage lifecycle rule on `{bucketID}/reconciliation/`, required at installation, deletes the files; the retention is the deployment setting `--lettering-retention` (default 90 d), and the manifest's `expiresAt` is for information only | ADR-005 §7 items 4 and 8, decision 4 |
+| B18, G6, F10, doc-only options | Removed from V1: follower reads, the exact replay through the logs `(S_prev, S]` and the periodic proof against a checkpoint are no longer mentioned as options; ADR-003 keeps the proof run, and the oracle test (R10, EN-2334) is the only checkpoint use | DD §3, §4; ADR §4, §5, §11 |
+| G9, a generic result store | Deferred after V1: the store is built for lettering; `stale_holds` (EN-2324) generalises it when it starts | ADR §11 |
+| F4 + F5, the stored-file check and the byte-identical replay | Kept: F4 is what makes the signed capture useful to the next run, and F5 follows from the determinism the golden tests need | RD §2, §4, §8 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -85,7 +89,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | B15 | The run's async job, idempotent per (rule, period, cut), own execution path, no 10 s drain grace | ADR §7.2, §11 | The per-key computation runs off the scheduler tick | Minutes of work, 1M rows | NEC | M | Cannot fit in the scheduler's synchronous path |
 | B16 | Resumable phase-2 job | ADR §7.2 | A run resumes after a crash | Avoid redoing work | **Removed from V1** | M | A crashed run restarts from scratch (~20 s to 2.5 min): no loss |
 | B17 | First-run bounded backfill (`backfillFrom`, default cut-off − max(grace) − 1 d; product window `psp.grace` earlier; "backfilled since …"; `open(S_prev)` rebuilt by the rewind) | ADR §7.6, D9, D19 | The first run reads a longer window to seed the carried items | Otherwise a payment finalised before the rule and never applied is never seen | NEC | M | Old unapplied payments are invisible forever. The product-side offset is a refinement: without it, the first day shows false `unapplied_payment` rows |
-| B18 | Follower reads (`x-consistency: stale`), enabled by the count check | DD §3 "Parallel reads" | Could offload the leader | Load | OPT (mentioned, not decided) | S | Drop the mention: nothing lost |
+| B18 | Follower reads (`x-consistency: stale`), enabled by the count check | DD §3 "Parallel reads" | Could offload the leader | Load | **Removed from V1** | S | Drop the mention: nothing lost |
 
 ## 3. Matching and classification
 
@@ -155,27 +159,27 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | F1 | Detail capture on `_recon`, Ed25519-signed (counts, drifts, `S`/`T` per ledger, artifact URI + manifest SHA-256) | ADR §7.2.4 (EN-1930) | Reuses the signed capture | The run's status and anchor | NEC | S | No status record (reuses existing infra) |
 | F2 | File SHA-256 in the manifest; manifest hash in the capture (transitive signature) | ADR §7.3; DD §5 | Tamper evidence over every file | Audit | OPT (keep: cheap) | S | Loses tamper evidence. Underpins F4, F5 and `check`'s `file_sha256` |
 | F3 | `logSha256` of the log at `S` in `cuts` | ADR §5; RD §6 | Hash of the protobuf `Log` at the cut | Re-identify the cut exactly | **Removed from V1** | S | `S` and `T` suffice to replay; logs are immutable. The hash is stable for one protocol version only |
-| F4 | `stored_file_mismatch`: stored stock and carried files checked against the signed capture before use | RD §2, §4 | Refuses a tampered or corrupted previous file | Chain integrity | OPT | S/M | Saves a verification step and an `incomplete` reason. A corrupted file would propagate, but the next continuity check would likely fail anyway |
-| F5 | Byte-identical data files for the same cut, rule, engine and previous run (fixed key and row order, gzip level 6, no name, no timestamp) | ADR §7.3; RD §8 | A replay proves itself by its SHA-256 | Audit reproducibility | OPT | M | Deterministic row order is cheap and still useful for tests. The "proves itself" guarantee and its 4 conditions can go. Depends on B11 (condition 4) |
+| F4 | `stored_file_mismatch`: stored stock and carried files checked against the signed capture before use | RD §2, §4 | Refuses a tampered or corrupted previous file | Chain integrity | OPT, **kept** | S/M | Saves a verification step and an `incomplete` reason. A corrupted file would propagate, but the next continuity check would likely fail anyway |
+| F5 | Byte-identical data files for the same cut, rule, engine and previous run (fixed key and row order, gzip level 6, no name, no timestamp) | ADR §7.3; RD §8 | A replay proves itself by its SHA-256 | Audit reproducibility | OPT, **kept** | M | Deterministic row order is cheap and still useful for tests. The "proves itself" guarantee and its 4 conditions can go. Depends on B11 (condition 4) |
 | F6 | `missing_index` → `incomplete`, never a silent fallback | DD §3 | An index missing at run time is an engine error | No wrong window | NEC | S | Silent wrong result |
 | F7 | `incomplete` = no conclusion: manifest only, engine-error alert, not a chain link | ADR §7.3; RD §2, §4 | A failed run never feeds the next | Bad data never carries forward | NEC | S | Wrong carried items and stock propagate |
 | F8 | Recon it-tests pinning purged-hold reachability through metadata and `reference` (L5; EN-2318, EN-2319) | ADR §9 L5 | Pins the Ledger contract the design relies on | The Ledger closed EN-2331 without that test | NEC | S | A Ledger change could break the flow silently |
 | F9 | Rewind oracle regression test against a checkpoint (R10, EN-2334) | ADR §5, §4; DD §7.4, §7.8 | Compares the rewound stock with a checkpoint listing under writes | Guards the rewind against Ledger changes | OPT (keep advised) | M | A synthetic unit test covers the fold; loses the end-to-end guard |
-| F10 | Optional periodic proof run against a checkpoint (ADR-003) | ADR §5, §4 | Rewound stock at `S = checkpoint.max_sequence` must equal the checkpoint | Extra assurance | OPT | M | Nothing in V1 depends on it |
+| F10 | Optional periodic proof run against a checkpoint (ADR-003) | ADR §5, §4 | Rewound stock at `S = checkpoint.max_sequence` must equal the checkpoint | Extra assurance | **Removed from V1** | M | Nothing in V1 depends on it |
 
 ## 7. Operations and recovery
 
 | # | Feature | Where | Description | Why | Interest | Cost | If removed |
 |---|---|---|---|---|---|---|---|
-| G1 | Retention: 90 days per rule (`retention`) through the storage lifecycle rule | ADR §7.4, D4 | Expiry done by S3/Azure lifecycle on the prefix | Bounded storage (7–14 GB per rule over 90 d) | NEC | S | Unbounded storage |
-| G2 | Recon's own `expiresAt` sweep (fallback) | ADR §7.4; RD §2 | Recon deletes expired files itself | Deployments without a lifecycle rule | OPT | M | Saves a deletion job (and its risk). Requires the lifecycle rule at setup |
+| G1 | Retention: a deployment setting (`--lettering-retention`, default 90 d), applied through one storage lifecycle rule on `{bucketID}/reconciliation/` | ADR §7.4, §7.8, D4 | The operator sets the S3/Azure lifecycle rule at installation; recon deletes nothing, and uses the retention to know which replays are byte-identical | Bounded storage (7–14 GB per rule over 90 d) | NEC | S | Unbounded storage |
+| G2 | Recon's own `expiresAt` sweep (fallback) | ADR §7.4; RD §2 | Recon deletes expired files itself | Deployments without a lifecycle rule | **Removed from V1** | M | Saves a deletion job (and its risk). The lifecycle rule is required at installation: without it the files are never deleted |
 | G3 | Monthly stock anchors (`anchor`, object tag, `anchorRetention` 13 mo; keep manifest + stock + carried) + per-file `expiresAt` | ADR §7.4, D4, D14 | The last run of each month outlives the 90 d | Keeps an old replay cheap | **Removed from V1** | M | Saves tagging, two retentions per run, and per-file expiry. An old replay then rewinds from head (G4). Depended on by G5 and I4's retention |
 | G4 | Replay of a past day from head (the rewind generalised) | ADR §7.7; DD §4 | Any day recomputed from the permanent logs | Audit, recovery | OPT (keep: nearly free) | S | Cost grows with age (~6 min at 90 days, ~26 min a year later at 1M tx/day, DD §7.16) |
 | G5 | Replay from the nearest stored stock (forward or backward; `stockFrom` `daily`/`anchor`/`head`) | ADR §7.7, D14; DD §4 | Starts a replay from a stored stock instead of head | Bounds an old replay to ~½ month of txs | **Removed from V1** | M/L | Saves two fold directions, a start-point selection and the stored-stock verification. Old replays fall back to G4 (minutes, rare) |
-| G6 | Exact replay variant through the logs `(S_prev, S]` | ADR §7.7; DD §4 | Re-derives a day from the logs, not the mutable metadata | Exactness if the metadata changed | OPT | S (doc) | Drop the mention; nothing implemented |
+| G6 | Exact replay variant through the logs `(S_prev, S]` | ADR §7.7; DD §4 | Re-derives a day from the logs, not the mutable metadata | Exactness if the metadata changed | **Removed from V1** | S (doc) | Drop the mention; nothing implemented |
 | G7 | Forward stock as a daily mode (open book > ~14 % of daily traffic) | DD §7.10 | Previous stock + the day's txs instead of list + rewind | Faster for huge open books | OPT (already "not needed in V1") | S (doc) | Keep as a measurement only |
 | G8 | Watch slice retention (kept while a manifest lists it, unlisted swept after 7 d) | ADR §7.4; RD §2 | Lifecycle of the slices | Storage | **Deferred after V1** | S | Goes with B12 |
-| G9 | Result store generic for `stale_holds` (EN-2324) | ADR §11 | Layout, manifest, hash and retention made template-agnostic | Reuse | OPT | S/M | Build it for lettering first and generalise when `stale_holds` needs it |
+| G9 | Result store generic for `stale_holds` (EN-2324) | ADR §11 | Layout, manifest, hash and retention made template-agnostic | Reuse | **Deferred after V1** | S/M | Build it for lettering first and generalise when `stale_holds` needs it |
 
 ## 8. Configuration knobs
 
@@ -194,7 +198,7 @@ feature's interest unless the row says otherwise.
 | `product.grace`, `psp.grace` | rule | D16, D20 | C3 | NEC | One grace would do, but loses the asymmetry |
 | `psp.maxAge`, `product.maxAge` | rule | ADR §6 | C6 | OPT | No `stuck` |
 | `buckets` | rule | ADR §6 | C7 | OPT | Hard-code the 4 buckets, or drop them |
-| `retention` | rule | ADR §7.4 | G1 | NEC (default 90 d) | Could be fixed per deployment |
+| `--lettering-retention` | operator | ADR §7.4, §7.8, D4 | G1 | NEC (default 90 d) | Fixed at 90 d; the lifecycle rule must match it |
 | `anchorRetention` | rule | ADR §7.4, D14 | G3 | **Removed with G3** | Goes with the anchors |
 | `backfillFrom` | rule | ADR §7.6, D9 | B17 | NEC (a default exists) | Keep the default, drop the knob? The knob is also the re-seed substitute (D10) |
 | `periodType` (`daily`/`weekly`/`monthly`), timezone, cut-off | rule | ADR §6, D8 | I1/I4 | NEC (daily, tz, cut-off); OPT (weekly/monthly) | — |
@@ -222,11 +226,11 @@ feature's interest unless the row says otherwise.
 - **Features:** 104 numbered rows in §1–§7 and §9. §8 lists 20 configuration knobs, which map to
   those rows and are not counted again.
 - **NEC:** 49, E14 included (its top-K breaks list).
-- **OPT:** 38, E14's pending and resolved lists not counted separately, and E10 counted here since
-  it is simplified, not removed. Of these, 5 are doc-only, proposed, or already outside V1: A14,
-  A15, B18, G6, G7.
-- **Removed, deferred or replaced:** 17, B12, B13, B14, B16, C4, D8, D9, D10, D11, E15, E16, E17, F3,
-  G3, G5, G8 and I5 (see "Decisions taken").
+- **OPT:** 33, E14's pending and resolved lists not counted separately, and E10 counted here since
+  it is simplified, not removed. F4 and F5 are kept by decision. Of these, 3 are doc-only, proposed,
+  or already outside V1: A14, A15, G7.
+- **Removed, deferred or replaced:** 22, B12, B13, B14, B16, B18, C4, D8, D9, D10, D11, E15, E16, E17,
+  F3, F10, G2, G3, G5, G6, G8, G9 and I5 (see "Decisions taken").
 
 ## Candidates to remove
 
@@ -268,12 +272,14 @@ judgement.
 11. **C4 `firstSide`, D8 `previousClass`, E10 `flowGross`/`offsetting`, E15 `execution`/`timingsMs`,
     F3 `logSha256`.** Each is S, and none is read by any check or trigger. Decided (D19, D21,
     ADR §5 and §7 items 7–8): all go but `flowGross`, which the alert's headline shows first.
-12. **G2, recon's own expiry sweep.** Require the storage lifecycle rule instead.
+12. **G2, recon's own expiry sweep.** Require the storage lifecycle rule instead. Decided (D4,
+    ADR §7 items 4 and 8): the retention becomes the deployment setting `--lettering-retention`,
+    and the rule loses its `retention`.
 13. **B18, G6, G7, A14, F10.** Doc-only mentions or options already outside V1: prune them from the
-    docs.
-14. **G9, a generic result store for `stale_holds`.** Defer the generalisation.
+    docs. Decided (removed: B18, G6, F10; A14 and G7 kept).
+14. **G9, a generic result store for `stale_holds`.** Defer the generalisation. Decided (deferred).
 15. **F4, `stored_file_mismatch`, and F5, the byte-identical replay guarantee.** Keep deterministic
-    row order, and drop the "replay proves itself" contract and its 4 conditions.
+    row order, and drop the "replay proves itself" contract and its 4 conditions. Decided (both kept).
 
 **Tier 3: medium saving, a real but acceptable loss (owner's call).**
 
