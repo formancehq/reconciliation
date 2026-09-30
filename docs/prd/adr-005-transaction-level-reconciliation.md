@@ -523,10 +523,11 @@ V1 runs no periodic proof against a checkpoint.
    same cut gives the same result. Its leftover files expire under the
    prefix's lifecycle rule.
 
-   The alert is derived from the manifests, never stored beside them: **every tick brings the
-   rule's alert up to date from the latest current run's manifest**, and the update is idempotent.
-   A job that stops after its manifest and before the alert therefore loses nothing: the next tick
-   applies it.
+   The alert is derived from the manifests, never stored beside them: **every tick rebuilds the
+   alert of the rule's open period from the current run of each of its days** (item 5), and the
+   rebuild is idempotent: the same manifests give the same alert. A job that stops after its
+   manifest and before the alert therefore loses nothing: the next tick includes that day. A
+   closed period's alert is never rebuilt.
 3. **Where the files go: the backup object storage, under a recon prefix.**
    - Recon writes to the S3 or Azure destination the rule's **product ledger** backs up to, under
      `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. Files and paths:
@@ -571,6 +572,10 @@ V1 runs no periodic proof against a checkpoint.
    - The period's alert, built from the period's **daily manifests** rather than from the ledgers,
      lists each day that has a current run, with its counts, its net and gross, and the link to
      its files. A closed period's alert is never rewritten.
+   - A period is **closed** once its last day has a current run; the open period is the one after
+     it. A replay or a catch-up of a day in a closed period writes that day's files and leaves the
+     closed alert as it is; one in the open period changes that day's current run, so the next
+     tick's rebuild shows it. With a `daily` period, the open period is the latest day.
    - A day with no complete run is simply not listed: the next complete run's window covers it
      ("window since …"), and each `incomplete` run already raises the engine-error alert
      (decision 26). There is no gap state.
