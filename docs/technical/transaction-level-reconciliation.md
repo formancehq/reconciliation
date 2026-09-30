@@ -276,18 +276,17 @@ sequenceDiagram
     J->>Q: ListTransactions(key = ref, id ≤ T_Q) · history of refs found final, window refs failed
     J->>J: join on the PSP reference (+ carried, + lookups) · age both stock books · continuity
     J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ flow / carried / stock / breaks / unclassified
-    J->>C: capture(counts, drifts, T per ledger, manifest sha256) — Ed25519
+    J->>C: capture(verdict, counts, drifts, T per ledger, manifest sha256) — Ed25519
     J->>O: manifest.json, last: the run exists once it is written
-    J->>C: open / update / resolve the aggregate alert (statement figures, counts, link)
+    J->>C: rebuild the open period's alert (day list · latest day's headline, statement, counts)
 ```
 
 - **The cut** turns the business cut-off into one transaction id `T` per ledger
   ([below](#the-cut-from-a-business-time-to-id-ranges)).
 - **The flow leg** reads the day's transactions as the id range `(T_prev, T]`, filtered server-side
-  on the key's presence (ADR-005 §5). The logs remain the ledger's permanent record ("Log and audit
-  history is permanent", ledger backup README), from which V1 re-derives a past day through its
-  transactions; there is no exact log variant. Transaction metadata is mutable, so that re-read
-  relies on the write-once convention (§2 row 5).
+  on the key's presence (ADR-005 §5). The ledger is the permanent record, and V1 re-reads a past
+  day through its transactions; recon reads no logs, and there is no exact log variant.
+  Transaction metadata is mutable, so that re-read relies on the write-once convention (§2 row 5).
 - **The stock leg** is a live listing *rewound* to `T` (§4).
 - **Continuity.** Per side, per hold prefix and per asset:
   `open(T) = open(T_prev) + opened(W) − lettered(W)`. A lost window event breaks the identity, which
@@ -466,9 +465,11 @@ improves (§7.7).
 - Scaling is sub-linear (§7.2, §7.15): the service sets the limit, not the client.
 - **Completeness is checkable for free on unfiltered ranges.** Transaction ids are contiguous per
   ledger, so the rewind's unfiltered range `(lo, hi]` must return exactly `hi − lo` transactions.
-  A short count means a replica that lags or a read that failed, and it makes the run `incomplete`
-  instead of silently shrinking the window. The filtered flow read has gaps by design; there,
-  completeness rests on the index and on the continuity identity.
+  The count catches a range cut short without an error (a replica that lags, for example) and
+  makes the run `incomplete` (`short_range`) instead of silently shrinking the window. A read
+  that fails with an error is tried 5 times; past that the job stops with no manifest and the run
+  starts again at the next tick (ADR-005 §7, item 8). The filtered flow read has gaps by design;
+  there, completeness rests on the index and on the continuity identity.
 - **Replay.** `T` is written in the signed capture for each ledger, so a later re-read covers the
   same window ([Replaying an old day](#replaying-an-old-day)).
   Both ledgers are cut at the same business time, whenever the job runs.
@@ -548,9 +549,9 @@ metadata-only writes (§7.8).
 
 ### Replaying an old day
 
-Any past day can be replayed: the logs are permanent, and the day's cut, `T` on each ledger, is in
-the signed capture (ADR-005 §7, item 7). A replay runs the daily algorithm as of that day; no stock
-is stored for it.
+Any past day can be replayed: the ledger keeps every transaction, and the day's cut, `T` on each
+ledger, is in the signed capture (ADR-005 §7, item 7). A replay runs the daily algorithm as of that
+day; no stock is stored for it.
 
 **The flow costs the same at any age.** The cut of an old day resolves in one index page per
 ledger, and the day is its id range `(T_prev, T]`, read filtered on the key:
@@ -558,7 +559,8 @@ O(payments of that day), a day or a year later. It matches the original run as l
 state metadata stayed write-once, which V1 does not monitor; V1 has no exact variant through the
 logs.
 
-**The stock is the live listing, rewound from head** (§4). The window `(T, head_tx]` grows with the
+**The stock at the cut is always the live listing, rewound from head** (§4), whether or not the
+previous day's files are kept. The window `(T, head_tx]` grows with the
 day's age, and the fold's memory does not: it holds the open book, since it reads newest first and
 drops a hold back at zero. Measured at 236k–261k transactions/s over 8 workers, holding at most the
 1M open holds, 426 MiB of heap, on a window that touched 10M holds (§7.16):
@@ -577,16 +579,18 @@ touch would hold every hold created since the day, about
 
 **The carried items come from the previous run while it is kept.** The previous day's files are
 kept for the retention after that run, a deployment setting (`--lettering-retention`, §5). Until
-then the replay starts from its carried and stock files, and it reproduces the day's files byte for
+then its carried, stock and breaks files give the replay's carried items, `openPrev`, the `cleared`
+holds, each hold's `openedAt` and the lifecycle, and the replay reproduces the day's files byte for
 byte (results reference §8). A query over the day's manifests compares the SHA-256s in the two
 runs' `files`: a mismatch reveals a metadata change or an engine change. Once those files have
-expired, the replay is a first run (ADR-005 §7, item 6): it seeds its carried items from
-`backfillFrom` up to `T_prev`, about `psp.grace` + 1 days of flow reads, and its rewind reads one
-day further for its starting stock and payment account (§4). An item carried for longer than the
-seed is missed, the statement says "open items seeded since …", and the files are no longer
-byte-identical to the original. The previous run's `expiresAt` tells recon which days a replay
-still reproduces. A customer who must reproduce older days raises the retention and the storage's
-lifecycle rule together.
+expired, the replay is a first run (ADR-005 §7, item 6): its seed ends at `T_prev` and starts at
+`backfillFrom`, by default cut-off − max(`psp.grace`, `product.grace`) − 1 day, with the product
+side starting `psp.grace` earlier, and its rewind reads one day further for its starting stock and
+payment account (§4). An item carried for longer than the seed is missed unless the replay is
+given an earlier `backfillFrom`, the statement says "open items seeded since …", and the files are
+no longer byte-identical to the original. The previous run's `expiresAt` tells recon which days a
+replay still reproduces. A customer who must reproduce older days raises the retention and the
+storage's lifecycle rule together.
 
 #### Catching up from a past day
 
@@ -692,10 +696,12 @@ opens on an open break, never on the net alone. The verdicts, every line of
 the statement and how to read them are defined in the [results
 reference](./transaction-level-results.md#4-the-verdict).
 
-**The statement is data, not text.** The alert's evidence holds the manifest's `statement` block
-as JSON, a headline (the verdict, the open breaks per leg, the P1 count, the gross and the net),
-the counts and the link to the run's files ([results
-reference](./transaction-level-results.md#the-alerts-evidence)). The manifest carries aggregates
+**The statement is data, not text.** For the latest day of its period that has a current run, the
+alert's evidence holds the manifest's `statement` block as JSON, a headline (the verdict, the open
+breaks per leg, the P1 count, the gross and the net) and the counts; it also lists each day of the
+period that has a current run, with its verdict, counts, net, gross and the link to its files. The
+[results reference](./transaction-level-results.md#the-alerts-evidence) defines this shape, and
+ADR-005 §7 items 2 and 5 when a period's alert is rebuilt. The manifest carries aggregates
 only: the statement's figures render from it alone, and lists of items come from the files,
 through the API. The UI renders the statement from the evidence and shows the breaks by paging
 them from the API; the engine renders no text, so no test pins one.
@@ -743,10 +749,14 @@ and `short_range` usually clear on the next run. `continuity`, `residual` and
 fault. When the fix cannot enter the window, an operator restarts the rule: its next run is a first
 run, its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run
 default and the oldest `firstSeen` of the last complete run's carried items (ADR-005 decision 26).
-The carried items, the stored stock and the break history therefore never come from a run that
-failed its checks. A previous run's stock or carried file that is missing counts as altered
-(`stored_file_mismatch`): the run never falls back to a rewind on its own, which would hide the
-loss and could not rebuild what the file carried, such as a hold's `openedAt`.
+The restart takes an optional `backfillFrom`, rejected when it is later than the next run's cut.
+When the carried file failed its signed check, the default cannot be computed from it, so a
+restart without `backfillFrom` is refused; a mismatch on the stock or breaks file alone keeps the
+default. The carried items, the stored stock and the break history therefore never come from a
+run that failed its checks. A previous run's stock, carried or breaks file that is missing, or that
+does not match its signed capture, counts as altered (`stored_file_mismatch`): the run never falls
+back to a rewind on its own, which would hide the loss and could not rebuild what the file carried,
+such as a hold's `openedAt` or a break's history.
 
 ## 6. Could Pebble do better?
 
@@ -762,8 +772,9 @@ We checked this against the Pebble v2.1.4 sources and the ledger's call sites. T
 | `Options.Experimental.RemoteStorage` / `IngestExternalFiles` | SSTs read from object storage | Pebble ships no S3 or Azure driver, only an interface and test implementations. It is designed for shared L5/L6 beside a local MANIFEST and WAL, not for a database read out of a bucket |
 | Backup to S3/Azure | A durable copy of a frozen state | It covers the whole store and exists for disaster recovery: reading it means restoring a node, and "it does not provide point-in-time queries" |
 
-**Conclusion.** Pebble is not what limits this use case; the ledger's read API is. And the log is
-already the exact, permanent, partitionable "snapshot" the use case needs.
+**Conclusion.** Pebble is not what limits this use case; the ledger's read API is. And the
+transactions, contiguous in id and immutable except for their metadata, are already the exact,
+partitionable "snapshot" the use case needs.
 
 ## 7. Measurements
 

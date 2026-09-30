@@ -330,14 +330,15 @@ flowchart LR
     Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, payment-account book and open-items identities"]
     Stock --> Join
     Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: no data file)"]
-    Art --> Cap["Capture on _recon<br/>(counts, drifts, T per ledger, the manifest's SHA-256) — Ed25519"]
+    Art --> Cap["Capture on _recon<br/>(verdict, counts, drifts, T per ledger, the manifest's SHA-256) — Ed25519"]
     Cap --> Man["Manifest, written last (files' SHA-256)<br/>the run exists once it is written<br/>(incomplete run: reduced manifest)"]
-    Man --> Alert["Alert per (rule, fingerprint, period)<br/>structured evidence: statement JSON + headline + counts<br/>opens on an open break (never on the net alone)<br/>artifact link · breaks paged from the API"]
+    Man --> Alert["Alert per (rule, fingerprint, period), rebuilt each tick while the period is open<br/>structured evidence: the period's day list (verdict, counts, net, gross, link)<br/>+ the latest day's statement JSON, headline and counts<br/>opens on an open break (never on the net alone) · breaks paged from the API"]
 ```
 
 No query checkpoint is taken: the cut is a transaction id per ledger, which no later write moves,
 and the rewind makes a live listing exact at the cut. A catch-up from a past day runs the daily
 algorithm for every day since, after one rewind that records each day's open book. Aggregate
 templates keep reading live (§7). Full design, booking conventions and measurements: [transaction-level-reconciliation.md](./transaction-level-reconciliation.md); the
-result files and how to read them: [transaction-level-results.md](./transaction-level-results.md);
+result files and how to read them: [transaction-level-results.md](./transaction-level-results.md),
+whose §5 defines [the alert's evidence](./transaction-level-results.md#the-alerts-evidence);
 decision record: [ADR-005](../prd/adr-005-transaction-level-reconciliation.md).

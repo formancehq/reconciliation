@@ -308,12 +308,8 @@ class Engine:
         body.pop('sha256')
         rule_json['sha256'] = sha(dump(body).encode())
         self.rule_json = rule_json
-        # A first run seeds its open items from backfillFrom, the product side psp.grace earlier
-        # (results doc §2): the transaction each side's seed starts after.
-        self.seed_from = {
-            'psp': Book.last_tx(book.psp, cutoff(rule.backfill_from - dt.timedelta(days=1))),
-            'product': Book.last_tx(book.prod, cutoff(rule.backfill_from - dt.timedelta(days=rule.psp_grace + 1))),
-        }
+        # The transaction each side's seed starts after, set by the chain's first run (seed()).
+        self.seed_from = None
 
     # -- one run -----------------------------------------------------------------------------
 
@@ -400,7 +396,16 @@ class Engine:
         """A first run's carried items: the references still open at its window's start, with a
         drift. The seed joins the flow from backfillFrom, the product side psp.grace earlier, up to
         that start, with the lookups of any window (results doc §2). Its transactions count in none
-        of the day's figures."""
+        of the day's figures. backfillFrom is a date: the seed covers the days from it up to the
+        window's start, so one on or after the compared day means no seed, on either side."""
+        rule = self.rule
+        if rule.backfill_from >= day:
+            self.seed_from = {'psp': f_psp, 'product': f_prod}
+            return []
+        self.seed_from = {
+            'psp': Book.last_tx(self.book.psp, cutoff(rule.backfill_from - dt.timedelta(days=1))),
+            'product': Book.last_tx(self.book.prod, cutoff(rule.backfill_from - dt.timedelta(days=rule.psp_grace + 1))),
+        }
         s_psp, s_prod = self.seed_from['psp'], self.seed_from['product']
         win_psp = [e for e in self.book.psp if s_psp < e.tx <= f_psp]
         win_prod = [e for e in self.book.prod if s_prod < e.tx <= f_prod]
@@ -1185,6 +1190,7 @@ def verdicts():
     # 01:00 in Paris on 10 Oct: after the 9 Oct cut and before that day's run starts, so the
     # incomplete run's rewind range (T, head_tx] is not empty.
     matched('2026-10-09', '23:00', 'V6', 4000, '07:00', '2026-10-11')
+    # backfillFrom is the first run's day, 5 October: that run seeds nothing (results doc §2)
     rule = Rule('qa-verdicts', psp_grace=3, product_grace=1, backfill_from=dt.date(2026, 10, 5),
                 period_type='weekly')
     return rule, Book(psp, prod)

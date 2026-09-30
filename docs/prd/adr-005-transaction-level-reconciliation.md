@@ -131,7 +131,7 @@ Two legs:
 
 | Leg | Question | Universe | Source of truth |
 |---|---|---|---|
-| **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (the logs remain the ledger's permanent record, from which V1 re-derives a day through its transactions), plus the previous run's carried items (seeded on a first run, §7 item 6) |
+| **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (the ledger is the permanent record, and a past day is re-read through its transactions), plus the previous run's carried items (seeded on a first run, §7 item 6) |
 | **Stock** (per hold, on each side) | What is still open at the cut `T`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to the cut with the unfiltered transactions `(T, head_tx]` (§5) |
 | **Continuity** (self-check) | `open(T) = open(T_prev) + opened(W) − lettered(W)`, per side, per hold prefix and per asset | Aggregates | `open(T)` from the rewind and `open(T_prev)` from the previous run's stored stock (rewound only when there is none); `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
 
@@ -140,8 +140,10 @@ The cross-ledger signal is in the flow leg, and in particular in its carry-over:
 whose drift is not 0 yet. Mostly **unapplied payments**, payments the PSP finalised that no product
 transaction references yet, but also under- and over-applications and applications the PSP has not
 finalised yet, which a later booking or PSP event can still settle. That set is reconciliation's own
-open-items book. It is carried from day to day in the run artifacts, and it can always be recomputed
-from the permanent logs.
+open-items book, carried from day to day in the run artifacts. A day can be recomputed from the
+ledgers' transactions, but beyond the retention its carried items come from a seed, which misses an
+item open for longer than the seed window unless the replay is given an earlier `backfillFrom` (§7
+items 6 and 7).
 
 The continuity identity is what makes the control **complete**. A window read that dropped an
 event breaks the identity, so the loss is detected instead of silently shrinking the universe.
@@ -194,7 +196,7 @@ provide point-in-time queries" (ledger backup README).
 
 | # | Option | Verdict |
 |---|---|---|
-| **C** | **A cut at the business cut-off, plus a rewind.** The cut is `T`, the last transaction id with `inserted_at ≤ cut-off`, on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the unfiltered transactions `(T, head_tx]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible, because logs are permanent. Cost ∝ the day's payments plus the open items, plus the transactions written since the cut-off; no log is read (§5, decision 25). |
+| **C** | **A cut at the business cut-off, plus a rewind.** The cut is `T`, the last transaction id with `inserted_at ≤ cut-off`, on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the unfiltered transactions `(T, head_tx]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible from the ledgers' transactions (§7 item 7). Cost ∝ the day's payments plus the open items, plus the transactions written since the cut-off; no log is read (§5, decision 25). |
 | A | Shared, short-lived query checkpoint per (cluster, run): extract, then delete | **Fallback and oracle only.** Used to validate the rewind in its oracle test (§5). Too slow and too scarce as the steady-state path (§3). |
 | B | Ledger-side consistent export (Pebble `NewSnapshot()` at a Raft-ordered trigger, streamed or written through `backup.Storage`) | **Not needed for this use case.** Still the right primitive for a frozen listing of a large *non-lettered* universe (EN-1480 generalised). Passed on to the Ledger team for information, not asked (§9). |
 | D | Store the checkpoint in S3/Azure through backup | **Rejected** (§3). |
@@ -481,11 +483,13 @@ V1 runs no periodic proof against a checkpoint.
     `weekly` or `monthly`), and the alert identity is `(rule, fingerprint, period)` exactly as in
     [alert-period-model.md](../technical/alert-period-model.md). With `monthly`, the month's alert
     is opened by the first failing daily run and updated by the following ones.
-  - **The alert carries a reconciliation statement as structured data**, never a bare drift. Its
-    evidence holds the manifest's `statement` block as JSON (a bridge whose unexplained residual
-    must be 0, the open items, the gross next to the net), a headline (the verdict, the open
-    breaks per leg, the P1 count, the gross and the net), the counts and the link to the run's
-    files ([results reference §4](../technical/transaction-level-results.md#4-the-verdict) and
+  - **The alert carries a reconciliation statement as structured data**, never a bare drift. For
+    the latest day of its period that has a current run, its evidence holds the manifest's
+    `statement` block as JSON (a bridge whose unexplained residual must be 0, the open items, the
+    gross next to the net), a headline (the verdict, the open breaks per leg, the P1 count, the
+    gross and the net) and the counts; it also lists each day of the period that has a current
+    run, with the link to its files ([results reference
+    §4](../technical/transaction-level-results.md#4-the-verdict) and
     [§5](../technical/transaction-level-results.md#the-alerts-evidence)). It carries no list of
     breaks. The UI renders the statement from it and shows the breaks by paging them from the API
     (§7 item 9); the engine renders no text.
@@ -509,8 +513,9 @@ V1 runs no periodic proof against a checkpoint.
    2. Stock rewind and ageing. There is no metadata watch step (decision 25), so the run reads
       no logs.
    3. Write the data files.
-   4. Write the run's **capture**: counts, drifts, `T` per ledger, and the artifact URI and
-      the SHA-256 of the manifest, computed before it is written, signed with Ed25519 (EN-1930).
+   4. Write the run's **capture**: the verdict, counts, drifts, `T` per ledger, and the artifact
+      URI and the SHA-256 of the manifest, computed before it is written, signed with Ed25519
+      (EN-1930). Every run's status comes from its capture (item 9).
    5. Write the **manifest**, last of the run's files.
    6. Update the alert.
 
@@ -533,8 +538,9 @@ V1 runs no periodic proof against a checkpoint.
 
    The alert is derived from the manifests, never stored beside them: **every tick rebuilds the
    alert of the rule's open period from the current run of each of its days** (item 5), and the
-   rebuild is idempotent: the same manifests give the same alert. A job that stops after its
-   manifest and before the alert therefore loses nothing: the next tick includes that day. A
+   rebuild is idempotent: the same manifests give the same alert. A period stays open until the
+   next period's first day has a current run, so a job that stops after its manifest and before
+   the alert loses nothing, even on the period's last day: the next tick includes that day. A
    closed period's alert is never rebuilt.
 3. **Where the files go: the backup object storage, under a recon prefix.**
    - Recon writes to the S3 or Azure destination the rule's **product ledger** backs up to, under
@@ -570,20 +576,26 @@ V1 runs no periodic proof against a checkpoint.
      the retention, for information only: a replayed or caught-up day's files expire a retention
      after that run, not after the day. Recon uses it to know up to when a replay reproduces a
      day's files byte for byte (item 7).
-   - Expiry loses nothing irrecoverable. The logs are permanent, so any past day can be recomputed
-     from the ledgers with the same cut and engine version, which each manifest records (item 7). A
-     customer bound to a longer legal retention raises the flag and the lifecycle rule together.
+   - After expiry, a day can still be recomputed from the ledgers' transactions, at the cut its
+     signed capture keeps (item 7). Its carried items then come from a seed (item 6), which misses
+     an item open for longer than the seed window unless the replay is given an earlier
+     `backfillFrom`. A customer bound to a longer legal retention raises the flag and the lifecycle
+     rule together.
    - The `file` driver has no expiry, which is fine for local development.
 5. **A period points at each day's diffs.**
    - The period is the rule's `periodType`, calendar-based in the rule's timezone. There is no
      separate accounting-period model.
    - The period's alert, built from the period's **daily manifests** rather than from the ledgers,
-     lists each day that has a current run, with its counts, its net and gross, and the link to
-     its files. A closed period's alert is never rewritten.
-   - A period is **closed** once its last day has a current run; the open period is the one after
-     it. A replay or a catch-up of a day in a closed period writes that day's files and leaves the
-     closed alert as it is; one in the open period changes that day's current run, so the next
-     tick's rebuild shows it. With a `daily` period, the open period is the latest day.
+     lists each day that has a current run, with its verdict, counts, net and gross, and the link
+     to its files. Its headline and statement figures are those of the latest listed day ([results
+     reference §5](../technical/transaction-level-results.md#the-alerts-evidence)). A closed
+     period's alert is never rewritten.
+   - A period is **closed** once the next period's first day has a current run. Until then it is
+     the open period, and every tick rebuilds its alert, its last day included. A replay or a
+     catch-up of a day in a closed period writes that day's files and leaves the closed alert as
+     it is; one in the open period changes that day's current run, so the next tick's rebuild
+     shows it. With a `daily` period, the open period is the latest day that has a current run,
+     and it closes when the next day's run completes.
    - A day with no complete run is simply not listed: the next complete run's window covers it
      ("window since …"), and each `incomplete` run already raises the engine-error alert
      (decision 26). There is no gap state.
@@ -605,12 +617,14 @@ V1 runs no periodic proof against a checkpoint.
      gives the stock at `T` reads one day further, the unfiltered transactions `(T_prev, head_tx]`
      instead of `(T, head_tx]`: on passing `T` the fold holds the state at `T`, and continuing to
      `T_prev` gives the state at `T_prev`.
-   - **The backfill only seeds the open items.** It reads the flow, filtered on the key, from
-     **`backfillFrom`**, a rule parameter that defaults to **cut-off − max(`psp.grace`,
-     `product.grace`) − 1 day**, up to `T_prev`, and joins it. The references still open at
-     `T_prev`, with a drift ≠ 0, are the seeded carried items: the first run's `openPrev` and
-     `countPrev` in the open-items identity. The seed window's transactions count in none of the
-     day's figures: not in the bridge, the books or the payment-account book.
+   - **The backfill only seeds the open items.** It reads the flow, filtered on the key, over the
+     days from **`backfillFrom`** up to `T_prev`, the cut before the compared day, and joins it.
+     `backfillFrom` is a rule parameter, a date in the rule's timezone, that defaults to
+     **cut-off − max(`psp.grace`, `product.grace`) − 1 day**; one on or after the compared day
+     means no seed. The references still open at `T_prev`, with a drift ≠ 0, are the seeded
+     carried items: the first run's `openPrev` and `countPrev` in the open-items identity. The
+     seed window's transactions count in none of the day's figures: not in the bridge, the books or
+     the payment-account book.
    - On the product ledger, the seed starts `psp.grace` earlier than on the PSP ledger (decision
      19). An application may precede its payment's final state by up to `psp.grace`, so a payment
      finalised early in the seed still finds its application, with no lookup by key. An
@@ -622,25 +636,31 @@ V1 runs no periodic proof against a checkpoint.
      opening time. Only a hold opened before `backfillFrom` (or before the product seed's start)
      has a null `openedAt` and a lower-bound age (§6): an invoice unpaid for 60 days is aged exactly
      only if the seed read its opening.
-   - Re-running with an earlier `backfillFrom` is idempotent per (rule, period, cut). It only costs
-     a longer seed read.
+   - The same `backfillFrom` and cut give the same result. An earlier `backfillFrom` can find more
+     open items, and its run records a different `rule.backfillFrom`.
    - The same first run restarts a rule whose chain is stuck on a cause that cannot be fixed inside
      its window; `backfillFrom` then defaults to the earlier of the first-run default above and the
      oldest `firstSeen` of the last complete run's carried items, which is the first-run default
-     when nothing was carried (decision 26).
+     when nothing was carried (decision 26). The restart takes an optional `backfillFrom`,
+     rejected when it is later than the next run's cut. When the carried file failed its signed
+     check (`stored_file_mismatch`), the default cannot be computed from it, so a restart without
+     `backfillFrom` is refused; a mismatch on the stock or breaks file alone keeps the default.
    - The manifest's `cuts[].txFrom` is `T_prev`, as on every run, and its `rule.backfillFrom`
      records where the seed started.
-7. **Replaying a past day, or catching up from one.** Any past day can be replayed: the logs are
-   permanent, and its cut (`T` on each ledger) is in the signed capture. A replay runs the daily
-   algorithm as of that day, and no stock is stored for it.
+7. **Replaying a past day, or catching up from one.** Any past day can be replayed: the ledger
+   keeps every transaction, and the day's cut (`T` on each ledger) is in the signed capture. A
+   replay runs the daily algorithm as of that day, and no stock is stored for it.
    - The flow costs the same at any age, one day's id range `(T_prev, T]`.
-   - The stock is the live listing rewound from head: about 6 min at the end of the default 90-day
-     retention and 26 min a year later, at 1M transactions a day, in the memory of the open book
-     (extrapolated from 20M measured, [design doc
+   - The stock at the cut is always the live listing rewound from head: about 6 min at the end of
+     the default 90-day retention and 26 min a year later, at 1M transactions a day, in the memory
+     of the open book (extrapolated from 20M measured, [design doc
      §7.16](../technical/transaction-level-reconciliation.md#716-replaying-an-old-day-from-head)).
-   - While the previous day's files are kept (item 4), the replay starts from its carried and stock
-     files and reproduces the day's files byte for byte. Beyond that, the replay is a first run:
-     its carried items are rebuilt by the same seed (item 6), and the statement says so.
+   - While the previous day's files are kept (item 4), its carried, stock and breaks files give
+     the replay's carried items, `openPrev`, the `cleared` holds, each hold's `openedAt` and the
+     lifecycle, and the replay reproduces the day's files byte for byte. Beyond that, the replay
+     is a first run: its carried items are rebuilt by the same seed (item 6), which misses an item
+     open for longer than the seed window unless the replay is given an earlier `backfillFrom`,
+     and the statement says so.
      Mechanics: [design doc](../technical/transaction-level-reconciliation.md#replaying-an-old-day).
    - **Catching up from day X** is an explicit API action on a rule. It writes a normal run for
      every day from X to yesterday, as if the rule had run since X, in two passes ([design
@@ -769,7 +789,7 @@ for the Ledger team to weigh against its own users:
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**, never a reversal of the original payment (§6). |
-| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries structured evidence (the statement as JSON, a headline, the counts and the link to the files), no list of breaks and no rendered text; the detail sits in the backup storage (§6, §7). |
+| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries structured evidence (the latest day's statement as JSON, headline and counts, and the period's days with the link to their files), no list of breaks and no rendered text; the detail sits in the backup storage (§6, §7). |
 | 9 | First run | A first run **compares one day**, `(T_prev, T]`, like every run. Its starting stock and payment-account volumes are rewound to `T_prev`, one day further than the daily rewind, and the **backfill only seeds its open items**: a flow read from `backfillFrom` (default: cut-off − the longer `grace` − 1 day) up to `T_prev`, whose join gives the references still open at `T_prev`, and whose transactions count in none of the day's figures. The first statement says "open items seeded since …"; a hold opened before the seed has a null `openedAt` and a lower-bound age (§6, §7). |
 | 10 | Read path of the flow | **`ListTransactions` filtered on the key's presence** (product side: `payment_ref` or `business_ref`), membership before the id range, over parallel id ranges: O(payments). The logs stay the immutable record; a run reads none of them (§5, decision 25). |
 | 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
@@ -787,7 +807,7 @@ for the Ledger team to weigh against its own users:
 | 23 | The PSP payment account | A booking convention (§8, rule 10), with the keys of the account's other movements in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
 | 24 | Bounded date filters in the cut | `T` is resolved with an upper-bounded filter on `inserted_at`, widened while empty, because the ledger materializes a date range before paging it (§5). |
 | 25 | The metadata watch | **No metadata watch in V1, deferred until L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326), §9). Reading every log since the previous run for changes to a transaction's key, state, business-id or merchant-reference field was about 95 % of a run: 134–158 s for 4.1M logs at 1M payments a day, against 15–25 s for all the other steps. A change on a transaction of a day already read moves no balance, and that transaction is in no later window; a change before the run, on a transaction of its window, is read at its latest value. Lost: the monitoring of the write-once convention (§8 rule 3), the `key_metadata_mutated` warning, and the watch behind condition 4 of a byte-identical replay (§5 caveat 1). The incremental watch in slices goes with it ([design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)). |
-| 26 | A run that fails every day | Some `incomplete` causes repeat on every run while each window grows, until they are fixed. `incomplete.detail` names the first 20 items at fault, and the engine-error alert says whether the next run retries (`missing_index`, `short_range`) or an operator must act. When the fix cannot enter the window, the operator **restarts the rule**: its next run is a first run (decision 9), with its stock and payment account rewound and its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run default and the oldest `firstSeen` of the last complete run's carried items, so nothing stored is trusted and the open items are found again (results doc §2). No re-seed run type, no `diagnostic.json`, no `incomplete.kind`. |
+| 26 | A run that fails every day | Some `incomplete` causes repeat on every run while each window grows, until they are fixed. `incomplete.detail` names the first 20 items at fault, and the engine-error alert says whether the next run retries (`missing_index`, `short_range`) or an operator must act. When the fix cannot enter the window, the operator **restarts the rule**: its next run is a first run (decision 9), with its stock and payment account rewound and its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run default and the oldest `firstSeen` of the last complete run's carried items, so nothing stored is trusted and the open items are found again (results doc §2). The restart takes an optional `backfillFrom`, rejected when it is later than the next run's cut. When the carried file failed its signed check (`stored_file_mismatch`), the default cannot be computed from it, so a restart without `backfillFrom` is refused; a mismatch on the stock or breaks file alone keeps the default. No re-seed run type, no `diagnostic.json`, no `incomplete.kind`. |
 
 **Open, to review with the Connectivity team (no decision):** decision 23 assumes that the payment
 account is credited only by payment finals. `formancepayments` also credits it from pending
@@ -806,8 +826,9 @@ new `periodType` without changing this design.
 
 - **Recon gains object storage** (the backup destination, under its own prefix) as its first durable
   dependency outside the ledger. It stays stateless in process. The artifacts are outputs, plus the
-  previous run's carried items and ageing. Every one of them can be recomputed from the permanent
-  logs.
+  previous run's carried items and ageing. A day can be recomputed from the ledgers' transactions,
+  but beyond the retention its carried items come from a seed, which misses an item open for longer
+  than the seed window unless the replay is given an earlier `backfillFrom` (§7 item 7).
 - **Installing recon includes a lifecycle rule on the storage.** Recon deletes no file: the
   operator sets one lifecycle rule on `{bucketID}/reconciliation/` for each product ledger's
   destination, with the age of `--lettering-retention` (§7 item 4). Without it the files are never

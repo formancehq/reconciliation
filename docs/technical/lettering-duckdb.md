@@ -235,7 +235,9 @@ python3 tools/lettering-duckdb/testdata/generate.py
 
 - **`rule=qa-verdicts`** is one week through every verdict, with an empty day and two incomplete
   runs: a `missing_index` one, whose `cuts` holds the PSP side only, retried the same day, and a
-  `short_range` one followed by a two-day window.
+  `short_range` one followed by a two-day window. Its first run, on 5 Oct, has `backfillFrom`
+  5 Oct, so it seeds nothing, and its `txFrom` is 0 on both sides: no transaction precedes that
+  day, and ids start at 1.
 
 The two qa rules come from a small reference engine in `generate.py` that follows the results doc.
 It also writes `expected/`, the CSV each query must return, computed in Python. A per-day query
