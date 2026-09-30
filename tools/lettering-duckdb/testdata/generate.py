@@ -212,7 +212,7 @@ class Rule:
     def as_json(self):
         return {
             "id": self.id, "version": 1, "sha256": None,
-            "buckets": [f"{b}d" for b in self.buckets],
+            "buckets": [f"{b}d" for b in self.buckets], "topK": 10,
             "backfillFrom": day_str(self.backfill_from),
             "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
                     "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],

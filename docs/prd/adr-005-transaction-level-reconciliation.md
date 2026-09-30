@@ -398,6 +398,8 @@ V1 runs no periodic proof against a checkpoint.
   indexed metadata fields that key the payment account's other movements, such as payouts and
   fees. The PSP flow read adds one `EXISTS` term per field; those transactions feed the
   payment-account book only, never matching.
+- **`topK`** (default 10, at most 100) bounds each triage list of the manifest (open breaks,
+  pending items, resolved breaks); the totals are in `counts` and the full lists in the files.
 - **`psp.merchantRef`** (optional) names the PSP metadata field holding the merchant's reference.
   When set, an unapplied payment whose merchant reference names an open hold is paired with it
   ("invoice X is paid: apply it").
@@ -457,6 +459,11 @@ V1 runs no periodic proof against a checkpoint.
     weekend, and applying at `pending` is common with those debits.
   - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`.
   - All three are rule parameters.
+  - A hold's age counts from its opening transaction, seen in a window recon read (the day's flow,
+    or a first run's backfill) and then kept in the stock file from run to run. A hold already open
+    before a first run's `backfillFrom` (or a restart's) has no known opening: its `openedAt` is
+    null and its age is a lower bound, counted from `backfillFrom`. The ledger's account
+    `first_usage` and `insertion_date` fields are not populated, so they cannot help.
   - An open hold is never a break for its age: the buckets show it, and holds held too long are
     the [`stale_holds`](../technical/stale-holds.md) template's job. The rule has no age limit.
 - **`breakId`.** Ageing compares with the previous run's artifact, matched by a `breakId` that

@@ -282,8 +282,8 @@ output(T) − output(T_prev) = debits on the account by the transactions the flo
 
 - **Triage**, in priority order, then by amount: each open break new or persisting, then the
   pending items with their `breakOn`, then the breaks resolved since the
-  previous run. Each list holds at most `topK` items, and `counts` gives the totals, so a
-  presentation can add "and N more".
+  previous run. Each list holds at most `topK` items, a rule parameter (10 by default, at most
+  100), and `counts` gives the totals, so a presentation can add "and N more".
 - **A merchant reference.** When the rule names `psp.merchantRef`, every unapplied payment is
   paired with the open business hold it names.
 - **Warnings**: unclassified transactions per side and state value. They make the verdict
@@ -389,7 +389,7 @@ One row per hold open at the cut, plus one row per hold cleared since the previo
 | `balance` | The ledger's balance at the cut, signed as the ledger shows it |
 | `class`, `outcome` | Below |
 | `lifecycle` | `new`, `persisting` or `cleared`, against the previous run |
-| `openedAt`, `ageDays`, `bucket` | When the hold opened, its age at the cut, and its age bucket |
+| `openedAt`, `ageDays`, `bucket` | When the hold opened (its opening transaction's time), its age at the cut, and its age bucket. `openedAt` is null for a hold already open before a first run's `backfillFrom`, whose opening recon never read: `ageDays` is then a lower bound counted from `backfillFrom`, and `bucket` follows it |
 | `previousBalance`, `clearedAt`, `clearedBy` | On a cleared hold: its balance at the previous cut, when it was lettered, and the `ref` that lettered it. No `clearedBy` means it was lettered without a PSP reference |
 | `pairedRef` | The unapplied payment whose `merchantRef` names this hold |
 
@@ -578,7 +578,7 @@ and was lettered on the same day.
   "engine": "reconciliation v1.4.0",
   "rule": {
     "id": "psp-vs-billing", "version": 7, "sha256": "4c1d…",
-    "buckets": ["1d", "7d", "30d"],
+    "buckets": ["1d", "7d", "30d"], "topK": 10,
     "backfillFrom": "2026-08-01",
     "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id",
                 "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
