@@ -95,7 +95,7 @@
   - Its `backfillFrom` defaults to the earlier of the first-run default and the oldest `firstSeen`
     of the last complete run's carried items, so the seed finds the items still open, and falls back
     to a first run's default when nothing was carried. When that file fails its signed check
-    (`stored_file_mismatch`), the operator gives `backfillFrom`.
+    (`stored_file_mismatch`), the operator gives `backfillFrom`: the default cannot be computed from that file, so a restart without it is refused.
   - Its breaks start `new`: their `breakId` is unchanged, their history is not carried over.
   - The restart takes an optional `backfillFrom`, rejected when it is later than the next run's
     cut. Nothing else is stored: the next run's manifest, a first run with no `previousRun` and
