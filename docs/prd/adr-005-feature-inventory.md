@@ -44,6 +44,7 @@ below still hold.
 | C7 + A8, ageing and the `psp.merchantRef` pairing | Kept: the age of every open hold is the credit-management view, and a stock break's row carries its `ageDays`; the pairing turns an unapplied payment into "apply it to invoice X" on its flow and stock rows (`pairedHold`, `pairedRef`) for a few fields | ADR §6; RD §5, §6 |
 | B1 + B2, the log-id cut `S` | Removed: the cut is `T` per ledger, and one mandatory index fewer (the log date). A run reads no range of logs, so `S` was only a label; its `ListLogs` read, `cuts[].logFrom` and `logTo`, its place in the signed capture and its `check-chain` comparison go with it. The flow reads `(T_prev, T]`, the rewind `(T, head_tx]`, and a replay needs only `T` per ledger | ADR §5, D12, D24; DD §3; RD §6 |
 | E14, the triage in the manifest, and the rule's `topK` | Removed from V1: the manifest carries aggregates only (the verdict, `incomplete`, the counts, the statement's figures, `books`, `paymentAccounts`, `files`); the statement's figures render from it alone, and lists of items come from the files, through the API. Open breaks, pending items and resolved breaks are in the breaks and flow files; the API pages breaks with filters on class, priority and lifecycle; the alert carries the headline, the statement's figures, the counts and the link; the bridge lines lose their `top` references. `incomplete.detail` keeps its first 20 items at fault, since an incomplete run writes no data file | ADR §6, §7 items 3 and 9, D8, D21; DD §5; RD §5, §6, §8 |
+| E21, API paging of breaks and the UI | Made necessary: with no list in the manifest or the alert, the API and the UI are how a controller sees the breaks | ADR §7 item 9; RD §5 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -157,7 +158,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | E18 | `schemaVersion` `lettering/1`, a JSON Schema per file, compatibility rules | ADR §7.3; RD §8 | Versioned, documented format | The customer reads the files directly | NEC | S | The format cannot evolve safely |
 | E19 | Every data file written on every complete run, even empty | RD §8 | No missing file on a quiet day | Globs never break | NEC | S | Readers special-case missing files |
 | E20 | Result API: lists a run's files with pre-signed URLs; run status from the capture | ADR §7.9 | Customers read without bucket access | Access control | NEC | M | Customers need raw bucket credentials |
-| E21 | API paging of breaks from the artifact, with filters on class, priority and lifecycle, + UI | ADR §7.3, §7.9 | Recon's API and UI read the files | The UI shows the breaks this way, since the manifest and the alert list none | OPT | M | Customers use the files and the alert only; the UI lists no break |
+| E21 | API paging of breaks from the artifact, with filters on class, priority and lifecycle, + UI | ADR §7.3, §7.9 | Recon's API and UI read the files | The UI shows the breaks this way, since the manifest and the alert list none | NEC | M | Without it no break is visible outside the files: the manifest and the alert carry aggregates only |
 | E22 | Customer query examples (RD §9) + `tools/lettering-duckdb` (check, check-chain, 11 queries, Python reference engine) | RD §9; lettering-duckdb.md | Internal validation pack, outside recon CI | An independent reading of the format for QA and support | OPT (already built) | M (maintenance) | Saves updating ~50 SQL rules, the generator and expected CSVs on every format change. Loses independent validation. Worth freezing, not growing |
 
 ## 6. Integrity and guarantees
@@ -233,8 +234,8 @@ feature's interest unless the row says otherwise.
 
 - **Features:** 104 numbered rows in §1–§7 and §9. §8 lists 20 configuration knobs, which map to
   those rows and are not counted again.
-- **NEC:** 48.
-- **OPT:** 31, E10 and I3 counted here since they are simplified, not removed. A8, C7, C8, C10,
+- **NEC:** 49, E21 included.
+- **OPT:** 30, E10 and I3 counted here since they are simplified, not removed. A8, C7, C8, C10,
   D5, D6, E6, E8, E9, F4 and F5 are kept by decision. Of the 31, 3 are doc-only, proposed, or
   already outside V1: A14, A15, G7.
 - **Removed, deferred or replaced:** 25, B11, B12, B13, B14, B16, B18, C4, C6, D8, D9, D10, D11, E14,

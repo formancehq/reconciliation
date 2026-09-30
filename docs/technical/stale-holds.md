@@ -617,7 +617,9 @@ Proposal:
   under `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`, next to a
   manifest whose SHA-256 goes into the capture;
 - keep `effectiveQuery` as the *live* view, since the artifact is the *as-evaluated* view;
-- add the artifact link and the top-K holds by amount to the alert evidence.
+- add the artifact link to the alert evidence, with the counts and amounts. As in ADR-005, the
+  manifest and the alert carry aggregates only: the flagged holds are in `holds.ndjson.gz`, which
+  the API pages.
 
 **2. Continuous cadence means writing on change, not every tick.** `periodType: continuous` fires
 every interval, and an artifact per tick would multiply objects for no information. Write one when
