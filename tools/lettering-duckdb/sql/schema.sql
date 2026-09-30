@@ -6,7 +6,7 @@
 -- written as strings in the files. Instants are read as TIMESTAMP in UTC, as the files write
 -- them. A key missing from a row reads as NULL. `hive` says whether to read `rule`, `day` and `run`
 -- from the rule=/day=/run= segments of the path. The macros also return:
---   - `filename`, to tell a file's parts and runs apart;
+--   - `filename`, to tell files and runs apart;
 --   - `ordinality`, the row's position in the scan, in file order.
 --
 -- Field definitions: docs/technical/transaction-level-results.md §6.

@@ -4,7 +4,6 @@
 --
 -- The directory may be local or s3://.
 --
--- `flow*` also matches a file that comes in parts (flow-00000.ndjson.gz, …).
 
 CREATE OR REPLACE MACRO lettering_file(name) AS
     getvariable('run') || '/' || name || '*.ndjson.gz';

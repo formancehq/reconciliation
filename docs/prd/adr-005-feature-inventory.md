@@ -24,6 +24,7 @@ below still hold.
 | D10 + E17 + D11, re-seed, `diagnostic.json`, `incomplete.kind` | Simplified: a stuck chain restarts as a first run, backfilled from the oldest open item of the last complete run; `incomplete.detail` names the first 20 items at fault; no `kind` field | ADR-005 decision 26 |
 | D9, acceptance of breaks one by one | Removed from V1: the alert opens on any open break; the controller acknowledges or accepts the alert itself (existing alert model), and a known break is fixed by booking it | ADR-005 §6 |
 | B14, phase-1 synchronous aggregate capture | Removed from V1: the run is one asynchronous job that resolves the cut, reads, joins, writes the files and one signed capture; the tick only enqueues it | ADR-005 §7 items 1 and 2 |
+| E16, file parts | Removed from V1: one gzip per data file, whatever its size (~4 s of one thread for the 75–142 MB flow file of a 1M day); readers follow `files` or glob `flow*`, so parts can come back without breaking them | RD §8; DD §7.14 |
 | B16, resumable job | Removed from V1: no progress is recorded; writes are ordered (data files, capture, manifest last, alert), a run exists once its manifest is written, and a run that did not finish is started again from the beginning with a new `runId` | ADR-005 §7 item 2 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
@@ -133,7 +134,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | E13 | Payment-account **debit** book (`output`, `flowDebits`, `debitResidual`) + `psp.movementKeys` | D23; DD §7.9 | Debits must be keyed payouts, fees, refunds | Unkeyed payouts and fees are a residual | OPT | M | Payouts and fees are outside payment lettering. Saves the debit direction; A9 stays needed for `formancepayments` conversions, and the Connectivity question is unchanged (DD §2) |
 | E14 | Triage in the manifest: top-K open breaks (NEC for the alert) + top-K `pending` and `resolved` lists | ADR §7.3, D21; RD §5 | The manifest renders the statement alone | The alert and a dashboard need no other file | NEC (breaks) / OPT (pending, resolved) | S | The pending and resolved lists come from the files. **Gap:** where `topK` is configured is not specified |
 | E15 | `execution` + `timingsMs` blocks (`readRanges`, `stockFrom`, `rewindTxs`, `lookups`, `watchLogs`) | ADR §7.8; RD §6 | Run telemetry in the manifest | Comparable run durations | OPT | S | Move to logs and metrics. No reader loss |
-| E16 | File parts beyond 250,000 rows (`flow-00000…`, `part` in `files`) | ADR §7.3; RD §8; DD §7.14 | Splits a data file into parts | Parallel compression and upload | OPT | S/M | One gzip of 75–142 MB: ~5 s on one thread; DuckDB reads it as fast. Saves the part logic in the writer, reader, checks and API |
+| E16 | File parts beyond 250,000 rows (`flow-00000…`, `part` in `files`) | ADR §7.3; RD §8; DD §7.14 | Splits a data file into parts | Parallel compression and upload | **Removed from V1** | S/M | One gzip of 75–142 MB: ~5 s on one thread; DuckDB reads it as fast. Saves the part logic in the writer, reader, checks and API |
 | E17 | `diagnostic.json` for structural `incomplete` (≤ 1,000 items per reason) | D26; RD §6 | Lists the books, holds, applications or files at fault | Debug a run that writes no data file | **Removed from V1** | M | Saves a file format with 4 item shapes. The operator debugs from logs or a debug run. Depends on D11 |
 | E18 | `schemaVersion` `lettering/1`, a JSON Schema per file, compatibility rules | ADR §7.3; RD §8 | Versioned, documented format | The customer reads the files directly | NEC | S | The format cannot evolve safely |
 | E19 | Every data file written on every complete run, even empty | RD §8 | No missing file on a quiet day | Globs never break | NEC | S | Readers special-case missing files |
@@ -215,10 +216,10 @@ feature's interest unless the row says otherwise.
 - **Features:** 104 numbered rows in §1–§7 and §9. §8 lists 20 configuration knobs, which map to
   those rows and are not counted again.
 - **NEC:** 49, E14 included (its top-K breaks list).
-- **OPT:** 44, E14's pending and resolved lists not counted separately. Of these, 5 are doc-only,
+- **OPT:** 43, E14's pending and resolved lists not counted separately. Of these, 5 are doc-only,
   proposed, or already outside V1: A14, A15, B18, G6, G7.
-- **Removed, deferred or replaced on 2026-09-29:** 11, B12, B14, B16, D9, D10, D11, E17, G3, G5,
-  G8 and I5 (see "Decisions taken").
+- **Removed, deferred or replaced:** 12, B12, B14, B16, D9, D10, D11, E16, E17, G3, G5, G8 and I5
+  (see "Decisions taken").
 
 ## Candidates to remove
 
@@ -254,7 +255,7 @@ judgement.
 
 **Tier 2: small or medium saving, near-zero loss.**
 
-9. **E16, file parts.** A single gzip per file is fine at 75–142 MB.
+9. **E16, file parts.** A single gzip per file is fine at 75–142 MB. Decided (RD §8).
 10. **B13, the purge consistency check.** The rewind is exact without it, per the design doc.
 11. **C4 `firstSide`, D8 `previousClass`, E10 `flowGross`/`offsetting`, E15 `execution`/`timingsMs`,
     F3 `logSha256`.** Each is S, and none is read by any check or trigger.

@@ -262,12 +262,6 @@ fi
 
 echo "legitimate variants and wrong arguments"
 fresh "$day24"
-gzip -dc "$work/run/flow.ndjson.gz" | sed -n '1,4p' | gzip -n > "$work/run/flow-00000.ndjson.gz"
-gzip -dc "$work/run/flow.ndjson.gz" | sed -n '5,$p' | gzip -n > "$work/run/flow-00001.ndjson.gz"
-rm "$work/run/flow.ndjson.gz"
-edit "$work/run/$m" "s/{\"name\":\"flow.ndjson.gz\",\"rows\":8,\"sha256\":\"[0-9a-f]*\"/{\"name\":\"flow-00000.ndjson.gz\",\"part\":0,\"rows\":4,\"sha256\":\"$(sha "$work/run/flow-00000.ndjson.gz")\"},{\"name\":\"flow-00001.ndjson.gz\",\"part\":1,\"rows\":4,\"sha256\":\"$(sha "$work/run/flow-00001.ndjson.gz")\"/"
-expect_ok "a flow file in two parts" "$lettering" check "$work/run"
-fresh "$day24"
 edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-42"/s/"drift":"0",/"drift":"0","newField":{"a":1},/'
 reseal "$work/run/flow.ndjson.gz"
 expect_ok "a row with a field unknown to lettering/1" "$lettering" check "$work/run"

@@ -115,8 +115,7 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
 
 - **Variable.** `run` is the run's directory.
 - **Data views.** `manifest`, `flow`, `carried`, `stock`, `breaks` and `unclassified`. Each data view
-  adds `file` (the file's name) and `pos` (the row's position). `flow*` also matches a file in
-  parts.
+  adds `file` (the file's name) and `pos` (the row's position).
 - **Manifest views.** The manifest, flattened: `m_run`, `m_files`, `m_cuts`, `m_statement`,
   `m_lines`, `m_carried_outside`, `m_books`, and `m_payment_accounts` with `m_payment_directions`
   (the payment-account book, one row per account and asset, then per direction).
@@ -244,8 +243,8 @@ The suite checks four things:
    corrupted copy of a run. The suite fails when a rule is never exercised, so a new rule needs a
    test.
 4. **Variants and wrong arguments.**
-   - Legitimate variants pass: a file in parts, a field unknown to `lettering/1`, an incomplete
-     run, a triage cut at `topK`.
+   - Legitimate variants pass: a field unknown to `lettering/1`, an incomplete run, a triage cut
+     at `topK`.
    - Wrong arguments get their exit status and a message that says why: an unknown or missing
      variable, a wrong directory, a bad or missing day, an unreadable file. An init file that
      prints and an empty CSV result are handled too.

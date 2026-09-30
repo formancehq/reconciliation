@@ -73,8 +73,10 @@
   the rule: its next run is a first run, with no `previousRun`.
   - Its stock is rewound to the cut before its window, so its `openPrev` values are recomputed from
     the ledger, not picked up.
-  - It reads the flow from `backfillFrom`, which defaults to the oldest `firstSeen` of the last
-    complete run's carried items, so it finds the items still open. When that file fails its
+  - It reads the flow from `backfillFrom`, which defaults to the earlier of a first run's default
+    (cut-off − max(`psp.grace`, `product.grace`) − 1 day) and the oldest `firstSeen` of the last
+    complete run's carried items, so it finds the items still open, and falls back to a first run's
+    default when nothing was carried. When that file fails its
     signed check (`stored_file_mismatch`), the operator gives `backfillFrom`. The statement says
     "backfilled since …".
   - Its breaks start `new`: their `breakId` is unchanged, their history is not carried over.
@@ -303,7 +305,7 @@ output(S) − output(S_prev) = debits on the account by the transactions the flo
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `S_prev` values here |
 | `triage` | What the statement names, so it is rendered from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
-| `files` | One entry per file: `name`, `rows`, `sha256`, and `part` when the file comes in parts |
+| `files` | One entry per file: `name`, `rows`, `sha256` |
 | `expiresAt` | When the run's files expire (§2) |
 
 ### `flow.ndjson.gz`
@@ -443,11 +445,9 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
 
 - **Every data file is written on every complete run**, even with no row, so a glob never breaks
   on a quiet day. The manifest gives each file's row count.
-- **A file may come in parts.** Past **250,000 rows**, `flow.ndjson.gz` becomes
-  `flow-00000.ndjson.gz`, `flow-00001.ndjson.gz` and so on, 250,000 rows each and the last one
-  shorter, each listed in `files` with its `part`. The same holds for every data file. A reader that
-  follows the manifest, or globs `flow*.ndjson.gz`, needs no change. A part of the flow file weighs
-  about 19 to 36 MB gzipped; parts are compressed and uploaded in parallel (design doc §7.14).
+- **One file per kind.** Each data file is a single gzip, whatever its size: the flow file of a
+  1M-payment day weighs 75 to 142 MB (design doc §7.14). A reader that follows the manifest's
+  `files`, or globs `flow*.ndjson.gz`, keeps working if a later format splits a file.
 - **The same cut gives the same bytes.** Keys follow the order of the file's JSON Schema, rows the
   order below, and gzip uses a fixed level with no name and no timestamp. A replay therefore
   reproduces every data file's SHA-256, provided four things hold:

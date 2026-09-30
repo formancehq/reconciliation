@@ -1240,7 +1240,7 @@ ledger has no `IN`), lookups cost about a hundredth. The id range first falls in
 
 **Question.** EN-2322 left the size of the self-contained rows to measure before the format is
 frozen, the flow file first. How large are a day's files, how long do they take to write, and
-where should a file be split into parts (results doc §8)?
+should a file be split into parts (results doc §8)?
 
 **Setup** (`file-size`). No ledger: a generated day of 1M payments in the `lettering/1` field order
 (results doc §6), 88 % matched, about 7 % carried, 2 % breaks, and 60,000 open holds. Payment
@@ -1269,9 +1269,12 @@ Encoding and compressing the flow file took 4.6 s (5.4 s with the long reference
 - A self-contained break row weighs 93 to 161 bytes. Breaks remain a small file.
 - Level 6 stays: level 1 saves 3 s of one thread for 20 % more bytes, level 9 doubles the time for
   1 % less.
-- **Parts of 250,000 rows** (results doc §8): about 19 to 36 MB each, so the flow file of a 1M day is
-  compressed on 4 cores in about a quarter of the time, and uploaded and fetched part by part. Parts
-  cost DuckDB nothing.
+- **One file per kind, no parts in V1** (results doc §8). Parts of 250,000 rows (19 to 36 MB each)
+  would compress the flow file of a 1M day on 4 cores in about a quarter of the time and cost DuckDB
+  nothing, but they save only ~4 s of one thread in a run of ~2.5 min, against a part logic in the
+  writer, the manifest, the API and the checks. The object stores' SDKs already upload a large
+  object in multipart. At 10M payments a day the flow file would weigh ~0.75 to 1.4 GB, still one
+  object; parts can come back then without breaking a reader that follows `files` or globs `flow*`.
 
 ### 7.15 One day's run, end to end
 
