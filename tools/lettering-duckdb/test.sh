@@ -194,10 +194,6 @@ fresh "$qa5"; edit "$work/run/breaks.ndjson.gz" '/"lifecycle":"resolved"/s/"outc
 expect_violation "a resolved break still marked break" break_outcome "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/breaks.ndjson.gz" 's/"priority":2,"lifecycle":"new"/"priority":1,"lifecycle":"new"/'
 expect_violation "a break's priority" break_priority "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"ref":"PAY-44","asset":"EUR\/2","amount":"5000"/"ref":"PAY-44","asset":"EUR\/2","amount":"5001"/'
-expect_violation "a triage break" triage_break "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"amount":"80000","breakOn":"2026-09-25"/"amount":"80000","breakOn":"2026-09-26"/'
-expect_violation "a triage pending item" triage_pending "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/breaks.ndjson.gz" '/"ref":"PAY-44"/d'
 expect_violation "an open break missing from the breaks file" breaks_vs_rows "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-42"/s/"productAmount":"100000"/"productAmount":"90000"/'
@@ -224,10 +220,6 @@ fresh "$day24"; edit "$work/run/$m" 's/"buckets":{"0-1d":0,"2-7d":2,"8-30d":2,">
 expect_violation "a book's age buckets" books_buckets "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/breaks.ndjson.gz" '/"ref":"PAY-44"/s/"class":"under_applied"/"class":"over_applied"/'
 expect_violation "a break that is not its row" break_vs_row "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"triage":{"topK":10/"triage":{"topK":2/'
-expect_violation "a triage that lists more than topK" triage_count "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"triage":{"topK":10/"triage":{"topK":1/; s/,{"breakId":"[0-9a-f]*","priority":[34][^}]*}//g; s/,{"ref":"PAY-99","class":"applied_before_final"[^}]*}//'
-expect_ok "a triage cut at topK, with more breaks and pending rows in the files" "$lettering" check "$work/run"
 fresh "$qa2"; edit "$work/run/$m" 's/"txFrom":\([0-9]*\),"txTo"/"txFrom":1,"txTo"/'
 expect_violation "a window that does not start at the previous cut" window_start "$lettering" check-chain "$qa1" "$work/run"
 fresh "$qa2"; edit "$work/run/flow.ndjson.gz" '/"ref":"S04"/s/"impact":"0"/"impact":"1"/'

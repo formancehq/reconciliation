@@ -280,26 +280,6 @@ WHERE priority IS DISTINCT FROM CASE
     WHEN class = 'unapplied_payment' THEN 3
     WHEN class = 'wrong_sign' THEN 4 END;
 
-INSERT INTO violations
-WITH t AS (SELECT unnest(from_json(m->'triage'->'breaks', '[{"breakId":"VARCHAR","priority":"INTEGER","class":"VARCHAR","lifecycle":"VARCHAR","amount":"HUGEINT"}]'), recursive := true) FROM manifest
-           UNION ALL
-           SELECT unnest(from_json(m->'triage'->'resolved', '[{"breakId":"VARCHAR","priority":"INTEGER","class":"VARCHAR","lifecycle":"VARCHAR","amount":"HUGEINT"}]'), recursive := true) FROM manifest)
-SELECT 'triage_break', t.breakId,
-       CASE WHEN b.breakId IS NULL THEN 'not in the breaks file'
-            ELSE 'triage ' || t.class || ' ' || t.amount || ', breaks file ' || b.class || ' ' || b.amount END
-FROM t LEFT JOIN breaks b USING (breakId)
-WHERE b.breakId IS NULL OR t.class <> b.class OR t.amount <> b.amount
-   OR (t.priority IS NOT NULL AND t.priority <> b.priority)
-   OR (t.lifecycle IS NOT NULL AND t.lifecycle <> b.lifecycle);
-
-INSERT INTO violations
-WITH t AS (SELECT unnest(from_json(m->'triage'->'pending', '[{"ref":"VARCHAR","class":"VARCHAR","asset":"VARCHAR","amount":"HUGEINT","breakOn":"DATE"}]'), recursive := true) FROM manifest)
-SELECT 'triage_pending', t.ref,
-       CASE WHEN f.ref IS NULL THEN 'not a pending flow row'
-            ELSE 'triage ' || t.amount || ' on ' || t.breakOn || ', flow ' || f.drift || ' on ' || f.breakOn END
-FROM t LEFT JOIN (SELECT * FROM flow WHERE outcome = 'pending') f USING (ref, asset)
-WHERE f.ref IS NULL OR t.amount <> f.drift OR t.breakOn IS DISTINCT FROM f.breakOn OR t.class <> f.class;
-
 -- Every open break of the flow and stock files, and every non-zero residual of the
 -- payment-account book, is in the breaks file, and back.
 INSERT INTO violations
@@ -442,13 +422,6 @@ WHERE b.leg = 'book'
        OR b.direction IS NULL OR b.direction NOT IN ('credit', 'debit')
        OR (b.inputPrev, b.input, b.outputPrev, b.output, b.flowCredits, b.flowDebits, b.creditResidual, b.debitResidual)
           IS DISTINCT FROM (p.inputPrev, p.input, p.outputPrev, p.output, p.flowCredits, p.flowDebits, p.creditResidual, p.debitResidual));
-
--- The triage lists at most topK open breaks, pending rows and resolved breaks.
-INSERT INTO violations
-WITH t AS (SELECT (m->'triage'->>'topK')::INTEGER AS top_k, l.list, json_array_length(m->'triage'->l.list) AS n
-           FROM manifest, (VALUES ('breaks'), ('pending'), ('resolved')) l(list))
-SELECT 'triage_count', list, 'triage ' || n || ', topK ' || top_k
-FROM t WHERE n > top_k;
 
 -- Keys and order (results doc §8) -----------------------------------------------------------
 

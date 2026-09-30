@@ -147,7 +147,7 @@ violation in any client, and the wrapper turns that failure into exit status 1.
 - **Independent computations.** A rule never trusts the figure it checks. The residual is
   recomputed from the applications booked in the product window (`cuts`), not read from the
   statement. The books are compared with the stock rows, and the verdict is derived from the files.
-- **Rule names.** Every rule name contains an underscore (`bridge_net`, `triage_count`). The test
+- **Rule names.** Every rule name contains an underscore (`bridge_net`, `row_order`). The test
   suite uses this to find the rule names and to check that each one fires on at least one corrupted
   copy (see [Tests](#tests-testsh)).
 - **What the files cannot show.** The checks read the files, not the ledgers. They cannot tell
@@ -243,8 +243,7 @@ The suite checks four things:
    corrupted copy of a run. The suite fails when a rule is never exercised, so a new rule needs a
    test.
 4. **Variants and wrong arguments.**
-   - Legitimate variants pass: a field unknown to `lettering/1`, an incomplete run, a triage cut
-     at `topK`.
+   - Legitimate variants pass: a field unknown to `lettering/1`, and an incomplete run.
    - Wrong arguments get their exit status and a message that says why: an unknown or missing
      variable, a wrong directory, a bad or missing day, an unreadable file. An init file that
      prints and an empty CSV result are handled too.
@@ -465,7 +464,6 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone, and its bucket and each book's bucket counts follow from the rule's bounds |
 | `row_amounts`, `row_impact`, `row_outcome` | A flow row's amounts follow from its transactions, a carried row has no `impact`, and each row's outcome (and a stock row's sign) follows from its class |
 | `row_class` | A flow row's class follows from its net amounts: applications that sum to 0 count as none |
-| `triage_break`, `triage_pending`, `triage_count` | The triage matches the breaks and the pending flow rows, and lists at most `topK` open breaks, pending rows and resolved breaks |
 | `unique_key`, `row_order` | Each file's unique key and row order (results doc §8) |
 | `verdict_mismatch` | The verdict follows from the files |
 

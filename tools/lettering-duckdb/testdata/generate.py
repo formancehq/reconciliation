@@ -212,7 +212,7 @@ class Rule:
     def as_json(self):
         return {
             "id": self.id, "version": 1, "sha256": None,
-            "buckets": [f"{b}d" for b in self.buckets], "topK": 10,
+            "buckets": [f"{b}d" for b in self.buckets],
             "backfillFrom": day_str(self.backfill_from),
             "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
                     "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
@@ -772,9 +772,6 @@ class Engine:
                 if r['impact'] == 0 and r['drift'] != 0 and r['firstSeen'] and r['firstSeen'] < day:
                     outside.setdefault((r['class'], r['outcome']), []).append(r)
 
-            def top(rs, by):
-                return [r['ref'] for r in sorted(rs, key=lambda r: (-abs(r[by]), r['ref']))[:3]]
-
             breaks = [r for r in rows if r['outcome'] == 'break']
             carried = [r for r in st['carried'] if r['asset'] == a]
             open_prev, count_prev = prev_susp.get(a, (0, 0))
@@ -793,11 +790,11 @@ class Engine:
                 "product": {"amount": str(prod_a), "count": prod_n},
                 "net": str(net),
                 "lines": [{"class": c, "outcome": o, "earlierDay": e, "amount": str(sum(r['impact'] for r in rs)),
-                           "count": len(rs), "top": top(rs, 'impact')}
+                           "count": len(rs)}
                           for (c, o, e), rs in sorted(lines.items(), key=lambda kv: (-sum(r['impact'] for r in kv[1]), kv[0]))],
                 "residual": "0",
                 "carriedOutside": [{"class": c, "outcome": o, "amount": str(sum(r['drift'] for r in rs)),
-                                    "count": len(rs), "top": top(rs, 'drift')}
+                                    "count": len(rs)}
                                    for (c, o), rs in sorted(outside.items())],
                 "flowGross": str(sum(abs(r['drift']) for r in breaks)),
                 "suspense": {"openPrev": str(open_prev), "countPrev": count_prev, "fromLookups": str(from_lookups),
@@ -822,31 +819,6 @@ class Engine:
         verdict = st['verdict']
         statement = self.statement(day, st)
 
-        def key_json(b):
-            if b['leg'] == 'flow':
-                return {'ref': b['key']}
-            if b['leg'] == 'book':
-                return {'side': 'psp', 'account': b['row']['account'], 'direction': b['row']['direction']}
-            return {'side': b['row']['side'], 'hold': b['row']['hold']}
-
-        def triage_break(b):
-            o = {'breakId': b['breakId'], 'priority': b['priority'], 'class': b['class'], 'lifecycle': b['lifecycle']}
-            o.update(key_json(b))
-            o.update({'asset': b['asset'], 'amount': str(b['amount'])})
-            if b['leg'] == 'book':
-                pass
-            elif b['leg'] == 'flow':
-                hold_ids = [hid for e in b['row']['app_ev'] for (_, hid, _, _) in e.moves]
-                if hold_ids:
-                    o['holdIds'] = hold_ids
-                elif b['row']['firstSeen']:
-                    o['firstSeen'] = day_str(b['row']['firstSeen'])
-            else:
-                o['ageDays'] = b['row']['ageDays']
-            return o
-
-        pending = sorted([r for r in rows if r['outcome'] == 'pending'], key=lambda r: (r['breakOn'], -abs(r['drift']), r['ref']))
-        resolved = [b for b in breaks if not b['open']]
         cuts = []
         for side, ledger in (('psp', 'psp'), ('product', 'main')):
             lo, hi = st['cuts'][side]
@@ -875,18 +847,6 @@ class Engine:
                        "letteredOther": str(b['other']), "open": str(b['open']), "count": b['count'],
                        "buckets": b['buckets'], "continuityOk": True} for b in st['books']],
             "paymentAccounts": [self.pay_json(p) for p in st['pay']],
-            "triage": {"topK": 10, "breaks": [triage_break(b) for b in breaks if b['open']][:10],
-                       "pending": [dict({'ref': r['ref'], 'class': r['class'], 'asset': r['asset'],
-                                         'amount': str(r['drift']), 'breakOn': day_str(r['breakOn'])},
-                                        **({'pairedHold': r['pairedHold']} if r.get('pairedHold') else
-                                           ({'holdIds': [hid for e in r['app_ev'] for (_, hid, _, _) in e.moves]}
-                                            if r['app_ev'] else {})))
-                                   for r in pending][:10],
-                       "resolved": [dict({'breakId': b['breakId'], 'class': b['class']}, **key_json(b),
-                                         asset=b['asset'], amount=str(b['amount']),
-                                         **({'clearedBy': b['row']['clearedBy']}
-                                            if b['leg'] == 'stock' and b['row'].get('clearedBy') else {}))
-                                    for b in resolved][:10]},
             "files": files,
             "expiresAt": day_str(day + dt.timedelta(days=90)),
         })

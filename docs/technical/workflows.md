@@ -331,7 +331,7 @@ flowchart LR
     Stock --> Join
     Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: manifest only)"]
     Art --> Cap["Capture on _recon<br/>(counts, drifts, T per ledger, artifact hash) — Ed25519"]
-    Cap --> Alert["Alert per (rule, fingerprint, period)<br/>structured evidence: statement JSON + headline + counts<br/>opens on an open break (never on the net alone)<br/>top-K breaks + artifact link"]
+    Cap --> Alert["Alert per (rule, fingerprint, period)<br/>structured evidence: statement JSON + headline + counts<br/>opens on an open break (never on the net alone)<br/>artifact link · breaks paged from the API"]
 ```
 
 No query checkpoint is taken: the cut is a transaction id per ledger, which no later write moves,

@@ -278,7 +278,7 @@ sequenceDiagram
     J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ flow / carried / stock / breaks / unclassified
     J->>C: capture(counts, drifts, T per ledger, manifest sha256) — Ed25519
     J->>O: manifest.json, last: the run exists once it is written
-    J->>C: open / update / resolve the aggregate alert (top-K breaks)
+    J->>C: open / update / resolve the aggregate alert (statement figures, counts, link)
 ```
 
 - **The cut** turns the business cut-off into one transaction id `T` per ledger
@@ -629,9 +629,11 @@ reference](./transaction-level-results.md#4-the-verdict).
 
 **The statement is data, not text.** The alert's evidence holds the manifest's `statement` block
 as JSON, a headline (the verdict, the open breaks per leg, the P1 count, the gross and the net),
-the counts, the top-K breaks and the link to the run's files ([results
-reference](./transaction-level-results.md#the-alerts-evidence)). The UI renders the statement from
-it; the engine renders no text, so no test pins one.
+the counts and the link to the run's files ([results
+reference](./transaction-level-results.md#the-alerts-evidence)). The manifest carries aggregates
+only: the statement's figures render from it alone, and lists of items come from the files,
+through the API. The UI renders the statement from the evidence and shows the breaks by paging
+them from the API; the engine renders no text, so no test pins one.
 
 ### Result artifacts and retention
 

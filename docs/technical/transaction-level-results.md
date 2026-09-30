@@ -17,19 +17,20 @@
 2. **Read `verdict`** (§4). `incomplete` means no conclusion can be drawn: the manifest says why in
    `incomplete.reason` and names the first items at fault in `incomplete.detail`. The run wrote no
    data file.
-3. **Read the statement** (§5), which is the manifest's `statement`, `books` and `triage` blocks.
-   The alert carries it as data and the UI renders it. The bridge explains the day's net
-   difference, the open items give the running total still unmatched, and the triage says what to
-   do first.
-4. **Open the detail** only for what the statement points at: `breaks.ndjson.gz` for the rows to
-   act on, `flow.ndjson.gz` and `stock.ndjson.gz` for the complete picture, and
-   `unclassified.ndjson.gz` for the transactions the rule could not classify.
+3. **Read the statement** (§5), which is the manifest's `statement`, `books` and `paymentAccounts`
+   blocks. The alert carries the `statement` block and the `counts` as data, and the UI renders
+   the statement. The bridge explains the day's net difference, the open items give the running
+   total still unmatched, and `counts` says how many breaks and pending items there are.
+4. **Open the files for the items.** The manifest carries aggregates only: `breaks.ndjson.gz` holds
+   the rows to act on, `flow.ndjson.gz` the pending items and, with `stock.ndjson.gz`, the complete
+   picture, and `unclassified.ndjson.gz` the transactions the rule could not classify.
+   Recon's API pages the breaks, with filters on class, priority and lifecycle.
 
 | Question | Where to look |
 |---|---|
 | Is the day reconciled? | `manifest.json` → `verdict` |
-| What must be done today? | `triage.breaks`, then `breaks.ndjson.gz` with `outcome = 'break'`, by `priority` |
-| What turns into a break soon? | `triage.pending`, with each item's `breakOn`; all of them: `flow.ndjson.gz` with `outcome = 'pending'` |
+| What must be done today? | `counts.breaks.openByPriority`, then `breaks.ndjson.gz` with `outcome = 'break'`, by `priority` |
+| What turns into a break soon? | `counts.flowOutcome.pending`, then `flow.ndjson.gz` with `outcome = 'pending'`, by `breakOn` |
 | Why is the day's net not zero? | `statement.{asset}.lines` |
 | How much is still unmatched, all days together? | `statement.{asset}.suspense.open`, which is the sum of `drift` in `carried.ndjson.gz` |
 | What is still open on each ledger? | `books`, then `stock.ndjson.gz` |
@@ -41,7 +42,7 @@
 
 ```text
 {backup bucket}/{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/
-  manifest.json           the run: rule, cuts, verdict, counts, statement, books, triage, files
+  manifest.json           the run's aggregates: rule, cuts, verdict, counts, statement, books, files
   flow.ndjson.gz          one row per payment reference and asset: the window's, plus the ones carried in or looked up
   carried.ndjson.gz       the flow rows whose drift is not 0, handed to the next run
   stock.ndjson.gz         one row per open hold at the cut, plus the holds cleared since the previous run
@@ -167,9 +168,9 @@ therefore answers with a reconciliation statement, the classic *état de rapproc
 three parts per asset, each closed by an identity that the engine checks, and a fourth check on the
 PSP payment account, whose residual is a break rather than an `incomplete` run.
 
-The statement is data: the manifest's `statement`, `books`, `paymentAccounts` and `triage` blocks
-(§6). The layouts below show what each part adds up, and §10 shows one way to present a whole
-day.
+The statement is data: the manifest's `statement`, `books` and `paymentAccounts` blocks (§6). Its
+figures render from the manifest alone; lists of items come from the files, through the API. The
+layouts below show what each part adds up, and §10 shows one way to present a whole day.
 
 ### The bridge: why the window's net is what it is
 
@@ -280,12 +281,14 @@ output(T) − output(T_prev) = debits on the account by the transactions the flo
 
 ### Around the three parts
 
-- **Triage**, in priority order, then by amount: each open break new or persisting, then the
-  pending items with their `breakOn`, then the breaks resolved since the
-  previous run. Each list holds at most `topK` items, a rule parameter (10 by default, at most
-  100), and `counts` gives the totals, so a presentation can add "and N more".
+- **The items** are in the files, and `counts` gives their totals. The open breaks, new or
+  persisting, and the breaks resolved since the previous run are the rows of `breaks.ndjson.gz`, in
+  priority order, then by amount (§8). The pending items are the `pending` rows of
+  `flow.ndjson.gz`, each with its `breakOn`. Recon's API pages the breaks, with filters on class,
+  priority and lifecycle.
 - **A merchant reference.** When the rule names `psp.merchantRef`, every unapplied payment is
-  paired with the open business hold it names.
+  paired with the open business hold it names: `pairedHold` on its flow row, `pairedRef` on the
+  hold's stock row.
 - **Warnings**: unclassified transactions per side and state value. They make the verdict
   `reconciled_with_warnings` at best.
 
@@ -298,11 +301,11 @@ The alert carries structured data, never rendered text:
   (`net`);
 - **the statement**: the manifest's `statement` block, as JSON;
 - **the counts**: the manifest's `counts`;
-- **the triage**: `triage.breaks`, the top-K open breaks;
 - **the link** to the run's files, which recon's API lists with pre-signed URLs (§2).
 
-The UI renders the reconciliation statement from this data, and reads the books and the pending
-and resolved lists from the run's manifest. The engine renders no text.
+It carries no list of items. The UI renders the reconciliation statement from this data and the
+manifest's `books`, and shows the breaks by paging them from recon's API. The engine renders no
+text.
 
 ## 6. File reference
 
@@ -325,10 +328,9 @@ and resolved lists from the run's manifest. The engine renders no text.
 | `counts.stock` | Stock rows per side and class |
 | `counts.breaks` | `new`, `persisting`, `resolved`, and open breaks `openByLeg` (`flow`, `stock`, `book`) and `openByPriority` |
 | `counts.unclassified` | Unclassified transactions per side |
-| `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
+| `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`), `flowGross`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `T_prev` values here |
-| `triage` | What the statement names, so the UI renders it from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
 | `files` | One entry per file: `name`, `rows`, `sha256` |
 | `expiresAt` | For information: the run's `day` plus the deployment's retention. The storage's lifecycle rule deletes the files, counting from their creation (§2) |
 
@@ -468,6 +470,10 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
 
 - **Every data file is written on every complete run**, even with no row, so a glob never breaks
   on a quiet day. The manifest gives each file's row count.
+- **The manifest carries aggregates only.** The statement's figures render from the manifest
+  alone; lists of items (breaks, pending items, resolved breaks) come from the files, through the
+  API. The one exception is `incomplete.detail`, which names the first 20 items at fault of a run
+  that writes no data file (§4).
 - **One file per kind.** Each data file is a single gzip, whatever its size: the flow file of a
   1M-payment day weighs 75 to 142 MB (design doc §7.14). A reader that follows the manifest's
   `files`, or globs `flow*.ndjson.gz`, keeps working if a later format splits a file.
@@ -578,7 +584,7 @@ and was lettered on the same day.
   "engine": "reconciliation v1.4.0",
   "rule": {
     "id": "psp-vs-billing", "version": 7, "sha256": "4c1d…",
-    "buckets": ["1d", "7d", "30d"], "topK": 10,
+    "buckets": ["1d", "7d", "30d"],
     "backfillFrom": "2026-08-01",
     "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id",
                 "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
@@ -619,13 +625,13 @@ and was lettered on the same day.
       "product": {"amount": "415000", "count": 6},
       "net": "-15000",
       "lines": [
-        {"class": "unapplied_payment",    "outcome": "pending", "earlierDay": false, "amount": "80000",  "count": 1, "top": ["PAY-45"]},
-        {"class": "applied_before_final", "outcome": "pending", "earlierDay": false, "amount": "-30000", "count": 1, "top": ["PAY-99"]},
-        {"class": "under_applied",        "outcome": "break",   "earlierDay": false, "amount": "5000",   "count": 1, "top": ["PAY-44"]},
-        {"class": "matched",              "outcome": "ok",      "earlierDay": true,  "amount": "-70000", "count": 1, "top": ["PAY-40"]}
+        {"class": "unapplied_payment",    "outcome": "pending", "earlierDay": false, "amount": "80000",  "count": 1},
+        {"class": "applied_before_final", "outcome": "pending", "earlierDay": false, "amount": "-30000", "count": 1},
+        {"class": "under_applied",        "outcome": "break",   "earlierDay": false, "amount": "5000",   "count": 1},
+        {"class": "matched",              "outcome": "ok",      "earlierDay": true,  "amount": "-70000", "count": 1}
       ],
       "residual": "0",
-      "carriedOutside": [{"class": "unapplied_payment", "outcome": "break", "amount": "50000", "count": 1, "top": ["PAY-39"]}],
+      "carriedOutside": [{"class": "unapplied_payment", "outcome": "break", "amount": "50000", "count": 1}],
       "flowGross": "55000",
       "suspense": {"openPrev": "120000", "countPrev": 2, "fromLookups": "0", "open": "105000", "count": 4, "continuityOk": true},
       "unclassified": [{"side": "psp", "state": "payin.refunded", "amount": "20000", "count": 1}]
@@ -647,19 +653,6 @@ and was lettered on the same day.
      "inputPrev": "9120000", "input": "9520000", "outputPrev": "310000", "output": "330000",
      "flowCredits": "400000", "flowDebits": "20000", "creditResidual": "0", "debitResidual": "0"}
   ],
-  "triage": {
-    "topK": 10,
-    "breaks": [
-      {"breakId": "a93d02e6b7f1c448", "priority": 2, "class": "under_applied",     "lifecycle": "new",        "ref": "PAY-44", "asset": "EUR/2", "amount": "5000",   "holdIds": ["INV-11"]},
-      {"breakId": "1c7f3a90d2e84b55", "priority": 3, "class": "unapplied_payment", "lifecycle": "persisting", "ref": "PAY-39", "asset": "EUR/2", "amount": "50000",  "firstSeen": "2026-09-20"},
-      {"breakId": "7b24e1f09c3d6a12", "priority": 4, "class": "wrong_sign",        "lifecycle": "persisting", "side": "product", "hold": "main:hold:invoice:INV-14", "asset": "EUR/2", "amount": "-10000", "ageDays": 6}
-    ],
-    "pending": [
-      {"ref": "PAY-45", "class": "unapplied_payment",    "asset": "EUR/2", "amount": "80000",  "breakOn": "2026-09-25", "pairedHold": "main:hold:invoice:INV-12"},
-      {"ref": "PAY-99", "class": "applied_before_final", "asset": "EUR/2", "amount": "-30000", "breakOn": "2026-10-01", "holdIds": ["INV-13"]}
-    ],
-    "resolved": []
-  },
   "files": [
     {"name": "flow.ndjson.gz",         "rows": 8, "sha256": "e41d…"},
     {"name": "carried.ndjson.gz",      "rows": 4, "sha256": "7a02…"},
@@ -751,8 +744,10 @@ is resolved today: INV-5, which PAY-40 lettered, was an open hold, not a break.
 {"side":"psp","tx":1276330,"ref":"PAY-31","asset":"EUR/2","outcome":"warning","state":"payin.refunded","amount":"20000","insertedAt":"2026-09-24T10:36:14Z"}
 ```
 
-**The statement**, as a UI may present it from the alert's evidence and the manifest (the engine
-writes no text):
+**The statement**, as a UI may present it. It is an example of presentation, not an engine
+output: the engine writes no text. The figures come from the manifest, whose `statement` block and
+`counts` the alert's evidence carries; the breaks and the pending items come from the breaks and
+flow files, through recon's API.
 
 ```text
 psp-vs-billing — 24 Sep 2026 (cut-off 23:59:59 Europe/Paris) — BREAKS
@@ -763,13 +758,13 @@ EUR
 − Product — applications in the window                             4,150.00  (6)
 = Net difference                                                     −150.00
   explained by:
-    + unapplied payments of the window (until 25 Sep)                +800.00  (1)  PAY-45 → INV-12
-    − applications awaiting a final PSP state (until 1 Oct)          −300.00  (1)  PAY-99 → INV-13
-    ± under / over applications                             P2        +50.00  (1)  PAY-44
-    ± matched, entered the join on an earlier day                    −700.00  (1)  PAY-40
+    + unapplied payments of the window (within product.grace)        +800.00  (1)  pending
+    − applications awaiting a final PSP state (within psp.grace)     −300.00  (1)  pending
+    ± under / over applications                             P2        +50.00  (1)
+    ± matched, entered the join on an earlier day                    −700.00  (1)
   = unexplained residual                                                0.00  ✓
 Carried from earlier days, outside the window's net:
-    unapplied payments past product.grace                   P3        500.00  (1)  PAY-39
+    unapplied payments past product.grace                   P3        500.00  (1)
 Gross open flow breaks: Σ|drift| = 550.00
 
 Open items (psp − product)
@@ -784,17 +779,23 @@ Open books at the cut               total      count   0–1d  2–7d  8–30d  
   Product refunds                    200.00       1       1     —     —      —      ✓
   Lettered outside matching: none
 
-Triage
-  P2  under_applied       PAY-44 → INV-11, short by 50.00   new
-  P3  unapplied_payment   PAY-39, 500.00, since 20 Sep      persisting
-  P4  wrong_sign          INV-14, 100.00 over-applied       persisting
-Resolved: none.
-Pending (not breaks): PAY-45, 800.00, a break on 25 Sep — its merchant reference names INV-12: apply it.
-                      PAY-99 → INV-13, 300.00, applied before the PSP finalised it — an orphan
-                      application (P1) on 1 Oct unless the PSP finalises it.
 ⚠ Unclassified: 1 PSP transaction with state "payin.refunded", 200.00 — the rule's state sets or the
   connector mapping need attention.
 Detail: {bucketID}/reconciliation/rule=psp-vs-billing/day=2026-09-24/run=r-20260925T000004Z/
+```
+
+The breaks, from `breaks.ndjson.gz` (3 open, none resolved), and the pending items, from the
+`pending` rows of `flow.ndjson.gz`:
+
+```text
+Open breaks
+  P2  under_applied       PAY-44 → INV-11, short by 50.00   new
+  P3  unapplied_payment   PAY-39, 500.00, since 20 Sep      persisting
+  P4  wrong_sign          INV-14, 100.00 over-applied       persisting
+Pending (not breaks)
+  PAY-45, 800.00, a break on 25 Sep — its merchant reference names INV-12: apply it.
+  PAY-99 → INV-13, 300.00, applied before the PSP finalised it — an orphan application (P1) on
+  1 Oct unless the PSP finalises it.
 ```
 
 - **The PSP total** counts the four payments finalised in the window: PAY-42, 43, 44 and 45.

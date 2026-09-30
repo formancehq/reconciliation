@@ -398,11 +398,10 @@ V1 runs no periodic proof against a checkpoint.
   indexed metadata fields that key the payment account's other movements, such as payouts and
   fees. The PSP flow read adds one `EXISTS` term per field; those transactions feed the
   payment-account book only, never matching.
-- **`topK`** (default 10, at most 100) bounds each triage list of the manifest (open breaks,
-  pending items, resolved breaks); the totals are in `counts` and the full lists in the files.
 - **`psp.merchantRef`** (optional) names the PSP metadata field holding the merchant's reference.
   When set, an unapplied payment whose merchant reference names an open hold is paired with it
-  ("invoice X is paid: apply it").
+  ("invoice X is paid: apply it"), on the flow row (`pairedHold`) and the hold's stock row
+  (`pairedRef`).
 - **An application's amount is its net posting on the accounts under the side's hold prefixes**,
   each counted in the direction that settles it: an invoice hold that opens at −X is settled by +X.
   A transaction that carries the key but moves no hold, such as a revenue recognition booked in the
@@ -482,11 +481,11 @@ V1 runs no periodic proof against a checkpoint.
   - **The alert carries a reconciliation statement as structured data**, never a bare drift. Its
     evidence holds the manifest's `statement` block as JSON (a bridge whose unexplained residual
     must be 0, the open items, the gross next to the net), a headline (the verdict, the open
-    breaks per leg, the P1 count, the gross and the net), the counts, the top-K breaks in priority
-    order and the link to the run's files ([results reference
-    §4](../technical/transaction-level-results.md#4-the-verdict) and
-    [§5](../technical/transaction-level-results.md#the-alerts-evidence)). The UI renders the
-    statement from it; the engine renders no text.
+    breaks per leg, the P1 count, the gross and the net), the counts and the link to the run's
+    files ([results reference §4](../technical/transaction-level-results.md#4-the-verdict) and
+    [§5](../technical/transaction-level-results.md#the-alerts-evidence)). It carries no list of
+    breaks. The UI renders the statement from it and shows the breaks by paging them from the API
+    (§7 item 9); the engine renders no text.
   - An `incomplete` run is never green. The payment-account book's residual is a P1 break, not an
     `incomplete` run (decision 23); a run that fails every day is decision 26.
   - **What opens the alert:** at least one open break. A known break stays one until it is booked;
@@ -533,9 +532,10 @@ V1 runs no periodic proof against a checkpoint.
    - **The customer is the first reader.** They analyse the files with their own tools (jq, DuckDB,
      pandas); recon's API and UI read them too. So the format stays simple: gzipped NDJSON, a JSON
      Schema per file and a `schemaVersion`, self-contained break rows with a stable `breakId`, and a
-     manifest that carries the statement and the triage, so the alert and a dashboard need no other
-     file. The [results reference](../technical/transaction-level-results.md) is the source of
-     truth for every file and field, and for the [rules a reader can rely
+     manifest that carries aggregates only: the statement's figures render from the manifest
+     alone; lists of items come from the files, through the API (item 9). The [results
+     reference](../technical/transaction-level-results.md) is the source of truth for every file
+     and field, and for the [rules a reader can rely
      on](../technical/transaction-level-results.md#8-rules-a-reader-can-rely-on) (byte-identical
      files for a given cut, `incomplete` runs, the current run of a day).
    - The prefix **must stay outside `{bucketID}/backups/`**: the ledger's orphan prune deletes every
@@ -564,8 +564,8 @@ V1 runs no periodic proof against a checkpoint.
    - The period is the rule's `periodType`, calendar-based in the rule's timezone. There is no
      separate accounting-period model.
    - The period's alert, built from the period's **daily manifests** rather than from the ledgers,
-     lists each day that has a current run, with its counts, its net and gross, its breaks and the
-     link to its files. A closed period's alert is never rewritten.
+     lists each day that has a current run, with its counts, its net and gross, and the link to
+     its files. A closed period's alert is never rewritten.
    - A day with no complete run is simply not listed: the next complete run's window covers it
      ("window since …"), and each `incomplete` run already raises the engine-error alert
      (decision 26). There is no gap state.
@@ -625,8 +625,9 @@ V1 runs no periodic proof against a checkpoint.
    the manifest. How K was chosen: [design doc
    §7.7](../technical/transaction-level-reconciliation.md#77-concurrent-readers-choosing-k).
 9. **Reads.** The run's status comes from its capture, for a run whose manifest is written.
-   Breaks are paged from the artifact by the API, and the API lists every file of a run with a pre-signed URL, so a customer reads them
-   without access to the bucket.
+   The API pages the breaks from the run's breaks file, with filters on class, priority and
+   lifecycle; the UI shows them this way. The API also lists every file of a run with a pre-signed
+   URL, so a customer reads them without access to the bucket.
 
 ## 8. Booking conventions we recommend
 
@@ -703,7 +704,7 @@ for the Ledger team to weigh against its own users:
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**, never a reversal of the original payment (§6). |
-| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries structured evidence (the statement as JSON, a headline, the counts, the top-K breaks and the link to the files) and no rendered text; the detail sits in the backup storage (§6, §7). |
+| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries structured evidence (the statement as JSON, a headline, the counts and the link to the files), no list of breaks and no rendered text; the detail sits in the backup storage (§6, §7). |
 | 9 | First run | A bounded **backfill** from `backfillFrom` (default: cut-off − the longer `grace` − 1 day), announced in the first statement (§7). |
 | 10 | Read path of the flow | **`ListTransactions` filtered on the key's presence** (product side: `payment_ref` or `business_ref`), membership before the id range, over parallel id ranges: O(payments). The logs stay the immutable record; a run reads none of them (§5, decision 25). |
 | 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
@@ -716,7 +717,7 @@ for the Ledger team to weigh against its own users:
 | 18 | Cases across days | A PSP `failed` never applied is `failed` (ok), and window references with a `failed` event that are not carried are looked up on both ledgers every run, so `reversed_after_application` is caught. The rest (a `businessId` per `holds` entry, `psp.merchantRef`, the previous stock read from storage) is in §5 and §6. |
 | 19 | Simplifications | Flow rows carry no `firstSide`: which side came first follows from `firstSeen` and the row's `psp` and `product` events. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` (§6, §7). |
 | 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**; a business that applies later or by hand raises it. A payment-to-apply hold is an option outside the V1 rule contract ([design doc](../technical/transaction-level-reconciliation.md#when-application-is-deferred-or-manual-a-payment-to-apply-hold)). |
-| 21 | Result files, statement and triage | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a write-off state, a flat transactions file, a separate alert threshold, a break's `previousClass` (the previous run's row with the same `breakId` has it), an `offsetting` flag next to `flowGross`, and a `stuck` stock class with its `maxAge` (`stale_holds` covers holds held too long). |
+| 21 | Result files and statement | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The manifest carries aggregates only: the statement's figures render from it alone, and lists of items (breaks, pending items, resolved breaks) come from the files, through the API. The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a triage in the manifest and its `topK` parameter, a write-off state, a flat transactions file, a separate alert threshold, a break's `previousClass` (the previous run's row with the same `breakId` has it), an `offsetting` flag next to `flowGross`, and a `stuck` stock class with its `maxAge` (`stale_holds` covers holds held too long). |
 | 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, newest first, not the logs, and so do replays. With no metadata watch (decision 25) and the cut resolved on `inserted_at` (decision 12), a run reads no logs (§5, §7). |
 | 23 | The PSP payment account | A booking convention (§8, rule 10), with the keys of the account's other movements in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
 | 24 | Bounded date filters in the cut | `T` is resolved with an upper-bounded filter on `inserted_at`, widened while empty, because the ledger materializes a date range before paging it (§5). |
