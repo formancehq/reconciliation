@@ -178,7 +178,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 
 | # | Feature | Where | Description | Why | Interest | Cost | If removed |
 |---|---|---|---|---|---|---|---|
-| F1 | Detail capture on `_recon`, Ed25519-signed (verdict, counts, drifts, `T` per ledger, artifact URI + manifest SHA-256) | ADR §7 item 2 (EN-1930) | Reuses the signed capture | The run's status and anchor | NEC | S | No status record (reuses existing infra) |
+| F1 | The run's capture on `_recon`, Ed25519-signed (verdict, counts, drifts, `T` per ledger, artifact URI + manifest SHA-256) | ADR §7 item 2 (EN-1930) | Reuses the signed capture | The run's status and anchor | NEC | S | No status record (reuses existing infra) |
 | F2 | File SHA-256 in the manifest; manifest hash in the capture (transitive signature) | ADR §7 item 3; RD §6 | Tamper evidence over every file | Audit | OPT, **kept** | S | Loses tamper evidence. Underpins F4, F5 and `check`'s `file_sha256` |
 | F3 | `logSha256` of the log at the cut, in `cuts` | ADR §5 | Hash of the protobuf `Log` at the cut | Re-identify the cut exactly | **Removed from V1** | S | `T` suffices to replay; logs are immutable. The hash is stable for one protocol version only |
 | F4 | `stored_file_mismatch`: the previous run's stock, carried and breaks files checked against its signed capture before use | RD §2, §4; DD §5 | A missing file counts as altered, with no fallback to a rewind. The operator restarts (D12); a restart without `backfillFrom` is refused when the carried file failed | Chain integrity | OPT, **kept** | S/M | Saves a verification step and an `incomplete` reason. A corrupted file would propagate, but the next continuity check would likely fail anyway |
