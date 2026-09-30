@@ -38,6 +38,7 @@ below still hold.
 | F4 + F5, the stored-file check and the byte-identical replay | Kept: F4 is what makes the signed capture useful to the next run, and F5 follows from the determinism the golden tests need | RD §2, §4, §8 |
 | B11, the metadata watch and `anomalies.key_metadata_mutated` | Deferred after V1, until L8: a run reads no range of logs, and its reads take ~20 s instead of ~2.5 min at 1M payments. A change on a transaction of a day already read moves no balance, and one before the run is read at its latest value. The write-once convention (A16) and replay condition 4 (F5) are no longer monitored; `reconciled_with_warnings` means unclassified transactions only | ADR-005 decision 25 and §5 caveat 1; DD §3; RD §4, §8 |
 | E8 + E9 + C10 + D5, the reconciliation statement and its self-checks | Kept: the statement is the deliverable a controller reads (a statement, never a bare drift), and the residual and the open-items identity are sums over rows already in memory that prove the join and the carry-over | ADR §6; RD §5 |
+| E6 + D6 + C8, the breaks file, the lifecycle and the cleared holds | Kept: new, persisting and resolved breaks, and the holds cleared with the transaction that cleared them, answer the controller's daily "what changed since yesterday"; the previous run's files are read anyway, and the API pages breaks from one file | ADR §6, §7 item 9; RD §6, §7 |
 
 Abbreviations: **ADR** = ADR-005, **D*n*** = decision *n* of ADR §10, **DD** = design doc, **RD** = results doc.
 
@@ -104,7 +105,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | C5 | Stock classes `open` + `wrong_sign` (P4) | ADR §6, D21 | Open hold, or balance of the wrong sign | `wrong_sign` is the only signal for an invoice paid twice by two separately matched payments | NEC | S | A double payment of one invoice goes unseen (both flows are `matched`) |
 | C6 | `stuck` via `maxAge` (no default, per side) | ADR §6 | Open past `maxAge` → P4 break | Per-key `stale_holds` signal | OPT | S | Overlaps the `stale_holds` template. Without a `maxAge` it never fires anyway |
 | C7 | Ageing: `openedAt`, `ageDays`, `bucket`, `buckets` param (0–1, 2–7, 8–30, > 30 d) | ADR §6; RD §6 stock | Age of every open hold and bucket counts per book | Credit-management view | OPT | S | Saves the bucket counts in `books` and a rule param. `ageDays` is still needed by C6 and triage. **Gap:** the source of `openedAt` for a hold opened before the first run, or re-listed after metadata purge, is not specified |
-| C8 | `cleared` stock rows (`previousBalance`, `clearedAt`, `clearedBy`) | ADR §6; RD §6 | A hold open at the previous cut and lettered since is listed once | Shows what the day lettered; resolves stock breaks | OPT | S | The stock file shows only open holds. `letteredOther` is still visible in `books`. Depends on D6 |
+| C8 | `cleared` stock rows (`previousBalance`, `clearedAt`, `clearedBy`) | ADR §6; RD §6 | A hold open at the previous cut and lettered since is listed once | Shows what the day lettered; resolves stock breaks | OPT, **kept** | S | The stock file shows only open holds. `letteredOther` is still visible in `books`. Depends on D6 |
 | C9 | Unclassified txs: counted per side, state and asset, warning, never dropped | ADR §6; RD §5 | A tx whose state is in no set takes no part in matching but is reported | Catches connector mappings that break the conventions | NEC | S | Silent loss of money movements |
 | C10 | `letteredOther` in the books | D21; RD §5 | Letterings by txs outside matching (credit notes, write-offs, unclassified) | Makes the bridge's B equal the applications; shows manual letterings | OPT, **kept** | S | Needed only by E8 (the residual). Manual write-offs become invisible inside `lettered` |
 | C11 | `outcome` on every row (`ok`/`pending`/`break`/`warning`) | RD §3 | One field answers "must someone act?" | Readers filter on it | NEC | S | Readers re-derive it from the class plus the grace |
@@ -120,7 +121,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | D3 | Chain: `previousRun` (runId, day, `manifestSha256`); a window over missed or incomplete days ("window since …") | RD §2 | Each run names its predecessor and starts at its cut | Continuity and carry across gaps | NEC | S | No way to find the carried items and `openPrev` |
 | D4 | Books continuity per side, prefix and asset: `open = openPrev + opened − lettered`, `openPrev` from the stored stock | ADR §2.3; RD §5 | Ties the window's hold movements to the rewound stock | The only completeness proof of the filtered flow read | NEC | M | A dropped event silently shrinks the universe |
 | D5 | Open-items (suspense) identity: `open = openPrev + net + fromLookups` → `incomplete` (`continuity`) | D21; RD §5 | Ties carried(S_prev) + the window's net to carried(S) | Detects a carried item lost or counted twice | OPT, **kept** | S | An engine self-check on the engine's own file. `suspense.open` (the sum of carried drift) can stay as a figure. Needs E8's `impact` |
-| D6 | Lifecycle: `new`/`persisting`/`resolved` (breaks), `new`/`persisting`/`cleared` (holds) | ADR §6; RD §7 | Compares with the previous run's artifacts | "What changed since yesterday" | OPT | M | Saves the diff against the previous breaks and stock files, the `resolved` rows and part of `check-chain`. Loses new-vs-persisting in triage and the alert |
+| D6 | Lifecycle: `new`/`persisting`/`resolved` (breaks), `new`/`persisting`/`cleared` (holds) | ADR §6; RD §7 | Compares with the previous run's artifacts | "What changed since yesterday" | OPT, **kept** | M | Saves the diff against the previous breaks and stock files, the `resolved` rows and part of `check-chain`. Loses new-vs-persisting in triage and the alert |
 | D7 | Stable `breakId` (hash of rule, leg, key, asset; not the class) | ADR §6, D16 | A break keeps its id when its class changes | Comments, lifecycle | OPT | S | Cheap. Required by D6; with D8 gone, it is also how a reader finds a break's earlier class |
 | D8 | `previousClass` on the day the class changes | ADR §6; RD §6 | Records the old class | Audit trail | **Removed from V1** | S | Nothing functional lost: the previous run's breaks file, joined on `breakId` (D7), has the old class |
 | D9 | Acceptance (`acceptedOn`; lapses when the class or amount changes; excluded from the alert trigger) | ADR §6, D21; RD §4, §7 | A known break stays in the files but stops opening the alert | Systematic known gaps (e.g. an unbooked fee) until they are booked | **Removed from V1** | M | Saves an acceptance store and API, the lapse rules and `counts.breaks.accepted`. Loses the means to silence known breaks: the alert stays open until booked. Depends on D7 |
@@ -136,7 +137,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | E3 | `manifest.json` core: `schemaVersion`, `engine`, rule snapshot + sha256, `cuts`, `verdict`, `counts`, `files` (rows, sha256) | RD §6 | The run's summary and index | Entry point for every reader | NEC | M | No index of the run |
 | E4 | `flow.ndjson.gz`, self-contained rows (`psp[]`, `product[]` tx lists, `holdAmount` on pending/failed) | RD §6 | One row per reference and asset | "Which payments are lettered" | NEC | M | No per-payment answer |
 | E5 | `stock.ndjson.gz` | RD §6 | One row per open hold (plus cleared) | Open book, `openPrev` for continuity | NEC | S | Continuity loses its `openPrev` |
-| E6 | `breaks.ndjson.gz`, self-contained, resolved rows included | RD §6 | Duplicates the break rows of flow/stock plus the book breaks | A reader never joins files | OPT | S/M | Breaks are `outcome = 'break'` in flow + stock + `paymentAccounts`. Loses the `resolved` list (see D6) and one-file convenience |
+| E6 | `breaks.ndjson.gz`, self-contained, resolved rows included | RD §6 | Duplicates the break rows of flow/stock plus the book breaks | A reader never joins files | OPT, **kept** | S/M | Breaks are `outcome = 'break'` in flow + stock + `paymentAccounts`. Loses the `resolved` list (see D6) and one-file convenience |
 | E7 | `unclassified.ndjson.gz` | RD §6 | One row per unclassified tx | Fixing the mapping | OPT | S | `statement.unclassified` in the manifest already gives side, state, amount and count. Low saving |
 | E8 | Statement bridge: A (payment account) − B (from books) = net, lines by class/outcome/`earlierDay`, `residual` = 0 else `incomplete`, `impact` field | ADR §6; RD §5 | The classic *état de rapprochement* for the window | Explains the net; the residual ties the join to the books | OPT, **kept** | M | The lines are a `GROUP BY` over the flow file (DuckDB `bridge` query). Loses the residual self-check (the join attributed every lettering), `impact`, and C10/D5/E9 with it. Continuity (D4) still guards completeness |
 | E9 | `carriedOutside` lines | RD §5 | Carried items with no movement today, per class | Complete statement | OPT, **kept** | S | Derivable from the carried file |
@@ -229,7 +230,7 @@ feature's interest unless the row says otherwise.
   those rows and are not counted again.
 - **NEC:** 49, E14 included (its top-K breaks list).
 - **OPT:** 32, E14's pending and resolved lists not counted separately, and E10 counted here since
-  it is simplified, not removed. C10, D5, E8, E9, F4 and F5 are kept by decision. Of these, 3 are doc-only, proposed,
+  it is simplified, not removed. C8, C10, D5, D6, E6, E8, E9, F4 and F5 are kept by decision. Of these, 3 are doc-only, proposed,
   or already outside V1: A14, A15, G7.
 - **Removed, deferred or replaced:** 23, B11, B12, B13, B14, B16, B18, C4, D8, D9, D10, D11, E15, E16,
   E17, F3, F10, G2, G3, G5, G6, G8, G9 and I5 (see "Decisions taken").
@@ -293,7 +294,7 @@ judgement.
     open-items identity.** A statement a DuckDB query can rebuild. The residual and D5 are engine
     self-checks; D4 remains the completeness proof. Decided (kept).
 18. **E6, the duplicated breaks file**, together with D6, lifecycle, and C8, `cleared` rows. This
-    only holds if the alert can live without new-vs-persisting.
+    only holds if the alert can live without new-vs-persisting. Decided (kept).
 19. **I3, the full rendered statement in the alert.** Send a minimal alert instead.
 20. **C6 `stuck`/`maxAge` and C7 buckets.** They overlap `stale_holds`.
 21. **A8, merchantRef pairing.** It is cheap, and the docs call it the single most useful field. Keep
