@@ -742,7 +742,9 @@ fault. When the fix cannot enter the window, an operator restarts the rule: its 
 run, its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run
 default and the oldest `firstSeen` of the last complete run's carried items (ADR-005 decision 26).
 The carried items, the stored stock and the break history therefore never come from a run that
-failed its checks.
+failed its checks. A previous run's stock or carried file that is missing counts as altered
+(`stored_file_mismatch`): the run never falls back to a rewind on its own, which would hide the
+loss and could not rebuild what the file carried, such as a hold's `openedAt`.
 
 ## 6. Could Pebble do better?
 
