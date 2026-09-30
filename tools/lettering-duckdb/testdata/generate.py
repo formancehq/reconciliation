@@ -116,7 +116,7 @@ def worked_example(out):
             {"side": "product", "prefix": "main:hold:invoice:", "asset": "EUR/2", "openSign": "negative", "open": "430000", "count": 6},
             {"side": "product", "prefix": "main:hold:refund:", "asset": "EUR/2", "openSign": "positive", "open": "0", "count": 0},
         ],
-        # the day 24 run reads its payment-account S_prev volumes here
+        # the day 24 run reads its payment-account T_prev volumes here
         "paymentAccounts": [{"account": "fpay:stripe:account:acct_eu:main", "asset": "EUR/2",
                              "input": "9120000", "output": "310000"}],
         "files": [{"name": "carried.ndjson.gz", "rows": 2, "sha256": sha(carried23)},
@@ -852,8 +852,7 @@ class Engine:
             lo, hi = st['cuts'][side]
             events = self.book.psp if side == 'psp' else self.book.prod
             head = Book.last_tx(events, cutoff(day) + dt.timedelta(hours=2))
-            cuts.append({'side': side, 'ledger': ledger, 'logFrom': lo, 'logTo': hi, 'txFrom': lo, 'txTo': hi,
-                         'txHead': head})
+            cuts.append({'side': side, 'ledger': ledger, 'txFrom': lo, 'txTo': hi, 'txHead': head})
         m = {
             "schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
             "runId": run_id,

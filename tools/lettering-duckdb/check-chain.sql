@@ -19,13 +19,12 @@ SELECT * FROM stock_file(getvariable('prev') || '/stock*.ndjson.gz', false);
 CREATE OR REPLACE TEMP VIEW prev_breaks AS
 SELECT * FROM breaks_file(getvariable('prev') || '/breaks*.ndjson.gz', false);
 
--- This run's window starts at the earlier run's cut, on each side.
+-- This run's window starts at the earlier run's cut `T`, on each side.
 INSERT INTO chain_violations
 WITH prev_cuts AS (SELECT unnest(from_json(m->'cuts', lettering_cuts_shape()), recursive := true) FROM prev_manifest)
-SELECT 'window_start', c.side,
-       'txFrom ' || c.txFrom || ' logFrom ' || c.logFrom || ', earlier txTo ' || p.txTo || ' logTo ' || p.logTo
+SELECT 'window_start', c.side, 'txFrom ' || c.txFrom || ', earlier txTo ' || p.txTo
 FROM m_cuts c JOIN prev_cuts p USING (side)
-WHERE c.txFrom <> p.txTo OR c.logFrom <> p.logTo;
+WHERE c.txFrom <> p.txTo;
 
 -- A carried item's drift moves only by this window's impact.
 INSERT INTO chain_violations

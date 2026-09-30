@@ -124,8 +124,9 @@
     booking;
   - `merchantRef`, the merchant reference the PSP reports;
   - `tx`, a ledger transaction id.
-- **Ledger ids** (`tx`, log ids) are JSON numbers. They are uint64 and stay below 2^53 in practice;
-  a JavaScript reader that must be exact beyond that parses them as big integers.
+- **Ledger ids** (`tx`, and the cuts' `txFrom`, `txTo` and `txHead`) are JSON numbers. They are
+  uint64 and stay below 2^53 in practice; a JavaScript reader that must be exact beyond that parses
+  them as big integers.
 - **Per side.** A figure split per side is keyed `psp` or `product`, never by the ledger's name.
 - **Checksums** are SHA-256 in lowercase hex, in fields whose name ends in `sha256` or `Sha256`.
   `breakId` is an identifier, not a checksum: 16 hex characters of a hash.
@@ -260,12 +261,12 @@ open = openPrev + opened − lettered
 For each account matching `psp.paymentAccount`, per asset, and separately for credits and debits:
 
 ```text
-input(S)  − input(S_prev)  = credits on the account by the transactions the flow read returned
-output(S) − output(S_prev) = debits on the account by the transactions the flow read returned
+input(T)  − input(T_prev)  = credits on the account by the transactions the flow read returned
+output(T) − output(T_prev) = debits on the account by the transactions the flow read returned
 ```
 
-- The account is `NORMAL`, so its volumes are cumulative. `input(S)` and `output(S)` are its live
-  volumes rewound to the cut with the stock's transaction window; the `S_prev` values are the
+- The account is `NORMAL`, so its volumes are cumulative. `input(T)` and `output(T)` are its live
+  volumes rewound to the cut with the stock's transaction window; the `T_prev` values are the
   previous run's.
 - The flow read returns every transaction that carries the PSP key or one of the rule's
   `psp.movementKeys` (payouts, fees), whatever its class, unclassified ones included. The
@@ -316,7 +317,7 @@ and resolved lists from the run's manifest. The engine renders no text.
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt` | When the run started and finished. Per-step durations and read counts go to the engine's metrics and logs, not to the manifest |
-| `cuts` | One entry per side: `ledger`, the log window `(logFrom, logTo]` and the transaction window `(txFrom, txTo]`. `logTo` is the cut `S` and `txTo` is `T`. Also `txHead`, the transaction head the run read up to: the rewind reads the transactions `(txTo, txHead]` |
+| `cuts` | One entry per side: `ledger` and the transaction window `(txFrom, txTo]`. `txTo` is the cut `T`; `txFrom` is the previous run's `txTo`, or where the backfill starts on a first run. Also `txHead`, the transaction head the run read up to: the rewind reads the transactions `(txTo, txHead]` |
 | `verdict` | §4 |
 | `incomplete` | Only when `verdict` is `incomplete`: `reason` and a human-readable `detail`, which names the first 20 items at fault (§4) |
 | `counts.flow` | Flow rows per class; adds up to the flow file's row count |
@@ -326,7 +327,7 @@ and resolved lists from the run's manifest. The engine renders no text.
 | `counts.unclassified` | Unclassified transactions per side |
 | `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`, `top` references; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`, `top`), `flowGross`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
-| `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `S_prev` values here |
+| `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `T_prev` values here |
 | `triage` | What the statement names, so the UI renders it from the manifest alone. Each list stops at `topK` items; the totals are in `counts` (`openByPriority`, `flowOutcome.pending`, `breaks.resolved`) and the full lists in the files. `topK`; `breaks`, the top-K open breaks in priority order, then by amount, then `breakId`, each with `breakId`, `priority`, `class`, `lifecycle`, its key (`ref`; or `side` and `hold`; or `side`, `account` and `direction`), `asset`, `amount`, and its context (`holdIds`, the holds its applications lettered; `firstSeen`; `ageDays`); `pending`, the top-K pending flow rows by `breakOn`, then by amount, then `ref`, each with `ref`, `class`, `asset`, `amount`, `breakOn` and `pairedHold` or `holdIds`; `resolved`, the top-K breaks resolved since the previous run, in priority order, then by amount, each with `breakId`, `class`, its key, `asset`, `amount` and `clearedBy` |
 | `files` | One entry per file: `name`, `rows`, `sha256` |
 | `expiresAt` | For information: the run's `day` plus the deployment's retention. The storage's lifecycle rule deletes the files, counting from their creation (§2) |
@@ -597,8 +598,8 @@ and was lettered on the same day.
   "startedAt": "2026-09-25T00:00:04Z",
   "finishedAt": "2026-09-25T00:00:31Z",
   "cuts": [
-    {"side": "psp",     "ledger": "psp",  "logFrom": 2411902, "logTo": 2640118, "txFrom": 1204000, "txTo": 1318500, "txHead": 1320606},
-    {"side": "product", "ledger": "main", "logFrom": 1530010, "logTo": 1574300, "txFrom": 880400,  "txTo": 902750,  "txHead": 904500}
+    {"side": "psp",     "ledger": "psp",  "txFrom": 1204000, "txTo": 1318500, "txHead": 1320606},
+    {"side": "product", "ledger": "main", "txFrom": 880400,  "txTo": 902750,  "txHead": 904500}
   ],
   "verdict": "breaks",
   "counts": {
@@ -777,7 +778,7 @@ Open items (psp − product)
 ± entered through a lookup                                              0.00
 = at this cut, handed to the next run                              1,050.00  (4)  ✓
 
-Open books at S                     total      count   0–1d  2–7d  8–30d  >30d   continuity
+Open books at the cut               total      count   0–1d  2–7d  8–30d  >30d   continuity
   PSP pending holds                  550.00       2       2     —     —      —      ✓
   Product invoices                 2,450.00       5       —     2     2      1      ✓   1 wrong_sign
   Product refunds                    200.00       1       1     —     —      —      ✓

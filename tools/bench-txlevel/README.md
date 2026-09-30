@@ -27,6 +27,10 @@ The tool dials `127.0.0.1:18888` by default. Override it with `LEDGER_ADDR`.
 
 ## 2. Commands
 
+In the commands and their output, `S` is the log id at the cut, which the first design resolved
+next to the transaction id `T`. V1 cuts on `T` only
+([ADR-005 §5](../../docs/prd/adr-005-transaction-level-reconciliation.md#5-decision-a--the-cut-is-a-transaction-id-and-the-stock-is-rewound-to-it)).
+
 | Command | What it does |
 |---|---|
 | `load -ledger L -prefix P -n N [-start S] [-batch 200] [-workers 16] [-drift]` | One `world → {P}{id(i)}` USD/2 transaction per `i`. Ids are pseudo-random 16-hex strings. With `-drift`, each block of 1,000 ids has one missing, one at +1 and one funded twice. |

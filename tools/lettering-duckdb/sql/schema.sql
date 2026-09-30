@@ -67,4 +67,4 @@ CREATE OR REPLACE MACRO lettering_lines_shape() AS
 CREATE OR REPLACE MACRO lettering_payment_accounts_shape() AS
     '[{"account":"VARCHAR","asset":"VARCHAR","inputPrev":"HUGEINT","input":"HUGEINT","outputPrev":"HUGEINT","output":"HUGEINT","flowCredits":"HUGEINT","flowDebits":"HUGEINT","creditResidual":"HUGEINT","debitResidual":"HUGEINT"}]';
 CREATE OR REPLACE MACRO lettering_cuts_shape() AS
-    '[{"side":"VARCHAR","ledger":"VARCHAR","txFrom":"UBIGINT","txTo":"UBIGINT","logFrom":"UBIGINT","logTo":"UBIGINT"}]';
+    '[{"side":"VARCHAR","ledger":"VARCHAR","txFrom":"UBIGINT","txTo":"UBIGINT","txHead":"UBIGINT"}]';

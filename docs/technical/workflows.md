@@ -325,17 +325,17 @@ Ledger transaction-address index and expose one ordered feed.
 
 ```mermaid
 flowchart LR
-    Cut["Cut per ledger at the business cut-off<br/>log id S · transaction id T"] --> Flow["Flow: ListTransactions (T_prev, T]<br/>∧ key present (PSP: payment_ref or a psp.movementKeys field;<br/>product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · first run from backfillFrom (product side psp.grace earlier)"]
+    Cut["Cut per ledger at the business cut-off<br/>transaction id T"] --> Flow["Flow: ListTransactions (T_prev, T]<br/>∧ key present (PSP: payment_ref or a psp.movementKeys field;<br/>product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · first run from backfillFrom (product side psp.grace earlier)"]
     Cut --> Stock["Stock: live ListAccounts of open holds<br/>rewound with the unfiltered ListTransactions (T, head_tx]"]
     Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, payment-account book and open-items identities"]
     Stock --> Join
     Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: manifest only)"]
-    Art --> Cap["Capture on _recon<br/>(counts, drifts, S and T per ledger, artifact hash) — Ed25519"]
+    Art --> Cap["Capture on _recon<br/>(counts, drifts, T per ledger, artifact hash) — Ed25519"]
     Cap --> Alert["Alert per (rule, fingerprint, period)<br/>structured evidence: statement JSON + headline + counts<br/>opens on an open break (never on the net alone)<br/>top-K breaks + artifact link"]
 ```
 
-No query checkpoint is taken: the log is the immutable cut, and the rewind makes a live listing
-exact at the cut. Aggregate templates keep reading live (§7). Full design, booking conventions and
+No query checkpoint is taken: the cut is a transaction id per ledger, which no later write moves,
+and the rewind makes a live listing exact at the cut. Aggregate templates keep reading live (§7). Full design, booking conventions and
 measurements: [transaction-level-reconciliation.md](./transaction-level-reconciliation.md); the
 result files and how to read them: [transaction-level-results.md](./transaction-level-results.md);
 decision record: [ADR-005](../prd/adr-005-transaction-level-reconciliation.md).

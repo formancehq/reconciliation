@@ -1,4 +1,4 @@
-# ADR-005 — Transaction-level (lettering) reconciliation: a log-window cut instead of query checkpoints
+# ADR-005 — Transaction-level (lettering) reconciliation: a transaction-id cut instead of query checkpoints
 
 **Status:** Proposed. The design is under evaluation and nothing is implemented. The decisions
 taken so far are in §10.
@@ -23,9 +23,8 @@ A transaction-level control reconciles a **PSP ledger** against a **product ledg
 payment reference**. The payment is first seen on the PSP ledger. The product ledger later books a
 transaction carrying the same reference, which letters a *business* hold (an invoice, an order…).
 
-The control defines its cut as **one log id `S` and one transaction id `T` per ledger, taken at
-the business cut-off**. It
-reconciles two legs:
+The control defines its cut as **one transaction id `T` per ledger: the last transaction inserted
+at or before the business cut-off**. It reconciles two legs:
 
 - the **flow**: what each ledger booked during the window, read with `ListTransactions` filtered
   server-side on the presence of the reference, and joined on it;
@@ -133,8 +132,8 @@ Two legs:
 | Leg | Question | Universe | Source of truth |
 |---|---|---|---|
 | **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (logs remain the immutable re-derivation path), plus the previous run's carried items |
-| **Stock** (per hold, on each side) | What is still open at `S`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to the cut with the unfiltered transactions `(T, head_tx]` (§5) |
-| **Continuity** (self-check) | `open(S) = open(S_prev) + opened(W) − lettered(W)`, per side, per hold prefix and per asset | Aggregates | `open(S)` from the rewind and `open(S_prev)` from the previous run's stored stock (rewound only when there is none); `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
+| **Stock** (per hold, on each side) | What is still open at the cut `T`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to the cut with the unfiltered transactions `(T, head_tx]` (§5) |
+| **Continuity** (self-check) | `open(T) = open(T_prev) + opened(W) − lettered(W)`, per side, per hold prefix and per asset | Aggregates | `open(T)` from the rewind and `open(T_prev)` from the previous run's stored stock (rewound only when there is none); `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
 
 The two stock books do not join to each other: an unpaid invoice has no PSP counterpart by design.
 The cross-ledger signal is in the flow leg, and in particular in its carry-over: every reference
@@ -195,7 +194,7 @@ provide point-in-time queries" (ledger backup README).
 
 | # | Option | Verdict |
 |---|---|---|
-| **C** | **A cut at the business cut-off, plus a rewind.** The cut is `S` (the last log id with `date ≤ cut-off`) and `T` (the last transaction id with `inserted_at ≤ cut-off`), on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the unfiltered transactions `(T, head_tx]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible, because logs are permanent. Cost ∝ the day's payments plus the open items, plus the transactions written since the cut-off; no range of logs is read (decision 25). |
+| **C** | **A cut at the business cut-off, plus a rewind.** The cut is `T`, the last transaction id with `inserted_at ≤ cut-off`, on each ledger. The flow comes from `ListTransactions` over `(T_prev, T]`, filtered server-side (§5). The stock comes from a live listing rewound with the unfiltered transactions `(T, head_tx]` | **Adopted.** No checkpoint and no ledger change. Exact at the business cut-off on each side. Reproducible, because logs are permanent. Cost ∝ the day's payments plus the open items, plus the transactions written since the cut-off; no log is read (§5, decision 25). |
 | A | Shared, short-lived query checkpoint per (cluster, run): extract, then delete | **Fallback and oracle only.** Used to validate the rewind in its oracle test (§5). Too slow and too scarce as the steady-state path (§3). |
 | B | Ledger-side consistent export (Pebble `NewSnapshot()` at a Raft-ordered trigger, streamed or written through `backup.Storage`) | **Not needed for this use case.** Still the right primitive for a frozen listing of a large *non-lettered* universe (EN-1480 generalised). Passed on to the Ledger team for information, not asked (§9). |
 | D | Store the checkpoint in S3/Azure through backup | **Rejected** (§3). |
@@ -212,7 +211,7 @@ depend on read speed:
   checkpoint scheduler; eleven daily rules at midnight already exceed it (ADR-003).
 - **The write path.** Each create and delete is a Raft order, and the create pauses the applier.
 - **The wrong instant.** A checkpoint captures the run instant, so the stock would still need
-  rewinding to `S`.
+  rewinding to `T`.
 - **Past days.** Backfill and replay need a cut where no checkpoint exists. Keeping checkpoints for
   90 days is impossible under the cap, and would pin SSTs.
 - **The flow needs no snapshot.** Transactions at or below `T` are immutable except for their
@@ -220,46 +219,47 @@ depend on read speed:
 
 A fast checkpoint read would only make the rewind's oracle test (R10) cheaper to run more often.
 
-## 5. Decision A — the cut is a log id, and the stock is rewound to it
+## 5. Decision A — the cut is a transaction id, and the stock is rewound to it
 
-**Choosing the cut.** On each ledger, `S` is the last log whose `date` (HLC, strictly monotonic)
-is at or before the cut-off.
+**Choosing the cut.** On each ledger, `T` is the last transaction whose `inserted_at` (the
+ledger's HLC insertion date, which follows the id order) is at or before the cut-off.
 
 - Both ledgers are cut at the **same business time**, whatever their cluster and whenever the run
   starts. This is better than a checkpoint's cross-cluster semantics.
-- `S` and `T` go into the capture, so the cut is identified exactly and can be re-derived later:
-  the logs are immutable. There is no `logSha256`, a hash of the log at `S`: it would hold for one
-  ledger protocol version only.
-- **Resolving `S`.** `ListLogs` rejects `reverse`, so `S` is **(the first log with
-  `date > cut-off`) − 1**: one ascending page of size 1 on the log-date index. `T` is resolved the
-  same way on the `inserted_at` index.
-- **The date filter is bounded** (decision 24): `cut-off < date ≤ cut-off + δ`, widening δ while
-  the page comes back empty. The ledger materializes the whole range of a date filter before it
-  pages it (`internal/query/compile.go:1382-1416` and `:1913` at `7dd615dba`), so an open
-  `date > cut-off` costs a memory spike the size of the history for an old day's replay or a long
-  backfill.
-- **Both indexes are mandatory on both ledgers** (decision 12; §8 rule 8). The rule's
-  validation rejects a ledger without them, and a run waits while they build, exactly as for the
-  key's metadata index.
+- `T` goes into the capture, so the cut is identified exactly and can be re-derived later:
+  transaction ids are never reused and `inserted_at` never changes. There is no hash of the cut
+  (the former `logSha256`): it would hold for one ledger protocol version only.
+- **Resolving `T`.** `T` is **(the first transaction with `inserted_at > cut-off`) − 1**: one page
+  of size 1 on the `inserted_at` index, in id order (`reverse = true`).
+- **No log-id cut.** A run reads no logs, so a log id at the cut would only label it, at the cost
+  of its own read and of a second mandatory index.
+- **The date filter is bounded** (decision 24): `cut-off < inserted_at ≤ cut-off + δ`, widening δ
+  while the page comes back empty. The ledger materializes the whole range of a date filter before
+  it pages it (`internal/query/compile.go:1382-1416` and `:1913` at `7dd615dba`), so an open
+  `inserted_at > cut-off` costs a memory spike the size of the history for an old day's replay or a
+  long backfill.
+- **The `inserted_at` index is mandatory on both ledgers** (decision 12; §8 rule 8). The rule's
+  validation rejects a ledger without it, and a run waits while it builds, exactly as for the key's
+  metadata index.
 - **Bisection was considered and dropped.** Halving the contiguous id range would find the cut
-  without the indexes, in about 20 reads for 1M rows. It is no faster, was never benched, and
-  would be a second, rarely exercised code path. The rule already requires an index on its key,
-  so two more do not change what onboarding asks for.
+  without the index, in about 20 reads for 1M rows. It is no faster, was never benched, and would
+  be a second, rarely exercised code path. The rule already requires an index on its key, so one
+  more does not change what onboarding asks for.
 
 The reads, a worked example, and why the id range makes the metadata-filtered read cheap are in
 the [design doc
 §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges).
 
-**Why the log date, not the transaction `timestamp`.**
+**Why `inserted_at`, not the transaction `timestamp`.**
 
-- The log date is the insertion time, assigned by the ledger's HLC. It never moves, and it only
-  grows. So "every log ≤ `S`" is a set that no later write can change: a day's result is final the
-  moment it is computed.
+- `inserted_at` is the insertion time, assigned by the ledger's HLC. It never moves, and it grows
+  with the id. So "every transaction ≤ `T`" is a set that no later write can extend: a day's window
+  is final the moment it is cut.
 - A transaction's `timestamp` is set by the writer. Connectivity sets it to the PSP event time, so
   it can be **backdated**: a payment captured at 23:58 but ingested at 00:03 carries a `timestamp`
-  from day D and a log date from day D+1.
+  from day D and an `inserted_at` from day D+1.
 - A cut on `timestamp` would let late ingestion rewrite a day that was already reconciled. The cut
-  on the log date instead places that payment in D+1's window, visibly and without losing it.
+  on `inserted_at` instead places that payment in D+1's window, visibly and without losing it.
 - The `timestamp` still serves ageing and reporting.
 
 **Flow leg: `ListTransactions` filtered server-side, not `ListLogs`.** Logs cannot be filtered
@@ -332,14 +332,14 @@ Why this is exact:
 - A hold touched in it is recomputed from its own transaction.
 - It needs no baseline and no stored state, and it works for NORMAL accounts too.
 
-**Why the transactions and not the logs** (decision 22). The logs `(S, head]` have the same three
-properties, but a read by transaction-id range takes the main-store path and never waits for the
-index to align, so it is faster ([design doc
+**Why the transactions and not the logs** (decision 22). The logs written since the cut have the
+same three properties, but a read by transaction-id range takes the main-store path and never
+waits for the index to align, so it is faster ([design doc
 §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)).
 The daily gain is small (about 2 s at 1M logs a day); it matters for the backfill and for replays.
-With no metadata watch (decision 25) and no purge consistency check ([design doc
-§4](../technical/transaction-level-reconciliation.md#4-the-rewind-an-exact-state-at-s-with-no-checkpoint))
-in V1, a run reads no range of logs: `ListLogs` only resolves `S`, one page per ledger.
+With no metadata watch (decision 25), no purge consistency check ([design doc
+§4](../technical/transaction-level-reconciliation.md#4-the-rewind-an-exact-state-at-t-with-no-checkpoint))
+and the cut resolved on `inserted_at`, a run reads no logs in V1.
 
 **Validated** against a checkpoint taken at the cut, with concurrent writers and reverts: the rewind
 was wrong on **0** of 1,000,000 rows ([design doc
@@ -493,14 +493,14 @@ V1 runs no periodic proof against a checkpoint.
 
 1. **The scheduler tick only enqueues the run.** There is no synchronous capture: an aggregate
    read live at the tick would give the exposure at the run instant, not at the cut, and the job
-   computes the exact aggregates at `S` anyway, as sums over the rewound rows.
+   computes the exact aggregates at the cut anyway, as sums over the rewound rows.
 2. **The run is one asynchronous job**, idempotent per (rule, period, cut).
-   1. Resolve `S` and `T` on each ledger, then read the flow window and join, including the
+   1. Resolve `T` on each ledger, then read the flow window and join, including the
       previous run's carried items and a key lookup of the references missing from both.
    2. Stock rewind and ageing. There is no metadata watch step (decision 25), so the run reads
-      no range of logs.
+      no logs.
    3. Write the data files.
-   4. Write the run's **capture**: counts, drifts, `S` and `T` per ledger, and the artifact URI and
+   4. Write the run's **capture**: counts, drifts, `T` per ledger, and the artifact URI and
       the SHA-256 of the manifest, computed before it is written, signed with Ed25519 (EN-1930).
    5. Write the **manifest**, last of the run's files.
    6. Update the alert.
@@ -582,7 +582,7 @@ V1 runs no periodic proof against a checkpoint.
      `psp.grace` and is a break anyway; it shows as an unapplied payment.
    - The stock books need no backfill. They come from the listing, so an invoice unpaid for 60 days
      is aged correctly from day one.
-   - Continuity is available from the first run as well: the rewind can rebuild `open(S_prev)` for
+   - Continuity is available from the first run as well: the rewind can rebuild `open(T_prev)` for
      any past cut, from the live listing and the transactions `(T_prev, head_tx]`.
    - Re-running with an earlier `backfillFrom` is idempotent per (rule, period, cut). It only costs
      a longer window read.
@@ -591,7 +591,7 @@ V1 runs no periodic proof against a checkpoint.
      oldest `firstSeen` of the last complete run's carried items, which is the first-run default
      when nothing was carried (decision 26).
 7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
-   (`S` and `T` on each ledger) is in the signed capture. A replay runs the daily algorithm as of
+   (`T` on each ledger) is in the signed capture. A replay runs the daily algorithm as of
    that day, and no stock is stored for it.
    - The flow costs the same at any age, one day's id range `(T_prev, T]`.
    - The stock is the live listing rewound from head: about 6 min at the end of the default 90-day
@@ -642,8 +642,8 @@ rules that the engine's efficiency depends on:
 5. **Clearing account** `main:clearing:{conn}` on the product side, as an aggregate control total.
 6. **`reference = {payment_ref}:{state}`** on the PSP side and `{payment_ref}:{business_ref}` on the
    product side: idempotent on re-delivery.
-7. **`timestamp` = event time; the log date is the cut.**
-8. **Log-date and `inserted_at` indexes on both ledgers: mandatory** (§5).
+7. **`timestamp` = event time; `inserted_at` is the cut.**
+8. **The `inserted_at` index on both ledgers: mandatory** (§5).
 9. **Traffic unrelated to payments costs nothing on the flow leg.** Only the rewind window reads
    all traffic, from the cut-off to the run. A metadata-only write costs recon nothing; on the
    fields of rule 3 it breaks the write-once convention.
@@ -664,15 +664,15 @@ No connector change is required.
 | Ask | Why | Size |
 |---|---|---|
 | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths. **Done** in formancehq/ledger#2128 (`199bee364`): logged at TRACE | A listing of 1M accounts wrote 1M log lines | XS |
-| **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. **Closed** with formancehq/ledger#2058 (`38c6eef55`) without such a test; the paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the logs | The flow leg finds lettered items through indexed transaction metadata, and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
-| **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–9× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream). At `7dd615dba` the gap holds (×5.4 on 8 ranges, ×9 on one stream), except in one session of the node where the same reads ran 4 to 9 times faster; that variance is part of the ask (design doc §7.13) | No longer on recon's path in V1: the rewind reads the transactions (§5) and there is no metadata watch (decision 25), so a run reads no range of logs. The gap still deserves an explanation for the ledger's other log readers, and for a watch after V1 | S–M |
+| **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. **Closed** with formancehq/ledger#2058 (`38c6eef55`) without such a test; the paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the rewind's transactions | The flow leg finds lettered items through indexed transaction metadata, and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
+| **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–9× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream). At `7dd615dba` the gap holds (×5.4 on 8 ranges, ×9 on one stream), except in one session of the node where the same reads ran 4 to 9 times faster; that variance is part of the ask (design doc §7.13) | No longer on recon's path in V1: the cut and the rewind read the transactions (§5) and there is no metadata watch (decision 25), so a run reads no logs. The gap still deserves an explanation for the ledger's other log readers, and for a watch after V1 | S–M |
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. V1 does not monitor the write-once convention (decision 25), so L8 is the condition to bring that guarantee back. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), epic EN-1336, Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2.7 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
-| **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), epic EN-1336, Ledger v3.1): a `ListLogs` filter on the logs a metadata watch needs, the `SavedMetadata` and `DeletedMetadata` that target a transaction. Today `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS` (`misc/proto/common.proto` at `7dd615dba`) | No longer needed by recon in V1, which runs no metadata watch and reads no range of logs (decision 25). Unfiltered, the watch read every log of the ledger to find a few: 4.1M logs in 134–158 s for a 1M-payment product ledger, about 95 % of a run (design doc §7.15). L10 would make a watch cheap if one came back before L8 | M |
+| **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), epic EN-1336, Ledger v3.1): a `ListLogs` filter on the logs a metadata watch needs, the `SavedMetadata` and `DeletedMetadata` that target a transaction. Today `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS` (`misc/proto/common.proto` at `7dd615dba`) | No longer needed by recon in V1, which runs no metadata watch and reads no logs (decision 25). Unfiltered, the watch read every log of the ledger to find a few: 4.1M logs in 134–158 s for a 1M-payment product ledger, about 95 % of a run (design doc §7.15). L10 would make a watch cheap if one came back before L8 | M |
 | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the snapshot horizon (the per-ledger log id the read saw) on `AggregateVolumes` and `ListAccounts` | Lets the rewind skip the untouched part of the window; it is already part of EN-1480's scope (`log_sequence`) | S |
 
 Only these are asked, because only these serve this design. L2 is done and L5 is closed; L6 and
-L10 are off V1's path, which reads no range of logs.
+L10 are off V1's path, which reads no logs.
 
 **Findings passed on for information, not asked.** Reconciliation takes no query checkpoint in an
 evaluation, so it does not ask for any of the following. The measurements stay in the design doc
@@ -698,9 +698,9 @@ for the Ledger team to weigh against its own users:
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**, never a reversal of the original payment (§6). |
 | 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries structured evidence (the statement as JSON, a headline, the counts, the top-K breaks and the link to the files) and no rendered text; the detail sits in the backup storage (§6, §7). |
 | 9 | First run | A bounded **backfill** from `backfillFrom` (default: cut-off − the longer `grace` − 1 day), announced in the first statement (§7). |
-| 10 | Read path of the flow | **`ListTransactions` filtered on the key's presence** (product side: `payment_ref` or `business_ref`), membership before the id range, over parallel id ranges: O(payments). The logs stay the immutable record; a run reads no range of them (§5, decision 25). |
+| 10 | Read path of the flow | **`ListTransactions` filtered on the key's presence** (product side: `payment_ref` or `business_ref`), membership before the id range, over parallel id ranges: O(payments). The logs stay the immutable record; a run reads none of them (§5, decision 25). |
 | 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
-| 12 | The cut's indexes | The **`inserted_at` and log-date indexes are mandatory** on both ledgers, and bisection is dropped. An index missing at run time is an engine error (§5). |
+| 12 | The cut's indexes | The **`inserted_at` index is mandatory** on both ledgers, and bisection is dropped. The cut is one transaction id `T` per ledger: there is no log-id cut, so no log-date index. An index missing at run time is an engine error (§5). |
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
 | 14 | Replaying an old day | The **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, extrapolated from 20M measured). Beyond the retention, the carried items are rebuilt from a backfill window (§7). |
 | 15 | Result files | For the customer first: gzipped NDJSON under `rule=/day=/run=`, a stable `breakId`, drifts carried to the next run, byte-identical files for a given cut ([results reference](../technical/transaction-level-results.md)). |
@@ -710,9 +710,9 @@ for the Ledger team to weigh against its own users:
 | 19 | Simplifications | Flow rows carry no `firstSide`: which side came first follows from `firstSeen` and the row's `psp` and `product` events. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` (§6, §7). |
 | 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**; a business that applies later or by hand raises it. A payment-to-apply hold is an option outside the V1 rule contract ([design doc](../technical/transaction-level-reconciliation.md#when-application-is-deferred-or-manual-a-payment-to-apply-hold)). |
 | 21 | Result files, statement and triage | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a write-off state, a flat transactions file, a separate alert threshold, a break's `previousClass` (the previous run's row with the same `breakId` has it), an `offsetting` flag next to `flowGross`, and a `stuck` stock class with its `maxAge` (`stale_holds` covers holds held too long). |
-| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, newest first, not the logs, and so do replays. With no metadata watch (decision 25), a run reads no range of logs (§5, §7). |
+| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, newest first, not the logs, and so do replays. With no metadata watch (decision 25) and the cut resolved on `inserted_at` (decision 12), a run reads no logs (§5, §7). |
 | 23 | The PSP payment account | A booking convention (§8, rule 10), with the keys of the account's other movements in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
-| 24 | Bounded date filters in the cut | `S` and `T` are resolved with an upper-bounded date filter, widened while empty, because the ledger materializes a date range before paging it (§5). |
+| 24 | Bounded date filters in the cut | `T` is resolved with an upper-bounded filter on `inserted_at`, widened while empty, because the ledger materializes a date range before paging it (§5). |
 | 25 | The metadata watch | **No metadata watch in V1, deferred until L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326), §9). Reading every log since the previous run for changes to a transaction's key, state, business-id or merchant-reference field was about 95 % of a run: 134–158 s for 4.1M logs at 1M payments a day, against 15–25 s for all the other steps. A change on a transaction of a day already read moves no balance, and that transaction is in no later window; a change before the run, on a transaction of its window, is read at its latest value. Lost: the monitoring of the write-once convention (§8 rule 3), the `key_metadata_mutated` warning, and the watch behind condition 4 of a byte-identical replay (§5 caveat 1). The incremental watch in slices goes with it ([design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)). |
 | 26 | A run that fails every day | Some `incomplete` causes repeat on every run while each window grows, until they are fixed. `incomplete.detail` names the first 20 items at fault, and the engine-error alert says whether the next run retries (`missing_index`, `short_range`) or an operator must act. When the fix cannot enter the window, the operator **restarts the rule**: its next run is a first run, with its stock rewound and its flow backfilled from the oldest open item of the last complete run, so nothing stored is trusted and the open items are found again (results doc §2). No re-seed run type, no `diagnostic.json`, no `incomplete.kind`. |
 
@@ -754,5 +754,5 @@ new `periodType` without changing this design.
     transactions, which carry their own id. The flow reads them filtered, in id order
     (`reverse = true`, since the API lists newest first); the rewind and the replays read them
     unfiltered, newest first.
-  - From the logs, it reads one page per ledger and run, to resolve `S` (§5), and no range: V1 has
-    no metadata watch (decision 25).
+  - Recon reads no logs: the cut is resolved on `inserted_at` (§5), and V1 has no metadata watch
+    (decision 25).
