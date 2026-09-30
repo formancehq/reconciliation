@@ -514,6 +514,14 @@ V1 runs no periodic proof against a checkpoint.
    5. Write the **manifest**, last of the run's files.
    6. Update the alert.
 
+   **An `incomplete` run writes in the same order, minus the data files.** Its capture holds the
+   verdict `incomplete`, `incomplete.reason`, `T` on each ledger where it was resolved, and the
+   SHA-256 of the manifest, computed before it is written, signed with Ed25519. Its manifest,
+   written last, is reduced: no counts, statement, books, payment accounts or file list, and cuts
+   only for the ledgers where `T` was resolved ([results reference
+   §6](../technical/transaction-level-results.md#manifestjson)). It raises the engine-error alert,
+   and it is not a link in the chain: the next run chains on the last complete one.
+
    The writes follow that order, and **a run exists once its manifest is written**: a job that
    stops earlier leaves files and perhaps a capture that no reader counts, and the day's current
    run is unchanged. A run that did not finish is started again from the beginning, with a new
@@ -674,7 +682,8 @@ V1 runs no periodic proof against a checkpoint.
    K, the per-step durations and the read counts are exported as metrics and logs, not written to
    the manifest. How K was chosen: [design doc
    §7.7](../technical/transaction-level-reconciliation.md#77-concurrent-readers-choosing-k).
-9. **Reads.** The run's status comes from its capture, for a run whose manifest is written.
+9. **Reads.** Every run's status comes from its capture, an `incomplete` run's included (item 2),
+   for a run whose manifest is written.
    The API pages the breaks from the run's breaks file, with filters on class, priority and
    lifecycle; the UI shows them this way. The API also lists every file of a run with a pre-signed
    URL, so a customer reads them without access to the bucket.

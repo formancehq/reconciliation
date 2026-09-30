@@ -731,8 +731,9 @@ outlive it by a day or more. The manifest's `expiresAt`, the run's start (`start
 in its `runId`) plus the retention, is for information only. A replayed or caught-up day's files
 therefore expire a retention after that run, not after the day.
 
-**A run that cannot conclude** writes its manifest and no data file, and the next run chains on
-the last complete one ([results reference
+**A run that cannot conclude** writes its signed capture and a reduced manifest, the manifest
+last as on every run, and no data file. It raises the engine-error alert, and the next run chains
+on the last complete one ([results reference
 §2](./transaction-level-results.md#2-where-the-files-are-and-which-run-counts)). `missing_index`
 and `short_range` usually clear on the next run. `continuity`, `residual` and
 `stored_file_mismatch` repeat until the cause is fixed; `incomplete.detail` names the first items at

@@ -12,8 +12,8 @@ Three rules come out:
 - rule=qa-scenarios: seven days, two assets, one scripted story per class and edge case, including
   a first run that seeds its open items, holds opened before that seed (a null openedAt), and
   unkeyed movements of the PSP payment account (book breaks: new, persisting, resolved).
-- rule=qa-verdicts: a week that walks through every verdict, an empty day, an incomplete run
-  followed by a two-day window and a retry.
+- rule=qa-verdicts: a week that walks through every verdict, an empty day, and two incomplete
+  runs: one retried the same day, one followed by a two-day window.
 
 The two qa rules are produced by a small reference engine that follows the results doc, and that
 asserts the doc's identities (books, bridge, residual, open items) on every day it writes. Next to
@@ -148,6 +148,7 @@ INVOICE = 'main:hold:invoice:'
 REFUND = 'main:hold:refund:'
 OPEN_SIGN = {PSP_HOLD: 1, INVOICE: -1, REFUND: 1}
 RETENTION = dt.timedelta(days=90)  # the deployment's --lettering-retention
+LEDGER = {'psp': 'psp', 'product': 'main'}  # each side's ledger, as the rules name it
 SIGN_NAME = {1: 'positive', -1: 'negative'}
 PAYMENT_ACCOUNT = 'fpay:stripe:account:acct_1:main'  # matches the rules' psp.paymentAccount pattern
 PSP_STATES = {'pending': 'payin.pending', 'final': 'payin.succeeded', 'failed': 'payin.compensate'}
@@ -298,16 +299,14 @@ class Engine:
 
     # -- one run -----------------------------------------------------------------------------
 
-    def run(self, day, run_id=None, incomplete=None):
+    def run(self, day, run_id=None, incomplete=None, unresolved=()):
+        """One run. An `incomplete` run takes its reason, and the sides whose cut it could not
+        resolve (`unresolved`)."""
         day = dt.date.fromisoformat(day)
         run_id = run_id or f"r-{(day + dt.timedelta(days=1)).strftime('%Y%m%d')}T000004Z"
         run_dir = os.path.join(self.out, f'day={day}', f'run={run_id}')
         if incomplete:
-            m = {"schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
-                 "runId": run_id, "period": self.period(day), "verdict": "incomplete",
-                 "incomplete": {"reason": incomplete,
-                                "detail": "a transaction range came back short"}}
-            write(os.path.join(run_dir, 'manifest.json'), (dump(m) + '\n').encode())
+            self.write_incomplete(run_dir, day, run_id, incomplete, unresolved)
             self.runs.append({'day': day, 'run': run_id, 'verdict': 'incomplete', 'reason': incomplete,
                               'complete': False})
             return
@@ -320,20 +319,28 @@ class Engine:
         return {"type": self.rule.period_type, "day": day_str(day),
                 "cutoff": f"{day}T23:59:59+02:00", "tz": "Europe/Paris"}
 
+    def window(self, day):
+        """Each side's transaction window (from, to]: from the previous complete run's cut to the
+        day's. A first run compares one day too: its window starts at the cut of the day before
+        (results doc §2)."""
+        cut = cutoff(day)
+        if self.prev:
+            start = {side: self.prev['cuts'][side][1] for side in ('psp', 'product')}
+        else:
+            before = cutoff(day - dt.timedelta(days=1))
+            start = {'psp': Book.last_tx(self.book.psp, before), 'product': Book.last_tx(self.book.prod, before)}
+        return {'psp': (start['psp'], Book.last_tx(self.book.psp, cut)),
+                'product': (start['product'], Book.last_tx(self.book.prod, cut))}
+
     def compute(self, day, run_id):
         book, prev = self.book, self.prev
-        cut = cutoff(day)
-        t_psp = Book.last_tx(book.psp, cut)
-        t_prod = Book.last_tx(book.prod, cut)
+        w = self.window(day)
+        (f_psp, t_psp), (f_prod, t_prod) = w['psp'], w['product']
         if prev:
-            f_psp, f_prod = prev['cuts']['psp'][1], prev['cuts']['product'][1]
             carried_in = prev['carried']
             prev_susp = prev['suspense']
         else:
-            # A first run compares one day too: its window starts at the cut of the day before, and
-            # its carried items are seeded (results doc §2).
-            start = cutoff(day - dt.timedelta(days=1))
-            f_psp, f_prod = Book.last_tx(book.psp, start), Book.last_tx(book.prod, start)
+            # A first run's carried items are seeded (results doc §2).
             carried_in = self.seed(day, f_psp, f_prod)
             prev_susp = {}
             for r in carried_in:
@@ -741,6 +748,27 @@ class Engine:
         o.update(row)
         return o
 
+    def write_incomplete(self, run_dir, day, run_id, reason, unresolved):
+        """An incomplete run writes a reduced manifest and no data file (results doc §6): no
+        counts, statement, books, payment accounts or files, and cuts for the resolved sides only."""
+        start = run_start(run_id)
+        cuts = {side: w for side, w in self.window(day).items() if side not in unresolved}
+        if reason == 'missing_index':
+            detail = ', '.join(f"ledger {LEDGER[side]} has no inserted_at index" for side in unresolved)
+        else:
+            lo, hi = cuts['psp']
+            detail = f"psp range ({lo}, {hi}] returned {hi - lo - 1} of {hi - lo} transactions"
+        m = self.manifest_head(run_id)
+        m.update({
+            "period": self.period(day),
+            "startedAt": iso(start), "finishedAt": iso(start + dt.timedelta(seconds=4)),
+            "cuts": self.cuts_json(cuts, start),
+            "verdict": "incomplete",
+            "incomplete": {"reason": reason, "detail": detail},
+            "expiresAt": iso(start + RETENTION),
+        })
+        write(os.path.join(run_dir, 'manifest.json'), (dump(m) + '\n').encode())
+
     def write_run(self, run_dir, day, run_id, st):
         files = []
 
@@ -903,23 +931,11 @@ class Engine:
         statement = self.statement(day, st)
 
         start = run_start(run_id)
-        cuts = []
-        for side, ledger in (('psp', 'psp'), ('product', 'main')):
-            lo, hi = st['cuts'][side]
-            events = self.book.psp if side == 'psp' else self.book.prod
-            head = Book.last_tx(events, start)
-            cuts.append({'side': side, 'ledger': ledger, 'txFrom': lo, 'txTo': hi, 'txHead': head})
-        m = {
-            "schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
-            "runId": run_id,
-        }
-        if self.prev:
-            m["previousRun"] = {"runId": self.prev['run'], "day": day_str(self.prev['day']),
-                                "manifestSha256": self.prev['manifest_sha']}
+        m = self.manifest_head(run_id)
         m.update({
             "period": self.period(day),
             "startedAt": iso(start), "finishedAt": iso(start + dt.timedelta(seconds=27)),
-            "cuts": cuts,
+            "cuts": self.cuts_json(st['cuts'], start),
             "verdict": verdict,
             "counts": {"flow": flow_counts, "flowOutcome": outcomes, "stock": stock_counts, "breaks": breaks_counts,
                        "unclassified": {side: sum(1 for u in st['unclassified'] if u['side'] == side)
@@ -935,6 +951,26 @@ class Engine:
             "expiresAt": iso(start + RETENTION),
         })
         return m
+
+    def manifest_head(self, run_id):
+        """The fields every manifest starts with, an incomplete run's included."""
+        m = {"schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
+             "runId": run_id}
+        if self.prev:
+            m["previousRun"] = {"runId": self.prev['run'], "day": day_str(self.prev['day']),
+                                "manifestSha256": self.prev['manifest_sha']}
+        return m
+
+    def cuts_json(self, cuts, start):
+        """One entry per side in `cuts`, with the transaction head the run read up to."""
+        out = []
+        for side in ('psp', 'product'):
+            if side in cuts:
+                lo, hi = cuts[side]
+                events = self.book.psp if side == 'psp' else self.book.prod
+                out.append({'side': side, 'ledger': LEDGER[side], 'txFrom': lo, 'txTo': hi,
+                            'txHead': Book.last_tx(events, start)})
+        return out
 
 
 # --- Scenarios ------------------------------------------------------------------------------
@@ -1312,7 +1348,7 @@ def main():
     engine = Engine(rule, book, out)
     engine.query_days = ['2026-10-06']  # replayed after an incomplete run
     engine.run('2026-10-05')
-    engine.run('2026-10-06', run_id='r-20261007T000003Z', incomplete='short_range')
+    engine.run('2026-10-06', run_id='r-20261007T000003Z', incomplete='missing_index', unresolved=('product',))
     engine.run('2026-10-06', run_id='r-20261007T001503Z')
     engine.run('2026-10-07')
     engine.run('2026-10-08')

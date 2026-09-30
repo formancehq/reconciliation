@@ -329,7 +329,7 @@ flowchart LR
     Cut --> Stock["Stock: live ListAccounts of open holds<br/>rewound with the unfiltered ListTransactions (T, head_tx]<br/>(a first run: on to T_prev, for its starting stock and payment account)"]
     Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, payment-account book and open-items identities"]
     Stock --> Join
-    Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: manifest only)"]
+    Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: reduced manifest, no data file)"]
     Art --> Cap["Capture on _recon<br/>(counts, drifts, T per ledger, artifact hash) — Ed25519"]
     Cap --> Alert["Alert per (rule, fingerprint, period)<br/>structured evidence: statement JSON + headline + counts<br/>opens on an open break (never on the net alone)<br/>artifact link · breaks paged from the API"]
 ```

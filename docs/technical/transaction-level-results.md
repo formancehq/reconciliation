@@ -59,7 +59,11 @@
   after the data files and the signed capture that holds its SHA-256 (ADR-005 §7, item 2). A run
   directory with no manifest is a run that stopped: no reader counts it, and its files expire under
   the prefix's lifecycle rule.
-- **An `incomplete` run writes its manifest, and no data file.** It is not a link in the chain.
+- **An `incomplete` run writes its capture and a reduced manifest, and no data file.** Like a
+  complete run, it writes the capture first and the manifest last. Its signed capture holds the
+  verdict, `incomplete.reason`, the cut `T` of each ledger where it was resolved and the
+  manifest's SHA-256; its manifest carries no counts and no statement (§6). It raises the
+  engine-error alert (§4), and it is not a link in the chain.
 - **The day's current run is its latest complete run**: the latest run whose manifest exists and
   whose `verdict` is not `incomplete`. A `runId` is `r-` followed by the run's start instant in UTC
   (`r-20260925T000004Z`), so run ids sort in time order. Replaying or retrying a day writes a new
@@ -167,7 +171,7 @@ The verdict is evaluated in this order, and the first condition that holds wins:
 
 | `verdict` | Condition | What it tells the controller |
 |---|---|---|
-| `incomplete` | A required index is missing, a transaction range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, or a stored file differs from the SHA-256 in its signed capture. `incomplete.reason` says which: `missing_index`, `short_range`, `continuity`, `residual`, `stored_file_mismatch`. `missing_index` and `short_range` usually clear on the next scheduled run. The other three come back on every run until the cause is fixed: the engine-error alert then says that an operator must act, and when the fix cannot enter the window the operator restarts the rule (§2). `incomplete.detail` names the first 20 items at fault (the books and holds that do not close with the transactions that moved them, the applications no flow row attributes, or the altered files), and the engine's logs list them all | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes no data file and opens the engine-error alert, never a green one |
+| `incomplete` | A required index is missing, a transaction range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, or a stored file differs from the SHA-256 in its signed capture. `incomplete.reason` says which: `missing_index`, `short_range`, `continuity`, `residual`, `stored_file_mismatch`. `missing_index` and `short_range` usually clear on the next scheduled run. The other three come back on every run until the cause is fixed: the engine-error alert then says that an operator must act, and when the fix cannot enter the window the operator restarts the rule (§2). `incomplete.detail` names the first 20 items at fault (the books and holds that do not close with the transactions that moved them, the applications no flow row attributes, or the altered files), and the engine's logs list them all | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes its signed capture and a reduced manifest (§6), no data file, and opens the engine-error alert, never a green one |
 | `breaks` | At least one open break | The breaks, by priority, new or persisting |
 | `reconciled_with_warnings` | No break, but at least one unclassified transaction | Money moved that the rule does not classify: the rule's state sets or the connector mapping need attention |
 | `reconciled_with_pending` | No break and no warning, but unapplied payments within `product.grace` or applications within `psp.grace` | "OK for now". Each pending item comes with the day it becomes a break |
@@ -339,7 +343,7 @@ text.
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt` | When the run started and finished. Per-step durations and read counts go to the engine's metrics and logs, not to the manifest |
-| `cuts` | One entry per side: `ledger` and the transaction window `(txFrom, txTo]`. `txTo` is the cut `T`; `txFrom` is `T_prev` on every run: the previous run's `txTo`, or on a first run the cut of the day before. A first run's seed lies before it and counts in no figure of the day; `rule.backfillFrom` records where the seed started. Also `txHead`, the transaction head the run read up to: the rewind reads the transactions `(txTo, txHead]`, and on a first run `(txFrom, txHead]` |
+| `cuts` | One entry per side (on an `incomplete` run, per side whose cut was resolved): `ledger` and the transaction window `(txFrom, txTo]`. `txTo` is the cut `T`; `txFrom` is `T_prev` on every run: the previous run's `txTo`, or on a first run the cut of the day before. A first run's seed lies before it and counts in no figure of the day; `rule.backfillFrom` records where the seed started. Also `txHead`, the transaction head the run read up to: the rewind reads the transactions `(txTo, txHead]`, and on a first run `(txFrom, txHead]` |
 | `verdict` | §4 |
 | `incomplete` | Only when `verdict` is `incomplete`: `reason` and a human-readable `detail`, which names the first 20 items at fault (§4) |
 | `counts.flow` | Flow rows per class; adds up to the flow file's row count |
@@ -352,6 +356,12 @@ text.
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `T_prev` values here |
 | `files` | One entry per file: `name`, `rows`, `sha256` |
 | `expiresAt` | For information: the run's start (`startedAt`, the instant in `runId`) plus the deployment's retention, as an instant. The storage's lifecycle rule deletes the files, counting from their creation, so a replayed or caught-up day's files expire a retention after that run (§2) |
+
+**An `incomplete` run's manifest is reduced** (§2). It always has `schemaVersion`, `engine`,
+`rule`, `runId`, `previousRun` (absent on a first run, as on any run), `period`, `startedAt`,
+`finishedAt`, `verdict`, `incomplete` and `expiresAt`. Its `cuts` lists only the sides whose cut
+was resolved: a side is missing when, for example, its ledger's `inserted_at` index is missing
+(`missing_index`). It never has `counts`, `statement`, `books`, `paymentAccounts` or `files`.
 
 ### `flow.ndjson.gz`
 
@@ -489,6 +499,10 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
 
 - **Every data file is written on every complete run**, even with no row, so a glob never breaks
   on a quiet day. The manifest gives each file's row count.
+- **Every run that exists has a signed capture and a manifest**, the manifest written last, and
+  its status comes from the capture. An `incomplete` run writes no data file, and its manifest is
+  reduced to the fields §6 lists: no `counts`, `statement`, `books`, `paymentAccounts` or `files`,
+  so a reader that sums figures over manifests keeps the complete runs only (§9).
 - **The manifest carries aggregates only.** The statement's figures render from the manifest
   alone; lists of items (breaks, pending items, resolved breaks) come from the files, through the
   API. The one exception is `incomplete.detail`, which names the first 20 items at fault of a run

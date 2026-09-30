@@ -4,8 +4,9 @@
 --   SET VARIABLE rule = 'path/to/rule=psp-vs-billing';
 --
 -- A day's current run is its latest complete run (results doc §2): run ids sort
--- by start instant, and an incomplete run writes its manifest only, so it is left
--- out here even when it came last. `day` and `run` come from the path.
+-- by start instant, and an incomplete run writes a reduced manifest and no data
+-- file, so it is left out here even when it came last. `day` and `run` come from
+-- the path.
 
 CREATE OR REPLACE MACRO lettering_glob(name) AS
     getvariable('rule') || '/day=*/run=*/' || name || '*.ndjson.gz';

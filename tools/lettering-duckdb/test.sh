@@ -93,6 +93,7 @@ for manifest in $(find "$data" -name manifest.json | sort); do
     run=$(dirname "$manifest")
     [ "$run" = "$day23" ] && continue # partial on purpose: only what check-chain reads
     expect_ok "check ${run#"$data"/}" "$lettering" check "$run"
+    grep -q '"verdict":"incomplete"' "$manifest" && continue # not a link in the chain
     previous=$(sed -n 's/.*"previousRun":{"runId":"\([^"]*\)","day":"\([^"]*\)".*/day=\2\/run=\1/p' "$manifest")
     if [ -n "$previous" ]; then
         expect_ok "check-chain ${run#"$data"/}" "$lettering" check-chain "${run%/day=*}/$previous" "$run"
@@ -262,11 +263,14 @@ edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-42"/s/"drift":"0",/"drift":"0","new
 reseal "$work/run/flow.ndjson.gz"
 expect_ok "a row with a field unknown to lettering/1" "$lettering" check "$work/run"
 rm -rf "$work/run" && mkdir -p "$work/run"
-printf '%s\n' '{"schemaVersion":"lettering/1","runId":"r-20260925T060000Z","period":{"type":"daily","day":"2026-09-24"},"verdict":"incomplete","incomplete":{"reason":"short_range","detail":"test"}}' > "$work/incomplete.json"
+printf '%s\n' '{"schemaVersion":"lettering/1","engine":"reconciliation v1.4.0","rule":{"id":"psp-vs-billing","version":7},"runId":"r-20260925T060000Z","period":{"type":"daily","day":"2026-09-24","cutoff":"2026-09-24T23:59:59+02:00","tz":"Europe/Paris"},"startedAt":"2026-09-25T06:00:00Z","finishedAt":"2026-09-25T06:00:04Z","cuts":[{"side":"psp","ledger":"psp","txFrom":1204000,"txTo":1318500,"txHead":1321400},{"side":"product","ledger":"main","txFrom":880400,"txTo":902750,"txHead":905100}],"verdict":"incomplete","incomplete":{"reason":"short_range","detail":"test"},"expiresAt":"2026-12-24T06:00:00Z"}' > "$work/incomplete.json"
 cp "$work/incomplete.json" "$work/run/manifest.json"
-expect_ok "an incomplete run with its manifest only" "$lettering" check "$work/run"
+expect_ok "an incomplete run with its reduced manifest and no data file" "$lettering" check "$work/run"
 cp "$day24/flow.ndjson.gz" "$work/run/"
 expect_violation "an incomplete run with a data file" incomplete_files "$lettering" check "$work/run"
+fresh "$data/rule=qa-verdicts/day=2026-10-06/run=r-20261007T000003Z"
+edit "$work/run/manifest.json" 's/,"expiresAt":"[^"]*"/,"counts":{}/'
+expect_violation "an incomplete manifest with counts and no expiresAt" incomplete_fields "$lettering" check "$work/run"
 
 expect_fail "an unknown query" "$lettering" query no-such-query "$data/rule=qa-scenarios"
 expect_fail "a query given a run's directory instead of a rule's" "$lettering" query bridge "$day24"

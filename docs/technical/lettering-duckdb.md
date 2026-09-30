@@ -125,8 +125,8 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
 - **Variable.** `rule` is the rule's directory.
 - **Runs.** `runs` reads every manifest under `day=*/run=*`.
 - **Current runs.** `current_runs` keeps, per day, the latest run that is not incomplete. Run ids
-  sort by start instant, and an incomplete run writes no data file, so this is the results
-  doc's current run (§2), even when a failed run came last.
+  sort by start instant, and an incomplete run writes a reduced manifest and no data file, so this
+  is the results doc's current run (§2), even when a failed run came last.
 - **Day views.** `flow_days`, `carried_days`, `stock_days`, `breaks_days` and `unclassified_days`
   keep only the current runs' rows, with `day`, `run` and `rule` from the path.
 - **Manifest views.** `statement_days`, `books_days` and `cuts_days` flatten the current runs'
@@ -231,8 +231,9 @@ python3 tools/lettering-duckdb/testdata/generate.py
   | K01 | A final with no pending and no reference credits the account 18.00 on 4 Oct | `unkeyed_payment_movement` on `credit`, P1, new on 4 Oct, resolved on 5 Oct |
   | K02 | Payouts without their movement key debit it 7.00 on 5 Oct and 3.00 on 6 Oct | `unkeyed_payment_movement` on `debit`, new on 5 Oct, persisting on 6 Oct with 3.00, resolved on 7 Oct |
 
-- **`rule=qa-verdicts`** is one week through every verdict, with an empty day, an incomplete run
-  followed by a two-day window and a retry.
+- **`rule=qa-verdicts`** is one week through every verdict, with an empty day and two incomplete
+  runs: a `missing_index` one, whose `cuts` holds the PSP side only, retried the same day, and a
+  `short_range` one followed by a two-day window.
 
 The two qa rules come from a small reference engine in `generate.py` that follows the results doc.
 It also writes `expected/`, the CSV each query must return, computed in Python. A per-day query
@@ -292,7 +293,9 @@ One fault usually breaks several rules. Read the rows by key: the rules named to
 the fault, and `file_sha256` says whether the file was changed after the manifest was written.
 
 - **Incomplete run.** `check` prints its reason and checks the run's shape only: no data file
-  (`incomplete_files`). The data is in the day's current run, which `current-runs` names.
+  (`incomplete_files`), and a reduced manifest (`incomplete_fields`), with every field the results
+  doc §6 requires and no `counts`, `statement`, `books`, `paymentAccounts` or `files`. The data is
+  in the day's current run, which `current-runs` names.
 - **Missing file.** A data file that is absent is reported as `file_missing`: a complete run writes
   every data file, even empty.
 
