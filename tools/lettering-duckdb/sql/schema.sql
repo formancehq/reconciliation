@@ -64,6 +64,8 @@ CREATE OR REPLACE MACRO lettering_books_shape() AS
     '[{"side":"VARCHAR","prefix":"VARCHAR","asset":"VARCHAR","openSign":"VARCHAR","openPrev":"HUGEINT","opened":"HUGEINT","lettered":"HUGEINT","letteredOther":"HUGEINT","open":"HUGEINT","count":"BIGINT","continuityOk":"BOOLEAN"}]';
 CREATE OR REPLACE MACRO lettering_lines_shape() AS
     '[{"class":"VARCHAR","outcome":"VARCHAR","earlierDay":"BOOLEAN","amount":"HUGEINT","count":"BIGINT"}]';
+CREATE OR REPLACE MACRO lettering_carried_outside_shape() AS
+    '[{"class":"VARCHAR","outcome":"VARCHAR","amount":"HUGEINT","count":"BIGINT"}]';
 CREATE OR REPLACE MACRO lettering_payment_accounts_shape() AS
     '[{"account":"VARCHAR","asset":"VARCHAR","inputPrev":"HUGEINT","input":"HUGEINT","outputPrev":"HUGEINT","output":"HUGEINT","flowCredits":"HUGEINT","flowDebits":"HUGEINT","creditResidual":"HUGEINT","debitResidual":"HUGEINT"}]';
 CREATE OR REPLACE MACRO lettering_cuts_shape() AS

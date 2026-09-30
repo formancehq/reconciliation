@@ -199,7 +199,9 @@ python3 tools/lettering-duckdb/testdata/generate.py
 ```
 
 - **`rule=psp-vs-billing`** is the results doc's worked example (§10). Its NDJSON lines are the
-  doc's, byte for byte. The run of 23 September holds only what `check-chain` reads.
+  doc's, byte for byte. The run of 23 September holds only what `check-chain` reads: a manifest
+  with its cuts, so that `window_start` compares 23 and 24 September, and its carried, stock and
+  breaks files.
 - **`rule=qa-scenarios`** is seven days in two assets, one scripted story per case. It covers every
   flow and stock class, lookups on both ledgers, `fromLookups`, a split payment, a credit
   note, an unclassified transaction and refunds. Three stories undo an
@@ -274,8 +276,9 @@ tools/lettering-duckdb/lettering check <run-dir>
 ```
 
 A run directory is `…/rule=<id>/day=<YYYY-MM-DD>/run=<runId>`, local or `s3://`. A sound run prints
-an empty violation table, then `ok: the run is sound`, and exits 0. A run of 200,000 payments (a
-7 MB flow file) checks in about 2 seconds.
+an empty violation table, then `ok: the run is sound`, and exits 0. A run of 200,000 payments with
+27-character references checks in about 3 seconds; its flow file weighs 14 MB, close to the 74 B a
+row of design doc §7.14.
 
 A violation prints one row per broken rule and key, then exits 1. Here the drift of a matched
 payment was changed by hand from 0 to 1:
@@ -465,6 +468,7 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | Rule | What it checks |
 |---|---|
 | `schema_version` | The manifest's `schemaVersion` is `lettering/1` |
+| `incomplete_files`, `incomplete_fields` | An incomplete run has no data file, and its reduced manifest has every field the results doc §6 requires and none it leaves out. The wrapper checks these before any SQL runs, and stops there |
 | `file_missing`, `file_unlisted`, `file_rows`, `file_sha256` | The manifest lists exactly the files present, with their row counts and SHA-256 |
 | `counts_flow`, `counts_flow_outcome`, `counts_stock`, `counts_breaks`, `counts_unclassified` | The manifest's counts match the files |
 | `bridge_net`, `bridge_totals`, `bridge_line`, `bridge_carried_outside`, `bridge_gross` | The net is `SUM(impact)` and `psp − product`; each line matches the flow rows; the carried lines and the gross match |

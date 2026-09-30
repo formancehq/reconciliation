@@ -3,8 +3,8 @@
 **Status:** Proposed. The design is under evaluation and nothing is implemented. The decisions
 taken so far are in §10.
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
-to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9, the period alert's day list), EN-2334 (R10 rewind oracle test) and
-EN-2335 (R11 booking guide). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
+to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9, the period alert's day list), EN-2334 (R10 rewind oracle test),
+EN-2335 (R11 booking guide) and EN-2353 (R12, the DuckDB tool for the result files). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
 L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L10 EN-2369, L5 EN-2331 (closed); EN-2336 tracks the checkpoint read
 penalty, which this design does not depend on.
 **Date:** 2026-09-28
@@ -131,7 +131,7 @@ Two legs:
 
 | Leg | Question | Universe | Source of truth |
 |---|---|---|---|
-| **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (logs remain the immutable re-derivation path), plus the previous run's carried items (seeded on a first run, §7 item 6) |
+| **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (the logs remain the ledger's permanent record, from which V1 re-derives a day through its transactions), plus the previous run's carried items (seeded on a first run, §7 item 6) |
 | **Stock** (per hold, on each side) | What is still open at the cut `T`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to the cut with the unfiltered transactions `(T, head_tx]` (§5) |
 | **Continuity** (self-check) | `open(T) = open(T_prev) + opened(W) − lettered(W)`, per side, per hold prefix and per asset | Aggregates | `open(T)` from the rewind and `open(T_prev)` from the previous run's stored stock (rewound only when there is none); `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
 
@@ -469,10 +469,10 @@ V1 runs no periodic proof against a checkpoint.
   - An open hold is never a break for its age: the buckets show it, and holds held too long are
     the [`stale_holds`](../technical/stale-holds.md) template's job. The rule has no age limit.
 - **`breakId`.** Ageing compares with the previous run's artifact, matched by a `breakId` that
-  hashes the rule, leg, key (`ref`, or `side` + `hold`) and asset, not the class: a break that
-  changes class stays the same break, with its comments, and its earlier class is on the previous
-  run's row with the same `breakId`. Lifecycle and reopening are in
-  the [results reference
+  hashes the rule, leg, key (`ref`, or `side` + `hold`, or `side` + `account` + `direction` for a
+  book break) and asset, not the class: a break that changes class stays the same break, with its
+  comments, and its earlier class is on the previous run's row with the same `breakId`. Lifecycle
+  and reopening are in the [results reference
   §7](../technical/transaction-level-results.md#7-how-rows-move-from-day-to-day).
 - **Arithmetic.** Exact integer minor units, colors collapsed per asset, and multi-asset through
   `asset: "*"` as in ADR-004.
@@ -636,7 +636,7 @@ V1 runs no periodic proof against a checkpoint.
    - The flow costs the same at any age, one day's id range `(T_prev, T]`.
    - The stock is the live listing rewound from head: about 6 min at the end of the default 90-day
      retention and 26 min a year later, at 1M transactions a day, in the memory of the open book
-     (measured on 20M transactions, [design doc
+     (extrapolated from 20M measured, [design doc
      §7.16](../technical/transaction-level-reconciliation.md#716-replaying-an-old-day-from-head)).
    - While the previous day's files are kept (item 4), the replay starts from its carried and stock
      files and reproduces the day's files byte for byte. Beyond that, the replay is a first run:
@@ -742,7 +742,7 @@ No connector change is required.
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. V1 does not monitor the write-once convention (decision 25), so L8 is the condition to bring that guarantee back. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), epic EN-1336, Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2.7 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
 | **L10** ([EN-2369](https://formance-team.atlassian.net/browse/EN-2369), epic EN-1336, Ledger v3.1): a `ListLogs` filter on the logs a metadata watch needs, the `SavedMetadata` and `DeletedMetadata` that target a transaction. Today `QueryFilter` allows only `ledger`, `log_id` and the log date, with `And`, `Or` and `Not`, on `QUERY_TARGET_LOGS` (`misc/proto/common.proto` at `7dd615dba`) | No longer needed by recon in V1, which runs no metadata watch and reads no logs (decision 25). Unfiltered, the watch read every log of the ledger to find a few: 4.1M logs in 134–158 s for a 1M-payment product ledger, about 95 % of a run (design doc §7.15). L10 would make a watch cheap if one came back before L8 | M |
-| **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the snapshot horizon on `AggregateVolumes` and `ListAccounts`: the last transaction id the read reflects, per ledger (or the log id, if the ledger can map it to one) | Lets the rewind read `(T, horizon]` instead of `(T, head_tx]`: the listing reflects nothing after its horizon, so those transactions need no undoing; it is already part of EN-1480's scope (`log_sequence`) | S |
+| **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the snapshot horizon on `AggregateVolumes` and `ListAccounts`: the last transaction id the read reflects, per ledger | Lets the rewind read `(T, horizon]` instead of `(T, head_tx]`: the listing reflects nothing after its horizon, so those transactions need no undoing; it could be done alongside EN-1480, which plans a `log_sequence` | S |
 
 Only these are asked, because only these serve this design. L2 is done and L5 is closed; L6 and
 L10 are off V1's path, which reads no logs.
@@ -790,8 +790,10 @@ for the Ledger team to weigh against its own users:
 | 26 | A run that fails every day | Some `incomplete` causes repeat on every run while each window grows, until they are fixed. `incomplete.detail` names the first 20 items at fault, and the engine-error alert says whether the next run retries (`missing_index`, `short_range`) or an operator must act. When the fix cannot enter the window, the operator **restarts the rule**: its next run is a first run (decision 9), with its stock and payment account rewound and its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run default and the oldest `firstSeen` of the last complete run's carried items, so nothing stored is trusted and the open items are found again (results doc §2). No re-seed run type, no `diagnostic.json`, no `incomplete.kind`. |
 
 **Open, to review with the Connectivity team (no decision):** decision 23 assumes that the payment
-account is credited only by payment finals. `formancepayments` also credits it from payouts,
-transfers, compensations and reversed refunds. These carry the payment key, so the book closes on
+account is credited only by payment finals. `formancepayments` also credits it from pending
+outflows, payouts, transfers, outflow compensations, reversed refunds and refunded payouts
+(`OUTFLOW_PENDING`, `PAYOUT_SUCCEEDED`, `TRANSFER_SUCCEEDED`, `OUTFLOW_COMPENSATE`,
+`PAYIN_REFUND_REVERSED` and `PAYOUT_REFUNDED`). These carry the payment key, so the book closes on
 them, but they are `unclassified` every day. Its conversions and order fills post on the account
 under ids of their own, which only `psp.movementKeys` would bring into the book. The facts, the
 options and what they mean for the debit book are in the [design doc

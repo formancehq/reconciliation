@@ -596,9 +596,11 @@ ADR-005 epic, and blocked by the result store it reuses
 ([EN-2322](https://formance-team.atlassian.net/browse/EN-2322)).*
 
 [ADR-005](../prd/adr-005-transaction-level-reconciliation.md) introduces a result store: files in
-the backup object storage, anchored by hash in the signed capture and kept 90 days. `stale_holds`
-is the first template outside ADR-005 that should use it. Four points of this design need
-revisiting.
+the backup object storage, anchored by hash in the signed capture. It is built for lettering first,
+and this work (EN-2324) generalises it. Recon deletes no file: expiry is the storage lifecycle rule on
+`{bucketID}/reconciliation/`, at the deployment's `--lettering-retention` (default 90 days).
+`stale_holds` is the first template outside ADR-005 that should use it. Four points of this design
+need revisiting.
 
 **1. The evidence should keep the holds, not only a query to re-find them.** §4.5 leaves the set
 behind a number recoverable through `effectiveQuery`, and argues that "a list captured at evaluation
@@ -637,7 +639,8 @@ one-line change, and it benefits every per-account read.
 under concurrent writes: 2,233 rows differed from the exact state at the cut.
 
 - For a continuous monitor this is tolerable, because the next tick self-corrects.
-- The artifact should still record the read horizon, the log head before and after the listing.
+- The artifact should still record the read horizon, the transaction head before and after the
+  listing.
 - If an exact as-of view is ever required, ADR-005's rewind (R4,
   [EN-2319](https://formance-team.atlassian.net/browse/EN-2319)) applies unchanged: this is the
   same prefix listing, rewound through the transactions `(T, head_tx]`.
@@ -650,7 +653,7 @@ under concurrent writes: 2,233 rows differed from the exact state at the cut.
   purged holds stop matching, so `holdsReleased` falls to zero, and the artifact then shrinks with
   it.
 
-**Convergence.** `stale_holds` is ADR-005's `stuck` stock class on a single ledger, run
-continuously. The two templates should share the ageing and artifact code, while staying separate
-templates, since their cadence and alert identity differ.
+**Convergence.** `stale_holds` covers the holds held too long, on a single ledger, run
+continuously; ADR-005 has no class for them. The two templates should share the ageing and
+artifact code, while staying separate templates, since their cadence and alert identity differ.
 

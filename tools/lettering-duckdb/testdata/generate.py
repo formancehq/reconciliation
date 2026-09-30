@@ -111,6 +111,9 @@ def worked_example(out):
         "schemaVersion": "lettering/1", "engine": m['engine'], "rule": m['rule'],
         "runId": "r-20260924T000003Z",
         "period": {"type": "daily", "day": "2026-09-23", "cutoff": "2026-09-23T23:59:59+02:00", "tz": "Europe/Paris"},
+        # the day 24 run's windows start at these cuts (check-chain's window_start)
+        "cuts": [{"side": "psp", "ledger": "psp", "txFrom": 1090500, "txTo": 1204000, "txHead": 1206100},
+                 {"side": "product", "ledger": "main", "txFrom": 858200, "txTo": 880400, "txHead": 882150}],
         "verdict": "breaks",
         "statement": {"EUR/2": {"suspense": {"open": "120000", "count": 2}}},
         "books": [
@@ -176,6 +179,21 @@ def iso(t):
 def run_start(run_id):
     """A runId is r- followed by the run's start instant in UTC (results doc §2)."""
     return dt.datetime.strptime(run_id, 'r-%Y%m%dT%H%M%SZ').replace(tzinfo=UTC)
+
+
+# What each incomplete reason means, in the terms of the results doc §4.
+INCOMPLETE_CAUSE = {
+    'missing_index': 'a required index is missing',
+    'short_range': 'a transaction range came back shorter than hi - lo',
+    'continuity': 'books or holds do not close with the transactions that moved them',
+    'residual': 'applications that no flow row attributes',
+    'stored_file_mismatch': "a previous run's file is missing or differs from its signed SHA-256",
+}
+
+
+def incomplete_detail(reason, items):
+    """incomplete.detail: the reason's cause, then the first 20 items at fault (results doc §4)."""
+    return f"{INCOMPLETE_CAUSE[reason]}: {', '.join(items[:20])}"
 
 
 def day_str(d):
@@ -754,17 +772,21 @@ class Engine:
         start = run_start(run_id)
         cuts = {side: w for side, w in self.window(day).items() if side not in unresolved}
         if reason == 'missing_index':
-            detail = ', '.join(f"ledger {LEDGER[side]} has no inserted_at index" for side in unresolved)
+            items = [f"inserted_at on ledger {LEDGER[side]}" for side in unresolved]
+        elif reason == 'short_range':
+            # Only an unfiltered range can come back short: the rewind's (T, head_tx].
+            lo, hi = cuts['psp'][1], Book.last_tx(self.book.psp, start)
+            assert hi - lo >= 2, 'the short range needs transactions after the cut'
+            items = [f"({lo}, {hi}] on ledger {LEDGER['psp']}, {hi - lo - 1} of {hi - lo} transactions"]
         else:
-            lo, hi = cuts['psp']
-            detail = f"psp range ({lo}, {hi}] returned {hi - lo - 1} of {hi - lo} transactions"
+            raise ValueError(f'no test data for an incomplete run of reason {reason}')
         m = self.manifest_head(run_id)
         m.update({
             "period": self.period(day),
             "startedAt": iso(start), "finishedAt": iso(start + dt.timedelta(seconds=4)),
             "cuts": self.cuts_json(cuts, start),
             "verdict": "incomplete",
-            "incomplete": {"reason": reason, "detail": detail},
+            "incomplete": {"reason": reason, "detail": incomplete_detail(reason, items)},
             "expiresAt": iso(start + RETENTION),
         })
         write(os.path.join(run_dir, 'manifest.json'), (dump(m) + '\n').encode())
@@ -1160,7 +1182,9 @@ def verdicts():
     psp.append(Psp(at('2026-10-07', '10:00'), 'V1', 'EUR/2', 'payin.refunded', 10000, 0))  # a warning
     # 8 October: nothing at all. 9 October: the run is incomplete.
     matched('2026-10-09', '09:00', 'V5', 7000)
-    matched('2026-10-10', '21:00', 'V6', 4000, '07:00', '2026-10-11')
+    # 01:00 in Paris on 10 Oct: after the 9 Oct cut and before that day's run starts, so the
+    # incomplete run's rewind range (T, head_tx] is not empty.
+    matched('2026-10-09', '23:00', 'V6', 4000, '07:00', '2026-10-11')
     rule = Rule('qa-verdicts', psp_grace=3, product_grace=1, backfill_from=dt.date(2026, 10, 5),
                 period_type='weekly')
     return rule, Book(psp, prod)

@@ -50,7 +50,7 @@ CREATE OR REPLACE VIEW m_lines AS
 SELECT asset, unnest(from_json(s->'lines', lettering_lines_shape()), recursive := true) FROM m_statement;
 
 CREATE OR REPLACE VIEW m_carried_outside AS
-SELECT asset, unnest(from_json(s->'carriedOutside', lettering_lines_shape()), recursive := true) FROM m_statement;
+SELECT asset, unnest(from_json(s->'carriedOutside', lettering_carried_outside_shape()), recursive := true) FROM m_statement;
 
 CREATE OR REPLACE VIEW m_books AS
 SELECT unnest(from_json(m->'books', lettering_books_shape()), recursive := true) FROM manifest;

@@ -92,7 +92,7 @@
   and each run's window grows (§4). When the fix cannot enter the window (a booking corrected by a
   new transaction leaves the faulty one in it, or a stored file was altered), an operator restarts
   the rule: its next run is a first run, with no `previousRun`, so nothing stored is trusted.
-  - Its `backfillFrom` defaults to the earlier of a first run's default and the oldest `firstSeen`
+  - Its `backfillFrom` defaults to the earlier of the first-run default and the oldest `firstSeen`
     of the last complete run's carried items, so the seed finds the items still open, and falls back
     to a first run's default when nothing was carried. When that file fails its signed check
     (`stored_file_mismatch`), the operator gives `backfillFrom`.
@@ -115,9 +115,9 @@
   expire a retention after that run, not after the day. A customer bound to a longer legal
   retention has the operator raise both ([design doc
   §5](./transaction-level-reconciliation.md#result-artifacts-and-retention)).
-  - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
-    (`engine` in the manifest). Its stock is rewound from the head; with the previous day's files
-    expired, the replay is a first run and its carried items are seeded (ADR-005 §7, item 7).
+  - An expired day can be recomputed from the ledgers, rewound from head through their
+    transactions, by the same engine version (`engine` in the manifest). With the previous day's
+    files expired, the replay is a first run and its carried items are seeded (ADR-005 §7, item 7).
 
 ## 3. Conventions
 
@@ -508,8 +508,9 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
   API. The one exception is `incomplete.detail`, which names the first 20 items at fault of a run
   that writes no data file (§4).
 - **One file per kind.** Each data file is a single gzip, whatever its size: the flow file of a
-  1M-payment day weighs 75 to 142 MB (design doc §7.14). A reader that follows the manifest's
-  `files`, or globs `flow*.ndjson.gz`, keeps working if a later format splits a file.
+  1M-payment day weighs 74–142 MB and takes ~5 s to write on one thread (design doc §7.14). A
+  reader that follows the manifest's `files`, or globs `flow*.ndjson.gz`, keeps working if a later
+  format splits a file.
 - **The same cut gives the same bytes.** Keys follow the order of the file's JSON Schema, rows the
   order below, and gzip uses a fixed level with no name and no timestamp. A replay therefore
   reproduces every data file's SHA-256, provided four things hold:

@@ -64,12 +64,11 @@ Connectivity feeds and the product ledger that pilots the business. It has two l
   application points at a real payment;
 - **stock**: the holds still open at the cut-off, aged.
 
-It runs daily at a business cut-off. It reads the ledgers' transactions and logs, and takes no query
-checkpoint. The
-complete break list is kept 90 days in the backup object storage. The rule runs daily on the
-existing `periodType` (daily, weekly or monthly). Its alert carries the aggregate comparison and
-points at each day's detail. The comparison is exact, with no tolerance, and refunds and chargebacks
-are their own 1-to-1 pairs.
+It runs daily at a business cut-off. It reads the ledgers' transactions only, no logs, and takes no
+query checkpoint. The complete break list is kept 90 days in the backup object storage. The rule
+runs daily on the existing `periodType` (daily, weekly or monthly). Its alert carries the aggregate
+comparison and points at each day's detail. The comparison is exact, with no tolerance, and refunds
+and chargebacks are their own 1-to-1 pairs.
 
 External statements reach the module *as a ledger*, through Connectivity. There is no separate
 statement-file matching path.
