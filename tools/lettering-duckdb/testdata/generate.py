@@ -10,6 +10,7 @@ Three rules come out:
   SHA-256 values. The run of 23 September is partial: only what check-chain reads (its manifest,
   carried, stock and breaks files).
 - rule=qa-scenarios: seven days, two assets, one scripted story per class and edge case, including
+  a first run that seeds its open items, holds opened before that seed (a null openedAt), and
   unkeyed movements of the PSP payment account (book breaks: new, persisting, resolved).
 - rule=qa-verdicts: a week that walks through every verdict, an empty day, an incomplete run
   followed by a two-day window and a retry.
@@ -43,7 +44,8 @@ def sha(data):
 
 
 def gz(lines):
-    return gzip.compress(''.join(line + '\n' for line in lines).encode(), compresslevel=9, mtime=0)
+    """Gzip level 6, with no name and no timestamp (results doc §8)."""
+    return gzip.compress(''.join(line + '\n' for line in lines).encode(), compresslevel=6, mtime=0)
 
 
 def dump(obj):
@@ -122,7 +124,7 @@ def worked_example(out):
         "files": [{"name": "carried.ndjson.gz", "rows": 2, "sha256": sha(carried23)},
                   {"name": "stock.ndjson.gz", "rows": 6, "sha256": sha(stock23_gz)},
                   {"name": "breaks.ndjson.gz", "rows": 2, "sha256": sha(breaks23_gz)}],
-        "expiresAt": "2026-12-22",
+        "expiresAt": "2026-12-23T00:00:03Z",  # the run's start plus the 90-day retention
     }
     b23 = (dump(m23) + '\n').encode()
     write(os.path.join(day23, 'manifest.json'), b23)
@@ -145,6 +147,7 @@ PSP_HOLD = 'fpay:stripe:payment:hold:pending:'
 INVOICE = 'main:hold:invoice:'
 REFUND = 'main:hold:refund:'
 OPEN_SIGN = {PSP_HOLD: 1, INVOICE: -1, REFUND: 1}
+RETENTION = dt.timedelta(days=90)  # the deployment's --lettering-retention
 SIGN_NAME = {1: 'positive', -1: 'negative'}
 PAYMENT_ACCOUNT = 'fpay:stripe:account:acct_1:main'  # matches the rules' psp.paymentAccount pattern
 PSP_STATES = {'pending': 'payin.pending', 'final': 'payin.succeeded', 'failed': 'payin.compensate'}
@@ -166,7 +169,12 @@ def local_day(t):
 
 
 def iso(t):
-    return t.strftime('%Y-%m-%dT%H:%M:%SZ')
+    return t.strftime('%Y-%m-%dT%H:%M:%SZ') if t else None
+
+
+def run_start(run_id):
+    """A runId is r- followed by the run's start instant in UTC (results doc §2)."""
+    return dt.datetime.strptime(run_id, 'r-%Y%m%dT%H%M%SZ').replace(tzinfo=UTC)
 
 
 def day_str(d):
@@ -281,6 +289,12 @@ class Engine:
         body.pop('sha256')
         rule_json['sha256'] = sha(dump(body).encode())
         self.rule_json = rule_json
+        # A first run seeds its open items from backfillFrom, the product side psp.grace earlier
+        # (results doc §2): the transaction each side's seed starts after.
+        self.seed_from = {
+            'psp': Book.last_tx(book.psp, cutoff(rule.backfill_from - dt.timedelta(days=1))),
+            'product': Book.last_tx(book.prod, cutoff(rule.backfill_from - dt.timedelta(days=rule.psp_grace + 1))),
+        }
 
     # -- one run -----------------------------------------------------------------------------
 
@@ -307,22 +321,74 @@ class Engine:
                 "cutoff": f"{day}T23:59:59+02:00", "tz": "Europe/Paris"}
 
     def compute(self, day, run_id):
-        rule, book, prev = self.rule, self.book, self.prev
+        book, prev = self.book, self.prev
         cut = cutoff(day)
         t_psp = Book.last_tx(book.psp, cut)
         t_prod = Book.last_tx(book.prod, cut)
         if prev:
             f_psp, f_prod = prev['cuts']['psp'][1], prev['cuts']['product'][1]
+            carried_in = prev['carried']
+            prev_susp = prev['suspense']
         else:
-            start = cutoff(rule.backfill_from - dt.timedelta(days=1))
-            f_psp = Book.last_tx(book.psp, start)
-            f_prod = Book.last_tx(book.prod, cutoff(rule.backfill_from - dt.timedelta(days=rule.psp_grace + 1)))
+            # A first run compares one day too: its window starts at the cut of the day before, and
+            # its carried items are seeded (results doc §2).
+            start = cutoff(day - dt.timedelta(days=1))
+            f_psp, f_prod = Book.last_tx(book.psp, start), Book.last_tx(book.prod, start)
+            carried_in = self.seed(day, f_psp, f_prod)
+            prev_susp = {}
+            for r in carried_in:
+                o, n = prev_susp.get(r['asset'], (0, 0))
+                prev_susp[r['asset']] = (o + r['drift'], n + 1)
         win_psp = [e for e in book.psp if f_psp < e.tx <= t_psp]
         win_prod = [e for e in book.prod if f_prod < e.tx <= t_prod]
+        rows = self.join(day, win_psp, win_prod, carried_in, f_psp, f_prod, t_psp, t_prod)
+
+        stock = self.stock(day, t_psp, t_prod, f_psp, f_prod)
+        open_holds = {s['hold'] for s in stock if s['class'] != 'cleared'}
+        paired = {}
+        for r in rows:  # pairing: an unapplied payment whose merchant reference names an open hold
+            if r['class'] == 'unapplied_payment' and r['merchant'] and INVOICE + r['merchant'] in open_holds:
+                r['pairedHold'] = INVOICE + r['merchant']
+                paired[r['pairedHold']] = r['ref']
+        for s in stock:
+            s['pairedRef'] = paired.get(s['hold'])
+        books = self.books(day, win_psp, win_prod, stock, f_psp, f_prod)
+        pay = self.pay_book(rows, books, win_psp, win_prod, f_psp, t_psp)
+        breaks = self.breaks(day, rows, stock, pay)
+        unclassified = self.unclassified(win_psp, win_prod)
+        carried = [r for r in rows if r['drift'] != 0]
+        if any(b['open'] for b in breaks):
+            verdict = 'breaks'
+        elif unclassified:
+            verdict = 'reconciled_with_warnings'
+        elif any(r['outcome'] == 'pending' for r in rows):
+            verdict = 'reconciled_with_pending'
+        else:
+            verdict = 'reconciled'
+        return {'verdict': verdict, 'day': day, 'run': run_id, 'complete': True, 'rows': rows, 'carried': carried,
+                'stock': stock, 'books': books, 'pay': pay, 'breaks': breaks, 'unclassified': unclassified,
+                'cuts': {'psp': (f_psp, t_psp), 'product': (f_prod, t_prod)},
+                'win_psp': win_psp, 'win_prod': win_prod, 'prev_suspense': prev_susp,
+                'pay_totals': {p['asset']: (p['input'], p['output']) for p in pay}}
+
+    def seed(self, day, f_psp, f_prod):
+        """A first run's carried items: the references still open at its window's start, with a
+        drift. The seed joins the flow from backfillFrom, the product side psp.grace earlier, up to
+        that start, with the lookups of any window (results doc §2). Its transactions count in none
+        of the day's figures."""
+        s_psp, s_prod = self.seed_from['psp'], self.seed_from['product']
+        win_psp = [e for e in self.book.psp if s_psp < e.tx <= f_psp]
+        win_prod = [e for e in self.book.prod if s_prod < e.tx <= f_prod]
+        rows = self.join(day - dt.timedelta(days=1), win_psp, win_prod, [], s_psp, s_prod, f_psp, f_prod)
+        return [r for r in rows if r['drift'] != 0]
+
+    def join(self, day, win_psp, win_prod, carried, f_psp, f_prod, t_psp, t_prod):
+        """The flow rows of the window (f, t] on each side, joined with the carried items and the
+        references read by key."""
+        book = self.book
         classified = [e for e in win_psp if e.kind in PSP_STATES]
         applies = [e for e in win_prod if e.kind == 'apply']
-
-        carried_in = {r['ref']: r for r in (prev['carried'] if prev else [])}
+        carried_in = {r['ref']: r for r in carried}
         w_psp_by_ref, w_app_by_ref = {}, {}
         for e in classified:
             w_psp_by_ref.setdefault(e.ref, []).append(e)
@@ -350,34 +416,7 @@ class Engine:
                     if app_items:
                         psp_items = [e for e in book.psp_by_ref.get(ref, []) if e.tx <= t_psp]
             rows.append(self.flow_row(day, ref, psp_items, app_items, f_psp, f_prod, t_prod, ref in carried_in))
-
-        stock, holds_now = self.stock(day, t_psp, t_prod, rows)
-        open_holds = {s['hold'] for s in stock if s['class'] != 'cleared'}
-        paired = {}
-        for r in rows:  # pairing: an unapplied payment whose merchant reference names an open hold
-            if r['class'] == 'unapplied_payment' and r['merchant'] and INVOICE + r['merchant'] in open_holds:
-                r['pairedHold'] = INVOICE + r['merchant']
-                paired[r['pairedHold']] = r['ref']
-        for s in stock:
-            s['pairedRef'] = paired.get(s['hold'])
-        books = self.books(day, win_psp, win_prod, stock, f_psp, f_prod)
-        pay = self.pay_book(rows, books, win_psp, win_prod)
-        breaks = self.breaks(day, rows, stock, pay)
-        unclassified = self.unclassified(win_psp, win_prod)
-        carried = [r for r in rows if r['drift'] != 0]
-        if any(b['open'] for b in breaks):
-            verdict = 'breaks'
-        elif unclassified:
-            verdict = 'reconciled_with_warnings'
-        elif any(r['outcome'] == 'pending' for r in rows):
-            verdict = 'reconciled_with_pending'
-        else:
-            verdict = 'reconciled'
-        return {'verdict': verdict, 'day': day, 'run': run_id, 'complete': True, 'rows': rows, 'carried': carried,
-                'stock': stock, 'books': books, 'pay': pay, 'breaks': breaks, 'unclassified': unclassified,
-                'cuts': {'psp': (f_psp, t_psp), 'product': (f_prod, t_prod)},
-                'win_psp': win_psp, 'win_prod': win_prod,
-                'pay_totals': dict(prev['pay_totals'] if prev else {}, **{p['asset']: (p['input'], p['output']) for p in pay})}
+        return rows
 
     def flow_row(self, day, ref, psp_items, app_items, f_psp, f_prod, t_prod, carried):
         asset = (psp_items or app_items)[0].asset if psp_items else self.app_asset(app_items)
@@ -444,15 +483,16 @@ class Engine:
     def app_asset(app_items):
         return app_items[0].moves[0][2]
 
-    def stock(self, day, t_psp, t_prod, rows):
-        """Open holds at the cut, plus the holds open at the previous cut and lettered since."""
+    def holds_at(self, t_psp, t_prod):
+        """Every hold's balance up to the transaction ids t_psp and t_prod, with its opening: the
+        stock the rewind gives at a cut."""
         holds = {}  # (side, prefix, holdId, asset) -> dict
 
         def move(side, prefix, hold_id, asset, delta, e):
             key = (side, prefix, hold_id, asset)
-            h = holds.setdefault(key, {'balance': 0, 'opened': None, 'last': None, 'last_ref': None})
+            h = holds.setdefault(key, {'balance': 0, 'opened': None, 'opened_tx': None, 'last': None, 'last_ref': None})
             if h['balance'] == 0 and delta != 0:
-                h['opened'] = e.t
+                h['opened'], h['opened_tx'] = e.t, e.tx
             h['balance'] += delta
             h['last'] = e.t
             h['last_ref'] = e.ref if e.kind in ('apply', 'unclassified') or side == 'psp' else None
@@ -464,8 +504,25 @@ class Engine:
             if e.tx <= t_prod:
                 for (p, hid, asset, d) in e.moves:
                     move('product', p, hid, asset, d, e)
+        return holds
 
-        prev_stock = {(s['side'], s['hold'], s['asset']): s for s in (self.prev['stock'] if self.prev else [])}
+    def stock(self, day, t_psp, t_prod, f_psp, f_prod):
+        """Open holds at the cut, plus the holds open at the previous cut and lettered since. A first
+        run has no previous stock file: its previous cut's stock is rewound (results doc §2)."""
+        holds = self.holds_at(t_psp, t_prod)
+        if self.prev:
+            prev_stock = {(s['side'], s['hold'], s['asset']): s for s in self.prev['stock']}
+        else:
+            prev_stock = {(side, prefix + hid, asset): {'balance': h['balance'], 'class': 'open'}
+                          for (side, prefix, hid, asset), h in self.holds_at(f_psp, f_prod).items() if h['balance'] != 0}
+
+        def aged(side, h):
+            """The opening's time and the age at the cut. A hold opened before the seed of the
+            chain's first run has no known opening: its age is a lower bound, from backfillFrom."""
+            if h['opened_tx'] <= self.seed_from[side]:
+                return None, (day - self.rule.backfill_from).days
+            return h['opened'], (day - local_day(h['opened'])).days
+
         out = []
         for (side, prefix, hid, asset), h in sorted(holds.items()):
             address = prefix + hid
@@ -474,24 +531,24 @@ class Engine:
             was_open = was is not None and was['class'] != 'cleared'
             sign = OPEN_SIGN[prefix]
             if h['balance'] != 0:
-                age = (day - local_day(h['opened'])).days
+                opened, age = aged(side, h)
                 od = sign * h['balance']
                 klass = 'wrong_sign' if od < 0 else 'open'
                 s = {'side': side, 'hold': address, 'asset': asset, 'prefix': prefix, 'holdId': hid,
                      'openSign': SIGN_NAME[sign], 'balance': h['balance'], 'class': klass,
                      'outcome': 'break' if klass == 'wrong_sign' else 'ok',
-                     'lifecycle': 'persisting' if was_open else 'new', 'openedAt': h['opened'],
+                     'lifecycle': 'persisting' if was_open else 'new', 'openedAt': opened,
                      'ageDays': age, 'bucket': bucket(age, self.rule.buckets)}
                 out.append(s)
             elif was_open:
-                age = (day - local_day(h['opened'])).days
+                opened, age = aged(side, h)
                 out.append({'side': side, 'hold': address, 'asset': asset, 'prefix': prefix, 'holdId': hid,
                             'openSign': SIGN_NAME[sign], 'balance': 0, 'class': 'cleared', 'outcome': 'ok',
-                            'lifecycle': 'cleared', 'openedAt': h['opened'], 'ageDays': age,
+                            'lifecycle': 'cleared', 'openedAt': opened, 'ageDays': age,
                             'bucket': bucket(age, self.rule.buckets), 'previousBalance': was['balance'],
                             'clearedAt': h['last'], 'clearedBy': h['last_ref']})
         out.sort(key=lambda s: (s['side'], s['hold'], s['asset']))
-        return out, holds
+        return out
 
     def books(self, day, win_psp, win_prod, stock, f_psp, f_prod):
         """Per side, prefix and asset, in the open direction. On the product side, a transaction
@@ -705,14 +762,39 @@ class Engine:
         st['manifest'] = m
         st['manifest_sha'] = sha(data)
 
-    def pay_book(self, rows, books, win_psp, win_prod):
+    def pay_volumes(self, upto):
+        """The payment account's cumulative volumes per asset, (input, output), up to the
+        transaction id `upto`: what the rewind gives at a cut, computed from every PSP event
+        rather than from the flow."""
+        vols, finalised = {}, {}
+        for e in self.book.psp:
+            if e.tx > upto:
+                continue
+            credit = debit = 0
+            if e.kind == 'final':
+                credit, debit = (0, e.amount) if e.out else (e.amount, 0)
+                finalised[e.ref] = finalised.get(e.ref, 0) + e.amount
+            elif e.kind == 'failed':
+                debit = finalised.pop(e.ref, 0)  # a failure after final takes the payment back
+            elif e.kind == 'unkeyed':
+                credit, debit = max(e.amount, 0), max(-e.amount, 0)
+            elif e.kind not in PSP_STATES:
+                debit = e.amount  # in this data, a refund booked on the original payment id
+            if credit or debit:
+                i, o = vols.get(e.asset, (0, 0))
+                vols[e.asset] = (i + credit, o + debit)
+        return vols
+
+    def pay_book(self, rows, books, win_psp, win_prod, f_psp, t_psp):
         """The payment-account book (results doc §5), per asset. The account is credited by the
         window's payment finals, and debited by its refund finals, by the failures after final and
         by the PSP transactions in no state set, which in this data are refunds booked on the
         original payment id (ADR-005 §8 rule 10: a refund is a debit). The unkeyed movements the
         flow read cannot return move it too; the flow's credits and debits leave them out, so the
-        residuals are exactly the unkeyed movements."""
-        prev = self.prev['pay_totals'] if self.prev else {}
+        residuals are exactly the unkeyed movements. A first run's previous volumes are rewound to
+        its window's start (results doc §2)."""
+        prev = self.prev['pay_totals'] if self.prev else self.pay_volumes(f_psp)
+        now = self.pay_volumes(t_psp)
         unkeyed = [e for e in win_psp if e.kind == 'unkeyed']
         # the account's volumes are cumulative: an asset it held at the previous cut stays listed
         assets = sorted(set(prev) | {r['asset'] for r in rows} | {b['asset'] for b in books} | {e.asset for e in unkeyed}
@@ -732,6 +814,7 @@ class Engine:
             u_credits = sum(e.amount for e in unkeyed if e.asset == a and e.amount > 0)
             u_debits = -sum(e.amount for e in unkeyed if e.asset == a and e.amount < 0)
             in_prev, out_prev = prev.get(a, (0, 0))
+            assert (in_prev + credits + u_credits, out_prev + debits + u_debits) == now.get(a, (0, 0)), ('pay', a)
             out.append({'account': PAYMENT_ACCOUNT, 'asset': a,
                         'inputPrev': in_prev, 'input': in_prev + credits + u_credits,
                         'outputPrev': out_prev, 'output': out_prev + debits + u_debits,
@@ -747,7 +830,7 @@ class Engine:
         out = {}
         assets = sorted({r['asset'] for r in st['rows']} | {b['asset'] for b in st['books']}
                         | {u['asset'] for u in st['unclassified']})
-        prev_susp = self.prev['suspense'] if self.prev else {}
+        prev_susp = st['prev_suspense']  # the previous run's, or a first run's seeded items
         st['suspense'] = {}
         for a in assets:
             rows = [r for r in st['rows'] if r['asset'] == a]
@@ -819,11 +902,12 @@ class Engine:
         verdict = st['verdict']
         statement = self.statement(day, st)
 
+        start = run_start(run_id)
         cuts = []
         for side, ledger in (('psp', 'psp'), ('product', 'main')):
             lo, hi = st['cuts'][side]
             events = self.book.psp if side == 'psp' else self.book.prod
-            head = Book.last_tx(events, cutoff(day) + dt.timedelta(hours=2))
+            head = Book.last_tx(events, start)
             cuts.append({'side': side, 'ledger': ledger, 'txFrom': lo, 'txTo': hi, 'txHead': head})
         m = {
             "schemaVersion": "lettering/1", "engine": "reconciliation v1.4.0", "rule": self.rule_json,
@@ -832,7 +916,6 @@ class Engine:
         if self.prev:
             m["previousRun"] = {"runId": self.prev['run'], "day": day_str(self.prev['day']),
                                 "manifestSha256": self.prev['manifest_sha']}
-        start = cutoff(day) + dt.timedelta(hours=2, seconds=5)
         m.update({
             "period": self.period(day),
             "startedAt": iso(start), "finishedAt": iso(start + dt.timedelta(seconds=27)),
@@ -848,7 +931,8 @@ class Engine:
                        "buckets": b['buckets'], "continuityOk": True} for b in st['books']],
             "paymentAccounts": [self.pay_json(p) for p in st['pay']],
             "files": files,
-            "expiresAt": day_str(day + dt.timedelta(days=90)),
+            # for information: the storage deletes the files a retention after their creation
+            "expiresAt": iso(start + RETENTION),
         })
         return m
 
@@ -861,7 +945,7 @@ def inv(hid, amount, asset='EUR/2'):
 
 def scenarios():
     """qa-scenarios: one story per class and edge case, 1–7 October 2026."""
-    D = ['2026-09-30'] + [f'2026-10-0{i}' for i in range(1, 8)]
+    D = ['2026-09-28'] + [f'2026-10-0{i}' for i in range(1, 8)]
     psp, prod = [], []
 
     def pay(day, t, ref, amount, asset='EUR/2', pending=True, merchant=None, t_final=None, out=False):
@@ -876,10 +960,35 @@ def scenarios():
     def opening(day, t, moves):
         prod.append(Prod(at(day, t), 'open', moves))
 
-    # S12: paid and invoiced before backfillFrom, applied on day 3 (a PSP lookup, fromLookups != 0)
+    # The first run, day 1, seeds its open items from backfillFrom (29 Sep) up to the cut of 30 Sep,
+    # the product side from 26 Sep, psp.grace earlier (results doc §2). None of the seed's
+    # transactions counts in day 1's figures.
+    # S12: paid on 28 Sep, before the PSP seed, and invoiced the same day, inside the product seed;
+    # applied on day 3 (a PSP lookup, fromLookups != 0)
     opening(D[0], '07:00', inv('INV-S12', 5000))
     pay(D[0], '09:00', 'S12', 5000, pending=False, t_final='09:00')
     apply(D[3], '10:00', 'S12', [(INVOICE, 'INV-S12', 'EUR/2', 5000)])
+    # S23: paid on 30 Sep, applied on day 1: seeded as an unapplied payment, then matched on an
+    # earlier day
+    opening('2026-09-29', '07:00', inv('INV-S23', 6000))
+    pay('2026-09-30', '08:00', 'S23', 6000, t_final='08:05')
+    apply(D[1], '09:00', 'S23', [(INVOICE, 'INV-S23', 'EUR/2', 6000)])
+    # S25: applied at pending on 30 Sep, finalised on day 2: seeded as applied_before_final, carried
+    # outside the net on day 1, matched on an earlier day on day 2. Its PSP hold, open at the
+    # seed's end, is persisting on day 1 and cleared on day 2.
+    opening('2026-09-27', '07:00', inv('INV-S25', 2400))
+    psp.append(Psp(at('2026-09-30', '10:00'), 'S25', 'EUR/2', 'pending', 0, 2400))
+    apply('2026-09-30', '10:30', 'S25', [(INVOICE, 'INV-S25', 'EUR/2', 2400)])
+    psp.append(Psp(at(D[2], '08:00'), 'S25', 'EUR/2', 'final', 2400, -2400))
+    # S24: an invoice opened on 15 Sep, before the product seed, never paid: its openedAt is null,
+    # and its age a lower bound counted from backfillFrom (2 days on day 1, for 16 really)
+    opening('2026-09-15', '07:00', inv('INV-S24', 3300))
+    # S26: a PSP pending opened on 27 Sep, before the PSP seed, finalised and applied on day 2: its
+    # hold has a null openedAt, open on day 1, then cleared
+    opening('2026-09-27', '07:05', inv('INV-S26', 1700))
+    psp.append(Psp(at('2026-09-27', '12:00'), 'S26', 'EUR/2', 'pending', 0, 1700))
+    psp.append(Psp(at(D[2], '09:30'), 'S26', 'EUR/2', 'final', 1700, -1700))
+    apply(D[2], '09:40', 'S26', [(INVOICE, 'INV-S26', 'EUR/2', 1700)])
     # S01: matched on its day
     opening(D[1], '07:00', inv('INV-S01', 10000))
     pay(D[1], '08:00', 'S01', 10000, t_final='08:05')
@@ -995,7 +1104,7 @@ def scenarios():
     psp.append(Psp(at(D[5], '17:00'), None, 'EUR/2', 'unkeyed', -700))
     psp.append(Psp(at(D[6], '17:00'), None, 'EUR/2', 'unkeyed', -300))
 
-    rule = Rule('qa-scenarios', psp_grace=3, product_grace=1, backfill_from=dt.date(2026, 10, 1))
+    rule = Rule('qa-scenarios', psp_grace=3, product_grace=1, backfill_from=dt.date(2026, 9, 29))
     return rule, Book(psp, prod), D[1:]
 
 

@@ -348,7 +348,8 @@ cut-off (say 24 September, 23:59:59 Europe/Paris) into **numbers the ledger alre
   (`docs/technical/architecture/subsystems/consensus/hybrid-logical-clock.md` in the ledger).
 
 **The cut.** `T` is the id of the last transaction inserted at or before the cut-off. The previous
-day's `T_prev` is already in yesterday's capture. There is no log-id cut: a run reads no logs, so
+day's `T_prev` is already in yesterday's capture; a first run resolves it like `T`, at the
+cut-off of the day before (ADR-005 §7, item 6). There is no log-id cut: a run reads no logs, so
 a log id would only label the cut.
 
 ```text
@@ -434,7 +435,7 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | Head of a ledger | `GetLedgerStats` → `transaction_count` (per-ledger transaction ids are contiguous from 1) | none |
 | Resolve `T` from the cut-off | `ListTransactions`, filter `cut-off < builtin_uint(INSERTED_AT) ≤ cut-off + δ` (bounded, widened while empty: the range is materialized before paging), page 1, `reverse = true` → `T = id − 1`. Per-ledger transaction ids are contiguous (an unfiltered `(0, 1M]` returned exactly 1M rows) | `inserted_at` index (`TX_BUILTIN_INDEX_INSERTED_AT`): **mandatory** (checklist row 10) |
 | **Flow window** | `ListTransactions`, filter `And(membership, builtin_uint(ID) ∈ (lo, hi])`, **membership first** ([above](#the-cut-from-a-business-time-to-id-ranges), §7.11), `reverse = true`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, or `Or(<psp.key> EXISTS, <psp.movementKeys> EXISTS…)` when the rule declares movement keys (decision 23), and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref` (and `business_ref` on the product side): mandatory.** While it builds, reads return a retryable `Unavailable` ("index is still building") |
-| Rewind window `(T, head_tx]`, and replays | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **newest first** (the default order; §4), in chunks, page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
+| Rewind window `(T, head_tx]` (`(T_prev, head_tx]` on a first run), replays and catch-ups | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **newest first** (the default order; §4), in chunks, page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
 | Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch. On a released v3.0 it is the only lookup left once a hold is purged (§2) |
 
@@ -492,6 +493,13 @@ pre = post_commit_volumes[account] − Σ(this transaction's postings on account
   read in chunks by K workers and applied chunk by chunk, newest first.
 - An account untouched in the window held one value for the whole listing, so the listed value is
   its value at the cut.
+
+**A first run reads one day further.** It has no stored stock and no stored payment-account
+volumes for its starting values, so its rewind reads `(T_prev, head_tx]` instead of `(T, head_tx]`,
+with the same newest-first fold. On passing `T` the fold holds the stock and the payment account
+at `T`; continuing to `T_prev` gives them at `T_prev`, the books' `openPrev` and the payment
+account's `input(T_prev)` and `output(T_prev)` (ADR-005 §7, item 6). At 1M transactions a day that
+day costs about 4 s more (§7.16).
 
 The method needs no baseline and no stored state, and it applies to NORMAL accounts as well as to
 EPHEMERAL holds. Only created and reverted transactions move balances, and both carry
@@ -565,17 +573,69 @@ four times as long: ~25 min at the end of the retention. An id-order fold that k
 touch would hold every hold created since the day, about
 760 bytes each (7.6 GB of heap for 10M, §7.16): about 70 GB for a 90-day-old day.
 
-**The carried items come from the previous run while it is kept.** Within the retention, a
-deployment setting (`--lettering-retention`, §5), the previous day's carried and stock files seed
-the replay, and it reproduces the day's files byte for byte (results reference §8). A query over
-the day's manifests compares the SHA-256s in the two runs' `files`: a mismatch reveals a metadata
-change or an engine change. Beyond the retention, those files have expired: the replay rebuilds
-its carried items from a backfill window, as a first run does (ADR-005 §7, item 6), which costs
-about `psp.grace` + 1 days of flow reads. An item carried for longer than that window is missed,
-the statement says "backfilled since …", and the files are no longer byte-identical to the
-original. Recon knows the retention, so it knows which
-days a replay still reproduces. A customer who must reproduce older days raises the retention and
-the storage's lifecycle rule together.
+**The carried items come from the previous run while it is kept.** The previous day's files are
+kept for the retention after that run, a deployment setting (`--lettering-retention`, §5). Until
+then the replay starts from its carried and stock files, and it reproduces the day's files byte for
+byte (results reference §8). A query over the day's manifests compares the SHA-256s in the two
+runs' `files`: a mismatch reveals a metadata change or an engine change. Once those files have
+expired, the replay is a first run (ADR-005 §7, item 6): it seeds its carried items from
+`backfillFrom` up to `T_prev`, about `psp.grace` + 1 days of flow reads, and its rewind reads one
+day further for its starting stock and payment account (§4). An item carried for longer than the
+seed is missed, the statement says "open items seeded since …", and the files are no longer
+byte-identical to the original. The previous run's `expiresAt` tells recon which days a replay
+still reproduces. A customer who must reproduce older days raises the retention and the storage's
+lifecycle rule together.
+
+#### Catching up from a past day
+
+A catch-up from day X writes a normal run for every day from X to yesterday, as if the rule had
+run since X (ADR-005 §7, item 7). It is an explicit API action on the rule. Replaying the days one
+by one would rewind from head once per day, about 4.5 h of rewinds for 90 days at 1M transactions a
+day; a catch-up rewinds once, in two passes:
+
+1. **Backward pass.** One newest-first rewind from the live state down to `T_{X−1}`, the cut before
+   X: the live listing, then the unfiltered transactions `(T_{X−1}, head_tx]`, folded as in §4. As
+   the fold crosses each day's cut, it records a snapshot of that day: the balances of the holds
+   open there (the day's raw stock) and the payment account's volumes. A snapshot is one open book,
+   about 13 MB gzipped for 1M open holds (§7.10), so the snapshots stay in memory or in a local
+   temporary file. Nothing goes to the bucket.
+2. **Forward pass.** The days run in order, X to yesterday, each a normal run: the day's filtered
+   flow and its lookups, the join with the carried items, the stock from the day's snapshot,
+   lifecycle against the day before, then the data files, the capture, the manifest last and the
+   alert. Day X is a first run, its open items seeded and its starting values taken from the
+   snapshot at `T_{X−1}`, unless day X−1 already has a current run, which it then chains on. Each
+   later day chains on the one before.
+
+- **A catch-up that stops** leaves the days already written as complete runs. The interrupted day
+  has no manifest, so no reader counts it. The operator starts a new catch-up from that day, which
+  chains on the previous day's current run. Nothing is resumed and nothing is stored.
+- **An `incomplete` day** stops the catch-up and raises the engine-error alert naming the day.
+  After the fix, the catch-up restarts from that day.
+- **Alerts.** Caught-up runs raise no alert for a closed period: their files are read through the
+  API and DuckDB. The open period's alert is built as usual from its days, caught-up days included.
+- **One job per rule at a time.** The rule's scheduled run waits while a catch-up runs, then chains
+  on the last day the catch-up wrote.
+- **Nothing marks a caught-up run** but its `startedAt` and its `runId`, later than its day
+  (results reference §2).
+
+**Cost, at 1M transactions a day.** There is no depth limit. The backward pass costs about 4 s per
+day of distance in all, not per day: its window grows with X's age, as a replay's does (§7.16).
+Each forward day costs about the 20 s of a daily run's reads (§7.15). Both figures are estimates,
+extrapolated from those measurements:
+
+| Catch-up from | Backward pass | Forward days | Total |
+|---|---|---|---|
+| A week ago | ~30 s | ~2 min | ~3 min |
+| 30 days ago | ~2 min | ~10 min | ~12 min |
+| 90 days ago | ~6 min | ~30 min | ~40 min |
+| A year ago | ~26 min | ~2 h | ~2.5 h |
+
+- The backward pass grows with the ledger's transactions a day, like a replay's rewind: a product
+  ledger of 1M payments a day writes about 4M transactions (§7.15), so its pass takes about four
+  times as long, ~25 min for 90 days.
+- **Storage.** Each caught-up day writes a daily run's files, 80 to 155 MB per rule at 1M payments
+  a day (§7.14). The lifecycle rule counts from each file's creation, so they are all kept for the
+  retention after the catch-up: 7 to 14 GB for 90 days, 29 to 57 GB for a year.
 
 ## 5. Matching semantics
 
@@ -601,8 +661,8 @@ and the statement.
   application, and report a false orphan. Failures are rare, so this costs little.
 - Lookups are grouped, 100 to 500 references per `Or` of equalities on the key, key first (the
   ledger has no `IN`): each then costs about a hundredth of a lookup alone (§7.13, EN-2318). The
-  run's metrics count them. The first run adds none: its product window starts `psp.grace` before `backfillFrom`
-  (ADR-005 §7).
+  run's metrics count them. A first run's seed adds none on the product side: its product side
+  starts `psp.grace` before `backfillFrom` (ADR-005 §7, item 6).
 
 ### What the controller sees: a reconciliation statement, never a bare drift
 
@@ -665,8 +725,9 @@ every recon rule under that product ledger's prefix, and the leftover files of a
 - **`file`:** no expiry, which is fine for local development.
 
 Both stores count the age from each file's creation and delete asynchronously, so a file can
-outlive it by a day or more. The manifest's `expiresAt`, the run's day plus the retention, is for
-information only.
+outlive it by a day or more. The manifest's `expiresAt`, the run's start (`startedAt`, the instant
+in its `runId`) plus the retention, is for information only. A replayed or caught-up day's files
+therefore expire a retention after that run, not after the day.
 
 **A run that cannot conclude** writes its manifest and no data file, and the next run chains on
 the last complete one ([results reference
@@ -674,7 +735,8 @@ the last complete one ([results reference
 and `short_range` usually clear on the next run. `continuity`, `residual` and
 `stored_file_mismatch` repeat until the cause is fixed; `incomplete.detail` names the first items at
 fault. When the fix cannot enter the window, an operator restarts the rule: its next run is a first
-run, backfilled from the oldest open item of the last complete run (ADR-005 decision 26).
+run, its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run
+default and the oldest `firstSeen` of the last complete run's carried items (ADR-005 decision 26).
 The carried items, the stored stock and the break history therefore never come from a run that
 failed its checks.
 
@@ -962,7 +1024,8 @@ The book compares the account's movement over the day with the flow's postings o
 - debits: `output(T) − output(T_prev)` against the flow's debits.
 
 The account is `NORMAL`, so its volumes are cumulative. Its value at `T` comes from a live read,
-rewound with the window already read (§7.8). Its value at `T_prev` is the previous run's.
+rewound with the window already read (§7.8). Its value at `T_prev` is the previous run's, or on a
+first run the same rewind read one day further (§4).
 
 **Setup** (`silent`). Same ledger. The holds are `EPHEMERAL`, the payment account is `psp:main`, and
 `payment_ref` and `movement_ref` are declared and indexed.

@@ -69,34 +69,51 @@
   one, with its day and its manifest's SHA-256. When that day is not the day before (a day missed or
   incomplete), this run's window starts at that run's cut and covers every day since. The statement
   then says "window since …".
+- **A first run compares one day too.** A first run, a new rule's, a restart's (below) or a
+  replay's once the previous run's files have expired, has no `previousRun`, and its window is
+  still `(T_prev, T]`, with `T_prev` the cut of the day before (ADR-005 §7, item 6).
+  - **Its starting values are rewound to `T_prev`** by its own stock rewind, read one day further:
+    the books' `openPrev`, the payment account's `inputPrev` and `outputPrev`, and the stock the
+    lifecycle of its stock rows is read against (a hold open at `T_prev` is `persisting`, or
+    `cleared` once lettered).
+  - **Its open items are seeded.** A read of the flow from `backfillFrom` up to `T_prev`, with the
+    product side starting `psp.grace` earlier, is joined, and the references still open at `T_prev`
+    with a drift are carried in as if a previous run had carried them: they give `openPrev` and
+    `countPrev` (§5). None of the seed's transactions counts in the day's bridge, books or
+    payment-account book. `backfillFrom` defaults to cut-off − max(`psp.grace`, `product.grace`) −
+    1 day, and the manifest's `rule.backfillFrom` records it (§6).
+  - The statement says "open items seeded since …". A hold opened before the seed has a null
+    `openedAt` and a lower-bound age (§6).
 - **Restarting a chain.** Some causes of `incomplete` come back on every run until they are fixed,
   and each run's window grows (§4). When the fix cannot enter the window (a booking corrected by a
   new transaction leaves the faulty one in it, or a stored file was altered), an operator restarts
-  the rule: its next run is a first run, with no `previousRun`.
-  - Its stock is rewound to the cut before its window, so its `openPrev` values are recomputed from
-    the ledger, not picked up.
-  - It reads the flow from `backfillFrom`, which defaults to the earlier of a first run's default
-    (cut-off − max(`psp.grace`, `product.grace`) − 1 day) and the oldest `firstSeen` of the last
-    complete run's carried items, so it finds the items still open, and falls back to a first run's
-    default when nothing was carried. When that file fails its
-    signed check (`stored_file_mismatch`), the operator gives `backfillFrom`. The statement says
-    "backfilled since …".
+  the rule: its next run is a first run, with no `previousRun`, so nothing stored is trusted.
+  - Its `backfillFrom` defaults to the earlier of a first run's default and the oldest `firstSeen`
+    of the last complete run's carried items, so the seed finds the items still open, and falls back
+    to a first run's default when nothing was carried. When that file fails its signed check
+    (`stored_file_mismatch`), the operator gives `backfillFrom`.
   - Its breaks start `new`: their `breakId` is unchanged, their history is not carried over.
   - The restart takes an optional `backfillFrom`, rejected when it is later than the next run's
     cut. Nothing else is stored: the next run's manifest, a first run with no `previousRun` and
-    "backfilled since …", is the trace of the restart.
+    "open items seeded since …", is the trace of the restart.
+- **Catching up from a past day.** An API action on the rule writes a normal run for every day
+  from a day X to yesterday, as if the rule had run since X (ADR-005 §7, item 7). The caught-up
+  runs are normal runs, chained day by day, with day X a first run unless day X−1 already has a
+  current run. Nothing marks them but their `startedAt` and `runId`, later than their day, and they
+  raise no alert for a closed period. A catch-up that stops leaves complete runs up to the
+  interrupted day, which has no manifest.
 - **Expiry.** A run's files are kept for the deployment's retention, the operator setting
   `--lettering-retention`, 90 days by default. A lifecycle rule of the storage on
   `{bucketID}/reconciliation/` deletes them; recon deletes nothing. The retention is not a rule
-  parameter: it applies to every rule under the product ledger's prefix. The manifest's
-  `expiresAt`, the run's day plus the retention, is for information only, since the storage counts
-  from each file's creation. A customer bound to a longer legal retention has the operator raise
-  both ([design doc
+  parameter: it applies to every rule under the product ledger's prefix. The storage counts from
+  each file's creation, so the manifest's `expiresAt` is the run's start (`startedAt`, the instant
+  in its `runId`) plus the retention, for information only: a replayed or caught-up day's files
+  expire a retention after that run, not after the day. A customer bound to a longer legal
+  retention has the operator raise both ([design doc
   §5](./transaction-level-reconciliation.md#result-artifacts-and-retention)).
   - An expired day can be recomputed from the ledgers' permanent logs, by the same engine version
-    (`engine` in the manifest). Its stock is rewound from the head; its carried items, with the
-    previous day's files expired, are rebuilt from a backfill window, as on a first run (ADR-005 §7,
-    item 7).
+    (`engine` in the manifest). Its stock is rewound from the head; with the previous day's files
+    expired, the replay is a first run and its carried items are seeded (ADR-005 §7, item 7).
 
 ## 3. Conventions
 
@@ -223,7 +240,8 @@ Gross open flow breaks: Σ|drift| = …
 - **`fromLookups`** is the drift a reference already had when neither the carried items nor the
   window held it. An example is a payment finalised before `backfillFrom` whose application arrives
   now. It is 0 in steady state.
-- **`openPrev`** and `countPrev` are the previous current run's `open` and `count`.
+- **`openPrev`** and `countPrev` are the previous current run's `open` and `count`, or on a first
+  run the sum and count of its seeded items (§2).
 - **The identity** `open = openPrev + net + fromLookups` fails when a carried item is lost or
   counted twice between two runs. The run is then `incomplete` (`continuity`).
 - **`open` is the running balance of the reconciliation**: payments not applied yet, applications
@@ -237,8 +255,9 @@ For each side, hold prefix and asset, in the open direction:
 open = openPrev + opened − lettered
 ```
 
-- `openPrev` is the previous run's stored stock. `opened` and `lettered` are the window's hold
-  movements, and `open` is the stock rewound to the cut.
+- `openPrev` is the previous run's stored stock, or on a first run the stock rewound to `T_prev`
+  (§2). `opened` and `lettered` are the window's hold movements, and `open` is the stock rewound to
+  the cut.
 - A transaction's movement counts in `opened` when it goes in the open direction and in
   `lettered` when it goes in the settling direction. The exception is a product transaction that
   takes part in matching: it always counts in `lettered`, with its signed amount, even when it
@@ -268,7 +287,7 @@ output(T) − output(T_prev) = debits on the account by the transactions the flo
 
 - The account is `NORMAL`, so its volumes are cumulative. `input(T)` and `output(T)` are its live
   volumes rewound to the cut with the stock's transaction window; the `T_prev` values are the
-  previous run's.
+  previous run's, or on a first run the same rewind read one day further (§2).
 - The flow read returns every transaction that carries the PSP key or one of the rule's
   `psp.movementKeys` (payouts, fees), whatever its class, unclassified ones included. The
   movement-key transactions count here and nowhere else.
@@ -315,12 +334,12 @@ text.
 |---|---|
 | `schemaVersion` | `lettering/1` |
 | `engine` | The version of recon that produced the run. A replay reproduces the files only with the same one |
-| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `buckets` are the age buckets' upper bounds. The retention is not a rule parameter (§2) |
+| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `buckets` are the age buckets' upper bounds. `backfillFrom` is where the chain's first run seeded its open items from (§2): the rule's parameter or its default, or the restart's; every later run of the chain repeats it, since a null `openedAt` counts its age from it. The retention is not a rule parameter (§2) |
 | `runId` | `r-{UTC start instant}`; run ids sort in time order |
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt` | When the run started and finished. Per-step durations and read counts go to the engine's metrics and logs, not to the manifest |
-| `cuts` | One entry per side: `ledger` and the transaction window `(txFrom, txTo]`. `txTo` is the cut `T`; `txFrom` is the previous run's `txTo`, or where the backfill starts on a first run. Also `txHead`, the transaction head the run read up to: the rewind reads the transactions `(txTo, txHead]` |
+| `cuts` | One entry per side: `ledger` and the transaction window `(txFrom, txTo]`. `txTo` is the cut `T`; `txFrom` is `T_prev` on every run: the previous run's `txTo`, or on a first run the cut of the day before. A first run's seed lies before it and counts in no figure of the day; `rule.backfillFrom` records where the seed started. Also `txHead`, the transaction head the run read up to: the rewind reads the transactions `(txTo, txHead]`, and on a first run `(txFrom, txHead]` |
 | `verdict` | §4 |
 | `incomplete` | Only when `verdict` is `incomplete`: `reason` and a human-readable `detail`, which names the first 20 items at fault (§4) |
 | `counts.flow` | Flow rows per class; adds up to the flow file's row count |
@@ -332,7 +351,7 @@ text.
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `T_prev` values here |
 | `files` | One entry per file: `name`, `rows`, `sha256` |
-| `expiresAt` | For information: the run's `day` plus the deployment's retention. The storage's lifecycle rule deletes the files, counting from their creation (§2) |
+| `expiresAt` | For information: the run's start (`startedAt`, the instant in `runId`) plus the deployment's retention, as an instant. The storage's lifecycle rule deletes the files, counting from their creation, so a replayed or caught-up day's files expire a retention after that run (§2) |
 
 ### `flow.ndjson.gz`
 
@@ -390,8 +409,8 @@ One row per hold open at the cut, plus one row per hold cleared since the previo
 | `prefix`, `holdId`, `openSign` | The rule's hold kind and the id after its prefix |
 | `balance` | The ledger's balance at the cut, signed as the ledger shows it |
 | `class`, `outcome` | Below |
-| `lifecycle` | `new`, `persisting` or `cleared`, against the previous run |
-| `openedAt`, `ageDays`, `bucket` | When the hold opened (its opening transaction's time), its age at the cut, and its age bucket. `openedAt` is null for a hold already open before a first run's `backfillFrom`, whose opening recon never read: `ageDays` is then a lower bound counted from `backfillFrom`, and `bucket` follows it |
+| `lifecycle` | `new`, `persisting` or `cleared`, against the previous run, or on a first run against the stock rewound to `T_prev` (§2) |
+| `openedAt`, `ageDays`, `bucket` | When the hold opened (its opening transaction's `timestamp`, the business date), its age at the cut in days, and its age bucket. The opening is known when it lies in a window recon read, a first run's seed included. `openedAt` is null for a hold opened before the chain's seed (§2): before `backfillFrom`, or on the product side before the seed's start, `psp.grace` earlier. Its opening was never read, so `ageDays` is a lower bound counted from `rule.backfillFrom`, and `bucket` follows it |
 | `previousBalance`, `clearedAt`, `clearedBy` | On a cleared hold: its balance at the previous cut, when it was lettered, and the `ref` that lettered it. No `clearedBy` means it was lettered without a PSP reference |
 | `pairedRef` | The unapplied payment whose `merchantRef` names this hold |
 
@@ -482,8 +501,8 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
   reproduces every data file's SHA-256, provided four things hold:
   - the same engine version;
   - the same rule version;
-  - the same previous run, whose carried and stock files seed the day, so a replay while that run's
-    files are kept (the retention, §2);
+  - the same previous run, whose carried and stock files the day starts from, so a replay while
+    that run's files are kept (a retention after that run, §2);
   - no key, state, business-id or merchant-reference metadata changed since the original run,
     because the ledger serves the current metadata. Recon does not watch for such a change
     (ADR-005 decision 25).
@@ -660,7 +679,7 @@ and was lettered on the same day.
     {"name": "breaks.ndjson.gz",       "rows": 3, "sha256": "15fe…"},
     {"name": "unclassified.ndjson.gz", "rows": 1, "sha256": "90b3…"}
   ],
-  "expiresAt": "2026-12-23"
+  "expiresAt": "2026-12-24T00:00:04Z"
 }
 ```
 

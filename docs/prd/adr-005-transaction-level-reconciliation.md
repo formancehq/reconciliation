@@ -131,7 +131,7 @@ Two legs:
 
 | Leg | Question | Universe | Source of truth |
 |---|---|---|---|
-| **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (logs remain the immutable re-derivation path), plus the previous run's carried items |
+| **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (logs remain the immutable re-derivation path), plus the previous run's carried items (seeded on a first run, §7 item 6) |
 | **Stock** (per hold, on each side) | What is still open at the cut `T`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to the cut with the unfiltered transactions `(T, head_tx]` (§5) |
 | **Continuity** (self-check) | `open(T) = open(T_prev) + opened(W) − lettered(W)`, per side, per hold prefix and per asset | Aggregates | `open(T)` from the rewind and `open(T_prev)` from the previous run's stored stock (rewound only when there is none); `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
 
@@ -212,8 +212,9 @@ depend on read speed:
 - **The write path.** Each create and delete is a Raft order, and the create pauses the applier.
 - **The wrong instant.** A checkpoint captures the run instant, so the stock would still need
   rewinding to `T`.
-- **Past days.** Backfill and replay need a cut where no checkpoint exists. Keeping checkpoints for
-  90 days is impossible under the cap, and would pin SSTs.
+- **Past days.** A first run's starting stock, a replay and a catch-up need a cut where no
+  checkpoint exists. Keeping checkpoints for 90 days is impossible under the cap, and would pin
+  SSTs.
 - **The flow needs no snapshot.** Transactions at or below `T` are immutable except for their
   metadata.
 
@@ -336,7 +337,8 @@ Why this is exact:
 same three properties, but a read by transaction-id range takes the main-store path and never
 waits for the index to align, so it is faster ([design doc
 §7.8](../technical/transaction-level-reconciliation.md#78-window-source-for-balances-logs-or-unfiltered-transactions)).
-The daily gain is small (about 2 s at 1M logs a day); it matters for the backfill and for replays.
+The daily gain is small (about 2 s at 1M logs a day); it matters for replays and catch-ups (§7
+item 7).
 With no metadata watch (decision 25), no purge consistency check ([design doc
 §4](../technical/transaction-level-reconciliation.md#4-the-rewind-an-exact-state-at-t-with-no-checkpoint))
 and the cut resolved on `inserted_at`, a run reads no logs in V1.
@@ -458,11 +460,12 @@ V1 runs no periodic proof against a checkpoint.
     weekend, and applying at `pending` is common with those debits.
   - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`.
   - All three are rule parameters.
-  - A hold's age counts from its opening transaction, seen in a window recon read (the day's flow,
-    or a first run's backfill) and then kept in the stock file from run to run. A hold already open
-    before a first run's `backfillFrom` (or a restart's) has no known opening: its `openedAt` is
-    null and its age is a lower bound, counted from `backfillFrom`. The ledger's account
-    `first_usage` and `insertion_date` fields are not populated, so they cannot help.
+  - A hold's age counts from its opening transaction's `timestamp`, the business date (§5), seen
+    in a window recon read (a day's flow, or a first run's seed, §7 item 6) and then kept in the
+    stock file from run to run. A hold opened before the seed (before `backfillFrom`, or on the
+    product side before the seed's start, `psp.grace` earlier) has no known opening: its
+    `openedAt` is null and its age is a lower bound, counted from `backfillFrom`. The ledger's
+    account `first_usage` and `insertion_date` fields are not populated, so they cannot help.
   - An open hold is never a break for its age: the buckets show it, and holds held too long are
     the [`stale_holds`](../technical/stale-holds.md) template's job. The rule has no age limit.
 - **`breakId`.** Ageing compares with the previous run's artifact, matched by a `breakId` that
@@ -553,9 +556,11 @@ V1 runs no periodic proof against a checkpoint.
      §5](../technical/transaction-level-reconciliation.md#result-artifacts-and-retention).
    - The retention is the `serve` flag `--lettering-retention`, 90 days by default (item 8), and
      the lifecycle rule carries the same age. It is not a rule parameter: it applies to every rule
-     under the product ledger's prefix. The manifest's `expiresAt`, the run's day plus the
-     retention, is for information only. Recon uses the retention to know up to when a replay
-     reproduces a day's files byte for byte (item 7).
+     under the product ledger's prefix. The lifecycle rule counts from each file's creation, so the
+     manifest's `expiresAt` is the run's start (its `startedAt`, the instant in its `runId`) plus
+     the retention, for information only: a replayed or caught-up day's files expire a retention
+     after that run, not after the day. Recon uses it to know up to when a replay reproduces a
+     day's files byte for byte (item 7).
    - Expiry loses nothing irrecoverable. The logs are permanent, so any past day can be recomputed
      from the ledgers with the same cut and engine version, which each manifest records (item 7). A
      customer bound to a longer legal retention raises the flag and the lifecycle rule together.
@@ -573,42 +578,80 @@ V1 runs no periodic proof against a checkpoint.
      kept for as long ([results reference
      §9](../technical/transaction-level-results.md#9-queries)).
    - The 90-day default retention covers a monthly period plus a review margin.
-6. **First run: bounded backfill.** A rule's first run has no previous day, so no carried items.
-   Left alone, a payment the PSP finalised before the rule existed, and that the product never
-   applied, would never be seen. On the PSP side its hold is already lettered, and it is in no later
-   window.
-   - The first run therefore reads the flow from **`backfillFrom`**, a rule parameter that
-     defaults to **cut-off − max(`psp.grace`, `product.grace`) − 1 day**, instead of from the
-     previous day's cut. That seeds the carried items.
-   - Everything older than `backfillFrom` is out of scope. The first statement says so explicitly
-     ("backfilled since …"), so it cannot be misread as covering all history.
-   - On the product ledger, the first run's window starts `psp.grace` earlier than on the PSP
-     ledger. An application may precede its payment's final state by up to `psp.grace`, so a payment
-     finalised early in the backfill still finds its application, with no lookup by key. Those
-     earlier product transactions only feed the join. An application older than that waited past
-     `psp.grace` and is a break anyway; it shows as an unapplied payment.
-   - The stock books need no backfill. They come from the listing, so an invoice unpaid for 60 days
-     is aged correctly from day one.
-   - Continuity is available from the first run as well: the rewind can rebuild `open(T_prev)` for
-     any past cut, from the live listing and the transactions `(T_prev, head_tx]`.
+6. **First run: one day, like every run, with its open items seeded.** A first run (a new rule, a
+   restart per decision 26, or a replay whose previous run's files have expired) has no previous
+   run: no carried items, no stored stock and no payment-account volumes at `T_prev`. Left alone,
+   a payment the PSP finalised before the rule existed, and that the product never applied, would
+   never be seen: on the PSP side its hold is already lettered, and it is in no later window. And
+   started from zero, the payment-account book would show a false P1 residual and the books would
+   fail continuity.
+   - **It compares one day**, like every run: its window is `(T_prev, T]`, where `T_prev` is the
+     cut of the day before, resolved like `T`.
+   - **Its starting values are rewound**: the stock at `T_prev` (the books' `openPrev`) and the
+     payment account's `input(T_prev)` and `output(T_prev)`. The same newest-first rewind that
+     gives the stock at `T` reads one day further, the unfiltered transactions `(T_prev, head_tx]`
+     instead of `(T, head_tx]`: on passing `T` the fold holds the state at `T`, and continuing to
+     `T_prev` gives the state at `T_prev`.
+   - **The backfill only seeds the open items.** It reads the flow, filtered on the key, from
+     **`backfillFrom`**, a rule parameter that defaults to **cut-off − max(`psp.grace`,
+     `product.grace`) − 1 day**, up to `T_prev`, and joins it. The references still open at
+     `T_prev`, with a drift ≠ 0, are the seeded carried items: the first run's `openPrev` and
+     `countPrev` in the open-items identity. The seed window's transactions count in none of the
+     day's figures: not in the bridge, the books or the payment-account book.
+   - On the product ledger, the seed starts `psp.grace` earlier than on the PSP ledger (decision
+     19). An application may precede its payment's final state by up to `psp.grace`, so a payment
+     finalised early in the seed still finds its application, with no lookup by key. An
+     application older than that waited past `psp.grace` and is a break anyway; it shows as an
+     unapplied payment.
+   - Everything older than the seed is out of scope. The first statement says so explicitly ("open
+     items seeded since …"), so it cannot be misread as covering all history.
+   - **Ages.** A hold whose opening lies in a window recon read, the seed included, gets its
+     opening time. Only a hold opened before `backfillFrom` (or before the product seed's start)
+     has a null `openedAt` and a lower-bound age (§6): an invoice unpaid for 60 days is aged exactly
+     only if the seed read its opening.
    - Re-running with an earlier `backfillFrom` is idempotent per (rule, period, cut). It only costs
-     a longer window read.
+     a longer seed read.
    - The same first run restarts a rule whose chain is stuck on a cause that cannot be fixed inside
      its window; `backfillFrom` then defaults to the earlier of the first-run default above and the
      oldest `firstSeen` of the last complete run's carried items, which is the first-run default
      when nothing was carried (decision 26).
-7. **Replaying a past day.** Any past day can be replayed: the logs are permanent, and its cut
-   (`T` on each ledger) is in the signed capture. A replay runs the daily algorithm as of
-   that day, and no stock is stored for it.
+   - The manifest's `cuts[].txFrom` is `T_prev`, as on every run, and its `rule.backfillFrom`
+     records where the seed started.
+7. **Replaying a past day, or catching up from one.** Any past day can be replayed: the logs are
+   permanent, and its cut (`T` on each ledger) is in the signed capture. A replay runs the daily
+   algorithm as of that day, and no stock is stored for it.
    - The flow costs the same at any age, one day's id range `(T_prev, T]`.
    - The stock is the live listing rewound from head: about 6 min at the end of the default 90-day
      retention and 26 min a year later, at 1M transactions a day, in the memory of the open book
      (measured on 20M transactions, [design doc
      §7.16](../technical/transaction-level-reconciliation.md#716-replaying-an-old-day-from-head)).
-   - Within the retention (item 4), the previous day's carried and stock files seed the replay,
-     which reproduces the day's files byte for byte. Beyond it, the carried items are rebuilt from a
-     backfill window, as on a first run (item 6), and the statement says so. Mechanics: [design
-     doc](../technical/transaction-level-reconciliation.md#replaying-an-old-day).
+   - While the previous day's files are kept (item 4), the replay starts from its carried and stock
+     files and reproduces the day's files byte for byte. Beyond that, the replay is a first run:
+     its carried items are rebuilt by the same seed (item 6), and the statement says so.
+     Mechanics: [design doc](../technical/transaction-level-reconciliation.md#replaying-an-old-day).
+   - **Catching up from day X** is an explicit API action on a rule. It writes a normal run for
+     every day from X to yesterday, as if the rule had run since X, in two passes ([design
+     doc](../technical/transaction-level-reconciliation.md#catching-up-from-a-past-day)):
+     - **backward**, one newest-first rewind from the live state down to `T_{X−1}`, the cut before
+       X, over the unfiltered transactions `(T_{X−1}, head_tx]`. As it crosses each day's cut it
+       records that day's open holds' balances and the payment account's volumes: one small
+       snapshot per day, in memory or in a local temporary file, never in the bucket;
+     - **forward**, the days in order, X to yesterday, each a normal run: the day's filtered flow,
+       the join, lifecycle against the day before, then data files, capture, manifest last, and
+       the alert. Day X is a first run (item 6) unless day X−1 already has a current run, which it
+       then chains on; each later day chains on the one before.
+   - A catch-up that stops leaves the days it wrote as complete runs; the interrupted day has no
+     manifest and is ignored. The operator starts a new catch-up from that day, which chains on the
+     previous day's current run. Nothing is resumed and nothing is stored.
+   - An `incomplete` day stops the catch-up and raises the engine-error alert naming the day; after
+     the fix, the catch-up restarts from that day.
+   - Caught-up runs raise no alert for a closed period: their files are read through the API and
+     DuckDB. The open period's alert is built as usual from its days, caught-up days included.
+   - A rule runs one job at a time: its scheduled run waits while a catch-up runs, then chains on
+     the last day the catch-up wrote.
+   - There is no depth limit, and the cost is documented: at 1M transactions a day, the backward
+     pass costs about 4 s per day of distance in all, and each forward day about the 20 s of a
+     daily run, so about 40 min for 90 days and 2.5 h for a year (estimates).
 8. **Execution and retention settings are operator settings, not rule parameters.** They are
    `serve` flags (with the matching environment variables), like `scheduler-interval`, absent from
    the rule contract and the API. The team running the deployment tunes them through Helm or the
@@ -705,24 +748,24 @@ for the Ledger team to weigh against its own users:
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
 | 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**, never a reversal of the original payment (§6). |
 | 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries structured evidence (the statement as JSON, a headline, the counts and the link to the files), no list of breaks and no rendered text; the detail sits in the backup storage (§6, §7). |
-| 9 | First run | A bounded **backfill** from `backfillFrom` (default: cut-off − the longer `grace` − 1 day), announced in the first statement (§7). |
+| 9 | First run | A first run **compares one day**, `(T_prev, T]`, like every run. Its starting stock and payment-account volumes are rewound to `T_prev`, one day further than the daily rewind, and the **backfill only seeds its open items**: a flow read from `backfillFrom` (default: cut-off − the longer `grace` − 1 day) up to `T_prev`, whose join gives the references still open at `T_prev`, and whose transactions count in none of the day's figures. The first statement says "open items seeded since …"; a hold opened before the seed has a null `openedAt` and a lower-bound age (§6, §7). |
 | 10 | Read path of the flow | **`ListTransactions` filtered on the key's presence** (product side: `payment_ref` or `business_ref`), membership before the id range, over parallel id ranges: O(payments). The logs stay the immutable record; a run reads none of them (§5, decision 25). |
 | 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
 | 12 | The cut's indexes | The **`inserted_at` index is mandatory** on both ledgers, and bisection is dropped. The cut is one transaction id `T` per ledger: there is no log-id cut, so no log-date index. An index missing at run time is an engine error (§5). |
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
-| 14 | Replaying an old day | The **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, extrapolated from 20M measured). Beyond the retention, the carried items are rebuilt from a backfill window (§7). |
+| 14 | Replaying an old day, or catching up from one | A replay is the **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, extrapolated from 20M measured). Once the previous day's files have expired, the replay is a first run and its carried items are seeded (decision 9). A **catch-up from day X**, an API action, writes a normal run for every day from X to yesterday: **one backward pass**, a single rewind down to the cut before X that records each day's open book and payment account, then **the days forward**, each chained on the one before. It resumes nothing, stops on an `incomplete` day, raises no alert for a closed period and has no depth limit: about 40 min for 90 days and 2.5 h for a year at 1M transactions a day, estimated (§7 item 7). |
 | 15 | Result files | For the customer first: gzipped NDJSON under `rule=/day=/run=`, a stable `breakId`, drifts carried to the next run, byte-identical files for a given cut ([results reference](../technical/transaction-level-results.md)). |
 | 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break: `applied_before_final` stays pending within `psp.grace`, unknown references included, then becomes `orphan_application` (P1). Missing references are looked up by key, and the alert opens on a break, never on the net alone (§6). |
 | 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern), not on the hold, which a final event with no `pending` before it moves by 0 (§6). |
 | 18 | Cases across days | A PSP `failed` never applied is `failed` (ok), and window references with a `failed` event that are not carried are looked up on both ledgers every run, so `reversed_after_application` is caught. The rest (a `businessId` per `holds` entry, `psp.merchantRef`, the previous stock read from storage) is in §5 and §6. |
-| 19 | Simplifications | Flow rows carry no `firstSide`: which side came first follows from `firstSeen` and the row's `psp` and `product` events. The first run does no product-side lookup: its product window starts `psp.grace` before `backfillFrom` (§6, §7). |
+| 19 | Simplifications | Flow rows carry no `firstSide`: which side came first follows from `firstSeen` and the row's `psp` and `product` events. A first run's seed does no product-side lookup: its product side starts `psp.grace` before `backfillFrom` (§6, §7). |
 | 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**; a business that applies later or by hand raises it. A payment-to-apply hold is an option outside the V1 rule contract ([design doc](../technical/transaction-level-reconciliation.md#when-application-is-deferred-or-manual-a-payment-to-apply-hold)). |
 | 21 | Result files and statement | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The manifest carries aggregates only: the statement's figures render from it alone, and lists of items (breaks, pending items, resolved breaks) come from the files, through the API. The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a triage in the manifest and its `topK` parameter, a write-off state, a flat transactions file, a separate alert threshold, a break's `previousClass` (the previous run's row with the same `breakId` has it), an `offsetting` flag next to `flowGross`, and a `stuck` stock class with its `maxAge` (`stale_holds` covers holds held too long). |
-| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`**, newest first, not the logs, and so do replays. With no metadata watch (decision 25) and the cut resolved on `inserted_at` (decision 12), a run reads no logs (§5, §7). |
+| 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`** (`(T_prev, head_tx]` on a first run), newest first, not the logs, and so do replays and catch-ups. With no metadata watch (decision 25) and the cut resolved on `inserted_at` (decision 12), a run reads no logs (§5, §7). |
 | 23 | The PSP payment account | A booking convention (§8, rule 10), with the keys of the account's other movements in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
 | 24 | Bounded date filters in the cut | `T` is resolved with an upper-bounded filter on `inserted_at`, widened while empty, because the ledger materializes a date range before paging it (§5). |
 | 25 | The metadata watch | **No metadata watch in V1, deferred until L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326), §9). Reading every log since the previous run for changes to a transaction's key, state, business-id or merchant-reference field was about 95 % of a run: 134–158 s for 4.1M logs at 1M payments a day, against 15–25 s for all the other steps. A change on a transaction of a day already read moves no balance, and that transaction is in no later window; a change before the run, on a transaction of its window, is read at its latest value. Lost: the monitoring of the write-once convention (§8 rule 3), the `key_metadata_mutated` warning, and the watch behind condition 4 of a byte-identical replay (§5 caveat 1). The incremental watch in slices goes with it ([design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)). |
-| 26 | A run that fails every day | Some `incomplete` causes repeat on every run while each window grows, until they are fixed. `incomplete.detail` names the first 20 items at fault, and the engine-error alert says whether the next run retries (`missing_index`, `short_range`) or an operator must act. When the fix cannot enter the window, the operator **restarts the rule**: its next run is a first run, with its stock rewound and its flow backfilled from the oldest open item of the last complete run, so nothing stored is trusted and the open items are found again (results doc §2). No re-seed run type, no `diagnostic.json`, no `incomplete.kind`. |
+| 26 | A run that fails every day | Some `incomplete` causes repeat on every run while each window grows, until they are fixed. `incomplete.detail` names the first 20 items at fault, and the engine-error alert says whether the next run retries (`missing_index`, `short_range`) or an operator must act. When the fix cannot enter the window, the operator **restarts the rule**: its next run is a first run (decision 9), with its stock and payment account rewound and its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run default and the oldest `firstSeen` of the last complete run's carried items, so nothing stored is trusted and the open items are found again (results doc §2). No re-seed run type, no `diagnostic.json`, no `incomplete.kind`. |
 
 **Open, to review with the Connectivity team (no decision):** decision 23 assumes that the payment
 account is credited only by payment finals. `formancepayments` also credits it from payouts,
@@ -755,8 +798,9 @@ new `periodType` without changing this design.
 - **ADR-003 stands.** Evaluations never take query checkpoints; one is used only as a test oracle
   (R10).
 - **A new template kind, with its own async execution path**; a job that stops is started again
-  from the beginning. The scheduler's
-  10 s drain grace does not apply to it ([scheduler.md](../technical/scheduler.md)).
+  from the beginning. A catch-up (§7 item 7) is one job over many days: the days it wrote stay
+  complete runs when it stops, and a new catch-up starts from the interrupted day. The scheduler's
+  10 s drain grace does not apply to them ([scheduler.md](../technical/scheduler.md)).
 - **Recon starts reading `ListTransactions` in bulk.**
   - From the transactions, it reads every one that moves a balance: created transactions and revert
     transactions, which carry their own id. The flow reads them filtered, in id order

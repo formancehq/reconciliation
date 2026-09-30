@@ -325,8 +325,8 @@ Ledger transaction-address index and expose one ordered feed.
 
 ```mermaid
 flowchart LR
-    Cut["Cut per ledger at the business cut-off<br/>transaction id T"] --> Flow["Flow: ListTransactions (T_prev, T]<br/>∧ key present (PSP: payment_ref or a psp.movementKeys field;<br/>product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · first run from backfillFrom (product side psp.grace earlier)"]
-    Cut --> Stock["Stock: live ListAccounts of open holds<br/>rewound with the unfiltered ListTransactions (T, head_tx]"]
+    Cut["Cut per ledger at the business cut-off<br/>transaction id T"] --> Flow["Flow: ListTransactions (T_prev, T]<br/>∧ key present (PSP: payment_ref or a psp.movementKeys field;<br/>product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · a first run seeds its open items from backfillFrom (product side psp.grace earlier)"]
+    Cut --> Stock["Stock: live ListAccounts of open holds<br/>rewound with the unfiltered ListTransactions (T, head_tx]<br/>(a first run: on to T_prev, for its starting stock and payment account)"]
     Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, payment-account book and open-items identities"]
     Stock --> Join
     Join --> Art["flow / carried / stock / breaks / unclassified .ndjson.gz + manifest (sha256)<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: manifest only)"]
@@ -335,7 +335,8 @@ flowchart LR
 ```
 
 No query checkpoint is taken: the cut is a transaction id per ledger, which no later write moves,
-and the rewind makes a live listing exact at the cut. Aggregate templates keep reading live (§7). Full design, booking conventions and
-measurements: [transaction-level-reconciliation.md](./transaction-level-reconciliation.md); the
+and the rewind makes a live listing exact at the cut. A catch-up from a past day runs the daily
+algorithm for every day since, after one rewind that records each day's open book. Aggregate
+templates keep reading live (§7). Full design, booking conventions and measurements: [transaction-level-reconciliation.md](./transaction-level-reconciliation.md); the
 result files and how to read them: [transaction-level-results.md](./transaction-level-results.md);
 decision record: [ADR-005](../prd/adr-005-transaction-level-reconciliation.md).

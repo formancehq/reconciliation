@@ -1,7 +1,7 @@
 day,asset,verdict,open_prev,net,from_lookups,open,items,open_breaks_gross
-2026-10-01,EUR/2,reconciled_with_pending,0,3000,0,3000,3,0
+2026-10-01,EUR/2,reconciled_with_pending,3600,-3000,0,600,4,0
 2026-10-01,USD/2,reconciled_with_pending,0,0,0,0,0,0
-2026-10-02,EUR/2,breaks,3000,4000,0,7000,6,11500
+2026-10-02,EUR/2,breaks,600,6400,0,7000,6,11500
 2026-10-02,USD/2,breaks,0,5000,0,5000,1,0
 2026-10-03,EUR/2,breaks,7000,-17500,5000,-5500,8,25000
 2026-10-03,USD/2,breaks,5000,0,0,5000,1,5000

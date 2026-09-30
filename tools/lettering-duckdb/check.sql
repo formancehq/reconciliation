@@ -11,12 +11,14 @@ CREATE OR REPLACE TEMP TABLE violations (rule VARCHAR, key VARCHAR, detail VARCH
 
 CREATE OR REPLACE TEMP MACRO v_int(x) AS coalesce(x::HUGEINT, 0);
 
--- The rule's durations, in days ("7d" -> 7; NULL when absent), and its age buckets.
+-- The rule's durations, in days ("7d" -> 7; NULL when absent), its age buckets, and where the
+-- chain's first run seeded its open items from.
 CREATE OR REPLACE TEMP MACRO v_days(x) AS regexp_extract(x, '^([0-9]+)d$', 1)::INTEGER;
 CREATE OR REPLACE TEMP VIEW v_rule AS
 SELECT v_days(m->'rule'->'psp'->>'grace') AS psp_grace,
        v_days(m->'rule'->'product'->>'grace') AS product_grace,
        list_transform(from_json(m->'rule'->'buckets', '["VARCHAR"]'), b -> v_days(b)) AS bounds,
+       (m->'rule'->>'backfillFrom')::DATE AS backfill_from,
        m->'period'->>'tz' AS tz
 FROM manifest;
 -- The label of an age bucket, from the bucket bounds: [1, 7, 30] gives 0-1d, 2-7d, 8-30d, >30d.
@@ -377,15 +379,20 @@ WHERE (f.class = 'unapplied_payment' AND f.breakOn IS DISTINCT FROM f.firstSeen 
    OR (f.class = 'applied_before_final' AND f.breakOn IS DISTINCT FROM f.firstSeen + g.psp_grace)
    OR (f.class = 'orphan_application' AND f.breakOn IS NOT NULL AND f.breakOn <> f.firstSeen + g.psp_grace);
 
--- A hold's age is counted in the rule's timezone, and its bucket follows from its age.
+-- A hold's age is counted in the rule's timezone, and its bucket follows from its age. A hold
+-- opened before the seed has a null openedAt: its age is a lower bound, counted from backfillFrom
+-- (results doc §6).
 INSERT INTO violations
 WITH aged AS (
-    SELECT s.*, r.day - timezone(g.tz, s.openedAt AT TIME ZONE 'UTC')::DATE AS age, g.bounds
+    SELECT s.*, r.day - CASE WHEN s.openedAt IS NULL THEN g.backfill_from
+                             ELSE timezone(g.tz, s.openedAt AT TIME ZONE 'UTC')::DATE END AS age, g.bounds
     FROM stock s, m_run r, v_rule g)
 SELECT 'stock_age', side || '/' || hold || '/' || asset,
-       class || ', ageDays ' || ageDays || ' (opened ' || age || ' days before the cut), bucket ' || bucket
+       class || ', ageDays ' || coalesce(ageDays::VARCHAR, 'missing') || ' ('
+       || CASE WHEN openedAt IS NULL THEN 'no openedAt: backfillFrom is ' ELSE 'opened ' END
+       || coalesce(age::VARCHAR, '?') || ' days before the cut), bucket ' || coalesce(bucket, 'missing')
 FROM aged
-WHERE ageDays <> age
+WHERE ageDays IS DISTINCT FROM age
    OR bucket IS DISTINCT FROM v_bucket(ageDays, bounds);
 
 INSERT INTO violations

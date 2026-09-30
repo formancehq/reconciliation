@@ -1,11 +1,11 @@
 day,asset,class,outcome,payments,psp_amount,product_amount,drift,impact
-2026-10-01,EUR/2,matched,ok,5,35500,35500,0,0
+2026-10-01,EUR/2,matched,ok,6,41500,41500,0,-6000
 2026-10-01,EUR/2,unapplied_payment,pending,1,8000,0,8000,8000
-2026-10-01,EUR/2,applied_before_final,pending,2,0,5000,-5000,-5000
+2026-10-01,EUR/2,applied_before_final,pending,3,0,7400,-7400,-5000
 2026-10-01,EUR/2,in_progress,ok,1,0,0,0,0
 2026-10-01,EUR/2,failed,ok,1,0,0,0,0
 2026-10-01,USD/2,matched,ok,1,12000,12000,0,0
-2026-10-02,EUR/2,matched,ok,3,12800,12800,0,3000
+2026-10-02,EUR/2,matched,ok,5,16900,16900,0,5400
 2026-10-02,EUR/2,over_applied,break,2,10000,12000,-2000,-2000
 2026-10-02,EUR/2,unapplied_payment,pending,1,4500,0,4500,4500
 2026-10-02,EUR/2,unapplied_payment,break,1,8000,0,8000,0

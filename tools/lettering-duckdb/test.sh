@@ -216,6 +216,8 @@ fresh "$day24"; edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-45"/s/"breakOn":"20
 expect_violation "a breakOn that is not firstSeen plus grace" row_break_on "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/stock.ndjson.gz" '/INV-9/s/"ageDays":12/"ageDays":13/'
 expect_violation "a hold's age" stock_age "$lettering" check "$work/run"
+fresh "$qa1"; edit "$work/run/stock.ndjson.gz" '/INV-S24/s/"ageDays":2,/"ageDays":3,/'
+expect_violation "a hold opened before the seed, aged from elsewhere than backfillFrom" stock_age "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"buckets":{"0-1d":0,"2-7d":2,"8-30d":2,">30d":1}/"buckets":{"0-1d":0,"2-7d":2,"8-30d":3,">30d":1}/'
 expect_violation "a book's age buckets" books_buckets "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/breaks.ndjson.gz" '/"ref":"PAY-44"/s/"class":"under_applied"/"class":"over_applied"/'
@@ -236,7 +238,7 @@ fresh "$day24"; edit "$work/run/$m" 's/"manifestSha256":"[0-9a-f]*"/"manifestSha
 expect_violation "a broken chain" previous_run "$lettering" check-chain "$day23" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"120000"/"openPrev":"120001"/'
 expect_violation "open items that do not pick up" suspense_open_prev "$lettering" check-chain "$day23" "$work/run"
-fresh "$qa5"; edit "$work/run/$m" 's/"inputPrev":"79100"/"inputPrev":"79000"/; s/"flowCredits":"0","flowDebits":"2800","creditResidual":"0"/"flowCredits":"100","flowDebits":"2800","creditResidual":"0"/'
+fresh "$qa5"; edit "$work/run/$m" 's/"inputPrev":"94200"/"inputPrev":"94100"/; s/"flowCredits":"0","flowDebits":"2800","creditResidual":"0"/"flowCredits":"100","flowDebits":"2800","creditResidual":"0"/'
 expect_violation "a payment-account book that does not pick up" book_prev "$lettering" check-chain "$qa4" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"430000"/"openPrev":"430001"/'
 expect_violation "a book that does not pick up" books_open_prev "$lettering" check-chain "$day23" "$work/run"
