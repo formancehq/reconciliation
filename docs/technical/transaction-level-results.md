@@ -23,7 +23,8 @@
    total still unmatched, and `counts` says how many breaks and pending items there are.
 4. **Open the files for the items.** The manifest carries aggregates only: `breaks.ndjson.gz` holds
    the rows to act on, `flow.ndjson.gz` the pending items and, with `stock.ndjson.gz`, the complete
-   picture, and `unclassified.ndjson.gz` the transactions the rule could not classify.
+   picture. The transactions the rule could not classify are counted in the manifest and listed
+   from the ledger ([§6](#unclassified-transactions)).
    Recon's API pages the breaks, with filters on class, priority and lifecycle.
 
 | Question | Where to look |
@@ -36,7 +37,7 @@
 | What is still open on each ledger? | `books`, then `stock.ndjson.gz` |
 | Was anything lettered outside matching (credit note, write-off)? | `books[].letteredOther`; in the stock, a `cleared` row with no `clearedBy` |
 | Everything about invoice INV-12 | a filter on `businessId`, `holdId` or `merchantRef` in every file (§9) |
-| Does the connector mapping follow the rule? | `counts.unclassified`, then `unclassified.ndjson.gz` |
+| Does the connector mapping follow the rule? | `counts.unclassified`, then `statement.{asset}.unclassified` per state value, then the ledger ([§6](#unclassified-transactions)) |
 
 ## 2. Where the files are, and which run counts
 
@@ -47,7 +48,6 @@
   carried.ndjson.gz       the flow rows whose drift is not 0, handed to the next run
   stock.ndjson.gz         one row per open hold at the cut, plus the holds cleared since the previous run
   breaks.ndjson.gz        every break of the three legs, open or resolved since the previous run
-  unclassified.ndjson.gz  the transactions whose state is in none of the rule's sets
 ```
 
 - **The bucket** is the backup destination of the rule's **product ledger**, under a prefix next to
@@ -165,7 +165,7 @@
 
 | Field | Question | Values | On |
 |---|---|---|---|
-| `outcome` | Must someone act? | `ok` (nothing to do), `pending` (not a break yet), `break`, `warning` (an unclassified transaction) | every row |
+| `outcome` | Must someone act? | `ok` (nothing to do), `pending` (not a break yet), `break` | every row |
 | `class` | What happened? | per leg, §6 | flow, carried, stock and break rows |
 | `priority` | How urgent is it? | 1 to 4, §6 | break rows |
 | `lifecycle` | What changed since the previous run? | `new`, `persisting`, then `cleared` for a hold or `resolved` for a break | stock and break rows |
@@ -281,7 +281,7 @@ open = openPrev + opened − lettered
   breaks the identity. The run is then `incomplete` (`continuity`).
 - **`letteredOther`** is the part of `lettered` done by transactions that take no part in
   matching. Most carry no PSP reference: a credit note, a write-off, a manual lettering. The rest
-  carry one but have a state in none of the rule's sets, and are also in the unclassified file. It
+  carry one but have a state in none of the rule's sets, and are also counted as unclassified. It
   is not an error, but it is money that cleared a hold with no matched payment behind it, so it
   stays visible. A transaction without a PSP reference must carry the hold's business id; otherwise
   the flow read misses it and continuity fails.
@@ -355,7 +355,7 @@ engine renders no text.
 |---|---|
 | `schemaVersion` | `lettering/1` |
 | `engine` | The version of recon that produced the run. A replay reproduces the files only with the same one |
-| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `buckets` are the age buckets' upper bounds. `backfillFrom` is the date, in the rule's timezone, where the chain's first run seeded its open items from (§2): the seed covers the days from it up to `T_prev`, and one on or after the first run's day means no seed. It is the rule's parameter or its default, or the restart's; every later run of the chain repeats it, since a null `openedAt` counts its age from it. The retention is not a rule parameter (§2) |
+| `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `backfillFrom` is the date, in the rule's timezone, where the chain's first run seeded its open items from (§2): the seed covers the days from it up to `T_prev`, and one on or after the first run's day means no seed. It is the rule's parameter or its default, or the restart's; every later run of the chain repeats it, since a null `openedAt` counts its age from it. The retention is not a rule parameter (§2) |
 | `runId` | `r-{UTC start instant}`; run ids sort in time order |
 | `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
@@ -437,7 +437,7 @@ One row per hold open at the cut, plus one row per hold cleared since the previo
 | `balance` | The ledger's balance at the cut, signed as the ledger shows it |
 | `class`, `outcome` | Below |
 | `lifecycle` | `new`, `persisting` or `cleared`, against the previous run, or on a first run against the stock rewound to `T_prev` (§2) |
-| `openedAt`, `ageDays`, `bucket` | When the hold opened (its opening transaction's `timestamp`, the business date), its age at the cut in days, and its age bucket. The opening is known when it lies in a window recon read, a first run's seed included. `openedAt` is null for a hold opened before the chain's seed (§2): before `backfillFrom`, or on the product side before the seed's start, `psp.grace` earlier. Its opening was never read, so `ageDays` is a lower bound counted from `rule.backfillFrom`, and `bucket` follows it |
+| `openedAt`, `ageDays`, `bucket` | When the hold opened (its opening transaction's `timestamp`, the business date), its age at the cut in days, and its age bucket: `0-1d`, `2-7d`, `8-30d` or `>30d`, fixed by the engine (ADR-005 §7 item 8). The opening is known when it lies in a window recon read, a first run's seed included. `openedAt` is null for a hold opened before the chain's seed (§2): before `backfillFrom`, or on the product side before the seed's start, `psp.grace` earlier. Its opening was never read, so `ageDays` is a lower bound counted from `rule.backfillFrom`, and `bucket` follows it |
 | `previousBalance`, `clearedAt`, `clearedBy` | On a cleared hold: its balance at the previous cut, when it was lettered, and the `ref` that lettered it. No `clearedBy` means it was lettered without a PSP reference |
 | `pairedRef` | The unapplied payment whose `merchantRef` names this hold |
 
@@ -486,15 +486,20 @@ residual in that direction is 0 again.
 the class, priority and amount it had when it was last open, next to the row as it stands now, and
 its `outcome` is `ok`. So `outcome = 'break'` counts the open breaks in every file.
 
-### `unclassified.ndjson.gz`
+### Unclassified transactions
 
-One row per transaction and asset whose state is in none of the rule's sets: `side`, `tx`, `ref`,
-`asset`, `outcome` (`warning`), `state`, `amount`, `insertedAt`. `amount` is its net posting, in
-absolute value, on the accounts the rule reads for that side: `psp.paymentAccount` and the hold
-prefixes on the PSP side, the hold prefixes on the product side. Such a transaction takes no part in
-matching.
-A typical cause is a connector booking refunds on the original payment's id ([connector
+A transaction whose state is in none of the rule's sets takes no part in matching. The run writes
+no file for it: the manifest counts these transactions per side (`counts.unclassified`) and gives,
+per asset, side and state value, their count and amount (`statement.{asset}.unclassified`). The
+amount is a transaction's net posting, in absolute value, on the accounts the rule reads for that
+side: `psp.paymentAccount` and the hold prefixes on the PSP side, the hold prefixes on the product
+side. A typical cause is a connector booking refunds on the original payment's id ([connector
 checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation), row 6).
+The state value names the fix: add it to one of the rule's sets, or correct the mapping.
+
+To list the transactions, read that side's ledger: `ListTransactions` filtered on the key's
+presence, the state field equal to the value, and the day's id range `(txFrom, txTo]` of that
+side in the manifest's `cuts`, with the field names from its `rule`.
 
 ## 7. How rows move from day to day
 
@@ -553,7 +558,6 @@ checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconci
 | `carried` | `ref`, `asset` | `ref`, `asset` |
 | `stock` | `side`, `hold`, `asset` | `side`, `hold`, `asset` |
 | `breaks` | `breakId` | open before resolved, then `priority`, then `\|amount\|` descending, then `breakId` |
-| `unclassified` | `side`, `tx`, `asset` | `side`, `tx`, `asset` |
 
 ## 9. Queries
 
@@ -635,7 +639,6 @@ and was lettered on the same day.
   "engine": "reconciliation v1.4.0",
   "rule": {
     "id": "psp-vs-billing", "version": 7, "sha256": "4c1d…",
-    "buckets": ["1d", "7d", "30d"],
     "backfillFrom": "2026-08-01",
     "psp":     {"ledger": "psp",  "key": "payments.formance.com/payment-id",
                 "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
@@ -708,8 +711,7 @@ and was lettered on the same day.
     {"name": "flow.ndjson.gz",         "rows": 8, "sha256": "e41d…"},
     {"name": "carried.ndjson.gz",      "rows": 4, "sha256": "7a02…"},
     {"name": "stock.ndjson.gz",        "rows": 9, "sha256": "c9b8…"},
-    {"name": "breaks.ndjson.gz",       "rows": 3, "sha256": "15fe…"},
-    {"name": "unclassified.ndjson.gz", "rows": 1, "sha256": "90b3…"}
+    {"name": "breaks.ndjson.gz",       "rows": 3, "sha256": "15fe…"}
   ],
   "expiresAt": "2026-12-24T00:00:04Z"
 }
@@ -788,12 +790,6 @@ lettered by PAY-40 today: it stays in the file once, as `cleared`.
 
 A stock break's `amount` reads in the open direction: INV-14 is 100.00 on the wrong side. No break
 is resolved today: INV-5, which PAY-40 lettered, was an open hold, not a break.
-
-**`unclassified.ndjson.gz`**, 1 row:
-
-```text
-{"side":"psp","tx":1276330,"ref":"PAY-31","asset":"EUR/2","outcome":"warning","state":"payin.refunded","amount":"20000","insertedAt":"2026-09-24T10:36:14Z"}
-```
 
 **The statement**, as a UI may present it. It is an example of presentation, not an engine
 output: the engine writes no text. The figures come from the manifest, whose `statement` block and

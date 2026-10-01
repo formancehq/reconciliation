@@ -124,7 +124,7 @@ check)
     # kinds of data file that are missing, and the fields an incomplete run's reduced manifest
     # lacks or has too many (results doc §6): verdict|reason|files|missing kinds|fields.
     missing=""
-    for kind in flow carried stock breaks unclassified; do
+    for kind in flow carried stock breaks; do
         missing="$missing, CASE WHEN (SELECT count(*) FROM glob($(quote "$run/$kind*.ndjson.gz"))) = 0 THEN '$kind' END"
     done
     required="'schemaVersion', 'engine', 'rule', 'runId', 'period', 'startedAt', 'finishedAt', 'verdict', 'incomplete.reason', 'incomplete.detail', 'expiresAt'"

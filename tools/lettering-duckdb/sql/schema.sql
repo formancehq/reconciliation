@@ -53,12 +53,6 @@ SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip'
     creditResidual: 'HUGEINT', debitResidual: 'HUGEINT'
 }) WITH ORDINALITY;
 
-CREATE OR REPLACE MACRO unclassified_file(path, hive) AS TABLE
-SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip', filename = true, hive_partitioning = hive, columns = {
-    side: 'VARCHAR', tx: 'UBIGINT', ref: 'VARCHAR', asset: 'VARCHAR', outcome: 'VARCHAR',
-    state: 'VARCHAR', amount: 'HUGEINT', insertedAt: 'TIMESTAMP'
-}) WITH ORDINALITY;
-
 -- JSON shapes of the manifest's arrays, for from_json.
 CREATE OR REPLACE MACRO lettering_books_shape() AS
     '[{"side":"VARCHAR","prefix":"VARCHAR","asset":"VARCHAR","openSign":"VARCHAR","openPrev":"HUGEINT","opened":"HUGEINT","lettered":"HUGEINT","letteredOther":"HUGEINT","open":"HUGEINT","count":"BIGINT","continuityOk":"BOOLEAN"}]';

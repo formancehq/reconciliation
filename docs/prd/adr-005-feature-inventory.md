@@ -54,6 +54,8 @@ was checked again against the docs.
 | G4, how a replay is requested | Decided: a replay is a catch-up of one day, the catch-up action (G10) with its optional last day `to` equal to X; there is no separate replay action | ADR §7 item 7, dec. 14; DD §4; RD §2 |
 | D12, restart a stuck chain | Added (NEC), replacing D10 with the rules of the D10 row above; the next run's manifest, a first run with no `previousRun`, is the restart's only trace | ADR dec. 26; RD §2 |
 | I6, the period alert rebuilt every tick | Added (NEC): every tick rebuilds the open period's alert from the current run of each of its days, idempotent; a period closes once the next period's first day has a current run, and a closed alert is never rebuilt; the day list carries each day's verdict, counts, net, gross and link, and the headline is the latest day's; no gap state | ADR §7 items 2, 5; RD §5 |
+| C7, the rule's `buckets` | Simplified (owner, 2026-10-01 review of the optional features): the age buckets are fixed by the engine at 0–1, 2–7, 8–30 and > 30 days, and the rule has no `buckets` parameter. Each open hold's `bucket` and the bucket counts per book stay; a reader who wants other buckets computes them from `ageDays` | ADR §6, §7 item 8, dec. 3; RD §6 |
+| E7, `unclassified.ndjson.gz` | Removed from V1 (owner, 2026-10-01 review of the optional features): the manifest's `counts.unclassified` and `statement.{asset}.unclassified` give the side, state value, count and amount, which name the fix; the ledger lists the transactions on the key, the state value and the day's id range | ADR §6; RD §1, §6 |
 
 Abbreviations: **ADR** = ADR-005, **dec. *n*** = decision *n* of ADR §10 (not to be confused with
 rows D1–D12), **DD** = design doc, **RD** = results doc.
@@ -123,7 +125,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | C4 | `firstSide` on flow rows | ADR dec. 19 | Which side came first (PSP terminal state or first application) | Analytics only | **Removed from V1** | S | Nothing functional lost: `firstSeen` and the row's events give it |
 | C5 | Stock classes `open` + `wrong_sign` (P4) | ADR §6, dec. 11; RD §6 | Open hold, or balance of the wrong sign | `wrong_sign` is the only signal for an invoice paid twice by two separately matched payments | NEC | S | A double payment of one invoice goes unseen (both flows are `matched`) |
 | C6 | `stuck` via `maxAge` (no default, per side) | ADR §6, dec. 21 | Open past `maxAge` → P4 break | Per-key `stale_holds` signal | **Removed from V1** | S | Saves a rule parameter per side and a stock class. `stale_holds` covers held-too-long holds, and the buckets (C7) still show the age. Without a `maxAge` it never fired anyway |
-| C7 | Ageing: `openedAt`, `ageDays`, `bucket`, `buckets` param (0–1, 2–7, 8–30, > 30 d) | ADR §6, §7 item 6; RD §6 | Age of every open hold and bucket counts per book. `openedAt` is the opening transaction's `timestamp`, seen in a read window and kept in the stock file; it is null only for a hold opened before the seed window (before `backfillFrom`, or on the product side before the seed's `psp.grace`-earlier start), and the age is then a lower bound from `backfillFrom` | Credit-management view | OPT, **kept** | S | Saves the bucket counts in `books` and a rule param. `ageDays` stays on the stock rows, where a stock break shows it |
+| C7 | Ageing: `openedAt`, `ageDays`, `bucket`, fixed buckets (0–1, 2–7, 8–30, > 30 d) | ADR §6, §7 item 6; RD §6 | Age of every open hold and bucket counts per book. `openedAt` is the opening transaction's `timestamp`, seen in a read window and kept in the stock file; it is null only for a hold opened before the seed window (before `backfillFrom`, or on the product side before the seed's `psp.grace`-earlier start), and the age is then a lower bound from `backfillFrom` | Credit-management view | **Simplified** (OPT): fixed buckets, no `buckets` rule parameter | S | Saves the bucket counts in `books`. `ageDays` stays on the stock rows, where a stock break shows it |
 | C8 | `cleared` stock rows (`previousBalance`, `clearedAt`, `clearedBy`) | ADR §6; RD §6 | A hold open at the previous cut and lettered since is listed once | Shows what the day lettered; resolves stock breaks | OPT, **kept** | S | The stock file shows only open holds. `letteredOther` is still visible in `books`. Depends on D6 |
 | C9 | Unclassified txs: counted per side, state and asset, warning, never dropped | ADR §6; RD §5 | A tx whose state is in no set takes no part in matching but is reported | Catches connector mappings that break the conventions | NEC | S | Silent loss of money movements |
 | C10 | `letteredOther` in the books | ADR dec. 21; RD §5 | Letterings by txs outside matching (credit notes, write-offs, unclassified) | Makes the bridge's B equal the applications; shows manual letterings | OPT, **kept** | S | Needed only by E8 (the residual). Manual write-offs become invisible inside `lettered` |
@@ -158,7 +160,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 | E4 | `flow.ndjson.gz`, self-contained rows (`psp[]`, `product[]` tx lists, `holdAmount` on pending/failed) | RD §6 | One row per reference and asset | "Which payments are lettered" | NEC | M | No per-payment answer |
 | E5 | `stock.ndjson.gz` | RD §6 | One row per open hold (plus cleared) | Open book, `openPrev` for continuity | NEC | S | Continuity loses its `openPrev` |
 | E6 | `breaks.ndjson.gz`, self-contained, resolved rows included | RD §6 | Duplicates the break rows of flow/stock plus the book breaks | A reader never joins files | OPT, **kept** | S/M | Breaks are `outcome = 'break'` in flow + stock + `paymentAccounts`. Loses the `resolved` list (see D6), one-file convenience, and the file E21 pages the breaks from |
-| E7 | `unclassified.ndjson.gz` | RD §6 | One row per unclassified tx | Fixing the mapping | OPT | S | `statement.unclassified` in the manifest already gives side, state, amount and count. Low saving |
+| E7 | `unclassified.ndjson.gz` | RD §6 | One row per unclassified tx | Fixing the mapping | **Removed from V1** | S | `statement.unclassified` in the manifest already gives side, state, amount and count. Low saving |
 | E8 | Statement bridge: A (payment account) − B (from books) = net, lines by class/outcome/`earlierDay`, `residual` = 0 else `incomplete`, `impact` field | ADR §6; RD §5 | The classic *état de rapprochement* for the window | Explains the net; the residual ties the join to the books | OPT, **kept** | M | The lines are a `GROUP BY` over the flow file (DuckDB `bridge` query). Loses the residual self-check (the join attributed every lettering), `impact`, and C10/D5/E9 with it. Continuity (D4) still guards completeness |
 | E9 | `carriedOutside` lines | RD §5 | Carried items with no movement today, per class | Complete statement | OPT, **kept** | S | Derivable from the carried file |
 | E10 | `flowGross` + `offsetting` flag | ADR §6; RD §5 | Σ\|drift\| of the open flow breaks, and whether both signs exist | A net of 0 can hide breaks | **Simplified** (OPT): `offsetting` removed, `flowGross` kept | S | The alert already opens on breaks, never on the net: nothing lost. `flowGross` stays, since the alert's headline shows it first |
@@ -209,7 +211,7 @@ Cost is implementation plus doc complexity: **S** small, **M** medium, **L** lar
 
 Every knob a customer or an operator can set, with the feature it belongs to. It inherits that
 feature's interest unless the row says otherwise. The lookup group size and the read retries are
-engine constants (B20), not knobs.
+engine constants (B20), not knobs, and so are the age buckets (C7).
 
 | Knob | Level | Where | Feature | Interest | If removed |
 |---|---|---|---|---|---|
@@ -223,7 +225,7 @@ engine constants (B20), not knobs.
 | `psp.movementKeys` | rule | ADR dec. 23 | A9/E13 | OPT, **on hold** | Conversions and order fills leave a P1 residual on both sides of the book (`formancepayments`) |
 | `product.grace`, `psp.grace` | rule | ADR dec. 16, 20 | C3 | NEC | One grace would do, but loses the asymmetry |
 | `psp.maxAge`, `product.maxAge` | rule | ADR §6, dec. 21 | C6 | **Removed with C6** | `stale_holds` covers holds held too long |
-| `buckets` | rule | ADR §6 | C7 | OPT, **kept** | Hard-code the 4 buckets, or drop them |
+| `buckets` | rule | ADR §6 | C7 | **Removed with C7's simplification** | The buckets are an engine constant; other buckets come from `ageDays` |
 | `backfillFrom` | rule, and the restart and catch-up actions (and a replay past the retention) | ADR §7 items 6, 7, dec. 9, 26; RD §2 | B17, D12, G10 | NEC (a default exists) | A date in the rule's timezone; on or after the compared day, no seed. A restart's value past the next run's cut is rejected. A restart without it is refused only when the carried file failed its check |
 | `retention` | rule | ADR §7 item 4 | G2 | **Removed with G2** | `--lettering-retention` applies to every rule |
 | `periodType` (`daily`/`weekly`/`monthly`), timezone, cut-off | rule | ADR §6, dec. 8 | I1/I4 | NEC (daily, tz, cut-off); OPT (weekly/monthly) | — |
@@ -254,15 +256,19 @@ engine constants (B20), not knobs.
 
 ## Counts
 
-- **Features:** 110 numbered rows in §1–§7 and §9. §8 has 25 knob rows: 20 live, 5 removed; they
+- **Features:** 110 numbered rows in §1–§7 and §9. §8 has 25 knob rows: 19 live, 6 removed; they
   map to those rows and are not counted again.
 - **NEC:** 53, E21 included.
-- **OPT:** 32. Counted here: the "OPT, kept" rows, the "OPT, on hold" rows (A9, E13) and the
-  "Simplified" rows (E10, I3). Kept by decision: A8, C7, C8, C10, D5, D6, E6, E8, E9, F2, F4, F5,
-  F9, and G10 (kept in V1). Of the 32, 3 are doc-only, proposed, or already outside V1: A14, A15,
+- **OPT:** 31. Counted here: the "OPT, kept" rows, the "OPT, on hold" rows (A9, E13) and the
+  "Simplified" rows (C7, E10, I3). Kept by decision: A8, C8, C10, D5, D6, E6, E8, E9, F2, F4, F5,
+  F9, and G10 (kept in V1). Of the 31, 3 are doc-only, proposed, or already outside V1: A14, A15,
   G7.
-- **Removed, deferred or replaced:** 25, B11, B12, B13, B14, B16, B18, C4, C6, D8, D9, D10, D11, E14,
-  E15, E16, E17, F3, F10, G2, G3, G5, G6, G8, G9 and I5 (see "Decisions taken").
+- **The owner reviewed the 27 optional features in V1 one by one on 2026-10-01:** 25 stay as
+  they are (E10 and I3 in their simplified form), C7 is simplified to fixed buckets, and E7 is
+  removed. The 26 that remain in V1 are A8, B3, B6, B7, B20, C7, C8, C10, C12, D2, D5, D6, D7, E6,
+  E8, E9, E10, E22 (frozen), F2, F4, F5, F9, G4, G10, I3 and I4.
+- **Removed, deferred or replaced:** 26, B11, B12, B13, B14, B16, B18, C4, C6, D8, D9, D10, D11, E7,
+  E14, E15, E16, E17, F3, F10, G2, G3, G5, G6, G8, G9 and I5 (see "Decisions taken").
 
 ## Candidates to remove
 
@@ -329,7 +335,7 @@ judgement.
 19. **I3, the full rendered statement in the alert.** Send a minimal alert instead. Decided
     (simplified): the evidence is structured data, and the UI renders the statement.
 20. **C6 `stuck`/`maxAge` and C7 buckets.** They overlap `stale_holds`. Decided (C6 removed, C7
-    kept).
+    kept, then simplified to fixed buckets on 2026-10-01).
 21. **A8, merchantRef pairing.** It is cheap, and the docs call it the single most useful field. Keep
     it unless the Connectivity mapping cannot provide it. Decided (kept).
 

@@ -24,8 +24,4 @@ FROM breaks_days
 WHERE ref = getvariable('id') OR holdId = getvariable('id') OR merchantRef = getvariable('id')
    OR list_contains(list_transform(product, p -> p.businessId), getvariable('id'))
    OR list_contains(list_transform(product, p -> p.holdId), getvariable('id'))
-UNION ALL
-SELECT day, 'unclassified', state, outcome, ref, NULL, amount, 'tx ' || tx
-FROM unclassified_days
-WHERE ref = getvariable('id')
 ORDER BY day, file;

@@ -234,12 +234,10 @@ class Rule:
     product_grace: int
     backfill_from: dt.date
     period_type: str = 'daily'
-    buckets: tuple = (1, 7, 30)
 
     def as_json(self):
         return {
             "id": self.id, "version": 1, "sha256": None,
-            "buckets": [f"{b}d" for b in self.buckets],
             "backfillFrom": day_str(self.backfill_from),
             "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
                     "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
@@ -281,6 +279,10 @@ class Book:
 
 def cutoff(day):
     return dt.datetime.combine(day, dt.time(23, 59, 59), tzinfo=UTC) - TZ_OFFSET
+
+
+# The engine's fixed age buckets (ADR-005 §7 item 8): 0-1d, 2-7d, 8-30d, >30d.
+BUCKETS = (1, 7, 30)
 
 
 def bucket(age, bounds):
@@ -568,14 +570,14 @@ class Engine:
                      'openSign': SIGN_NAME[sign], 'balance': h['balance'], 'class': klass,
                      'outcome': 'break' if klass == 'wrong_sign' else 'ok',
                      'lifecycle': 'persisting' if was_open else 'new', 'openedAt': opened,
-                     'ageDays': age, 'bucket': bucket(age, self.rule.buckets)}
+                     'ageDays': age, 'bucket': bucket(age, BUCKETS)}
                 out.append(s)
             elif was_open:
                 opened, age = aged(side, h)
                 out.append({'side': side, 'hold': address, 'asset': asset, 'prefix': prefix, 'holdId': hid,
                             'openSign': SIGN_NAME[sign], 'balance': 0, 'class': 'cleared', 'outcome': 'ok',
                             'lifecycle': 'cleared', 'openedAt': opened, 'ageDays': age,
-                            'bucket': bucket(age, self.rule.buckets), 'previousBalance': was['balance'],
+                            'bucket': bucket(age, BUCKETS), 'previousBalance': was['balance'],
                             'clearedAt': h['last'], 'clearedBy': h['last_ref']})
         out.sort(key=lambda s: (s['side'], s['hold'], s['asset']))
         return out
@@ -637,7 +639,7 @@ class Engine:
             open_ = sum(OPEN_SIGN[prefix] * s['balance'] for s in rows)
             open_prev = prev_open.get((side, prefix, asset), 0)
             assert open_ == open_prev + b['opened'] - b['lettered'], (day, side, prefix, asset)
-            buckets = {bucket(a, self.rule.buckets): 0 for a in (0, 2, 8, 31)}
+            buckets = {bucket(a, BUCKETS): 0 for a in (0, 2, 8, 31)}
             for s in rows:
                 buckets[s['bucket']] += 1
             out.append({'side': side, 'prefix': prefix, 'asset': asset, 'openSign': SIGN_NAME[OPEN_SIGN[prefix]],
@@ -808,9 +810,6 @@ class Engine:
         data_file('carried.ndjson.gz', [self.flow_json(r, with_impact=False) for r in st['carried']])
         data_file('stock.ndjson.gz', [self.stock_json(s) for s in st['stock']])
         data_file('breaks.ndjson.gz', [self.break_json(b) for b in st['breaks']])
-        data_file('unclassified.ndjson.gz', [
-            {'side': u['side'], 'tx': u['tx'], 'ref': u['ref'], 'asset': u['asset'], 'outcome': 'warning',
-             'state': u['state'], 'amount': str(u['amount']), 'insertedAt': iso(u['t'])} for u in st['unclassified']])
         m = self.manifest(day, run_id, st, files)
         data = (dump(m) + '\n').encode()
         write(os.path.join(run_dir, 'manifest.json'), data)
@@ -1351,9 +1350,6 @@ def business_id(current, days, bid):
                 detail = f"P{b['priority']}" + (f" resolved on {b['resolvedOn']}" if not b['open']
                                                 else f" {b['lifecycle']} since {b['openedOn']}")
                 out.append([tag, 'breaks', b['class'], 'break' if b['open'] else 'ok', ref, hold, b['amount'], detail])
-        for u in st['unclassified']:
-            if u['ref'] == bid:
-                out.append([tag, 'unclassified', u['state'], 'warning', u['ref'], None, u['amount'], f"tx {u['tx']}"])
     return csv_text(['day', 'file', 'class', 'outcome', 'ref', 'hold', 'amount', 'detail'], out)
 
 

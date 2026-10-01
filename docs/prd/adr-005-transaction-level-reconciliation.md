@@ -389,8 +389,9 @@ V1 runs no periodic proof against a checkpoint.
   ```
 
   A transaction whose state value is in no set takes no part in matching, but it is **never dropped
-  silently**: it is counted as `unclassified` in the statement, with a warning, and listed in the
-  unclassified file. `formancepayments` books refunds on the original payment id as
+  silently**: it is counted as `unclassified` in the statement, per side and state value, with a
+  warning, and the ledger lists its transactions ([results
+  reference](../technical/transaction-level-results.md#unclassified-transactions)). `formancepayments` books refunds on the original payment id as
   `payin.refunded` (`formancehq/connectivity-plugins-poc` @ `9df05c5b`), so a default mapping shows
   up there instead of vanishing; the [connector mapping
   checklist](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation)
@@ -469,8 +470,9 @@ V1 runs no periodic proof against a checkpoint.
     after it. A team that letters by hand raises it to its usual delay.
   - `psp.grace` = **7 calendar days**: a direct debit (SEPA, ACH) final at D+5 business days spans a
     weekend, and applying at `pending` is common with those debits.
-  - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`.
-  - All three are rule parameters.
+  - Age buckets `0–1 d`, `2–7 d`, `8–30 d`, `> 30 d`, a constant of the engine (§7 item 8). A
+    reader who wants other buckets computes them from `ageDays` in the stock file.
+  - Both graces are rule parameters.
   - A hold's age counts from its opening transaction's `timestamp`, the business date (§5), seen
     in a window recon read (a day's flow, or a first run's seed, §7 item 6) and then kept in the
     stock file from run to run. A hold opened before the seed (before `backfillFrom`, or on the
@@ -712,10 +714,11 @@ V1 runs no periodic proof against a checkpoint.
      manifest's `expiresAt` and bounds the byte-identical replays (item 7); the storage's lifecycle
      rule, set to the same age, deletes the files (item 4).
 
-   Two more values are **constants of the engine**, not settings: key lookups go by groups of
-   **100** references (§6), and a failed read is tried **5 times**, waiting 1, 2, 4 and 8 s between
-   tries. Past the fifth failure the job stops without writing its manifest, so the run is
-   unfinished and starts again from the beginning at the next tick (item 2). An index still
+   Three more values are **constants of the engine**, not settings: the age buckets `0–1 d`,
+   `2–7 d`, `8–30 d` and `> 30 d` (§6), key lookups by groups of **100** references (§6), and a
+   failed read is tried **5 times**, waiting 1, 2, 4 and 8 s between tries. Past the fifth
+   failure the job stops without writing its manifest, so the run is unfinished and starts again
+   from the beginning at the next tick (item 2). An index still
    building (`INDEX_BUILDING`) is therefore waited for from tick to tick. These tries stack on the
    gRPC client's own retry of `UNAVAILABLE` (`GRPCRetryPolicy`: 5 attempts, 3 to 4.5 s of waits):
    a read that stays `UNAVAILABLE` reaches the ledger 25 times over 30 to 38 s before the job
@@ -802,7 +805,7 @@ for the Ledger team to weigh against its own users:
 |---|---|---|
 | 1 | The shared key | The **PSP payment reference**, carried by the transactions on both ledgers. Authorization/capture, where both sides share the authorization number, is the special case (§2.1, §6). |
 | 2 | The state vocabulary | **Parameterised per side** in the rule, because it depends on how external payment states are modelled on the PSP ledger (§6). |
-| 3 | Grace and ageing | `grace` is per side: `product.grace` 1 day and `psp.grace` 7 days by default (decisions 16, 20). Age buckets 0–1, 2–7, 8–30 and > 30 days; all are rule parameters, to calibrate (§6). |
+| 3 | Grace and ageing | `grace` is per side: `product.grace` 1 day and `psp.grace` 7 days by default (decisions 16, 20). Both graces are rule parameters, to calibrate (§6). The age buckets 0–1, 2–7, 8–30 and > 30 days are a constant of the engine, not a rule parameter (owner, 2026-10-01). |
 | 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`, kept **90 days** by default. The retention is a deployment setting (`--lettering-retention`), not a rule parameter, and one storage lifecycle rule on `{bucketID}/reconciliation/`, required at installation, deletes the files; recon deletes none. A longer legal retention raises both. No longer-kept monthly anchors (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |

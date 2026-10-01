@@ -26,9 +26,6 @@ FROM stock_file(lettering_file('stock'), false);
 CREATE OR REPLACE VIEW breaks AS
 SELECT * EXCLUDE (filename, ordinality), parse_filename(filename) AS file, ordinality AS pos
 FROM breaks_file(lettering_file('breaks'), false);
-CREATE OR REPLACE VIEW unclassified AS
-SELECT * EXCLUDE (filename, ordinality), parse_filename(filename) AS file, ordinality AS pos
-FROM unclassified_file(lettering_file('unclassified'), false);
 
 -- The manifest, flattened.
 CREATE OR REPLACE VIEW m_run AS

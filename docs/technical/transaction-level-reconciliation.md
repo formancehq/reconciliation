@@ -275,7 +275,7 @@ sequenceDiagram
     J->>P: ListTransactions(key = ref, id ≤ T_P) · applied refs in neither window nor carried, window refs failed
     J->>Q: ListTransactions(key = ref, id ≤ T_Q) · history of refs found final, window refs failed
     J->>J: join on the PSP reference (+ carried, + lookups) · age both stock books · continuity
-    J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ flow / carried / stock / breaks / unclassified
+    J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ flow / carried / stock / breaks
     J->>C: capture(verdict, counts, drifts, T per ledger, manifest sha256) — Ed25519
     J->>O: manifest.json, last: the run exists once it is written
     J->>C: rebuild the open period's alert (day list · latest day's headline, statement, counts)
@@ -1353,7 +1353,7 @@ references of 27 characters (a Stripe id) or 110 (a base64 Payments id, which `f
 | `carried` | ~70,000 | 4.8 MB | 9.4 MB |
 | `stock` | 60,000 | 1.0 MB (17 B/row) | 1.0 MB |
 | `breaks` | ~20,000 | 1.8 MB (93 B/row) | 3.2 MB (161 B/row) |
-| `unclassified` | 1,000 | < 0.1 MB | 0.1 MB |
+| `unclassified` (removed from V1 on 2026-10-01: the manifest counts these transactions) | 1,000 | < 0.1 MB | 0.1 MB |
 
 Encoding and compressing the flow file took 4.6 s (5.4 s with the long references); at level 1,
 1.7 s for 89 MB; at level 9, 10.2 s for 73 MB. Its SHA-256 took 22 to 43 ms. DuckDB read it

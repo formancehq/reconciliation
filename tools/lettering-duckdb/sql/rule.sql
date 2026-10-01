@@ -37,9 +37,6 @@ FROM stock_file(lettering_glob('stock'), true) s SEMI JOIN current_runs USING (d
 CREATE OR REPLACE VIEW breaks_days AS
 SELECT b.* EXCLUDE (filename, ordinality)
 FROM breaks_file(lettering_glob('breaks'), true) b SEMI JOIN current_runs USING (day, run);
-CREATE OR REPLACE VIEW unclassified_days AS
-SELECT u.* EXCLUDE (filename, ordinality)
-FROM unclassified_file(lettering_glob('unclassified'), true) u SEMI JOIN current_runs USING (day, run);
 
 -- The current runs' manifests, flattened: one row per day and asset, prefix or side.
 CREATE OR REPLACE VIEW statement_days AS

@@ -96,8 +96,8 @@ flowchart LR
 
 ### Readers (`sql/schema.sql`)
 
-There is one table macro per file kind: `flow_file(path, hive)`, `stock_file`, `breaks_file` and
-`unclassified_file`. The carried file has the flow file's columns. Four choices make them reliable:
+There is one table macro per file kind: `flow_file(path, hive)`, `stock_file` and `breaks_file`.
+The carried file has the flow file's columns. Four choices make them reliable:
 
 - **Declared columns.** Each column and its type is declared, never inferred. A complete run writes
   every data file, even with no row, and an empty file still has its columns. A key missing from a
@@ -114,7 +114,7 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
 ### One run (`sql/run.sql`)
 
 - **Variable.** `run` is the run's directory.
-- **Data views.** `manifest`, `flow`, `carried`, `stock`, `breaks` and `unclassified`. Each data view
+- **Data views.** `manifest`, `flow`, `carried`, `stock` and `breaks`. Each data view
   adds `file` (the file's name) and `pos` (the row's position).
 - **Manifest views.** The manifest, flattened: `m_run`, `m_files`, `m_cuts`, `m_statement`,
   `m_lines`, `m_carried_outside`, `m_books`, and `m_payment_accounts` with `m_payment_directions`
@@ -127,8 +127,8 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
 - **Current runs.** `current_runs` keeps, per day, the latest run that is not incomplete. Run ids
   sort by start instant, and an incomplete run writes a reduced manifest and no data file, so this
   is the results doc's current run (§2), even when a failed run came last.
-- **Day views.** `flow_days`, `carried_days`, `stock_days`, `breaks_days` and `unclassified_days`
-  keep only the current runs' rows, with `day`, `run` and `rule` from the path.
+- **Day views.** `flow_days`, `carried_days`, `stock_days` and `breaks_days` keep only the current
+  runs' rows, with `day`, `run` and `rule` from the path.
 - **Manifest views.** `statement_days`, `books_days` and `cuts_days` flatten the current runs'
   manifests. `cuts_days` gives each side's transaction window, which tells what the day itself
   booked.
@@ -379,7 +379,6 @@ query the views:
 | `flow_days`, `carried_days` | day, payment reference and asset |
 | `stock_days` | day and hold, open or cleared since the previous run |
 | `breaks_days` | day and break, open or resolved since the previous run |
-| `unclassified_days` | day and unclassified transaction |
 | `statement_days` | day and asset: the statement as JSON (`s`) |
 | `books_days` | day, side, prefix and asset: the open books |
 | `cuts_days` | day and side: the transaction window (`txFrom`, `txTo`] |
@@ -472,21 +471,21 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `schema_version` | The manifest's `schemaVersion` is `lettering/1` |
 | `incomplete_files`, `incomplete_fields` | An incomplete run has no data file, and its reduced manifest has every field the results doc §6 requires and none it leaves out. The wrapper checks these before any SQL runs, and stops there |
 | `file_missing`, `file_unlisted`, `file_rows`, `file_sha256` | The manifest lists exactly the files present, with their row counts and SHA-256 |
-| `counts_flow`, `counts_flow_outcome`, `counts_stock`, `counts_breaks`, `counts_unclassified` | The manifest's counts match the files |
+| `counts_flow`, `counts_flow_outcome`, `counts_stock`, `counts_breaks` | The manifest's counts match the files |
+| `counts_unclassified` | The manifest's unclassified counts per side match the statement's unclassified lines (the run writes no file for them, results doc §6) |
 | `bridge_net`, `bridge_totals`, `bridge_line`, `bridge_carried_outside`, `bridge_gross` | The net is `SUM(impact)` and `psp − product`; each line matches the flow rows; the carried lines and the gross match |
 | `bridge_residual`, `bridge_product_vs_books` | The residual is 0, recomputed from the applications booked in the product window, and the product total equals the books' `lettered − letteredOther` |
-| `statement_unclassified` | The statement's unclassified totals match the file |
 | `carried_vs_flow`, `suspense_open`, `suspense_identity` | The carried file holds exactly the flow rows whose drift is not 0; the open items equal its sum and count, and `open = openPrev + net + fromLookups` |
 | `books_continuity`, `books_vs_stock` | Each book closes, and equals its open stock rows in the open direction |
 | `book_residual` | Each payment-account residual is the account's movement since the previous cut minus the flow's (`input − inputPrev − flowCredits`, `output − outputPrev − flowDebits`), and its volumes never go down |
 | `breaks_vs_rows`, `break_vs_row` | Every open break of the flow and stock files, and every non-zero residual of the payment-account book, is in the breaks file, and back, with the same class and amount; a book break, open or resolved, carries its account's `paymentAccounts` entry as it stands |
 | `break_amount`, `break_outcome`, `break_priority` | What `break_vs_row` cannot see: an open book break's amount is its direction's residual and a resolved one's residual is 0 again, and a resolved stock break keeps its hold's last open balance; a break's outcome and priority follow its lifecycle and class |
 | `row_drift`, `row_break_on` | A pending or break row has a drift and a matched, in-progress or failed one has none; `breakOn` is `firstSeen` plus the lagging side's grace |
-| `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone from its `openedAt`, or from `rule.backfillFrom` when `openedAt` is null (a lower bound), and its bucket and each book's bucket counts follow from the rule's bounds |
+| `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone from its `openedAt`, or from `rule.backfillFrom` when `openedAt` is null (a lower bound), and its bucket and each book's bucket counts follow from the engine's fixed buckets (0-1d, 2-7d, 8-30d, >30d) |
 | `row_amounts`, `row_impact`, `row_outcome` | A flow row's amounts follow from its transactions, a carried row has no `impact`, and each row's outcome (and a stock row's sign) follows from its class |
 | `row_class` | A flow row's class follows from its net amounts: applications that sum to 0 count as none |
 | `unique_key`, `row_order` | Each file's unique key and row order (results doc §8) |
-| `verdict_mismatch` | The verdict follows from the files |
+| `verdict_mismatch` | The verdict follows from the files and, for the warnings, the manifest's unclassified counts |
 
 ### Rules of `check-chain`
 

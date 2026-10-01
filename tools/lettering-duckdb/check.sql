@@ -11,13 +11,13 @@ CREATE OR REPLACE TEMP TABLE violations (rule VARCHAR, key VARCHAR, detail VARCH
 
 CREATE OR REPLACE TEMP MACRO v_int(x) AS coalesce(x::HUGEINT, 0);
 
--- The rule's durations, in days ("7d" -> 7; NULL when absent), its age buckets, and where the
--- chain's first run seeded its open items from.
+-- The rule's durations, in days ("7d" -> 7; NULL when absent), the engine's fixed age buckets
+-- (ADR-005 §7 item 8), and where the chain's first run seeded its open items from.
 CREATE OR REPLACE TEMP MACRO v_days(x) AS regexp_extract(x, '^([0-9]+)d$', 1)::INTEGER;
 CREATE OR REPLACE TEMP VIEW v_rule AS
 SELECT v_days(m->'rule'->'psp'->>'grace') AS psp_grace,
        v_days(m->'rule'->'product'->>'grace') AS product_grace,
-       list_transform(from_json(m->'rule'->'buckets', '["VARCHAR"]'), b -> v_days(b)) AS bounds,
+       [1, 7, 30] AS bounds,
        (m->'rule'->>'backfillFrom')::DATE AS backfill_from,
        m->'period'->>'tz' AS tz
 FROM manifest;
@@ -39,15 +39,13 @@ CREATE OR REPLACE TEMP TABLE actual_files AS
 SELECT parse_filename(filename) AS name, sha256(content) AS sha256 FROM read_blob(lettering_file('flow'))
 UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('carried'))
 UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('stock'))
-UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('breaks'))
-UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('unclassified'));
+UNION ALL SELECT parse_filename(filename), sha256(content) FROM read_blob(lettering_file('breaks'));
 
 CREATE OR REPLACE TEMP TABLE actual_rows AS
 SELECT file AS name, count(*) AS rows FROM flow GROUP BY file
 UNION ALL SELECT file, count(*) FROM carried GROUP BY file
 UNION ALL SELECT file, count(*) FROM stock GROUP BY file
-UNION ALL SELECT file, count(*) FROM breaks GROUP BY file
-UNION ALL SELECT file, count(*) FROM unclassified GROUP BY file;
+UNION ALL SELECT file, count(*) FROM breaks GROUP BY file;
 
 INSERT INTO violations
 SELECT 'file_missing', l.name, 'listed in the manifest, not found'
@@ -113,8 +111,10 @@ WHERE coalesce(l.n, 0) <> coalesce(f.n, 0);
 INSERT INTO violations
 WITH listed AS (SELECT k AS side, (m->'counts'->'unclassified'->>k)::BIGINT AS n
                 FROM manifest, unnest(json_keys(m->'counts'->'unclassified')) t(k)),
-     found AS (SELECT side, count(*) AS n FROM unclassified GROUP BY side)
-SELECT 'counts_unclassified', coalesce(l.side, f.side), 'manifest ' || coalesce(l.n, 0) || ', unclassified file ' || coalesce(f.n, 0)
+     found AS (SELECT u.side, sum(u.count) AS n
+               FROM m_statement, unnest(from_json(s->'unclassified', '[{"side":"VARCHAR","count":"BIGINT"}]')) t(u)
+               GROUP BY u.side)
+SELECT 'counts_unclassified', coalesce(l.side, f.side), 'counts ' || coalesce(l.n, 0) || ', statement ' || coalesce(f.n, 0)
 FROM listed l FULL JOIN found f USING (side)
 WHERE coalesce(l.n, 0) <> coalesce(f.n, 0);
 
@@ -178,15 +178,6 @@ SELECT 'bridge_gross', s.asset,
        'statement flowGross ' || coalesce(s.s->>'flowGross', 'missing') || ', flow ' || coalesce(f.gross, 0)
 FROM m_statement s LEFT JOIN found f USING (asset)
 WHERE v_int(s.s->>'flowGross') <> coalesce(f.gross, 0);
-
-INSERT INTO violations
-WITH listed AS (SELECT asset, unnest(from_json(s->'unclassified', '[{"side":"VARCHAR","state":"VARCHAR","amount":"HUGEINT","count":"BIGINT"}]'), recursive := true)
-                FROM m_statement),
-     found AS (SELECT asset, side, state, sum(amount) AS amount, count(*) AS n FROM unclassified GROUP BY ALL)
-SELECT 'statement_unclassified', concat_ws('/', coalesce(l.asset, f.asset), coalesce(l.side, f.side), coalesce(l.state, f.state)),
-       'statement ' || coalesce(l.amount, 0) || ' (' || coalesce(l.count, 0) || '), file ' || coalesce(f.amount, 0) || ' (' || coalesce(f.n, 0) || ')'
-FROM listed l FULL JOIN found f USING (asset, side, state)
-WHERE coalesce(l.amount, 0) <> coalesce(f.amount, 0) OR coalesce(l.count, 0) <> coalesce(f.n, 0);
 
 -- The open items (carried) ---------------------------------------------------------------
 
@@ -437,7 +428,6 @@ SELECT 'unique_key', 'flow ' || ref || '/' || asset, count(*) || ' rows' FROM fl
 UNION ALL SELECT 'unique_key', 'carried ' || ref || '/' || asset, count(*) || ' rows' FROM carried GROUP BY ref, asset HAVING count(*) > 1
 UNION ALL SELECT 'unique_key', 'stock ' || side || '/' || hold || '/' || asset, count(*) || ' rows' FROM stock GROUP BY side, hold, asset HAVING count(*) > 1
 UNION ALL SELECT 'unique_key', 'breaks ' || breakId, count(*) || ' rows' FROM breaks GROUP BY breakId HAVING count(*) > 1
-UNION ALL SELECT 'unique_key', 'unclassified ' || side || '/' || tx || '/' || asset, count(*) || ' rows' FROM unclassified GROUP BY side, tx, asset HAVING count(*) > 1
 UNION ALL SELECT 'unique_key', 'paymentAccounts ' || account || '/' || asset, count(*) || ' entries' FROM m_payment_accounts GROUP BY account, asset HAVING count(*) > 1;
 
 -- Rows are read in file order; each file's key must never go backwards.
@@ -459,18 +449,14 @@ WITH ordered AS (SELECT breakId, struct_pack(a := CASE WHEN outcome = 'break' TH
                  FROM breaks)
 SELECT 'row_order', 'breaks ' || breakId, 'open before resolved, then priority, then |amount| descending' FROM ordered WHERE k < prev;
 
-INSERT INTO violations
-WITH ordered AS (SELECT side || '/' || tx || '/' || asset AS key, struct_pack(a := side, b := tx, c := asset) AS k,
-                        lag(struct_pack(a := side, b := tx, c := asset)) OVER (ORDER BY file, pos) AS prev FROM unclassified)
-SELECT 'row_order', 'unclassified ' || key, 'follows a greater key' FROM ordered WHERE k < prev;
-
 -- The verdict ------------------------------------------------------------------------------
 
 INSERT INTO violations
 WITH expected AS (
     SELECT CASE
         WHEN (SELECT count(*) FROM breaks WHERE outcome = 'break') > 0 THEN 'breaks'
-        WHEN (SELECT count(*) FROM unclassified) > 0 THEN 'reconciled_with_warnings'
+        WHEN (SELECT coalesce(sum((m->'counts'->'unclassified'->>k)::BIGINT), 0)
+              FROM manifest, unnest(json_keys(m->'counts'->'unclassified')) t(k)) > 0 THEN 'reconciled_with_warnings'
         WHEN (SELECT count(*) FROM flow WHERE outcome = 'pending') > 0 THEN 'reconciled_with_pending'
         ELSE 'reconciled' END AS verdict)
 SELECT 'verdict_mismatch', r.run_id, 'manifest ' || r.verdict || ', files say ' || e.verdict

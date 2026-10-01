@@ -169,8 +169,6 @@ fresh "$day24"; edit "$work/run/$m" 's/"carriedOutside":\[{"class":"unapplied_pa
 expect_violation "a carried line" bridge_carried_outside "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"flowGross":"55000"/"flowGross":"55001"/'
 expect_violation "the gross" bridge_gross "$lettering" check "$work/run"
-fresh "$day24"; edit "$work/run/$m" 's/"state":"payin.refunded","amount":"20000","count":1/"state":"payin.refunded","amount":"20001","count":1/'
-expect_violation "the statement's unclassified total" statement_unclassified "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/carried.ndjson.gz" '/"ref":"PAY-39"/d'
 expect_violation "a carried row removed" carried_vs_flow "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"open":"105000","count":4/"open":"105001","count":4/'
