@@ -11,6 +11,11 @@ dist/
 .env
 reconciliation
 
+# Python bytecode, written when a tool script such as
+# tools/lettering-duckdb/testdata/generate.py is imported.
+__pycache__/
+*.pyc
+
 # Isolated local dev stack — Compose file, Dockerfile, gateway config, smoke
 # script, and per-developer .env live here. Not part of the shipped product.
 local/
