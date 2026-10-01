@@ -5,8 +5,8 @@ taken so far are in §10.
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
 to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9, the period alert's day list), EN-2334 (R10 rewind oracle test),
 EN-2335 (R11 booking guide) and EN-2353 (R12, the DuckDB tool for the result files). EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
-L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L10 EN-2369, L5 EN-2331 (closed); EN-2336 tracks the checkpoint read
-penalty, which this design does not depend on.
+L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L10 EN-2369, L5 EN-2331 (closed). EN-2336, the checkpoint read
+penalty this design does not depend on, is fixed by formancehq/ledger#2165.
 **Date:** 2026-09-28
 **Decision owners:** Reconciliation maintainers
 **Related:** [feature inventory](./adr-005-feature-inventory.md) (V1 scope review) · [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [design, measurements and evidence](../technical/transaction-level-reconciliation.md)
@@ -173,14 +173,20 @@ table is in the [design doc §7](../technical/transaction-level-reconciliation.m
 | Keyed diff of two 1M scopes | 22 s | **10 min 25 s** (sequential at `0b4676d97`); **2 min 38 s** (parallel, on the tip) |
 | Concurrent reads of one checkpoint | — | fail (`lock held by current process`, non-retryable `Unknown`) at `0b4676d97`; fixed by EN-2108 on the tip |
 
-The cost is in reopening, not reading: every page reopens both checkpoint databases (finding F-b,
-[design doc §7.3](../technical/transaction-level-reconciliation.md#73-what-the-numbers-say)).
+These figures predate formancehq/ledger#2165 (`7f57e98b5`, EN-2336). The cost was in opening, not
+reading: every page reopens both checkpoint databases, and each open replayed the WAL the checkpoint
+had inherited from the live store (finding F-b,
+[design doc §7.3](../technical/transaction-level-reconciliation.md#73-what-the-numbers-say)). The
+fix flushes the live store before the snapshot. By the Ledger's figures, the 1M-account aggregate
+drops from about 62 s to about 3.4 s; reconciliation has not re-measured.
 
 The structural limits hold whatever the speed:
 
 - **At most 10 live checkpoints per cluster**, shared with every tenant and with the ledger's own
   cron (`processor_query_checkpoint.go:21-24`).
-- **Each create and delete is a Raft order.** The create gates the apply loop.
+- **Each create and delete is a Raft order.** The create gates the apply loop, and since
+  formancehq/ledger#2165 it flushes the live store while the loop is gated (about 1.4 s at 1M
+  accounts, by the Ledger's figures).
 - **Disk grows with write churn × lifetime, on every replica.** The measured 100k-account checkpoint
   kept its 169 MB alive after the live store moved on.
 - **A checkpoint cannot be created in the past.** It freezes the *run* instant, not the business
@@ -203,15 +209,16 @@ provide point-in-time queries" (ledger backup README).
 | E | Pebble primitives: EFOS, `Checkpoint(WithRestrictToSpans)`, `RemoteStorage` | **Rejected**, evidence in the [design doc §6](../technical/transaction-level-reconciliation.md#6-could-pebble-do-better). Pebble is not the bottleneck; the ledger read API is. |
 | F | Paginate live without correction | **Rejected.** A 1M listing spans about 1,000 snapshots and tears under writes (measured, [design doc §7.4](../technical/transaction-level-reconciliation.md#74-rewind-proof)). |
 
-### If checkpoint reads became as fast as live reads
+### Checkpoint reads are now about as fast as live reads
 
-[EN-2336](https://formance-team.atlassian.net/browse/EN-2336) asks the Ledger to remove the ~20×
-read penalty at a checkpoint. **Option A would stay rejected even then**, for reasons that do not
-depend on read speed:
+[EN-2336](https://formance-team.atlassian.net/browse/EN-2336) removed the ~20× read penalty at a
+checkpoint (formancehq/ledger#2165, 2026-10-01). **Option A stays rejected**, for reasons that do
+not depend on read speed:
 
 - **The cap.** 10 live checkpoints per cluster, shared by every tenant and by the ledger's own
   checkpoint scheduler; eleven daily rules at midnight already exceed it (ADR-003).
-- **The write path.** Each create and delete is a Raft order, and the create pauses the applier.
+- **The write path.** Each create and delete is a Raft order, and the create pauses the applier
+  while it flushes the live store.
 - **The wrong instant.** A checkpoint captures the run instant, so the stock would still need
   rewinding to `T`.
 - **Past days.** A first run's starting stock, a replay and a catch-up need a cut where no
@@ -219,8 +226,10 @@ depend on read speed:
   SSTs.
 - **The flow needs no snapshot.** Transactions at or below `T` are immutable except for their
   metadata.
+- **One read path.** Past days need the rewind anyway. A checkpoint would add a second path to
+  build and test, and a fallback for when the cap is reached, which would be the rewind.
 
-A fast checkpoint read would only make the rewind's oracle test (R10) cheaper to run more often.
+The fast read only makes the rewind's oracle test (R10) cheaper to run.
 
 ## 5. Decision A — the cut is a transaction id, and the stock is rewound to it
 
@@ -776,9 +785,10 @@ evaluation, so it does not ask for any of the following. The measurements stay i
 ([§8](../technical/transaction-level-reconciliation.md#8-ledger-findings-and-asks), F-b, F-g, F-h)
 for the Ledger team to weigh against its own users:
 
-- **Checkpoint reads are about ×20 slower than live reads**: every page reopens both databases.
-  Filed at the Ledger team's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336)
-  (ex-L1), theirs to prioritise. The rewind's test oracle can afford the slowdown.
+- **Checkpoint reads were about ×20 slower than live reads**: each open replayed the WAL the
+  checkpoint had inherited. Filed at the Ledger team's request as
+  [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1), fixed by
+  formancehq/ledger#2165, which flushes the live store before the snapshot.
 - **No consistent export**, meaning no single-snapshot multi-page listing, and **checkpoints have
   no owner and no TTL**. These served options A and B only.
 

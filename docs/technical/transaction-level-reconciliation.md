@@ -813,6 +813,9 @@ laptop.
 | Keyed diff at checkpoint, tip (EN-2108 fixed) | 8.3 s (parallel) | 2 min 38 s (parallel) |
 | Merge-join + write, alone | 3 ms | 29 ms |
 
+The rows at a checkpoint predate formancehq/ledger#2165, which removed most of the read penalty
+(§7.3, item 2).
+
 ### 7.2 Log and transaction reads
 
 **Ledger `psp`**, 1M transactions, one account each:
@@ -845,12 +848,16 @@ appears as a new `SavedMetadata` log at the head. This is why the flow filters o
 ### 7.3 What the numbers say
 
 1. **The join is free.** Moving the data is the whole cost: 29 ms of join for 1M × 2.
-2. **A checkpoint makes reads about ×20 slower.** Every page reopens both checkpoint databases with
-   the backup profile (`internal/adapter/grpc/server_bucket.go:336-398`,
-   `internal/storage/dal/store_readonly.go`). On the tip, two concurrent readers are *faster* than
-   one: 100k × 2 in 8.3 s, against 26 s for one scope. The shared open survives while any reader
-   holds it, which shows the reopen is the cost. Not needed by recon (§8, F-b); filed for the Ledger
-   team as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336).
+2. **A checkpoint made reads about ×20 slower, until formancehq/ledger#2165.** Every page reopens
+   both checkpoint databases with the backup profile (`internal/adapter/grpc/server_bucket.go:336-398`,
+   `internal/storage/dal/store_readonly.go`). Two concurrent readers were *faster* than one: 100k × 2
+   in 8.3 s, against 26 s for one scope, because the shared open survived while either reader held
+   it. The open was the cost: it replayed the WAL the checkpoint had inherited from the live store,
+   about 165 MB into 64 memtables on the Ledger's 1M-account reproduction. The fix for
+   [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) flushes the live store before the
+   snapshot (`internal/storage/dal/store.go:1093-1097` at `7f57e98b5`). By the Ledger's figures,
+   the 1M aggregate drops from about 62 s to about 3.4 s, and the flush takes about 1.4 s while the
+   applier is gated. Not re-measured here, and not needed by recon (§8, F-b).
 3. **Page size costs ×4.7.** Bulk reads must use `MaxPageSize` = 1000.
 4. **Every listed account emitted an INFO log line** (`internal/application/ctrl/store.go:189-195`):
    3.86M lines, a 970 MB log. → ask **L2**, done (§8, F-c): now at TRACE.
@@ -1464,7 +1471,7 @@ stream and 2.8 s on 8 (95k and 356k/s, as in §7.8), and the rewinds above were 
 | # | Finding | Evidence | Ask |
 |---|---|---|---|
 | F-a | Concurrent reads of one checkpoint failed (`lock held by current process`) | `0b4676d97`; fixed by [EN-2108](https://formance-team.atlassian.net/browse/EN-2108) (`7492e7304`) | none |
-| F-b | Checkpoint reads are ×20 slower: every page reopens both databases with the backup profile | §7.3.2 | For information: evaluations take no checkpoint, and the test oracle can afford the slowdown. Filed at the Ledger team's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1), related to EN-2108 |
+| F-b | Checkpoint reads were ×20 slower: every page reopens both databases, and each open replayed the WAL the checkpoint had inherited | §7.3.2 | None: evaluations take no checkpoint. Filed at the Ledger team's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1), related to EN-2108; fixed by formancehq/ledger#2165 (`7f57e98b5`), which flushes the live store before the snapshot |
 | F-c | One INFO log line per listed account | `store.go:189-195` | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)), done: formancehq/ledger#2128 (`199bee364`) |
 | F-d | A purged EPHEMERAL account's transactions, its opening included, were not returned by an address filter: the query checked that the account currently exists (`internal/query/compile.go:1069-1110` at `92b378e4b`). Fixed by formancehq/ledger#2058, merged as `38c6eef55` (EN-2331 closed). The merged prefix listing includes purged holds, against the ask to keep the address prefix to current accounts, at O(every hold ever created) per page: 50.7 s for a 2k window at 1M purged holds at `20a5595d6` ([reported on the PR](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700)), not re-measured on the merge | §2 probe; §7.6 | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331), closed): a tested contract for the metadata and `reference` paths, all this design needs. The ledger added no test for them, so recon pins them: EN-2318 (window filter, key lookup, business id, `reference`) and EN-2319 (a purged hold's `post_commit_volumes` in the unfiltered transactions) |
 | F-e | `ListLogs` runs at 7.3k–13.8k logs/s on one stream, 5–9× slower than `ListTransactions` over the same data. At `7dd615dba`, 10.7k/s with the fold on one stream and ~60k/s on 8 ranges; in one session of the node the same reads ran 4–9× faster, which did not reproduce | §7.2, §7.8, §7.13 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): no longer on recon's path in V1, which reads no logs (ADR-005 decisions 12 and 25) |
