@@ -716,7 +716,11 @@ V1 runs no periodic proof against a checkpoint.
    **100** references (§6), and a failed read is tried **5 times**, waiting 1, 2, 4 and 8 s between
    tries. Past the fifth failure the job stops without writing its manifest, so the run is
    unfinished and starts again from the beginning at the next tick (item 2). An index still
-   building (`INDEX_BUILDING`) is therefore waited for from tick to tick.
+   building (`INDEX_BUILDING`) is therefore waited for from tick to tick. These tries stack on the
+   gRPC client's own retry of `UNAVAILABLE` (`GRPCRetryPolicy`: 5 attempts, 3 to 4.5 s of waits):
+   a read that stays `UNAVAILABLE` reaches the ledger 25 times over 30 to 38 s before the job
+   stops. Other errors, and an `UNAVAILABLE` after a stream has delivered its first result, are
+   tried 5 times by this retry alone.
 
    K, the per-step durations and the read counts are exported as metrics and logs, not written to
    the manifest. How K was chosen: [design doc

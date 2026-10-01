@@ -39,15 +39,29 @@ const nextCursorTrailerKey = "x-next-cursor"
 // follows the cursor across pages, so this only trades round-trips for memory.
 const queryPageSize = 200
 
-// GRPCRetryPolicy retries on UNAVAILABLE (leader failover, cluster unhealthy).
+// GRPCRetryPolicy retries UNAVAILABLE for as long as one leader election
+// lasts, and no longer. A call makes at most 5 attempts, with waits of 0.25,
+// 0.5, 1 and 2 s between them (gRPC adds ±20 % jitter), so it gives up after
+// 3 to 4.5 s of waiting. At the ledger's defaults an election takes 1 to 2 s
+// (election timeout of 10 ticks of 100 ms, randomized up to twice that).
+//
+// 5 is also grpc-go's ceiling: it caps maxAttempts at 5 unless the dial sets
+// grpc.WithMaxCallAttempts, so a larger value here would be silently capped
+// (TestRetryPolicyAttemptsPerCall pins the effective count).
+//
+// UNAVAILABLE that lasts longer surfaces as an error, and the caller decides
+// whether to retry. That includes an index build that outlasts the 5 attempts
+// (INDEX_BUILDING arrives as UNAVAILABLE). The transport does not retry a
+// stream that has already delivered a message, nor a request larger than
+// 256 KiB (grpc-go's retry buffer).
 const GRPCRetryPolicy = `{
 	"methodConfig": [{
 		"name": [{"service": "ledger.BucketService"}],
 		"retryPolicy": {
-			"maxAttempts": 50,
-			"initialBackoff": "0.2s",
+			"maxAttempts": 5,
+			"initialBackoff": "0.25s",
 			"maxBackoff": "2s",
-			"backoffMultiplier": 1.5,
+			"backoffMultiplier": 2,
 			"retryableStatusCodes": ["UNAVAILABLE"]
 		}
 	}]
@@ -910,8 +924,8 @@ func deleteMetadataRequest(ledgerName, address, key string) *servicepb.Request {
 // fn returning a non-nil error aborts the stream and surfaces that error verbatim
 // — the seam a bounded reader uses to enforce an accounts budget without
 // collecting the whole set into memory first. A metadata-filtered query returns
-// codes.Unavailable while the field's index is still building — the client's
-// retry policy absorbs that.
+// codes.Unavailable while the field's index is still building; the client's
+// retry policy absorbs only the first few seconds of that (GRPCRetryPolicy).
 func (c *Client) QueryAccountsFunc(ctx context.Context, ledgerName string, filter *commonpb.QueryFilter, fn func(*commonpb.Account) error) error {
 	var cursor string
 
