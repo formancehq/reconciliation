@@ -551,7 +551,9 @@ metadata-only writes (§7.8).
 
 Any past day can be replayed: the ledger keeps every transaction, and the day's cut, `T` on each
 ledger, is in the signed capture (ADR-005 §7, item 7). A replay runs the daily algorithm as of that
-day; no stock is stored for it.
+day; no stock is stored for it. It is requested as a catch-up of one day: the catch-up action with
+its last day `to` equal to X ([below](#catching-up-from-a-past-day)). There is no separate replay
+action.
 
 **The flow costs the same at any age.** The cut of an old day resolves in one index page per
 ledger, and the day is its id range `(T_prev, T]`, read filtered on the key:
@@ -594,8 +596,9 @@ storage's lifecycle rule together.
 
 #### Catching up from a past day
 
-A catch-up from day X writes a normal run for every day from X to yesterday, as if the rule had
-run since X (ADR-005 §7, item 7). It is an explicit API action on the rule. Replaying the days one
+A catch-up from day X writes a normal run for every day from X to its last day `to`, yesterday by
+default, as if the rule had run since X (ADR-005 §7, item 7). It is an explicit API action on the
+rule, and with `to` = X it replays day X alone. Replaying the days one
 by one would rewind from head once per day, about 4.5 h of rewinds for 90 days at 1M transactions a
 day; a catch-up rewinds once, in two passes:
 
@@ -605,7 +608,7 @@ day; a catch-up rewinds once, in two passes:
    open there (the day's raw stock) and the payment account's volumes. A snapshot is one open book,
    about 13 MB gzipped for 1M open holds (§7.10), so the snapshots stay in memory or in a local
    temporary file. Nothing goes to the bucket.
-2. **Forward pass.** The days run in order, X to yesterday, each a normal run: the day's filtered
+2. **Forward pass.** The days run in order, X to `to`, each a normal run: the day's filtered
    flow and its lookups, the join with the carried items, the stock from the day's snapshot,
    lifecycle against the day before, then the data files, the capture, the manifest last and the
    alert. Day X is a first run, its open items seeded and its starting values taken from the
@@ -619,9 +622,10 @@ day; a catch-up rewinds once, in two passes:
   After the fix, the catch-up restarts from that day.
 - **Alerts.** Caught-up runs raise no alert for a closed period: their files are read through the
   API and DuckDB. The open period's alert is built as usual from its days, caught-up days included.
-- **One job per rule at a time.** The rule's scheduled run waits while a catch-up runs, then chains
-  on the last day the catch-up wrote; a catch-up asked for while a job runs is refused.
-- **X is at most yesterday.** Day X seeds from its own first-run default `backfillFrom` (X's
+- **One job per rule at a time.** The rule's scheduled run waits while a catch-up runs, then chains,
+  as every run does, on the last day that has a current run (the catch-up's last day when `to` is
+  yesterday); a catch-up asked for while a job runs is refused.
+- **X ≤ `to` ≤ yesterday.** Day X seeds from its own first-run default `backfillFrom` (X's
   cut-off − max(`psp.grace`, `product.grace`) − 1 day) unless the action gives one.
 - **Nothing marks a caught-up run** but its `startedAt` and its `runId`, later than its day
   (results reference §2).

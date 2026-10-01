@@ -104,7 +104,8 @@
     cut. Nothing else is stored: the next run's manifest, a first run with no `previousRun` and
     "open items seeded since …", is the trace of the restart.
 - **Catching up from a past day.** An API action on the rule writes a normal run for every day
-  from a day X to yesterday, as if the rule had run since X (ADR-005 §7, item 7). The caught-up
+  from a day X to its last day `to`, yesterday by default, as if the rule had run since X (ADR-005
+  §7, item 7). A catch-up with `to` = X is how one past day is replayed. The caught-up
   runs are normal runs, chained day by day, with day X a first run unless day X−1 already has a
   current run. Nothing marks them but their `startedAt` and `runId`, later than their day, and they
   raise no alert for a closed period. A catch-up that stops leaves complete runs up to the

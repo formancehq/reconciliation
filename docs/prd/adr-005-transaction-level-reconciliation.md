@@ -662,14 +662,17 @@ V1 runs no periodic proof against a checkpoint.
      open for longer than the seed window unless the replay is given an earlier `backfillFrom`,
      and the statement says so.
      Mechanics: [design doc](../technical/transaction-level-reconciliation.md#replaying-an-old-day).
+   - **A replay is requested as a catch-up of one day.** The catch-up action takes an optional
+     last day `to`, yesterday by default, and a catch-up from X with `to` = X replays day X alone.
+     There is no separate replay action.
    - **Catching up from day X** is an explicit API action on a rule. It writes a normal run for
-     every day from X to yesterday, as if the rule had run since X, in two passes ([design
+     every day from X to its last day `to`, as if the rule had run since X, in two passes ([design
      doc](../technical/transaction-level-reconciliation.md#catching-up-from-a-past-day)):
      - **backward**, one newest-first rewind from the live state down to `T_{X−1}`, the cut before
        X, over the unfiltered transactions `(T_{X−1}, head_tx]`. As it crosses each day's cut it
        records that day's open holds' balances and the payment account's volumes: one small
        snapshot per day, in memory or in a local temporary file, never in the bucket;
-     - **forward**, the days in order, X to yesterday, each a normal run: the day's filtered flow,
+     - **forward**, the days in order, X to `to`, each a normal run: the day's filtered flow,
        the join, lifecycle against the day before, then data files, capture, manifest last, and
        the alert. Day X is a first run (item 6) unless day X−1 already has a current run, which it
        then chains on; each later day chains on the one before.
@@ -680,9 +683,10 @@ V1 runs no periodic proof against a checkpoint.
      the fix, the catch-up restarts from that day.
    - Caught-up runs raise no alert for a closed period: their files are read through the API and
      DuckDB. The open period's alert is built as usual from its days, caught-up days included.
-   - A rule runs one job at a time: its scheduled run waits while a catch-up runs, then chains on
-     the last day the catch-up wrote, and a catch-up asked for while a job runs is refused.
-   - X is at most yesterday. Day X, as a first run, seeds from its own default `backfillFrom`
+   - A rule runs one job at a time: its scheduled run waits while a catch-up runs, then chains, as
+     every run does, on the last day that has a current run (the catch-up's last day when `to` is
+     yesterday), and a catch-up asked for while a job runs is refused.
+   - X ≤ `to` ≤ yesterday. Day X, as a first run, seeds from its own default `backfillFrom`
      (X's cut-off − max(`psp.grace`, `product.grace`) − 1 day) unless the action gives one.
    - There is no depth limit, and the cost is documented: at 1M transactions a day, the backward
      pass costs about 4 s per day of distance in all, and each forward day about the 20 s of a
@@ -795,7 +799,7 @@ for the Ledger team to weigh against its own users:
 | 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
 | 12 | The cut's indexes | The **`inserted_at` index is mandatory** on both ledgers, and bisection is dropped. The cut is one transaction id `T` per ledger: there is no log-id cut, so no log-date index. An index missing at run time is an engine error (§5). |
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
-| 14 | Replaying an old day, or catching up from one | A replay is the **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, extrapolated from 20M measured). Once the previous day's files have expired, the replay is a first run and its carried items are seeded (decision 9). A **catch-up from day X**, an API action, writes a normal run for every day from X to yesterday: **one backward pass**, a single rewind down to the cut before X that records each day's open book and payment account, then **the days forward**, each chained on the one before. It resumes nothing, stops on an `incomplete` day, raises no alert for a closed period and has no depth limit: about 40 min for 90 days and 2.5 h for a year at 1M transactions a day, estimated (§7 item 7). |
+| 14 | Replaying an old day, or catching up from one | A replay is the **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, extrapolated from 20M measured). Once the previous day's files have expired, the replay is a first run and its carried items are seeded (decision 9). A **catch-up from day X**, an API action, writes a normal run for every day from X to its last day `to`, yesterday by default: **one backward pass**, a single rewind down to the cut before X that records each day's open book and payment account, then **the days forward**, each chained on the one before. It resumes nothing, stops on an `incomplete` day, raises no alert for a closed period and has no depth limit: about 40 min for 90 days and 2.5 h for a year at 1M transactions a day, estimated (§7 item 7). **A replay is requested as a catch-up of one day** (`to` = X): there is no separate replay action. |
 | 15 | Result files | For the customer first: gzipped NDJSON under `rule=/day=/run=`, a stable `breakId`, drifts carried to the next run, byte-identical files for a given cut ([results reference](../technical/transaction-level-results.md)). |
 | 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break: `applied_before_final` stays pending within `psp.grace`, unknown references included, then becomes `orphan_application` (P1). Missing references are looked up by key, and the alert opens on a break, never on the net alone (§6). |
 | 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern), not on the hold, which a final event with no `pending` before it moves by 0 (§6). |
