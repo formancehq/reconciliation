@@ -443,10 +443,10 @@ class Engine:
                     if any(e.kind == 'final' for e in psp_items):
                         app_items = [e for e in book.apply_by_ref.get(ref, []) if e.tx <= t_prod]
                 elif any(e.kind == 'failed' for e in w_psp):
-                    # a failure on a reference not carried in: its whole history, on both ledgers
+                    # a failure on a reference not carried in: its whole history, read by key on
+                    # both ledgers (design doc §5)
+                    psp_items = [e for e in book.psp_by_ref.get(ref, []) if e.tx <= t_psp]
                     app_items = [e for e in book.apply_by_ref.get(ref, []) if e.tx <= t_prod]
-                    if app_items:
-                        psp_items = [e for e in book.psp_by_ref.get(ref, []) if e.tx <= t_psp]
             rows.append(self.flow_row(day, ref, psp_items, app_items, f_psp, f_prod, t_prod, ref in carried_in))
         return rows
 
@@ -698,9 +698,14 @@ class Engine:
                             'amount': abs(e.amount) + abs(e.hold), 't': e.t})
         for e in win_prod:
             if e.kind == 'unclassified':
+                # one entry per transaction and asset: the sum of its absolute net postings on the
+                # holds it moves (results doc §6, unclassified transactions)
+                per_asset = {}
                 for (p, _, asset, d) in e.moves:
+                    per_asset[asset] = per_asset.get(asset, 0) + abs(d)
+                for asset, amount in sorted(per_asset.items()):
                     out.append({'side': 'product', 'tx': e.tx, 'ref': e.ref, 'asset': asset,
-                                'state': 'manual_fix', 'amount': abs(d), 't': e.t})
+                                'state': 'manual_fix', 'amount': amount, 't': e.t})
         out.sort(key=lambda u: (u['side'], u['tx'], u['asset']))
         return out
 
@@ -717,9 +722,23 @@ class Engine:
         return item
 
     @staticmethod
+    def business_id(e, prefix, hold_id):
+        """The business id a transaction carries for a hold: one value per field, so none when it
+        letters two holds of the same kind (results doc §6, `product`)."""
+        return hold_id if sum(1 for (p, _, _, _) in e.moves if p == prefix) == 1 else None
+
+    @staticmethod
     def product_items(events):
-        return [{'tx': e.tx, 'businessId': hid, 'holdId': hid, 'amount': str(-OPEN_SIGN[p] * d),
-                 'insertedAt': iso(e.t)} for e in events for (p, hid, _, d) in e.moves]
+        out = []
+        for e in events:
+            for (p, hid, _, d) in e.moves:
+                item = {'tx': e.tx}
+                bid = Engine.business_id(e, p, hid)
+                if bid:
+                    item['businessId'] = bid
+                item.update({'holdId': hid, 'amount': str(-OPEN_SIGN[p] * d), 'insertedAt': iso(e.t)})
+                out.append(item)
+        return out
 
     def flow_json(self, r, with_impact=True):
         o = {'ref': r['ref'], 'asset': r['asset'], 'class': r['class'], 'outcome': r['outcome'],
@@ -964,7 +983,8 @@ class Engine:
             "cuts": self.cuts_json(st['cuts'], start),
             "verdict": verdict,
             "counts": {"flow": flow_counts, "flowOutcome": outcomes, "stock": stock_counts, "breaks": breaks_counts,
-                       "unclassified": {side: sum(1 for u in st['unclassified'] if u['side'] == side)
+                       # transactions, each counted once per side whatever its assets
+                       "unclassified": {side: len({u['tx'] for u in st['unclassified'] if u['side'] == side})
                                         for side in ('psp', 'product')}},
             "statement": statement,
             "books": [{"side": b['side'], "prefix": b['prefix'], "asset": b['asset'], "openSign": b['openSign'],
@@ -1055,7 +1075,8 @@ def scenarios():
     opening(D[1], '07:00', inv('INV-S01', 10000))
     pay(D[1], '08:00', 'S01', 10000, t_final='08:05')
     apply(D[1], '08:10', 'S01', [(INVOICE, 'INV-S01', 'EUR/2', 10000)])
-    # S02: one payment split across two invoices by one transaction
+    # S02: one payment split across two invoices by one transaction, which can carry only one
+    # invoice_no: its flow entries have no businessId (results doc §6)
     opening(D[1], '07:01', inv('INV-S02A', 6000) + inv('INV-S02B', 4000))
     pay(D[1], '08:20', 'S02', 10000, t_final='08:25')
     apply(D[1], '08:30', 'S02', [(INVOICE, 'INV-S02A', 'EUR/2', 6000), (INVOICE, 'INV-S02B', 'EUR/2', 4000)])
@@ -1278,7 +1299,8 @@ def expected(engine, out):
             for e in x['app_ev']:
                 if f_prod < e.tx <= t_prod:
                     for (p, hid, _, dlt) in e.moves:
-                        apps.append([tag, x['ref'], x['class'], x['outcome'], e.tx, hid, hid, -OPEN_SIGN[p] * dlt, ts(e.t)])
+                        apps.append([tag, x['ref'], x['class'], x['outcome'], e.tx, Engine.business_id(e, p, hid), hid,
+                                     -OPEN_SIGN[p] * dlt, ts(e.t)])
         res[f'applications@{tag}'] = csv_text(['day', 'ref', 'class', 'outcome', 'tx', 'business_id', 'hold_id',
                                                'amount', 'inserted_at'], apps)
     oi = []

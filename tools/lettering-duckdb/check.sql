@@ -108,15 +108,19 @@ SELECT 'counts_breaks', coalesce(l.k, f.k), 'manifest ' || coalesce(l.n, 0) || '
 FROM listed l FULL JOIN found f USING (k)
 WHERE coalesce(l.n, 0) <> coalesce(f.n, 0);
 
+-- counts.unclassified counts each transaction once per side; the statement counts it once in each
+-- asset it posts in. So the side's count lies between the most one asset counts and the sum.
 INSERT INTO violations
 WITH listed AS (SELECT k AS side, (m->'counts'->'unclassified'->>k)::BIGINT AS n
                 FROM manifest, unnest(json_keys(m->'counts'->'unclassified')) t(k)),
-     found AS (SELECT u.side, sum(u.count) AS n
-               FROM m_statement, unnest(from_json(s->'unclassified', '[{"side":"VARCHAR","count":"BIGINT"}]')) t(u)
-               GROUP BY u.side)
-SELECT 'counts_unclassified', coalesce(l.side, f.side), 'counts ' || coalesce(l.n, 0) || ', statement ' || coalesce(f.n, 0)
+     per_asset AS (SELECT asset, u.side, sum(u.count) AS n
+                   FROM m_statement, unnest(from_json(s->'unclassified', '[{"side":"VARCHAR","count":"BIGINT"}]')) t(u)
+                   GROUP BY ALL),
+     found AS (SELECT side, max(n) AS most, sum(n) AS total FROM per_asset GROUP BY side)
+SELECT 'counts_unclassified', coalesce(l.side, f.side),
+       'counts ' || coalesce(l.n, 0) || ', statement ' || coalesce(f.most, 0) || ' to ' || coalesce(f.total, 0) || ' over the assets'
 FROM listed l FULL JOIN found f USING (side)
-WHERE coalesce(l.n, 0) <> coalesce(f.n, 0);
+WHERE coalesce(l.n, 0) < coalesce(f.most, 0) OR coalesce(l.n, 0) > coalesce(f.total, 0);
 
 -- The bridge ---------------------------------------------------------------------------
 

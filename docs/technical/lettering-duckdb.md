@@ -244,7 +244,10 @@ It also writes `expected/`, the CSV each query must return, computed in Python. 
 is computed for three chosen days: two of `qa-scenarios` and the replayed day of `qa-verdicts`. The Python engine
 and the SQL are two independent readings of the doc, so a test passes only when they agree. A
 disagreement found this way is fixed in the doc first, then in the side that was wrong. Once
-EN-2322 writes result files from the same scenarios, they are compared with this data.
+EN-2322 writes result files from the same scenarios, they are compared with this data row by row,
+on the decompressed NDJSON. Their SHA-256s cannot match: Go's `compress/flate` and Python's zlib
+write different deflate streams at the same level, and the results doc's byte-identical rule holds
+for one engine only (results doc §8).
 
 ### Tests (`test.sh`)
 
@@ -472,7 +475,7 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `incomplete_files`, `incomplete_fields` | An incomplete run has no data file, and its reduced manifest has every field the results doc §6 requires and none it leaves out. The wrapper checks these before any SQL runs, and stops there |
 | `file_missing`, `file_unlisted`, `file_rows`, `file_sha256` | The manifest lists exactly the files present, with their row counts and SHA-256 |
 | `counts_flow`, `counts_flow_outcome`, `counts_stock`, `counts_breaks` | The manifest's counts match the files |
-| `counts_unclassified` | The manifest's unclassified counts per side match the statement's unclassified lines (the run writes no file for them, results doc §6) |
+| `counts_unclassified` | The manifest's unclassified count per side lies between the most one asset counts in the statement and the sum over the assets, since a transaction counts once per side and once in each asset it posts in (the run writes no file for them, results doc §6) |
 | `bridge_net`, `bridge_totals`, `bridge_line`, `bridge_carried_outside`, `bridge_gross` | The net is `SUM(impact)` and `psp − product`; each line matches the flow rows; the carried lines and the gross match |
 | `bridge_residual`, `bridge_product_vs_books` | The residual is 0, recomputed from the applications booked in the product window, and the product total equals the books' `lettered − letteredOther` |
 | `carried_vs_flow`, `suspense_open`, `suspense_identity` | The carried file holds exactly the flow rows whose drift is not 0; the open items equal its sum and count, and `open = openPrev + net + fromLookups` |

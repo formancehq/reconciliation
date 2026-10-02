@@ -18,8 +18,8 @@
    `incomplete.reason` and names the first items at fault in `incomplete.detail`. The run wrote no
    data file.
 3. **Read the statement** (§5), which is the manifest's `statement`, `books` and `paymentAccounts`
-   blocks. The alert carries the `statement` block and the `counts` as data, and the UI renders
-   the statement. The bridge explains the day's net difference, the open items give the running
+   blocks. The alert carries these three blocks for the latest day, and each day's `counts`, as
+   data, and the UI renders the statement from them. The bridge explains the day's net difference, the open items give the running
    total still unmatched, and `counts` says how many breaks and pending items there are.
 4. **Open the files for the items.** The manifest carries aggregates only: `breaks.ndjson.gz` holds
    the rows to act on, `flow.ndjson.gz` the pending items and, with `stock.ndjson.gz`, the complete
@@ -190,6 +190,11 @@ break stays open until it is booked, and the controller acknowledges or accepts 
 as for any rule. A resolved break does not open it, and neither does the net alone, since pending items move the net without being breaks and
 offsetting breaks net to zero. An `incomplete` run opens the engine-error alert instead.
 
+**The engine-error alert** is the rule's `engine.error` meta-alert, in the continuous scope. Every
+tick derives it from the rule's latest run: it is open while that run is `incomplete`, with the
+run's day, `runId`, `incomplete.reason` and `incomplete.detail` as evidence, and it is resolved by
+the tick that finds a later complete run (ADR-005 §6).
+
 ## 5. The statement
 
 A net difference of 0 proves nothing: breaks of +1,000 € and −1,000 € net to zero. Every run
@@ -297,9 +302,15 @@ input(T)  − input(T_prev)  = credits on the account by the transactions the fl
 output(T) − output(T_prev) = debits on the account by the transactions the flow read returned
 ```
 
+- The book covers every account the pattern matches. The ledger filters an address by prefix or
+  exact value only, so recon lists the pattern's literal prefix live, with the holds, and matches
+  the other segments in memory; an account the previous run listed stays listed. The flow's
+  postings cannot find them: an account that only an unkeyed movement credits appears in none.
 - The account is `NORMAL`, so its volumes are cumulative. `input(T)` and `output(T)` are its live
   volumes rewound to the cut with the stock's transaction window; the `T_prev` values are the
-  previous run's, or on a first run the same rewind read one day further (§2).
+  previous run's, or on a first run the same rewind read one day further (§2). An account-type
+  change that made the account EPHEMERAL would purge its volumes at a zero balance and show as a
+  residual, so the payment account stays `NORMAL` (ADR-005 §8 rule 10).
 - The flow read returns every transaction that carries the PSP key or one of the rule's
   `psp.movementKeys` (payouts, fees), whatever its class, unclassified ones included. The
   movement-key transactions count here and nowhere else.
@@ -326,26 +337,26 @@ output(T) − output(T_prev) = debits on the account by the transactions the flo
 ### The alert's evidence
 
 There is one alert per rule, fingerprint and period, and it carries structured data, never
-rendered text. Its headline, statement and counts are those of the **latest day of the period that
-has a current run**; with a `daily` period, that is the period's one day:
+rendered text:
 
-- **the headline**: that day's `verdict`, open breaks per leg (`counts.breaks.openByLeg`), open P1
-  breaks (`counts.breaks.openByPriority["1"]`), and per asset the gross (`flowGross`) and the net
-  (`net`);
-- **the statement**: that day's manifest `statement` block, as JSON;
-- **the counts**: that day's manifest `counts`;
 - **the day list**: one entry per day of the period that has a current run, with its `verdict`,
   its `counts`, per asset its `net` and gross (`flowGross`), and the link to its run's files, which
   recon's API lists with pre-signed URLs (§2). A day with no complete run is not listed: the next
-  complete run's window covers it.
+  complete run's window covers it. With a `daily` period, the list has one entry.
+- **the latest day**: the manifest's `statement`, `books` and `paymentAccounts` blocks, as JSON,
+  for the **latest day of the period that has a current run**.
+
+The latest entry of the day list is the alert's headline: its `verdict`, its open breaks per leg
+(`counts.breaks.openByLeg`), its open P1 breaks (`counts.breaks.openByPriority["1"]`), and per
+asset its gross and its net.
 
 Every tick rebuilds the open period's alert from these manifests. A period closes once the next
 period's first day has a current run, and a closed period's alert is never rebuilt (ADR-005 §7,
 items 2 and 5).
 
 It carries no list of breaks or pending items. The UI renders the reconciliation statement from
-this data and the latest day's `books`, and shows the breaks by paging them from recon's API. The
-engine renders no text.
+this data alone, and shows the breaks by paging them from recon's API. The engine renders no
+text.
 
 ## 6. File reference
 
@@ -367,7 +378,7 @@ engine renders no text.
 | `counts.flowOutcome` | Flow rows per outcome |
 | `counts.stock` | Stock rows per side and class |
 | `counts.breaks` | `new`, `persisting`, `resolved`, and open breaks `openByLeg` (`flow`, `stock`, `book`) and `openByPriority` |
-| `counts.unclassified` | Unclassified transactions per side |
+| `counts.unclassified` | Unclassified transactions per side, each counted once (§6, unclassified transactions) |
 | `statement.{asset}` | The bridge: `psp` and `product` (`amount`, `count`), `net`, `lines` (`class`, `outcome`, `earlierDay`, `amount`, `count`; `earlierDay` is `firstSeen < day`, false on a row with no `firstSeen`, such as an `in_progress` row whose application was undone), `residual`, `carriedOutside` (`class`, `outcome`, `amount` as `SUM(drift)`, `count`), `flowGross`. The open items: `suspense` (`openPrev`, `countPrev`, `fromLookups`, `open`, `count`, `continuityOk`). And `unclassified` per side and state |
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `T_prev` values here |
@@ -393,11 +404,11 @@ from the previous run and the ones read by key.
 | `productAmount` | The sum of the reference's applications |
 | `drift` | `pspAmount − productAmount` |
 | `impact` | The change in `drift` within the window: finalised amount gained, or lost to a failure, minus applications booked in the window. The bridge is `SUM(impact)`. A reference carried in with nothing new today has `impact` 0 |
-| `firstSeen` | The day the reference entered the join: its first final PSP state or its first application. Absent on `in_progress` |
+| `firstSeen` | The day the reference entered the join: the day, in the rule's timezone, of the `insertedAt` of its first final PSP event or of its first application, whichever came first. It follows the cut, which is on `inserted_at` too, never the writer's `timestamp`. Absent on `in_progress` |
 | `breakOn` | On a `pending` row, the day it becomes a break: `firstSeen` plus the lagging side's `grace`. It stays on the row once the break is open, as long as the row keeps the class that set it |
 | `merchantRef`, `pairedHold` | When the PSP reports a merchant reference, and the open hold it names |
 | `psp` | The reference's PSP transactions: `tx`, `state`, `insertedAt`, plus `amount` on a `final` event, which is its net posting on `psp.paymentAccount` and what `pspAmount` sums. A `pending` or `failed` event carries `holdAmount` instead: its hold movement, in absolute value |
-| `product` | The reference's applications: `tx`, `businessId`, `holdId`, `amount` (the net posting on the hold, in the settling direction), `insertedAt`. A transaction that letters two holds is listed once per hold |
+| `product` | The reference's applications: `tx`, `businessId`, `holdId`, `amount` (the net posting on the hold, in the settling direction), `insertedAt`. A transaction that letters two holds is listed once per hold. `businessId` is the value the transaction carries in the business-id field of that hold's kind; it is absent when the transaction carries none, which an application may (ADR-005 §8 rule 3), or when it letters two holds of one kind, since one field holds one value. `holdId` is always there |
 
 A reference carried in or read by key keeps the transactions of its earlier days. Any other row
 lists the window's transactions only.
@@ -438,7 +449,7 @@ One row per hold open at the cut, plus one row per hold cleared since the previo
 | `class`, `outcome` | Below |
 | `lifecycle` | `new`, `persisting` or `cleared`, against the previous run, or on a first run against the stock rewound to `T_prev` (§2) |
 | `openedAt`, `ageDays`, `bucket` | When the hold opened (its opening transaction's `timestamp`, the business date), its age at the cut in days, and its age bucket: `0-1d`, `2-7d`, `8-30d` or `>30d`, fixed by the engine (ADR-005 §7 item 8). The opening is known when it lies in a window recon read, a first run's seed included. `openedAt` is null for a hold opened before the chain's seed (§2): before `backfillFrom`, or on the product side before the seed's start, `psp.grace` earlier. Its opening was never read, so `ageDays` is a lower bound counted from `rule.backfillFrom`, and `bucket` follows it |
-| `previousBalance`, `clearedAt`, `clearedBy` | On a cleared hold: its balance at the previous cut, when it was lettered, and the `ref` that lettered it. No `clearedBy` means it was lettered without a PSP reference |
+| `previousBalance`, `clearedAt`, `clearedBy` | On a cleared hold: its balance at the previous cut, then the `insertedAt` and the `ref` of the transaction that brought it to 0. No `clearedBy` means that transaction carried no PSP reference |
 | `pairedRef` | The unapplied payment whose `merchantRef` names this hold |
 
 **Stock classes:**
@@ -490,10 +501,13 @@ its `outcome` is `ok`. So `outcome = 'break'` counts the open breaks in every fi
 
 A transaction whose state is in none of the rule's sets takes no part in matching. The run writes
 no file for it: the manifest counts these transactions per side (`counts.unclassified`) and gives,
-per asset, side and state value, their count and amount (`statement.{asset}.unclassified`). The
-amount is a transaction's net posting, in absolute value, on the accounts the rule reads for that
-side: `psp.paymentAccount` and the hold prefixes on the PSP side, the hold prefixes on the product
-side. A typical cause is a connector booking refunds on the original payment's id ([connector
+per asset, side and state value, their count and amount (`statement.{asset}.unclassified`). Each
+count is of transactions: a transaction counts once per side in `counts.unclassified`, and once in
+each asset it posts in, so a transaction in two assets appears in two `statement` entries. Its
+amount in an asset is the sum, over the accounts the rule reads for that side, of the absolute
+value of its net posting on each account: `psp.paymentAccount` and the hold prefixes on the PSP
+side, the hold prefixes on the product side. A refund that debits the payment account by 200.00
+and releases 50.00 of the hold therefore counts 250.00. A typical cause is a connector booking refunds on the original payment's id ([connector
 checklist](./transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation), row 6).
 The state value names the fix: add it to one of the rule's sets, or correct the mapping.
 
@@ -792,9 +806,10 @@ A stock break's `amount` reads in the open direction: INV-14 is 100.00 on the wr
 is resolved today: INV-5, which PAY-40 lettered, was an open hold, not a break.
 
 **The statement**, as a UI may present it. It is an example of presentation, not an engine
-output: the engine writes no text. The figures come from the manifest, whose `statement` block and
-`counts` the alert's evidence carries; the breaks and the pending items come from the breaks and
-flow files, through recon's API.
+output: the engine writes no text. The figures come from the manifest, whose `statement`, `books`
+and `paymentAccounts` blocks and `counts` the alert's evidence carries; the wrong-sign count is
+`counts.stock.product.wrong_sign`. The breaks and the pending items come from the breaks and flow
+files, through recon's API.
 
 ```text
 psp-vs-billing — 24 Sep 2026 (cut-off 23:59:59 Europe/Paris) — BREAKS
@@ -822,9 +837,10 @@ Open items (psp − product)
 
 Open books at the cut               total      count   0–1d  2–7d  8–30d  >30d   continuity
   PSP pending holds                  550.00       2       2     —     —      —      ✓
-  Product invoices                 2,450.00       5       —     2     2      1      ✓   1 wrong_sign
+  Product invoices                 2,450.00       5       —     2     2      1      ✓
   Product refunds                    200.00       1       1     —     —      —      ✓
   Lettered outside matching: none
+  Wrong sign: 1 product hold (P4, in the breaks below)
 
 ⚠ Unclassified: 1 PSP transaction with state "payin.refunded", 200.00 — the rule's state sets or the
   connector mapping need attention.

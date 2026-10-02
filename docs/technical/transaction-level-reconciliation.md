@@ -62,8 +62,10 @@ On the product ledger, the invoice is booked in three transactions:
       not touch the hold and takes no part in reconciliation.
 
 **The amount of an application is its net posting on the accounts under the side's hold prefixes**,
-each counted in the direction that settles it (ADR-005 §6). The revenue recognition therefore counts for
-nothing, even if it carried the payment reference. It is still best kept without one.
+each counted in the direction that settles it (ADR-005 §6). The revenue recognition therefore adds
+nothing to any amount, even if it carried the payment reference. It is still best kept without one:
+a transaction that carries the reference with a state in none of the rule's sets is counted as
+unclassified, which caps the day at `reconciled_with_warnings` (results reference §4).
 
 **The amount of a PSP payment is its net posting on the rule's `psp.paymentAccount`**, the account
 its final event credits (`fpay:{conn}:account:*:main` for `formancepayments`), never its movement on
@@ -75,6 +77,10 @@ the hold. The hold is right only when the `pending` and the final amount agree:
 | final Y, no `pending` before | Y mirror → `main` (the hold is empty) | 0 | Y | Y |
 | `pending` X, then final Y < X | Y hold → `main`, then X − Y hold → mirror | −X | Y | Y |
 | `pending` X, then final Y > X | X hold + Y − X mirror → `main` | −X | Y | Y |
+
+Since `ae604968`, a `payin.refunded` between the `pending` and the final also releases the hold up
+to the refund, so the net on the hold is then the `pending` amount less that refund
+(`formancepayments.yaml:462-465` @ `016dcf41`). The amount on `paymentAccount` is unchanged.
 
 The hold keeps its role for the PSP stock: `opened` and `lettered` are hold movements, so
 continuity holds in every row above.
@@ -90,17 +96,17 @@ continuity holds in every row above.
   - `reference == "{id}:done"` still finds the lettering transaction;
   - its `post_commit_volumes` still shows the hold at `100 − 100 = 0`.
 
-  EN-2036 (formancehq/ledger#2058, merged as `38c6eef55` on `release/v3.0`, not yet released)
-  makes a purged hold reachable by **exact address** again; its prefix path scales with every hold
-  ever created (§7.6, §8 F-d). The design never reads the flow by address.
+  EN-2036 (formancehq/ledger#2058, merged as `38c6eef55` on `release/v3.0`, first released in
+  `v3.0.0-beta.6`) makes a purged hold reachable by address again, by exact address or by prefix;
+  the prefix path scales with every hold ever created (§7.6, §8 F-d). The design never reads the flow by address.
 - **The join key must therefore be indexed transaction metadata**, and the address cannot be the
   only carrier.
   - Connectivity's `formancepayments` profile already does this: `payments.formance.com/payment-id`
     and `formance.com/observation.event-type` are indexed (`formancehq/connectivity-plugins-poc`,
-    `plugins/formancepayments/profiles/formancepayments.yaml:1155-1166` @ `ae604968`).
+    `plugins/formancepayments/profiles/formancepayments.yaml:1155-1165` @ `ae604968`, unchanged at `016dcf41`).
   - The shipped Stripe plugin does not model holds at all. It books Stripe balance transactions with
     `stripe_txn_id` indexed (`formancehq/connectivity`,
-    `plugins/stripe/internal/adapter/grpc/server.go:227-236` @ `e7ca3e29`).
+    `plugins/stripe/internal/adapter/grpc/server.go:227-236` @ `e7ca3e29`, unchanged at `3119b24a`).
 
 ### Recommended booking design (ADR-005 §8)
 
@@ -114,7 +120,7 @@ listing the holds by prefix costs O(open accounts).
 | **In-flight hold** (EPHEMERAL) | `psp:{conn}:payment:pending:{payment_ref}` (and `psp:{conn}:refund:pending:{refund_ref}`), a single prefix per kind | `main:hold:invoice:{business_ref}` (and `main:hold:refund:{refund_no}`): **one hold per business object**, not one per state. Here the invoice hold opens negative, against pending revenue. Each prefix is one entry of the rule's `holds`, with its own sign |
 | **Final accounts** (NORMAL) | `psp:{conn}:account:{acct}:main`, and **`psp:{conn}:fees`**: with no tolerance, every fee is an explicit posting | **`main:clearing:{conn}`**: the application transaction credits the invoice hold from the clearing account, so the clearing balance is the product's view of cash at the PSP (an aggregate control total). Revenue recognition, if any, is a separate transaction in the same atomic batch that does not touch the hold |
 | **One transaction =** | one event of one payment: pending, succeeded, failed… A refund or a chargeback is **its own payment reference**, not an event of the original payment (decision 7) | one application of one payment to one business object. A payment split across two invoices is two transactions with the same `payment_ref` |
-| **Transaction metadata** (declared, typed) | `payment_ref`; a **movement key** on every other movement of the payment account, payouts and fees (the rule's `psp.movementKeys`, decision 23); **`merchant_ref`** (the business id the merchant passed when it created the payment: Stripe `metadata`, Adyen `merchantReference`…), `state` (the rule maps its values to pending, final and failed), `kind` (payment, refund, chargeback) | `payment_ref` on applications only, not on the revenue recognition; `business_ref` on **every** transaction touching a business hold, including its opening; `kind` |
+| **Transaction metadata** (declared, typed) | `payment_ref`; a **movement key** on every other movement of the payment account, payouts and fees (the rule's `psp.movementKeys`, decision 23); **`merchant_ref`** (the business id the merchant passed when it created the payment: Stripe `metadata`, Adyen `merchantReference`…), `state` (the rule maps its values to pending, final and failed), `kind` (payment, refund, chargeback) | `payment_ref` on applications only, not on the revenue recognition; `business_ref` on **every** transaction touching a business hold without `payment_ref`, its opening included, and on applications as a recommendation; `kind` |
 | **`reference`** | `{payment_ref}:{state}`: idempotent on re-delivery | `{payment_ref}:{business_ref}` |
 | **`timestamp`** | the PSP event time | the business event time |
 | **Postings** | exact amounts, with fees split out | application **strict on the amount** (`send [$asset $amount]`, never `*`): an over-application takes the hold past zero, to the sign opposite its opening (`wrong_sign`), and a partial payment leaves an honest residual |
@@ -122,8 +128,9 @@ listing the holds by prefix costs O(open accounts).
 | **Mutability** | key and state metadata are **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one. Recon does not monitor this in V1 (ADR-005 decision 25); **labels** (ask L8) would make it structural | same |
 
 In this table the clearing account, `kind`, the `reference` format and the `merchant_ref` index are
-*recommended*: good practice that the engine never reads. The rest is required by the rule (ADR-005
-§8).
+*recommended*: good practice that the engine never reads. `business_ref` on an application is
+recommended too: the engine shows it on the flow row when it is there, and the PSP payment
+reference is the key either way. The rest is required by the rule (ADR-005 §8).
 
 **Why `merchant_ref` matters.** Without it, an `unapplied_payment` is known only by its
 `payment_ref`. With it, the engine pairs it with the **open invoice** it was meant for, and the
@@ -187,7 +194,7 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
   [`formancehq/connectivity-plugins-poc`](https://github.com/formancehq/connectivity-plugins-poc)
   (`plugins/formancepayments/profiles/formancepayments.yaml` @ `ae604968`, unchanged at `016dcf41`):
   - **covered:** row 1, with `payments.formance.com/payment-id` on every payment transaction and
-    indexed (`:1155-1166`); row 3, with `formance.com/observation.event-type` indexed and
+    indexed (`:1155-1165`); row 3, with `formance.com/observation.event-type` indexed and
     `payments.formance.com/payment-status`; row 8, with an EPHEMERAL
     `fpay:{conn}:payment:hold:pending:{payment_id}` hold (`:64-73`); row 9 in intent, since
     `reference = {conn}:padj:{adjustment_key}` (its `adjustment_id` when there is no key) is
@@ -196,14 +203,14 @@ and the state field per side, so `payment_id` and `event_type` work as well as `
     `payin.succeeded` credits `fpay:{conn}:account:{acct}:main` with the payment amount;
   - **to configure:** row 4, as there is no merchant reference on transactions
     (`payments.formance.com/reference` is account metadata); row 6, as refunds are mapped
-    (`PAYIN_REFUNDED` and five siblings, `:430-716`) but as deltas **on the original payment id**,
+    (`PAYIN_REFUNDED` and five siblings, `:430-714`) but as deltas **on the original payment id**,
     not as their own payment reference; row 7, as a `fees` account is declared (`:82`) but no
     mapping posts to it; row 12,
     as conversions and order fills post on `…:account:{acct}:main` under
     `payments.formance.com/conversion-id` and `order-id`, declared but not indexed (`:1085-1090`,
-    `:1155-1166`). Row 11 does not hold today: see the open question below.
+    `:1155-1165`). Row 11 does not hold today: see the open question below.
 - The Stripe plugin, in [`formancehq/connectivity`](https://github.com/formancehq/connectivity)
-  (`plugins/stripe` @ `e7ca3e29`), does not model holds. It books balance transactions keyed by
+  (`plugins/stripe` @ `e7ca3e29`, unchanged at `3119b24a`), does not model holds. It books balance transactions keyed by
   `stripe_txn_id`, so rows 1–3 and 8 need a lettering mapping first.
 - `stripecore`, in `connectivity-plugins-poc` (`plugins/stripecore/profiles/stripecore.yaml` @
   `9896f9fd`), sets an indexed `stripe.com/stripe-object-id` on all 46 of its transaction kinds and
@@ -223,13 +230,14 @@ decision is taken here; the table is for that review.
     its amount: `PAYIN_REFUNDED` to the provider mirror, `PAYOUT_REFUNDED` and `TRANSFER_REFUNDED`
     to `…:main` (`:557`, `:652`). These carry the payment id like the rest;
   - every payment event, payins, payouts, transfers and refunds, sets
-    `payments.formance.com/payment-id`, with its own `formance.com/observation.event-type`
-    (`:157-701`);
+    `payments.formance.com/payment-id` and a `formance.com/observation.event-type` (`:157-713`).
+    Payouts and transfers share `outflow.pending` and `outflow.compensate` (`:288`, `:424`), so a
+    state set that names them covers both;
   - `CONVERSION` and `ORDER_FILL` debit `…:account:{src}:main` and credit `…:account:{dst}:main`
     (`:748-753`, `:793-798`) with no payment id: they set `payments.formance.com/conversion-id`
     and `order-id` (`:757`, `:802`), which are declared but not indexed. They also set the state
     field, `formance.com/observation.event-type`, to `conversion` and `order.fill` (`:755`,
-    `:800`), and that field is indexed (`:1155-1166`).
+    `:800`), and that field is indexed (`:1155-1165`).
 - **What follows, with the rule as specified today:**
   - the flow read returns the payment events, since they carry the key. Their states are in no
     set, so they are `unclassified`, which caps every day at `reconciled_with_warnings`;
@@ -307,7 +315,7 @@ sequenceDiagram
     J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ flow / carried / stock / breaks
     J->>C: capture(verdict, counts, drifts, T per ledger, manifest sha256) — Ed25519
     J->>O: manifest.json, last: the run exists once it is written
-    J->>C: rebuild the open period's alert (day list · latest day's headline, statement, counts)
+    J->>C: rebuild the open period's alert (day list, latest entry as headline · latest day's statement, books, payment accounts)
 ```
 
 - **The cut** turns the business cut-off into one transaction id `T` per ledger
@@ -373,8 +381,10 @@ cut-off (say 24 September, 23:59:59 Europe/Paris) into **numbers the ledger alre
   unfiltered `(0, 1M]` returned exactly 1M rows.)
 - Every transaction carries two dates. **`timestamp`** is set by the writer and can be backdated.
   The **insertion date**, `inserted_at`, is set by the ledger's HLC when it writes. It cannot be
-  backdated and it follows id order
-  (`docs/technical/architecture/subsystems/consensus/hybrid-logical-clock.md` in the ledger).
+  backdated and it never decreases as the id grows
+  (`docs/technical/architecture/subsystems/consensus/hybrid-logical-clock.md` in the ledger). The
+  transactions of one Raft proposal share it (`processor_transaction.go:287` at `c56aeb98`), so they
+  fall on the same side of any cut.
 
 **The cut.** `T` is the id of the last transaction inserted at or before the cut-off. The previous
 day's `T_prev` is already in yesterday's capture; a first run resolves it like `T`, at the
@@ -467,7 +477,8 @@ Every read is gRPC on `BucketService`, through recon's vendored client (`interna
 | **Flow window** | `ListTransactions`, filter `And(membership, builtin_uint(ID) ∈ (lo, hi])`, **membership first** ([above](#the-cut-from-a-business-time-to-id-ranges), §7.11), `reverse = true`, page 1000. Membership is `metadata[<psp.key>] EXISTS` on the PSP ledger, or `Or(<psp.key> EXISTS, <psp.movementKeys> EXISTS…)` when the rule declares movement keys (decision 23), and `Or(<product.key> EXISTS, <holds[].businessId> EXISTS…)`, one term per hold kind, on the product ledger, so that hold openings are returned for continuity. The field names come from the rule, for example `payments.formance.com/payment-id` with `formancepayments` | **metadata indexes on `payment_ref`, each `psp.movementKeys` field (checklist row 12) and `business_ref` on the product side: mandatory.** While one builds, reads return the retryable `Unavailable` with the reason `INDEX_BUILDING`, which recon matches on the reason, never on the message (ADR-005 §5 caveat 2) |
 | Rewind window `(T, head_tx]` (`(T_prev, head_tx]` on a first run), replays and catch-ups | `ListTransactions`, filter `builtin_uint(ID) ∈ (lo, hi]` and nothing else, **newest first** (the default order; §4), in chunks, page 1000 | **none**: an id range reads the main store and never waits for the index (§7.8) |
 | Open holds | `ListAccounts`, filter `address` prefix, one listing per entry of the side's `holds`, page 1000 | **none**. An address-prefix listing iterates the main store, not the read index |
-| Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch. On a released v3.0 it is the only lookup left once a hold is purged (§2) |
+| Payment accounts | `ListAccounts`, filter `address` prefix on the literal prefix of `psp.paymentAccount` (`fpay:stripe:account:` for `fpay:stripe:account:*:main`), listed live with the holds, the other segments matched in memory, plus every account the previous run listed. The ledger filters an address by prefix or exact value only, with no segment wildcard (`common.proto:1701-1709` at `c56aeb98`). The flow's postings cannot find them: an account that only an unkeyed movement credits appears in no flow posting | **none**, as for the holds |
+| Investigation: "every transaction of payment PAY-42", "which payments settled invoice INV-7" | `ListTransactions`, filter on metadata or `reference` | **indexed metadata** for the PSP reference and the business id, plus the `reference` index. This is not needed by the batch. Before `v3.0.0-beta.6` it was the only lookup left once a hold was purged (§2) |
 
 Each `ListTransactions` call is a server stream of at most 1,000 `Transaction`, and each carries
 its postings, its metadata and its `post_commit_volumes`.
@@ -560,7 +571,10 @@ lettered, then re-funded with 100 shows `post_commit_volumes` of `100-0` on the 
 cumulative `200-100`. The balance (input − output) is right on both sides of the
 purge, so the rewind uses balances only on the EPHEMERAL holds, never cumulative input or output
 volumes. The payment-account book is the exception: its account is NORMAL, never purged, so its
-input and output are rewound as they are (decision 23). The lettering
+input and output are rewound as they are (decision 23). They restart from 0 only if an
+account-type change makes the account EPHEMERAL: at a zero balance it is then purged with its
+volume rows (`internal/application/admission/admission.go:976-1037` at `c56aeb98`). The book would
+show that as a residual, so the payment account stays NORMAL (ADR-005 §8 rule 10). The lettering
 transaction itself still carries the purged hold in `post_commit_volumes` (`100-100`).
 
 **Why the unfiltered transactions**, and neither a filtered read nor the logs, for this window:
@@ -632,8 +646,11 @@ rule, and with `to` = X it replays day X alone. Replaying the days one
 by one would rewind from head once per day, about 4.5 h of rewinds for 90 days at 1M transactions a
 day; a catch-up rewinds once, in two passes:
 
-1. **Backward pass.** One newest-first rewind from the live state down to `T_{X−1}`, the cut before
-   X: the live listing, then the unfiltered transactions `(T_{X−1}, head_tx]`, folded as in §4. As
+1. **Backward pass.** One newest-first rewind from the live state down to the earliest cut a day
+   needs: `T_{X−1}`, the cut before X, when day X is a first run, or `T_X` when day X chains on the
+   current run of day X−1, whose stored stock and payment account give its starting values. It
+   reads the live listing, then the unfiltered transactions from that cut to `head_tx`, folded as
+   in §4. As
    the fold crosses each day's cut, it records a snapshot of that day: the balances of the holds
    open there (the day's raw stock) and the payment account's volumes. A snapshot is one open book,
    about 13 MB gzipped for 1M open holds (§7.10), so the snapshots stay in memory or in a local
@@ -730,10 +747,10 @@ opens on an open break, never on the net alone. The verdicts, every line of
 the statement and how to read them are defined in the [results
 reference](./transaction-level-results.md#4-the-verdict).
 
-**The statement is data, not text.** For the latest day of its period that has a current run, the
-alert's evidence holds the manifest's `statement` block as JSON, a headline (the verdict, the open
-breaks per leg, the P1 count, the gross and the net) and the counts; it also lists each day of the
-period that has a current run, with its verdict, counts, net, gross and the link to its files. The
+**The statement is data, not text.** The alert's evidence lists each day of its period that has a
+current run, with its verdict, counts, net, gross and the link to its files; the latest entry is
+the alert's headline. For that latest day it also holds the manifest's `statement`, `books` and
+`paymentAccounts` blocks as JSON, so the whole statement renders from the evidence. The
 [results reference](./transaction-level-results.md#the-alerts-evidence) defines this shape, and
 ADR-005 §7 items 2 and 5 when a period's alert is rebuilt. The manifest carries aggregates
 only: the statement's figures render from it alone, and lists of items come from the files,
@@ -950,8 +967,9 @@ holds. The window is the **last** N transaction ids, and the history is everythi
 With real **EPHEMERAL** holds, all lettered and purged, on EN-2036's head `20a5595d6`, which
 resolves purged accounts from the mappings, a 2k-transaction window read in 56 ms against 5.7 s at
 100k payments, and 65 ms against **50.7 s** at 1M. The merged `38c6eef55` also includes purged holds
-in a prefix listing, by walking the `[atxm][ledger][account][txID]` keys under the prefix (commit
-`701d0f0bb`): still O(history) per page, not re-measured.
+in a prefix listing, by walking the `[atxm][ledger][account][txID]` keys under the prefix
+(`internal/storage/readstore/iterator_address.go:15-77` at `c56aeb98`): still O(history) per page,
+not re-measured.
 
 **Reading.**
 
@@ -1111,7 +1129,9 @@ In every variant, the rewound stock and `psp:main` at `T` matched a checkpoint t
 **Cost.**
 
 - One `GetAccount` per payment account, and that account folded in the window already read:
-  15,500 transactions in 84 ms.
+  15,500 transactions in 84 ms. A run finds the accounts that match the pattern with one listing of
+  its literal prefix (§3, reads table), which the bench did not time; with `formancepayments` it
+  holds the mirror and `main` accounts of each provider account.
 - The `Or` of two keys raised the flow read from 1.34 s to 1.76 s for 216k transactions (+31 %).
 
 **Reading.**
@@ -1373,8 +1393,10 @@ should a file be split into parts (results doc §8)?
 
 **Setup** (`file-size`). No ledger: a generated day of 1M payments in the `lettering/1` field order
 (results doc §6), 88 % matched, about 7 % carried, 2 % breaks, and 60,000 open holds. Payment
-references of 27 characters (a Stripe id) or 110 (a base64 Payments id, which `formancepayments`'
-`slug(parent_ref, parent_id)` can yield). Gzip level 6 with no name and no timestamp (results doc
+references of 27 characters (a Stripe id) or 110 (a long raw Payments id). `formancepayments` sets
+the payment id to `slug(default(parent_ref, parent_id))`, which gives `pay-in-<ref>`, or
+`x_<base32>` when the reference is not slug-clean (`formancepayments.yaml:135` @ `016dcf41`); a
+raw id that long only comes from a plain, unstructured id. Gzip level 6 with no name and no timestamp (results doc
 §8), one thread.
 
 | File | Rows | 27-character references | 110-character references |
@@ -1503,7 +1525,7 @@ stream and 2.8 s on 8 (95k and 356k/s, as in §7.8), and the rewinds above were 
 | F-a | Concurrent reads of one checkpoint failed (`lock held by current process`) | `0b4676d97`; fixed by [EN-2108](https://formance-team.atlassian.net/browse/EN-2108) (`7492e7304`) | none |
 | F-b | Checkpoint reads were ×20 slower: every page reopens both databases, and each open replayed the WAL the checkpoint had inherited | §7.3.2 | None: evaluations take no checkpoint. Filed at the Ledger team's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1), related to EN-2108; fixed by formancehq/ledger#2165 (`7f57e98b5`), which flushes the live store before the snapshot |
 | F-c | One INFO log line per listed account | `store.go:189-195` | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)), done: formancehq/ledger#2128 (`199bee364`) |
-| F-d | A purged EPHEMERAL account's transactions, its opening included, were not returned by an address filter: the query checked that the account currently exists (`internal/query/compile.go:1069-1110` at `92b378e4b`). Fixed by formancehq/ledger#2058, merged as `38c6eef55` (EN-2331 closed). The merged prefix listing includes purged holds, against the ask to keep the address prefix to current accounts, at O(every hold ever created) per page: 50.7 s for a 2k window at 1M purged holds at `20a5595d6` ([reported on the PR](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700)), not re-measured on the merge | §2 probe; §7.6 | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331), closed): a tested contract for the metadata and `reference` paths, all this design needs. The ledger added no test for them, so recon pins them: EN-2318 (window filter, key lookup, business id, `reference`) and EN-2319 (a purged hold's `post_commit_volumes` in the unfiltered transactions) |
+| F-d | A purged EPHEMERAL account's transactions, its opening included, were not returned by an address filter: the query checked that the account currently exists (`internal/query/compile.go:1101-1110` at `9e1e10aac`, the parent of `38c6eef55` on `release/v3.0`). Fixed by formancehq/ledger#2058, merged as `38c6eef55` (EN-2331 closed). The merged prefix listing includes purged holds, against the ask to keep the address prefix to current accounts, at O(every hold ever created) per page: 50.7 s for a 2k window at 1M purged holds at `20a5595d6` ([reported on the PR](https://github.com/formancehq/ledger/pull/2058#issuecomment-5817109700)), not re-measured on the merge | §2 probe; §7.6 | **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331), closed): a tested contract for the metadata and `reference` paths, all this design needs. The ledger added no test for them, so recon pins them: EN-2318 (window filter, key lookup, business id, `reference`) and EN-2319 (a purged hold's `post_commit_volumes` in the unfiltered transactions) |
 | F-e | `ListLogs` runs at 7.3k–13.8k logs/s on one stream, 5–9× slower than `ListTransactions` over the same data. At `7dd615dba`, 10.7k/s with the fold on one stream and ~60k/s on 8 ranges; in one session of the node the same reads ran 4–9× faster, which did not reproduce | §7.2, §7.8, §7.13 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): no longer on recon's path in V1, which reads no logs (ADR-005 decisions 12 and 25) |
 | F-e2 | Transaction metadata is mutable (`SavedMetadata` on a transaction id), so a filtered `ListTransactions` re-read of a past window can change; logs do not. Ledger v3 has no immutable alternative today: no label concept in the protos at `a08f99bc3`, and `reference` is exact-match only | §7.2 `retag` | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): immutable transaction labels, add-only indexed, filterable on `ListTransactions` and `ListLogs`. Until then: the write-once convention, which V1 does not monitor (ADR-005 decision 25); L8 is the condition to bring that guarantee back |
 | F-f | Reads do not say which transaction their snapshot reflects, so the rewind reads up to a head taken separately | `AggregateVolumes` / `ListAccounts` responses | **L7** ([EN-2329](https://formance-team.atlassian.net/browse/EN-2329)): return the horizon, the last transaction id the read reflects; it could be done alongside EN-1480, which plans a `log_sequence` |
