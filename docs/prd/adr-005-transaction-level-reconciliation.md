@@ -394,7 +394,11 @@ V1 runs no periodic proof against a checkpoint.
   The hold address keys the stock only.
 - **States are parameters, not a fixed vocabulary.** How external payment states are modelled on
   the PSP ledger is a per-deployment choice. The rule therefore declares, **for each side**, the
-  metadata field or fields and the value sets that mean `pending`, `final` and `failed`:
+  metadata field and its value sets: on the PSP side the sets that mean `pending`, `final` and
+  `failed`, and on the product side the `final` set alone, the values that mark an application.
+  Every flow class reads the PSP's states and the product's applications, so a product `pending`
+  or `failed` set would have no effect; a product transaction whose state is in no set is
+  unclassified, like any other:
 
   ```json
   "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
@@ -436,7 +440,8 @@ V1 runs no periodic proof against a checkpoint.
   ("invoice X is paid: apply it"), on the flow row (`pairedHold`) and the hold's stock row
   (`pairedRef`).
 - **What the rule's validation rejects** at create time:
-  - overlapping state value sets, or an empty `holds` list on either side;
+  - overlapping state value sets, a `pending` or `failed` set on the product side, or an empty
+    `holds` list on either side;
   - a hold `prefix` that is not a literal address prefix, or two prefixes of one side where one is
     a prefix of the other;
   - an `openSign` other than `positive` or `negative`, a product `holds` entry without
@@ -895,7 +900,7 @@ for the Ledger team to weigh against its own users:
 | # | Question | Decision |
 |---|---|---|
 | 1 | The shared key | The **PSP payment reference**, carried by the transactions on both ledgers. Authorization/capture, where both sides share the authorization number, is the special case (§2.1, §6). |
-| 2 | The state vocabulary | **Parameterised per side** in the rule, because it depends on how external payment states are modelled on the PSP ledger (§6). |
+| 2 | The state vocabulary | **Parameterised per side** in the rule, because it depends on how external payment states are modelled on the PSP ledger (§6). The product side declares its `final` set only, since no class reads a product `pending` or `failed` state. |
 | 3 | Grace and ageing | `grace` is per side: `product.grace` 1 day and `psp.grace` 7 days by default (decisions 16, 20). Both graces are rule parameters, to calibrate (§6). The age buckets 0–1, 2–7, 8–30 and > 30 days are a constant of the engine, not a rule parameter (owner, 2026-10-01). |
 | 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`, kept **90 days** by default. The retention is a deployment setting (`--lettering-retention`), not a rule parameter, and one storage lifecycle rule on `{bucketID}/reconciliation/`, required at installation, deletes the files; recon deletes none. A longer legal retention raises both. No longer-kept monthly anchors (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
