@@ -42,7 +42,7 @@ paths:
           description: |
             The filter, as URL-encoded JSON in the `QueryBuilder` format. It is
             the only filter. The server reads only `query`, `pageSize`, and
-            `cursor`.
+            `cursor`, and returns 400 for any other parameter.
 
             Rule keys: `id` (a prefix match), `name`, `templateKind`, `enabled`
             (a boolean), `lastVerdict` (`pass`, `fail`, or `error`), and the
@@ -123,6 +123,7 @@ paths:
           schema: { type: string }
       responses:
         '200': { $ref: '#/components/responses/Captures' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
   # --- Ledger introspection (UI federation) ----------------------------------
   # Read-only helpers the standalone UI's rule builder uses for live ledger-name
   # / metadata-key / account autosuggest, sourced through this module's ledger
@@ -135,6 +136,7 @@ paths:
         Live ledger names in the cluster (soft-deleted ledgers are skipped),
         read through this module's ledger gRPC connection. Backs the rule
         builder's ledger picker. Best-effort: an unreachable ledger yields [].
+        The operation reads no query parameters, so any parameter is a 400.
       operationId: listLedgers
       tags: [reconciliation]
       responses:
@@ -148,7 +150,8 @@ paths:
       description: |
         Indexed account-metadata keys (+ value kind) and account types for a
         data ledger, so the rule builder can offer a typed key picker. An
-        unknown ledger yields an empty set.
+        unknown ledger yields an empty set. The operation reads no query
+        parameters, so any parameter is a 400.
       operationId: listLedgerMetaFields
       tags: [reconciliation]
       parameters: [{ $ref: '#/components/parameters/Ledger' }]
@@ -162,7 +165,8 @@ paths:
       summary: List a ledger's accounts
       description: |
         Accounts (address + per-asset balance) for a data ledger, bounded by
-        `limit`.
+        `limit`. A parameter other than `prefix`, `filter`, and `limit` is a
+        400.
 
         Two modes, and they differ in how failure behaves. With no `filter` this
         backs the UI's account-selector autosuggest, so an unknown or
@@ -220,6 +224,7 @@ paths:
         `_recon` entry themselves — `ed25519.Verify(publicKey, payload, signature)`
         — with nobody from Formance in the loop. Backs the audit tab's
         "verify it yourself" panel. Best-effort: an unreachable ledger yields [].
+        The operation reads no query parameters, so any parameter is a 400.
       operationId: listAuditSigningKeys
       tags: [reconciliation]
       responses:
@@ -244,7 +249,8 @@ paths:
         evaluations and alert transitions; `system` are the provisioning writes
         (the ledger, its chart of accounts, metadata types, indexes and
         numscripts); `all` is both. A rejected write appears in the scope of what
-        it tried to do. An unknown scope is a 400.
+        it tried to do. An unknown scope, or a parameter other than `scope` and
+        `limit`, is a 400.
 
         Note: `sequence` is the ledger's dense, bucket-wide audit sequence, shared
         with any other ledgers in the same bucket; per-entry authenticity is
@@ -354,7 +360,8 @@ paths:
           description: |
             The filter, as URL-encoded JSON in the `QueryBuilder` format. It is
             the only filter. The server reads only `query`, `pageSize`, and
-            `cursor`, so `?status=OPEN` returns every alert.
+            `cursor`, and returns 400 for any other parameter, such as
+            `?status=OPEN`.
 
             Alert keys: `id`, `ruleID` (not `ruleId`), `status` (`OPEN`,
             `ACKNOWLEDGED`, or `RESOLVED`), `severity`, `fingerprint`,
@@ -506,8 +513,9 @@ components:
         Set to the value of next for the next page of results.
         Set to the value of previous for the previous page of results.
         The cursor carries the page size and the filter of the first request,
-        so the server ignores the other query parameters when this parameter
-        is set.
+        so the server ignores the endpoint's other parameters when this
+        parameter is set. A parameter that the endpoint does not read still
+        returns 400.
       schema:
         type: string
         example: aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ==

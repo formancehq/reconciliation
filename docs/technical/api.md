@@ -180,7 +180,8 @@ EE-gated. The contracts below match what's wired in [`internal/api/router.go`](.
 ### Filtering lists
 
 `GET /rules` and `GET /alerts` take one filter, as JSON in the `query` parameter. They read only
-`query`, `pageSize`, and `cursor`, so `GET /alerts?status=OPEN` returns every alert.
+`query`, `pageSize`, and `cursor`. Any other parameter returns `400 VALIDATION`, so
+`GET /alerts?status=OPEN` fails instead of returning every alert.
 
 URL-encode the filter:
 
@@ -208,7 +209,7 @@ The server returns `400 VALIDATION` for an unknown key or for an operator that t
 support. Each endpoint lists its keys below.
 
 The `next` and `previous` cursors carry the filter, so later pages stay filtered. When you pass
-`cursor`, the server ignores `query`.
+`cursor`, the server ignores `query`, `pageSize`, and the body.
 
 ### Rules
 
@@ -552,7 +553,7 @@ The control ledger's audit entries, newest first.
 | `scope` | `actions`: reconciliation actions (rule changes, evaluations, alert transitions) · `system`: provisioning (the ledger, its chart of accounts, metadata types, indexes, numscripts) · `all` | `actions` |
 | `limit` | 1–500 | 50 |
 
-An unknown `scope` returns `400 VALIDATION`. The ledger applies the scope, and a rejected write appears in the scope of what it tried to do.
+An unknown `scope`, or a parameter other than `scope` and `limit`, returns `400 VALIDATION`. The ledger applies the scope, and a rejected write appears in the scope of what it tried to do.
 
 Each entry carries:
 
@@ -687,7 +688,7 @@ All endpoints share the existing `ErrorResponse` shape:
 
 | HTTP | `errorCode` | When |
 |---|---|---|
-| 400 | `VALIDATION`         | Bad request body, unknown templateKind, invalid spec, invalid list filter |
+| 400 | `VALIDATION`         | Bad request body, unknown templateKind, invalid spec, invalid list filter, unknown query parameter on a list endpoint |
 | 400 | `INVALID_ID`         | Path UUID malformed |
 | 401 | `UNAUTHORIZED`       | Missing/invalid token |
 | 403 | `FORBIDDEN`          | Token lacks the required scope |
@@ -695,6 +696,11 @@ All endpoints share the existing `ErrorResponse` shape:
 | 409 | `CONFLICT`           | Concurrent transition lost the ledger marker guard (compare-and-swap); low-concurrency control-plane, rare (see F22 in the migration log) |
 | 422 | `BUSINESS_RULE`      | E.g. accept-without-note, resolve-on-already-resolved |
 | 500 | `INTERNAL`           | Engine error, resolver timeout — also raises an `engine.error` meta-alert |
+
+Every list endpoint rejects a query parameter that it does not read. The server returns
+`400 VALIDATION`, and the message names the parameters that the endpoint reads, for example
+`unknown query parameter "status": this endpoint reads only cursor, pageSize, and query`. A
+malformed query string, such as `status=%ZZ` or a `;` separator, also returns `400 VALIDATION`.
 
 An evaluation that would open more new alerts than the service permits succeeds normally (200) but
 withholds its alert transitions and raises an `alert.cap` meta-alert instead — see

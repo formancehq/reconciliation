@@ -49,6 +49,11 @@ type signingKeysResponse struct {
 // it returns an empty set (debug-logged) rather than failing the page.
 func listSigningKeysHandler(client ledgerIntrospector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := validateQueryParams(r.URL.RawQuery); err != nil {
+			api.BadRequest(w, ErrValidation, err)
+			return
+		}
+
 		resp := signingKeysResponse{Keys: []signingKeyOption{}}
 
 		keys, err := client.ListSigningKeys(r.Context())
@@ -139,10 +144,15 @@ func prettyFailureReason(reason string) string {
 // it returns an empty set (debug-logged) rather than failing the page.
 func listAuditEntriesHandler(client ledgerIntrospector, control ControlLedger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := validateQueryParams(r.URL.RawQuery, QueryKeyLimit, QueryKeyScope); err != nil {
+			api.BadRequest(w, ErrValidation, err)
+			return
+		}
+
 		resp := auditEntriesResponse{Entries: []auditEntry{}}
 
 		limit := defaultAuditEntriesLimit
-		if v := r.URL.Query().Get("limit"); v != "" {
+		if v := r.URL.Query().Get(QueryKeyLimit); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				limit = n
 			}
@@ -152,7 +162,7 @@ func listAuditEntriesHandler(client ledgerIntrospector, control ControlLedger) h
 		}
 
 		scope := ledger.AuditScopeActions
-		if v := r.URL.Query().Get("scope"); v != "" {
+		if v := r.URL.Query().Get(QueryKeyScope); v != "" {
 			parsed, err := ledger.ParseAuditScope(v)
 			if err != nil {
 				api.BadRequest(w, ErrValidation, err)

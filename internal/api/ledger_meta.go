@@ -92,6 +92,11 @@ func metadataKind(t commonpb.MetadataType) string {
 // an empty set and the UI falls back to a free-text key.
 func listLedgerMetaFieldsHandler(client ledgerIntrospector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := validateQueryParams(r.URL.RawQuery); err != nil {
+			api.BadRequest(w, ErrValidation, err)
+			return
+		}
+
 		name := chi.URLParam(r, "ledger")
 
 		resp := ledgerMetaFieldsResponse{
@@ -157,8 +162,13 @@ var errStopScan = errors.New("stop scan")
 // an empty list.
 func listLedgerAccountsHandler(client ledgerIntrospector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := validateQueryParams(r.URL.RawQuery, QueryKeyFilter, QueryKeyLimit, QueryKeyPrefix); err != nil {
+			api.BadRequest(w, ErrValidation, err)
+			return
+		}
+
 		name := chi.URLParam(r, "ledger")
-		prefix := r.URL.Query().Get("prefix")
+		prefix := r.URL.Query().Get(QueryKeyPrefix)
 
 		// `filter` carries this module's own account-query DSL — the shape a
 		// rule's source.query takes, and the shape an alert records as
@@ -173,7 +183,7 @@ func listLedgerAccountsHandler(client ledgerIntrospector) http.HandlerFunc {
 		// TranslateDataQuery reports malformed JSON and an unsupported predicate
 		// alike, and its message names the offending input, so there is nothing
 		// for a pre-check to add.
-		raw := r.URL.Query().Get("filter")
+		raw := r.URL.Query().Get(QueryKeyFilter)
 		explicit := raw != ""
 
 		var filter *commonpb.QueryFilter
@@ -190,7 +200,7 @@ func listLedgerAccountsHandler(client ledgerIntrospector) http.HandlerFunc {
 		}
 
 		limit := 50
-		if v := r.URL.Query().Get("limit"); v != "" {
+		if v := r.URL.Query().Get(QueryKeyLimit); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				limit = n
 			}
@@ -255,6 +265,11 @@ type ledgersResponse struct {
 // rule dialog.
 func listLedgersHandler(client ledgerIntrospector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := validateQueryParams(r.URL.RawQuery); err != nil {
+			api.BadRequest(w, ErrValidation, err)
+			return
+		}
+
 		resp := ledgersResponse{Ledgers: []ledgerNameOption{}}
 
 		names, err := client.ListLedgers(r.Context())

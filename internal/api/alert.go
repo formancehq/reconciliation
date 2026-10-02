@@ -125,6 +125,11 @@ func getAlertHandler(b backend.Backend) http.HandlerFunc {
 
 func listAlertsHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := validateQueryParams(r.URL.RawQuery, QueryKeyCursor, QueryKeyPageSize, QueryKeyQuery); err != nil {
+			api.BadRequest(w, ErrValidation, err)
+			return
+		}
+
 		q := store.GetAlertsQuery{}
 		if r.URL.Query().Get(QueryKeyCursor) != "" {
 			if err := bunpaginate.UnmarshalCursor(r.URL.Query().Get(QueryKeyCursor), &q); err != nil {
@@ -165,6 +170,11 @@ func listAlertsHandler(b backend.Backend) http.HandlerFunc {
 // not out of the table — so an unbounded response could be enormous.
 func listAlertEventsHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := validateQueryParams(r.URL.RawQuery, QueryKeyCursor, QueryKeyPageSize); err != nil {
+			api.BadRequest(w, ErrValidation, err)
+			return
+		}
+
 		id, err := uuid.Parse(chi.URLParam(r, "alertID"))
 		if err != nil {
 			api.BadRequest(w, ErrInvalidID, err)

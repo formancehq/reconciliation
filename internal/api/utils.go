@@ -25,7 +25,7 @@ func getQueryBuilder(r *http.Request) (query.Builder, error) {
 	}
 
 	// If we don't have a body, we use the query param
-	return query.ParseJSON(r.URL.Query().Get("query"))
+	return query.ParseJSON(r.URL.Query().Get(QueryKeyQuery))
 }
 
 func getPaginatedQueryOptionsRules(r *http.Request) (*store.PaginatedQueryOptions[store.RulesFilters], error) {
@@ -75,7 +75,7 @@ func getPaginatedQueryOptionsCaptures(r *http.Request) (*store.PaginatedQueryOpt
 	// The rule id comes from the path; `period` is the one optional filter
 	// (scope to a single reconciliation period).
 	return pointer.For(store.NewPaginatedQueryOptions(store.CapturesFilters{
-		Period: r.URL.Query().Get("period"),
+		Period: r.URL.Query().Get(QueryKeyPeriod),
 	}).WithPageSize(pageSize)), nil
 }
 

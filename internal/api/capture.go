@@ -63,6 +63,11 @@ func renderCapture(c *models.Capture) *captureResponse {
 // backed today (no event sink required).
 func listRuleCapturesHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := validateQueryParams(r.URL.RawQuery, QueryKeyCursor, QueryKeyPageSize, QueryKeyPeriod); err != nil {
+			api.BadRequest(w, ErrValidation, err)
+			return
+		}
+
 		id, err := uuid.Parse(chi.URLParam(r, "ruleID"))
 		if err != nil {
 			api.BadRequest(w, ErrInvalidID, err)

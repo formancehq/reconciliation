@@ -167,6 +167,11 @@ func patchRuleHandler(b backend.Backend) http.HandlerFunc {
 
 func listRulesHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if err := validateQueryParams(r.URL.RawQuery, QueryKeyCursor, QueryKeyPageSize, QueryKeyQuery); err != nil {
+			api.BadRequest(w, ErrValidation, err)
+			return
+		}
+
 		q := store.GetRulesQuery{}
 		if r.URL.Query().Get(QueryKeyCursor) != "" {
 			if err := bunpaginate.UnmarshalCursor(r.URL.Query().Get(QueryKeyCursor), &q); err != nil {
