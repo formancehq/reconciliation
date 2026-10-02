@@ -1254,6 +1254,9 @@ range first and in 32 ms membership first.
 - A client that writes the id range first pays the difference without knowing it. A ledger that
   ordered an `And`'s terms itself, or whose `Or` skipped re-seeking a term already past the target,
   would remove the trap (§8, finding F-i, ask L9: [EN-2356](https://formance-team.atlassian.net/browse/EN-2356)).
+- EN-2318 keeps the order with a unit test of the built filter and a bench-backed check that the
+  membership-first `Or` of three keys reads at least twice as fast as id range first, below the
+  2.7 to 3.4 times measured here.
 - No write ran during these reads; §7.13 measures the flow read under writes, and §7.15 at 1M
   payments.
 

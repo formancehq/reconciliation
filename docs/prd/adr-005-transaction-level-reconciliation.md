@@ -430,6 +430,22 @@ V1 runs no periodic proof against a checkpoint.
   When set, an unapplied payment whose merchant reference names an open hold is paired with it
   ("invoice X is paid: apply it"), on the flow row (`pairedHold`) and the hold's stock row
   (`pairedRef`).
+- **What the rule's validation rejects** at create time:
+  - overlapping state value sets, or an empty `holds` list on either side;
+  - a hold `prefix` that is not a literal address prefix, or two prefixes of one side where one is
+    a prefix of the other;
+  - an `openSign` other than `positive` or `negative`, a product `holds` entry without
+    `businessId`, or a PSP entry with one;
+  - a missing `psp.paymentAccount`, one that is not a pattern of `:`-separated segments, each a
+    literal or `*`, or one that overlaps a PSP hold prefix;
+  - a negative `grace` (`0` is valid) or an unknown `periodType`;
+  - a `key`, `businessId`, `merchantRef` or `movementKeys` field that is not declared as
+    transaction metadata on its ledger, or a `key`, `businessId` or `movementKeys` field without an
+    index, and a `movementKeys` field equal to the `key` or to `state.field`;
+  - a ledger without the `inserted_at` index (§5).
+
+  An index that is still building is accepted, and the first run waits for it. Contract versions
+  are isolated as for the other V2 templates.
 - **An application's amount is its net posting on the accounts under the side's hold prefixes**,
   each counted in the direction that settles it: an invoice hold that opens at −X is settled by +X.
   A transaction that carries the key but moves no hold, such as a revenue recognition booked in the
@@ -557,7 +573,8 @@ V1 runs no periodic proof against a checkpoint.
    3. Write the data files.
    4. Write the run's **capture**: the verdict, counts, drifts, `T` per ledger, and the artifact
       URI and the SHA-256 of the manifest, computed before it is written, signed with Ed25519
-      (EN-1930). Every run's status comes from its capture (item 9).
+      (EN-1930). Like every `_recon` write it is committed as a signed batch, and its signature
+      verifies with the public key alone. Every run's status comes from its capture (item 9).
    5. Write the **manifest**, last of the run's files.
    6. Update the alert.
 
@@ -747,6 +764,10 @@ V1 runs no periodic proof against a checkpoint.
    - `--lettering-retention` (default 90 days): how long a run's files are kept. It sets the
      manifest's `expiresAt` and bounds the byte-identical replays (item 7); the storage's lifecycle
      rule, set to the same age, deletes the files (item 4).
+
+   The process validates them at startup and refuses to start, with an error that names the flag,
+   unless both read flags are positive integers, `--lettering-read-ranges` is at most
+   `--lettering-max-concurrent-reads`, and the retention is a positive duration.
 
    Three more values are **constants of the engine**, not settings: the age buckets `0–1 d`,
    `2–7 d`, `8–30 d` and `> 30 d` (§6), key lookups by groups of **100** references (§6), and a

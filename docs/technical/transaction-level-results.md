@@ -130,7 +130,8 @@
 ## 3. Conventions
 
 - **Format.** Gzipped NDJSON, one JSON object per line. Each file has a JSON Schema under the
-  manifest's `schemaVersion`.
+  manifest's `schemaVersion`, generated from the writer's Go types so that it cannot drift from the
+  files.
 - **Amounts** are integers in minor units, written as strings, always next to their `asset`:
   `"100000"` in `EUR/2` is 1,000.00.
 - **Signs.** Three conventions, each attached to a fixed set of fields:
