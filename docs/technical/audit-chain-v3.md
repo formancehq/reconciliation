@@ -143,29 +143,28 @@ resolve / accept / snooze). `GET /audit/entries/by-transaction/{transactionId}`
 returns the signed audit entry for that write, and the UI verifies its Ed25519
 signature in-browser (`EventAuditProof`) — a per-action "verify this write".
 
-**The ids are three different number spaces**, which is the whole subtlety (a
-live spike disproved the naive assumption that they coincide — they only do when
-reconciliation is the sole writer in the bucket):
+**The ids are four different number spaces**, which is the whole subtlety:
 
-- **transaction id** — per *ledger*; equals the **ledger-local log id**.
-- **log sequence** — per *bucket* (the FSM's single log); what `AuditItem.log_sequence` and the `AUDIT_FIELD_LOG_SEQUENCE` index carry.
-- **audit sequence** — per *bucket*; indexes `GET /audit/entries/{sequence}`. Assigned after signing (§9), so unsigned.
+- **transaction id**: per *ledger*. Only a created or reverted transaction takes one.
+- **ledger-local log id**: per *ledger*, a separate counter. Every ledger-scoped write takes one: account types, metadata types, indexes, metadata. Provisioning takes the first log ids of the control ledger, so a transaction id never equals its log id there.
+- **log sequence**: per *bucket* (the FSM's single log); what `AuditItem.log_sequence` and the `AUDIT_FIELD_LOG_SEQUENCE` index carry.
+- **audit sequence**: per *bucket*; indexes `GET /audit/entries/{sequence}`. Assigned after signing (§9), so unsigned.
 
-So the resolver (`ledger.ResolveAuditEntryByTransaction`) is a **two-hop**:
+Until 2026-10-02 the resolver assumed that a transaction id equals its log id. It returned a provisioning entry for every event, and the in-browser check passed, because that entry was genuinely signed.
 
-1. `ListLogs(ledger, filter LogId == transactionId)` → the write's log, whose
-   `Sequence` is the bucket-wide log sequence.
-2. `ListAuditEntries(filter AUDIT_FIELD_LOG_SEQUENCE == that sequence)` → the
-   audit entry carrying it; re-read by its sequence for the full signed detail.
+No log filter maps a transaction to its log, so the resolver (`ledger.ResolveAuditEntryByTransaction`) goes through time. A proposal's effective date is the transaction's `inserted_at`, the date of each log it writes, and its audit entry's timestamp. The ledger's HLC gives each proposal its own instant (ledger `internal/infra/state/machine.go:1347` and `:1498`, `internal/domain/processing/processor_transaction.go:288` at `v3.0.0-beta.6`, `118531bc7`; checked live: the three values are equal to the microsecond). The resolver makes three reads:
 
-The audit index does **not** support ANDing a ledger condition with the
-log-sequence condition (an `And` of audit conditions matches nothing), so hop 1
-is scoped by ledger and hop 2's match is confirmed against the control ledger
-client-side. Note an audit *proposal* can batch several consecutive log entries,
-so multiple transactions can resolve to the same audit entry — that entry is
-still the correct, signed record that committed the write.
+1. `GetTransaction` → `inserted_at`.
+2. `ListAuditEntries(filter AUDIT_FIELD_TIMESTAMP == inserted_at)` → the candidate entries. The index is bucket-wide, so the resolver keeps only successful entries that name the control ledger. It filters on the timestamp alone and checks the ledger client-side, which is cheaper than an `And` with the ledger condition.
+3. `GetAuditEntry` for the items, then `GetLog` on each item's log sequence → the entry whose log created this transaction on the control ledger. The answer never rests on the timestamp alone.
 
-This adds no write-path change and no new ledger capability — it composes the
-existing `ListLogs` + `AUDIT_FIELD_LOG_SEQUENCE` indexes. It does not change the
+When the entry is signed, the resolver also checks the signed payload. It must hold a `CreateTransaction` whose metadata is stored on the transaction, value for value. Otherwise the resolver returns `ErrAuditEntryMismatch`, and the API answers 404 and logs an error. A valid signature over a different write is never served as the proof of this event.
+
+An audit *proposal* can batch several log entries, so several transactions can resolve to the same audit entry. That entry is still the correct, signed record that committed the write.
+
+This adds no write-path change and no new ledger index. It composes
+`GetTransaction`, the audit projection's timestamp index (nothing to create)
+and `GetLog` (scope
+`OPS_READ`, which recon already needs for `ListSigningKeys`). It does not change the
 completeness story (§9): it verifies authorship + integrity of one write, on
 demand, from the public key.

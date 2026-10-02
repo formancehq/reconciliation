@@ -291,6 +291,10 @@ type AuditEntryInfo struct {
 	Outcome    string
 	OrderCount uint32
 	Ledgers    []string
+	// IdempotencyKey is the batch's idempotency key, bound into the ledger's
+	// audit hash chain (and, for a signed batch, inside the signed payload).
+	// Empty for an unkeyed batch.
+	IdempotencyKey string
 	// Failure detail (outcome == "failure"): the ledger's own reason enum name
 	// and human message — e.g. why a guarded write was rejected.
 	FailureReason  string
@@ -387,71 +391,148 @@ func (c *Client) GetAuditEntry(ctx context.Context, sequence uint64) (AuditEntry
 	return auditEntryInfoFrom(entry), nil
 }
 
+// ErrAuditEntryMismatch reports a resolved audit entry whose signed payload does
+// not carry the transaction it was resolved for. Serving it would prove a
+// different write, so the resolver refuses it.
+var ErrAuditEntryMismatch = errors.New("audit entry: signed payload does not carry the transaction")
+
 // ResolveAuditEntryByTransaction finds the signed audit entry for a control-ledger
 // write, given the transaction id an alert event carries. It bridges an event to
 // its entry in the signed audit chain — whose own `sequence` is a different,
 // bucket-wide number. Returns ok=false when nothing matches.
 func (c *Client) ResolveAuditEntryByTransaction(ctx context.Context, ledgerName string, transactionID uint64) (AuditEntryInfo, bool, error) {
-	// The transaction id is per-ledger (it equals the ledger-local log id); the
-	// audit chain keys on the bucket-wide log sequence, a different number. So it
-	// takes two hops:
-	//   1. the ledger-local log with LogId == transactionID → its bucket-wide
-	//      Sequence (this is the write's log sequence);
-	//   2. the audit entry whose item carries that log sequence.
-	// The AUDIT_FIELD_LOG_SEQUENCE index does not support ANDing a ledger
-	// condition (an And of audit conditions matches nothing), so we scope hop 1 by
-	// ledger and confirm the resolved entry's ledgers client-side.
-	logID := transactionID
-	logStream, err := c.service.ListLogs(ctx, &servicepb.ListLogsRequest{
-		Ledger: ledgerName,
-		Options: &commonpb.ListOptions{PageSize: 1, Filter: &commonpb.QueryFilter{
-			Filter: &commonpb.QueryFilter_LogId{LogId: &commonpb.LogIdCondition{
-				Cond: &commonpb.UintCondition{Min: &logID, Max: &logID},
-			}},
-		}},
-	})
+	// A transaction id is not a log id: the ledger keeps separate counters, and
+	// every ledger-scoped write (account types, metadata types, indexes,
+	// metadata) takes a log id but no transaction id. No log filter maps a
+	// transaction to its log, so this resolves through time instead. A
+	// proposal's effective date is the transaction's inserted_at, the date of
+	// every log it writes and its audit entry's timestamp, and the ledger's HLC
+	// gives each proposal its own instant. So:
+	//   1. GetTransaction → inserted_at;
+	//   2. the audit entries at exactly that timestamp (the index is bucket-wide,
+	//      so an entry is kept only when it names this ledger);
+	//   3. GetLog on each item's bucket-wide log sequence, to confirm the log
+	//      created this transaction on this ledger. The answer never rests on the
+	//      timestamp alone.
+	// A signed entry must then carry the transaction in the bytes recon signed,
+	// or the in-browser signature check would vouch for a different write.
+	resp, err := c.service.GetTransaction(ctx, &servicepb.GetTransactionRequest{Ledger: ledgerName, TransactionId: transactionID})
+	if status.Code(err) == codes.NotFound {
+		return AuditEntryInfo{}, false, nil
+	}
 	if err != nil {
-		return AuditEntryInfo{}, false, fmt.Errorf("resolve log for transaction %d: %w", transactionID, err)
+		return AuditEntryInfo{}, false, fmt.Errorf("get transaction %d: %w", transactionID, err)
 	}
-	logEntry, lerr := logStream.Recv()
-	if errors.Is(lerr, io.EOF) {
-		return AuditEntryInfo{}, false, nil // no such transaction on this ledger
-	}
-	if lerr != nil {
-		return AuditEntryInfo{}, false, fmt.Errorf("recv log for transaction %d: %w", transactionID, lerr)
-	}
-	bucketLogSeq := logEntry.GetSequence()
+	at := resp.GetTransaction().GetInsertedAt().GetData()
 
-	auditStream, err := c.service.ListAuditEntries(ctx, &servicepb.ListAuditEntriesRequest{
+	stream, err := c.service.ListAuditEntries(ctx, &servicepb.ListAuditEntriesRequest{
 		Options: &commonpb.ListOptions{PageSize: 10, Filter: &commonpb.QueryFilter{
 			Filter: &commonpb.QueryFilter_Audit{Audit: &commonpb.AuditCondition{
-				Field:     commonpb.AuditField_AUDIT_FIELD_LOG_SEQUENCE,
-				Condition: &commonpb.AuditCondition_UintCond{UintCond: &commonpb.UintCondition{Min: &bucketLogSeq, Max: &bucketLogSeq}},
+				Field:     commonpb.AuditField_AUDIT_FIELD_TIMESTAMP,
+				Condition: &commonpb.AuditCondition_UintCond{UintCond: &commonpb.UintCondition{Min: &at, Max: &at}},
 			}},
 		}},
 	})
 	if err != nil {
-		return AuditEntryInfo{}, false, fmt.Errorf("resolve audit entry for log sequence %d: %w", bucketLogSeq, err)
+		return AuditEntryInfo{}, false, fmt.Errorf("list audit entries at %d: %w", at, err)
 	}
+
+	var candidates []uint64
 	for {
-		entry, rerr := auditStream.Recv()
+		entry, rerr := stream.Recv()
 		if errors.Is(rerr, io.EOF) {
-			return AuditEntryInfo{}, false, nil
+			break
 		}
 		if rerr != nil {
-			return AuditEntryInfo{}, false, fmt.Errorf("recv audit entry for log sequence %d: %w", bucketLogSeq, rerr)
+			return AuditEntryInfo{}, false, fmt.Errorf("recv audit entry at %d: %w", at, rerr)
 		}
-		if !slices.Contains(entry.GetLedgers(), ledgerName) {
-			continue // a batch on another ledger sharing the log-sequence page — skip
+		if entry.GetFailure() == nil && slices.Contains(entry.GetLedgers(), ledgerName) {
+			candidates = append(candidates, entry.GetSequence())
 		}
-		// The filtered stream omits per-order items; re-read by sequence for the
-		// full detail (decoded actions, failure reason/message).
-		full, err := c.GetAuditEntry(ctx, entry.GetSequence())
-		if err != nil {
-			return AuditEntryInfo{}, false, err
-		}
-		return full, true, nil
 	}
+
+	for _, sequence := range candidates {
+		// The filtered stream omits per-order items; the single read carries them.
+		entry, err := c.service.GetAuditEntry(ctx, &servicepb.GetAuditEntryRequest{Sequence: sequence})
+		if err != nil {
+			return AuditEntryInfo{}, false, fmt.Errorf("get audit entry %d: %w", sequence, err)
+		}
+
+		for _, item := range entry.GetItems() {
+			created, err := c.logCreatesTransaction(ctx, item.GetLogSequence(), ledgerName, transactionID)
+			if err != nil {
+				return AuditEntryInfo{}, false, err
+			}
+			if !created {
+				continue
+			}
+
+			if payload := entry.GetSignature().GetPayload(); len(payload) > 0 && !batchCreatesTransaction(payload, ledgerName, resp.GetTransaction()) {
+				return AuditEntryInfo{}, false, fmt.Errorf("%w: entry %d, transaction %d", ErrAuditEntryMismatch, sequence, transactionID)
+			}
+
+			return auditEntryInfoFrom(entry), true, nil
+		}
+	}
+
+	return AuditEntryInfo{}, false, nil
+}
+
+// logCreatesTransaction reports whether the bucket-wide log at sequence created
+// transaction transactionID on ledgerName. A sequence with no log (NotFound) is
+// not a match.
+func (c *Client) logCreatesTransaction(ctx context.Context, sequence uint64, ledgerName string, transactionID uint64) (bool, error) {
+	logEntry, err := c.service.GetLog(ctx, &servicepb.GetLogRequest{Sequence: sequence})
+	if status.Code(err) == codes.NotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get log %d: %w", sequence, err)
+	}
+
+	apply := logEntry.GetPayload().GetApply()
+	if apply.GetLedgerName() != ledgerName {
+		return false, nil
+	}
+
+	created := apply.GetLog().GetData().GetCreatedTransaction()
+
+	return created != nil && created.GetTransaction().GetId() == transactionID, nil
+}
+
+// batchCreatesTransaction reports whether a signed payload (the exact ApplyBatch
+// bytes recon signed) creates tx on ledgerName: it holds a CreateTransaction
+// whose metadata is non-empty and stored on tx value for value. Recon's control
+// writes all carry an activity envelope, so empty metadata binds nothing.
+func batchCreatesTransaction(payload []byte, ledgerName string, tx *commonpb.Transaction) bool {
+	batch := &servicepb.ApplyBatch{}
+	if err := batch.UnmarshalVT(payload); err != nil {
+		return false
+	}
+
+	for _, req := range batch.GetRequests() {
+		if req.GetApply().GetLedger() != ledgerName {
+			continue
+		}
+
+		signed := req.GetApply().GetAction().GetCreateTransaction().GetMetadata()
+		if len(signed) > 0 && metadataStored(signed, tx.GetMetadata()) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// metadataStored reports whether every signed key is stored with the same value.
+func metadataStored(signed, stored map[string]*commonpb.MetadataValue) bool {
+	for k, v := range signed {
+		if !v.EqualVT(stored[k]) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // auditLedgerFilter is the QueryFilter scoping audit entries to one ledger.
@@ -470,10 +551,11 @@ func auditLedgerFilter(ledgerName string) *commonpb.QueryFilter {
 // single read.
 func auditEntryInfoFrom(entry *auditpb.AuditEntry) AuditEntryInfo {
 	info := AuditEntryInfo{
-		Sequence:   entry.GetSequence(),
-		OrderCount: entry.GetOrderCount(),
-		Ledgers:    entry.GetLedgers(),
-		Outcome:    "success",
+		Sequence:       entry.GetSequence(),
+		OrderCount:     entry.GetOrderCount(),
+		Ledgers:        entry.GetLedgers(),
+		IdempotencyKey: entry.GetIdempotency().GetKey(),
+		Outcome:        "success",
 	}
 	if failure := entry.GetFailure(); failure != nil {
 		info.Outcome = "failure"

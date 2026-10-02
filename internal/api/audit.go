@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -186,6 +187,13 @@ func getAuditEntryByTransactionHandler(client ledgerIntrospector, control Contro
 		}
 
 		entry, found, err := client.ResolveAuditEntryByTransaction(r.Context(), string(control), txID)
+		if errors.Is(err, ledger.ErrAuditEntryMismatch) {
+			// The ledger's audit entry for this write signs different bytes: an
+			// integrity anomaly, never served as a proof.
+			v5log.FromContext(r.Context()).Errorf("audit entry for tx %d does not carry it: %v", txID, err)
+			api.NotFound(w, fmt.Errorf("no audit entry for transaction %d", txID))
+			return
+		}
 		if err != nil {
 			v5log.FromContext(r.Context()).Debugf("resolve audit entry for tx %d failed: %v", txID, err)
 			api.NotFound(w, fmt.Errorf("no audit entry for transaction %d", txID))
