@@ -6,9 +6,13 @@
  * The threaded `coi` bundle is left out on purpose: it needs SharedArrayBuffer,
  * so a cross-origin-isolated page, which the console's iframe embedding is not.
  * The URL carries the package version (`?v=`), so the files cache for good.
+ *
+ * It answers only while the Results tab has a source (lib/lettering/source.ts):
+ * under `next dev` today, so a production build serves nothing.
  */
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { LETTERING_SOURCE_AVAILABLE } from '@/lib/lettering/source'
 
 export const runtime = 'nodejs'
 
@@ -23,6 +27,7 @@ const FILES = new Map([
 const DIST = path.resolve(process.cwd(), 'node_modules', '@duckdb', 'duckdb-wasm', 'dist')
 
 export async function GET(_req: Request, ctx: { params: Promise<{ file: string }> }): Promise<Response> {
+	if (!LETTERING_SOURCE_AVAILABLE) return new Response(null, { status: 404 })
 	const { file } = await ctx.params
 	const type = FILES.get(file)
 	if (!type) return new Response(null, { status: 404 })
