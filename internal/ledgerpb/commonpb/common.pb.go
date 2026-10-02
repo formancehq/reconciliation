@@ -767,6 +767,10 @@ const (
 	// Creation never evicts; an existing checkpoint must be deleted first. See
 	// EN-1501.
 	ErrorReason_ERROR_REASON_CHECKPOINT_LIMIT_REACHED ErrorReason = 65
+	// ERROR_REASON_INVALID_CALLER_ATTRIBUTION: a proposal reached admission or
+	// the FSM without a complete canonical caller principal. This is an internal
+	// trust-boundary violation and is never client-correctable.
+	ErrorReason_ERROR_REASON_INVALID_CALLER_ATTRIBUTION ErrorReason = 72
 	// ERROR_REASON_CHECKPOINT_NOT_FOUND: a DeleteQueryCheckpoint targeted an id
 	// that is not live (never created, or already deleted). See EN-1501.
 	ErrorReason_ERROR_REASON_CHECKPOINT_NOT_FOUND ErrorReason = 66
@@ -793,6 +797,7 @@ const (
 	// and re-admitting the identical batch reproduces the same observation.
 	// Submit the revert in a later batch.
 	ErrorReason_ERROR_REASON_REVERT_TARGET_CREATED_IN_BATCH ErrorReason = 70
+	ErrorReason_ERROR_REASON_SINK_CONTROLLER_MISMATCH       ErrorReason = 71
 )
 
 // Enum value maps for ErrorReason.
@@ -864,11 +869,13 @@ var (
 		63: "ERROR_REASON_CLUSTER_POLICY_REVISION_CONFLICT",
 		64: "ERROR_REASON_CLUSTER_POLICY_INVALID",
 		65: "ERROR_REASON_CHECKPOINT_LIMIT_REACHED",
+		72: "ERROR_REASON_INVALID_CALLER_ATTRIBUTION",
 		66: "ERROR_REASON_CHECKPOINT_NOT_FOUND",
 		67: "ERROR_REASON_SEQUENCE_EXHAUSTED",
 		68: "ERROR_REASON_INDEX_ALREADY_EXISTS",
 		69: "ERROR_REASON_METADATA_LIMIT_EXCEEDED",
 		70: "ERROR_REASON_REVERT_TARGET_CREATED_IN_BATCH",
+		71: "ERROR_REASON_SINK_CONTROLLER_MISMATCH",
 	}
 	ErrorReason_value = map[string]int32{
 		"ERROR_REASON_UNSPECIFIED":                      0,
@@ -937,11 +944,13 @@ var (
 		"ERROR_REASON_CLUSTER_POLICY_REVISION_CONFLICT": 63,
 		"ERROR_REASON_CLUSTER_POLICY_INVALID":           64,
 		"ERROR_REASON_CHECKPOINT_LIMIT_REACHED":         65,
+		"ERROR_REASON_INVALID_CALLER_ATTRIBUTION":       72,
 		"ERROR_REASON_CHECKPOINT_NOT_FOUND":             66,
 		"ERROR_REASON_SEQUENCE_EXHAUSTED":               67,
 		"ERROR_REASON_INDEX_ALREADY_EXISTS":             68,
 		"ERROR_REASON_METADATA_LIMIT_EXCEEDED":          69,
 		"ERROR_REASON_REVERT_TARGET_CREATED_IN_BATCH":   70,
+		"ERROR_REASON_SINK_CONTROLLER_MISMATCH":         71,
 	}
 )
 
@@ -1076,15 +1085,16 @@ func (AccountTypePersistence) EnumDescriptor() ([]byte, []int) {
 type AuditField int32
 
 const (
-	AuditField_AUDIT_FIELD_UNSPECIFIED    AuditField = 0
-	AuditField_AUDIT_FIELD_SEQUENCE       AuditField = 1 // uint   -> AuditEntry.sequence (audit-zone key range)
-	AuditField_AUDIT_FIELD_PROPOSAL_ID    AuditField = 2 // uint   -> AuditEntry.proposal_id (index range)
-	AuditField_AUDIT_FIELD_TIMESTAMP      AuditField = 3 // uint   -> AuditEntry.timestamp.data, unix micros (index range)
-	AuditField_AUDIT_FIELD_LOG_SEQUENCE   AuditField = 4 // uint   -> item log_sequence, match-any (index range)
-	AuditField_AUDIT_FIELD_OUTCOME        AuditField = 5 // string in {success, failure} (index)
-	AuditField_AUDIT_FIELD_CALLER_SUBJECT AuditField = 6 // string -> caller_snapshot.authenticated.identity.subject (index)
-	AuditField_AUDIT_FIELD_LEDGER         AuditField = 7 // string -> AuditEntry.ledgers, match-any (index)
-	AuditField_AUDIT_FIELD_ORDER_TYPE     AuditField = 8 // string -> order payload variant, match-any (index)
+	AuditField_AUDIT_FIELD_UNSPECIFIED     AuditField = 0
+	AuditField_AUDIT_FIELD_SEQUENCE        AuditField = 1 // uint   -> AuditEntry.sequence (audit-zone key range)
+	AuditField_AUDIT_FIELD_PROPOSAL_ID     AuditField = 2 // uint   -> AuditEntry.proposal_id (index range)
+	AuditField_AUDIT_FIELD_TIMESTAMP       AuditField = 3 // uint   -> AuditEntry.timestamp.data, unix micros (index range)
+	AuditField_AUDIT_FIELD_LOG_SEQUENCE    AuditField = 4 // uint   -> item log_sequence, match-any (index range)
+	AuditField_AUDIT_FIELD_OUTCOME         AuditField = 5 // string in {success, failure} (index)
+	AuditField_AUDIT_FIELD_CALLER_SUBJECT  AuditField = 6 // string -> caller_snapshot.authenticated.identity.subject (index)
+	AuditField_AUDIT_FIELD_LEDGER          AuditField = 7 // string -> AuditEntry.ledgers, match-any (index)
+	AuditField_AUDIT_FIELD_ORDER_TYPE      AuditField = 8 // string -> order payload variant, match-any (index)
+	AuditField_AUDIT_FIELD_IDEMPOTENCY_KEY AuditField = 9 // string -> AuditEntry.idempotency.key (index, exact or prefix)
 )
 
 // Enum value maps for AuditField.
@@ -1099,17 +1109,19 @@ var (
 		6: "AUDIT_FIELD_CALLER_SUBJECT",
 		7: "AUDIT_FIELD_LEDGER",
 		8: "AUDIT_FIELD_ORDER_TYPE",
+		9: "AUDIT_FIELD_IDEMPOTENCY_KEY",
 	}
 	AuditField_value = map[string]int32{
-		"AUDIT_FIELD_UNSPECIFIED":    0,
-		"AUDIT_FIELD_SEQUENCE":       1,
-		"AUDIT_FIELD_PROPOSAL_ID":    2,
-		"AUDIT_FIELD_TIMESTAMP":      3,
-		"AUDIT_FIELD_LOG_SEQUENCE":   4,
-		"AUDIT_FIELD_OUTCOME":        5,
-		"AUDIT_FIELD_CALLER_SUBJECT": 6,
-		"AUDIT_FIELD_LEDGER":         7,
-		"AUDIT_FIELD_ORDER_TYPE":     8,
+		"AUDIT_FIELD_UNSPECIFIED":     0,
+		"AUDIT_FIELD_SEQUENCE":        1,
+		"AUDIT_FIELD_PROPOSAL_ID":     2,
+		"AUDIT_FIELD_TIMESTAMP":       3,
+		"AUDIT_FIELD_LOG_SEQUENCE":    4,
+		"AUDIT_FIELD_OUTCOME":         5,
+		"AUDIT_FIELD_CALLER_SUBJECT":  6,
+		"AUDIT_FIELD_LEDGER":          7,
+		"AUDIT_FIELD_ORDER_TYPE":      8,
+		"AUDIT_FIELD_IDEMPOTENCY_KEY": 9,
 	}
 )
 
@@ -3875,7 +3887,7 @@ func (x *SetSigningConfigLog) GetRequireSignatures() bool {
 	return false
 }
 
-// AddedEventsSinkLog records the addition (or update) of a named sink config.
+// AddedEventsSinkLog records the addition of a named sink config.
 type AddedEventsSinkLog struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Config        *SinkConfig            `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
@@ -5149,6 +5161,7 @@ type SinkConfig struct {
 	BatchSize     int32             `protobuf:"varint,8,opt,name=batch_size,json=batchSize,proto3" json:"batch_size,omitempty"`                                  // Max events per batch (default: 64)
 	BatchDelayMs  int64             `protobuf:"varint,9,opt,name=batch_delay_ms,json=batchDelayMs,proto3" json:"batch_delay_ms,omitempty"`                       // Max delay before flush in ms (default: 10)
 	EventTypes    []EventType       `protobuf:"varint,10,rep,packed,name=event_types,json=eventTypes,proto3,enum=common.EventType" json:"event_types,omitempty"` // Empty = all events (default)
+	ControllerId  string            `protobuf:"bytes,11,opt,name=controller_id,json=controllerId,proto3" json:"controller_id,omitempty"`                         // Opaque owner identity (EventSink CR UID); empty for manually managed sinks
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5268,6 +5281,13 @@ func (x *SinkConfig) GetEventTypes() []EventType {
 		return x.EventTypes
 	}
 	return nil
+}
+
+func (x *SinkConfig) GetControllerId() string {
+	if x != nil {
+		return x.ControllerId
+	}
+	return ""
 }
 
 type isSinkConfig_Type interface {
@@ -10439,9 +10459,12 @@ func (x *RevertedCondition) GetValue() bool {
 //
 // Every exposed field is answerable from the readstore audit secondary index
 // (EN-1339) — outcome, ledger, caller_subject, order_type, timestamp,
-// proposal_id, log_seq — except AUDIT_FIELD_SEQUENCE, which is the audit-zone
-// key itself and is served by bounding the entry scan. There is deliberately no
-// scan-time predicate fallback: a field the index cannot answer is not exposed.
+// proposal_id, log_seq, idempotency_key — except AUDIT_FIELD_SEQUENCE, which
+// is the audit-zone key itself and is served by bounding the entry scan.
+// idempotency_key supports exact lookup (string_cond) and prefix lookup
+// (string_prefix); prefix operands containing NUL are rejected.
+// There is deliberately no scan-time predicate fallback: a field the index
+// cannot answer is not exposed.
 type AuditCondition struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Field AuditField             `protobuf:"varint,1,opt,name=field,proto3,enum=common.AuditField" json:"field,omitempty"`
@@ -10449,6 +10472,7 @@ type AuditCondition struct {
 	//
 	//	*AuditCondition_StringCond
 	//	*AuditCondition_UintCond
+	//	*AuditCondition_StringPrefix
 	Condition     isAuditCondition_Condition `protobuf_oneof:"condition"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -10516,6 +10540,15 @@ func (x *AuditCondition) GetUintCond() *UintCondition {
 	return nil
 }
 
+func (x *AuditCondition) GetStringPrefix() string {
+	if x != nil {
+		if x, ok := x.Condition.(*AuditCondition_StringPrefix); ok {
+			return x.StringPrefix
+		}
+	}
+	return ""
+}
+
 type isAuditCondition_Condition interface {
 	isAuditCondition_Condition()
 }
@@ -10528,9 +10561,17 @@ type AuditCondition_UintCond struct {
 	UintCond *UintCondition `protobuf:"bytes,3,opt,name=uint_cond,json=uintCond,proto3,oneof"`
 }
 
+type AuditCondition_StringPrefix struct {
+	// Prefix match for indexed string fields. Currently accepted only for
+	// idempotency_key, whose historical values live in the audit projection.
+	StringPrefix string `protobuf:"bytes,4,opt,name=string_prefix,json=stringPrefix,proto3,oneof"`
+}
+
 func (*AuditCondition_StringCond) isAuditCondition_Condition() {}
 
 func (*AuditCondition_UintCond) isAuditCondition_Condition() {}
+
+func (*AuditCondition_StringPrefix) isAuditCondition_Condition() {}
 
 // LedgerCondition filters logs by ledger name (exact match).
 type LedgerCondition struct {
@@ -12045,8 +12086,9 @@ func (x *LedgerStats) GetLogCount() uint64 {
 }
 
 // PersistedConfig stores critical configuration parameters that must not change
-// between restarts with existing data. Stored at Pebble key {0x06, 0x0C}
-// (Global zone, SubGlobPersistedConfig).
+// between restarts with existing data. Stored at Pebble key {0x08, 0x0C}
+// (ZoneClusterPersistent, SubGlobPersistedConfig). The old {0x06, 0x0C}
+// anchor from earlier development layouts is detected and rejected at boot.
 type PersistedConfig struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	NodeId               uint64                 `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
@@ -13248,7 +13290,7 @@ const file_common_proto_rawDesc = "" +
 	"created_at\x18\x03 \x01(\v2\x11.common.TimestampR\tcreatedAt\x12#\n" +
 	"\rapplied_index\x18\x04 \x01(\x06R\fappliedIndex\"@\n" +
 	"\x19DeletedQueryCheckpointLog\x12#\n" +
-	"\rcheckpoint_id\x18\x01 \x01(\x06R\fcheckpointId\"\xc6\x03\n" +
+	"\rcheckpoint_id\x18\x01 \x01(\x06R\fcheckpointId\"\xeb\x03\n" +
 	"\n" +
 	"SinkConfig\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12,\n" +
@@ -13267,7 +13309,8 @@ const file_common_proto_rawDesc = "" +
 	"\x0ebatch_delay_ms\x18\t \x01(\x03R\fbatchDelayMs\x122\n" +
 	"\vevent_types\x18\n" +
 	" \x03(\x0e2\x11.common.EventTypeR\n" +
-	"eventTypesB\x06\n" +
+	"eventTypes\x12#\n" +
+	"\rcontroller_id\x18\v \x01(\tR\fcontrollerIdB\x06\n" +
 	"\x04type\"j\n" +
 	"\n" +
 	"SinkStatus\x12\x1b\n" +
@@ -13627,12 +13670,13 @@ const file_common_proto_rawDesc = "" +
 	"\x12ReferenceCondition\x12+\n" +
 	"\x04cond\x18\x01 \x01(\v2\x17.common.StringConditionR\x04cond\")\n" +
 	"\x11RevertedCondition\x12\x14\n" +
-	"\x05value\x18\x01 \x01(\bR\x05value\"\xb9\x01\n" +
+	"\x05value\x18\x01 \x01(\bR\x05value\"\xe0\x01\n" +
 	"\x0eAuditCondition\x12(\n" +
 	"\x05field\x18\x01 \x01(\x0e2\x12.common.AuditFieldR\x05field\x12:\n" +
 	"\vstring_cond\x18\x02 \x01(\v2\x17.common.StringConditionH\x00R\n" +
 	"stringCond\x124\n" +
-	"\tuint_cond\x18\x03 \x01(\v2\x15.common.UintConditionH\x00R\buintCondB\v\n" +
+	"\tuint_cond\x18\x03 \x01(\v2\x15.common.UintConditionH\x00R\buintCond\x12%\n" +
+	"\rstring_prefix\x18\x04 \x01(\tH\x00R\fstringPrefixB\v\n" +
 	"\tcondition\">\n" +
 	"\x0fLedgerCondition\x12+\n" +
 	"\x04cond\x18\x01 \x01(\v2\x17.common.StringConditionR\x04cond\";\n" +
@@ -13859,7 +13903,7 @@ const file_common_proto_rawDesc = "" +
 	"\x12LEDGER_MODE_MIRROR\x10\x01*Q\n" +
 	"\x0fMirrorSyncState\x12\x1d\n" +
 	"\x19MIRROR_SYNC_STATE_SYNCING\x10\x00\x12\x1f\n" +
-	"\x1bMIRROR_SYNC_STATE_FOLLOWING\x10\x01*\xb8\x16\n" +
+	"\x1bMIRROR_SYNC_STATE_FOLLOWING\x10\x01*\x90\x17\n" +
 	"\vErrorReason\x12\x1c\n" +
 	"\x18ERROR_REASON_UNSPECIFIED\x10\x00\x12&\n" +
 	"\"ERROR_REASON_LEDGER_ALREADY_EXISTS\x10\x01\x12!\n" +
@@ -13927,19 +13971,21 @@ const file_common_proto_rawDesc = "" +
 	"!ERROR_REASON_STALE_CLUSTER_POLICY\x10>\x121\n" +
 	"-ERROR_REASON_CLUSTER_POLICY_REVISION_CONFLICT\x10?\x12'\n" +
 	"#ERROR_REASON_CLUSTER_POLICY_INVALID\x10@\x12)\n" +
-	"%ERROR_REASON_CHECKPOINT_LIMIT_REACHED\x10A\x12%\n" +
+	"%ERROR_REASON_CHECKPOINT_LIMIT_REACHED\x10A\x12+\n" +
+	"'ERROR_REASON_INVALID_CALLER_ATTRIBUTION\x10H\x12%\n" +
 	"!ERROR_REASON_CHECKPOINT_NOT_FOUND\x10B\x12#\n" +
 	"\x1fERROR_REASON_SEQUENCE_EXHAUSTED\x10C\x12%\n" +
 	"!ERROR_REASON_INDEX_ALREADY_EXISTS\x10D\x12(\n" +
 	"$ERROR_REASON_METADATA_LIMIT_EXCEEDED\x10E\x12/\n" +
-	"+ERROR_REASON_REVERT_TARGET_CREATED_IN_BATCH\x10F*Q\n" +
+	"+ERROR_REASON_REVERT_TARGET_CREATED_IN_BATCH\x10F\x12)\n" +
+	"%ERROR_REASON_SINK_CONTROLLER_MISMATCH\x10G*Q\n" +
 	"\x14ChartEnforcementMode\x12\x1c\n" +
 	"\x18CHART_ENFORCEMENT_STRICT\x10\x00\x12\x1b\n" +
 	"\x17CHART_ENFORCEMENT_AUDIT\x10\x01*i\n" +
 	"\x16AccountTypePersistence\x12\x17\n" +
 	"\x13ACCOUNT_TYPE_NORMAL\x10\x00\x12\x1a\n" +
 	"\x16ACCOUNT_TYPE_EPHEMERAL\x10\x01\x12\x1a\n" +
-	"\x16ACCOUNT_TYPE_TRANSIENT\x10\x02*\x86\x02\n" +
+	"\x16ACCOUNT_TYPE_TRANSIENT\x10\x02*\xa7\x02\n" +
 	"\n" +
 	"AuditField\x12\x1b\n" +
 	"\x17AUDIT_FIELD_UNSPECIFIED\x10\x00\x12\x18\n" +
@@ -13950,7 +13996,8 @@ const file_common_proto_rawDesc = "" +
 	"\x13AUDIT_FIELD_OUTCOME\x10\x05\x12\x1e\n" +
 	"\x1aAUDIT_FIELD_CALLER_SUBJECT\x10\x06\x12\x16\n" +
 	"\x12AUDIT_FIELD_LEDGER\x10\a\x12\x1a\n" +
-	"\x16AUDIT_FIELD_ORDER_TYPE\x10\b*Z\n" +
+	"\x16AUDIT_FIELD_ORDER_TYPE\x10\b\x12\x1f\n" +
+	"\x1bAUDIT_FIELD_IDEMPOTENCY_KEY\x10\t*Z\n" +
 	"\vAddressRole\x12\x14\n" +
 	"\x10ADDRESS_ROLE_ANY\x10\x00\x12\x17\n" +
 	"\x13ADDRESS_ROLE_SOURCE\x10\x01\x12\x1c\n" +
@@ -14619,6 +14666,7 @@ func file_common_proto_init() {
 	file_common_proto_msgTypes[124].OneofWrappers = []any{
 		(*AuditCondition_StringCond)(nil),
 		(*AuditCondition_UintCond)(nil),
+		(*AuditCondition_StringPrefix)(nil),
 	}
 	file_common_proto_msgTypes[134].OneofWrappers = []any{
 		(*FieldCondition_StringCond)(nil),

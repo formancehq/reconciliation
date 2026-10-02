@@ -408,6 +408,7 @@ func (m *RemoveEventsSinkOrder) CloneVT() *RemoveEventsSinkOrder {
 	}
 	r := new(RemoveEventsSinkOrder)
 	r.Name = m.Name
+	r.ControllerId = m.ControllerId
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -1435,6 +1436,19 @@ func (m *TechnicalUpdate_IncrementalBackupOrder) CloneVT() isTechnicalUpdate_Kin
 	}
 	r := new(TechnicalUpdate_IncrementalBackupOrder)
 	r.IncrementalBackupOrder = m.IncrementalBackupOrder.CloneVT()
+	return r
+}
+
+func (m *TechnicalUpdate_AuditKey) CloneVT() isTechnicalUpdate_Kind {
+	if m == nil {
+		return (*TechnicalUpdate_AuditKey)(nil)
+	}
+	r := new(TechnicalUpdate_AuditKey)
+	if rhs := m.AuditKey; rhs != nil {
+		tmpBytes := make([]byte, len(rhs))
+		copy(tmpBytes, rhs)
+		r.AuditKey = tmpBytes
+	}
 	return r
 }
 
@@ -2854,6 +2868,9 @@ func (this *RemoveEventsSinkOrder) EqualVT(that *RemoveEventsSinkOrder) bool {
 		return false
 	}
 	if this.Name != that.Name {
+		return false
+	}
+	if this.ControllerId != that.ControllerId {
 		return false
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
@@ -4583,6 +4600,23 @@ func (this *TechnicalUpdate_IncrementalBackupOrder) EqualVT(thatIface isTechnica
 		if !p.EqualVT(q) {
 			return false
 		}
+	}
+	return true
+}
+
+func (this *TechnicalUpdate_AuditKey) EqualVT(thatIface isTechnicalUpdate_Kind) bool {
+	that, ok := thatIface.(*TechnicalUpdate_AuditKey)
+	if !ok {
+		return false
+	}
+	if this == that {
+		return true
+	}
+	if this == nil && that != nil || this != nil && that == nil {
+		return false
+	}
+	if string(this.AuditKey) != string(that.AuditKey) {
+		return false
 	}
 	return true
 }
@@ -6383,6 +6417,13 @@ func (m *RemoveEventsSinkOrder) MarshalToSizedBufferVT(dAtA []byte) (int, error)
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.ControllerId) > 0 {
+		i -= len(m.ControllerId)
+		copy(dAtA[i:], m.ControllerId)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.ControllerId)))
+		i--
+		dAtA[i] = 0x12
 	}
 	if len(m.Name) > 0 {
 		i -= len(m.Name)
@@ -8953,6 +8994,20 @@ func (m *TechnicalUpdate_IncrementalBackupOrder) MarshalToSizedBufferVT(dAtA []b
 	}
 	return len(dAtA) - i, nil
 }
+func (m *TechnicalUpdate_AuditKey) MarshalToVT(dAtA []byte) (int, error) {
+	size := m.SizeVT()
+	return m.MarshalToSizedBufferVT(dAtA[:size])
+}
+
+func (m *TechnicalUpdate_AuditKey) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	i -= len(m.AuditKey)
+	copy(dAtA[i:], m.AuditKey)
+	i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.AuditKey)))
+	i--
+	dAtA[i] = 0x42
+	return len(dAtA) - i, nil
+}
 func (m *BackupDestination) MarshalVT() (dAtA []byte, err error) {
 	if m == nil {
 		return nil, nil
@@ -10909,6 +10964,10 @@ func (m *RemoveEventsSinkOrder) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
+	l = len(m.ControllerId)
+	if l > 0 {
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -11984,6 +12043,16 @@ func (m *TechnicalUpdate_IncrementalBackupOrder) SizeVT() (n int) {
 		l = m.IncrementalBackupOrder.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
+	return n
+}
+func (m *TechnicalUpdate_AuditKey) SizeVT() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.AuditKey)
+	n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	return n
 }
 func (m *BackupDestination) SizeVT() (n int) {
@@ -14432,6 +14501,38 @@ func (m *RemoveEventsSinkOrder) UnmarshalVT(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Name = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ControllerId", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ControllerId = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -20782,6 +20883,39 @@ func (m *TechnicalUpdate) UnmarshalVT(dAtA []byte) error {
 				}
 				m.Kind = &TechnicalUpdate_IncrementalBackupOrder{IncrementalBackupOrder: v}
 			}
+			iNdEx = postIndex
+		case 8:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field AuditKey", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			v := make([]byte, postIndex-iNdEx)
+			copy(v, dAtA[iNdEx:postIndex])
+			m.Kind = &TechnicalUpdate_AuditKey{AuditKey: v}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

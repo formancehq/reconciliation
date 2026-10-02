@@ -42,7 +42,7 @@ func addLedgerFlags(flags *pflag.FlagSet) {
 
 // reconciliationEventsSinkName is the stable name of the webhook sink recon
 // provisions. Per-sink cursor/status key off the name, so it must be constant
-// across boots (AddEventsSink is add-or-update).
+// across boots (the server is add-only: AddEventsSink skips an existing sink).
 const reconciliationEventsSinkName = "reconciliation"
 
 // reconciliationSinkEventTypes are the ledger event types that carry alert

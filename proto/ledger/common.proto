@@ -421,7 +421,7 @@ message SetSigningConfigLog {
   bool require_signatures = 1;
 }
 
-// AddedEventsSinkLog records the addition (or update) of a named sink config.
+// AddedEventsSinkLog records the addition of a named sink config.
 message AddedEventsSinkLog {
   SinkConfig config = 1;
 }
@@ -625,6 +625,7 @@ message SinkConfig {
   int32 batch_size = 8;       // Max events per batch (default: 64)
   int64 batch_delay_ms = 9;   // Max delay before flush in ms (default: 10)
   repeated EventType event_types = 10;  // Empty = all events (default)
+  string controller_id = 11;  // Opaque owner identity (EventSink CR UID); empty for manually managed sinks
 }
 
 // SinkStatus tracks per-sink operational state (replicated via Raft).
@@ -1298,6 +1299,10 @@ enum ErrorReason {
   // Creation never evicts; an existing checkpoint must be deleted first. See
   // EN-1501.
   ERROR_REASON_CHECKPOINT_LIMIT_REACHED = 65;
+  // ERROR_REASON_INVALID_CALLER_ATTRIBUTION: a proposal reached admission or
+  // the FSM without a complete canonical caller principal. This is an internal
+  // trust-boundary violation and is never client-correctable.
+  ERROR_REASON_INVALID_CALLER_ATTRIBUTION = 72;
   // ERROR_REASON_CHECKPOINT_NOT_FOUND: a DeleteQueryCheckpoint targeted an id
   // that is not live (never created, or already deleted). See EN-1501.
   ERROR_REASON_CHECKPOINT_NOT_FOUND = 66;
@@ -1324,6 +1329,7 @@ enum ErrorReason {
   // and re-admitting the identical batch reproduces the same observation.
   // Submit the revert in a later batch.
   ERROR_REASON_REVERT_TARGET_CREATED_IN_BATCH = 70;
+  ERROR_REASON_SINK_CONTROLLER_MISMATCH = 71;
 }
 
 // IdempotencyFailure captures a definitive business rejection so a retried key
@@ -1554,14 +1560,20 @@ message RevertedCondition {
 //
 // Every exposed field is answerable from the readstore audit secondary index
 // (EN-1339) — outcome, ledger, caller_subject, order_type, timestamp,
-// proposal_id, log_seq — except AUDIT_FIELD_SEQUENCE, which is the audit-zone
-// key itself and is served by bounding the entry scan. There is deliberately no
-// scan-time predicate fallback: a field the index cannot answer is not exposed.
+// proposal_id, log_seq, idempotency_key — except AUDIT_FIELD_SEQUENCE, which
+// is the audit-zone key itself and is served by bounding the entry scan.
+// idempotency_key supports exact lookup (string_cond) and prefix lookup
+// (string_prefix); prefix operands containing NUL are rejected.
+// There is deliberately no scan-time predicate fallback: a field the index
+// cannot answer is not exposed.
 message AuditCondition {
   AuditField field = 1;
   oneof condition {
     StringCondition string_cond = 2;
     UintCondition   uint_cond   = 3;
+    // Prefix match for indexed string fields. Currently accepted only for
+    // idempotency_key, whose historical values live in the audit projection.
+    string          string_prefix = 4;
   }
 }
 
@@ -1579,6 +1591,7 @@ enum AuditField {
   AUDIT_FIELD_CALLER_SUBJECT = 6;  // string -> caller_snapshot.authenticated.identity.subject (index)
   AUDIT_FIELD_LEDGER         = 7;  // string -> AuditEntry.ledgers, match-any (index)
   AUDIT_FIELD_ORDER_TYPE     = 8;  // string -> order payload variant, match-any (index)
+  AUDIT_FIELD_IDEMPOTENCY_KEY = 9; // string -> AuditEntry.idempotency.key (index, exact or prefix)
 }
 
 // LedgerCondition filters logs by ledger name (exact match).
@@ -1774,8 +1787,9 @@ message LedgerStats {
 }
 
 // PersistedConfig stores critical configuration parameters that must not change
-// between restarts with existing data. Stored at Pebble key {0x06, 0x0C}
-// (Global zone, SubGlobPersistedConfig).
+// between restarts with existing data. Stored at Pebble key {0x08, 0x0C}
+// (ZoneClusterPersistent, SubGlobPersistedConfig). The old {0x06, 0x0C}
+// anchor from earlier development layouts is detected and rejected at boot.
 message PersistedConfig {
   uint64 node_id = 1;
   string cluster_id = 2;
