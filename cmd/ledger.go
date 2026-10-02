@@ -42,7 +42,7 @@ func addLedgerFlags(flags *pflag.FlagSet) {
 
 // reconciliationEventsSinkName is the stable name of the webhook sink recon
 // provisions. Per-sink cursor/status key off the name, so it must be constant
-// across boots (AddEventsSink is add-or-update).
+// across boots (the server is add-only: AddEventsSink skips an existing sink).
 const reconciliationEventsSinkName = "reconciliation"
 
 // reconciliationSinkEventTypes are the ledger event types that carry alert
@@ -141,7 +141,8 @@ func ledgerClientModule(cmd *cobra.Command) fx.Option {
 					}
 
 					// Register the alert-transition delivery sink (RFC §4.4), when
-					// configured. Idempotent add-or-update; the sink delivers the
+					// configured. Idempotent and add-only, so a sink already
+					// registered keeps its config; the sink delivers the
 					// self-describing transition events (ED-1) to the webhook.
 					if url := flagStr(cmd, eventsSinkURLFlag); url != "" {
 						if err := client.AddEventsSink(ctx, ledger.EventSinkConfig{
