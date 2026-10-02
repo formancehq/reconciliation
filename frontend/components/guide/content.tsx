@@ -14,7 +14,7 @@
 // Section/GuideTable/AppLink/SubHeading). Rendered by ./guide-shell.
 
 import * as React from 'react'
-import { Scale, ListChecks, History, Bell, LineChart, ShieldCheck } from 'lucide-react'
+import { Scale, ListChecks, History, Bell, ShieldCheck } from 'lucide-react'
 import { Section, SubHeading, P, Callout, GuideTable, AppLink, Code } from './primitives'
 
 export interface GuideSection {
@@ -61,7 +61,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					]}
 				/>
 
-				<SubHeading id="v3-rec-tabs">The five tabs</SubHeading>
+				<SubHeading id="v3-rec-tabs">The four tabs</SubHeading>
 				<GuideTable
 					caption="Reconcile tabs"
 					columns={['Tab', 'Purpose']}
@@ -69,7 +69,6 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 						[<strong key="overview">Overview</strong>, 'Clickable shortcuts to open alerts, handled alerts, rules, and the most recent break activity'],
 						[<strong key="rules">Rules</strong>, <span key="rules-purpose">The checks you define, with an enable toggle and one-click evaluation (see <AppLink href="/guide?section=rules">Rules & templates</AppLink>)</span>],
 						[<strong key="alerts">Alerts</strong>, <span key="alerts-purpose">The inbox of breaks to triage and resolve (see <AppLink href="/guide?section=alerts">Alerts & resolution</AppLink>)</span>],
-						[<strong key="insights">Insights</strong>, <span key="insights-purpose">Deviation and break distribution built from reconciliation history (see <AppLink href="/guide?section=insights">Insights</AppLink>)</span>],
 						[<strong key="audit">Audit</strong>, <span key="audit-purpose">The signed, independently verifiable record of what Reconcile did, and who did it (see <AppLink href="/guide?section=audit">Audit & verification</AppLink>)</span>],
 					]}
 				/>
@@ -442,52 +441,6 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					reference that fixed them). <strong>Accept</strong>{' '}says &quot;this difference is expected and we
 					are choosing to live with it.&quot; Both close the break, but they tell very different stories
 					later.
-				</Callout>
-			</Section>
-		),
-	},
-	{
-		id: 'insights',
-		group: 'Reconciliation',
-		label: 'Insights',
-		icon: <LineChart className="size-4" aria-hidden />,
-		render: () => (
-			<Section
-				id="insights"
-				eyebrow="Reconciliation"
-				title="Reconciliation insights"
-				intro="Insights turns capture and alert history into operational signals. Use it after rules have run several times: the charts help separate isolated breaks from persistent bias and show where the alert workload is concentrated."
-			>
-				<SubHeading id="v3-rec-insights-start">Start with a rule and asset</SubHeading>
-				<ol className="list-decimal space-y-1 pl-7 text-sm">
-					<li>Choose a rule from the selector. Balance-equation and balance-bounds rules provide deviation charts.</li>
-					<li>If the rule covers several assets or fingerprints, choose the series you want to investigate.</li>
-					<li>Hover a point for its exact time, verdict, observed value, and configured boundary.</li>
-					<li>Return to the rule&apos;s combined activity timeline when you need the complete evidence for a specific run.</li>
-				</ol>
-
-				<SubHeading id="v3-rec-insights-charts">Read the charts</SubHeading>
-				<GuideTable
-					caption="Insights charts"
-					columns={['Chart', 'How to use it']}
-					rows={[
-						[<strong key="deviation">Deviation over time</strong>, 'Drawn for the two templates that measure a distance from a reference: a balance equation plots its residual against the ± tolerance band, and balance bounds plots the balance against its minimum and maximum. Other templates have no single deviation to plot, so the chart is omitted rather than faked'],
-						[<strong key="passes">Pass markers</strong>, 'Show that a run stayed safe. A pass capture does not record a magnitude, so the marker is placed inside the safe zone without inventing a value'],
-						[<strong key="drift">Cumulative drift</strong>, 'Adds the signed gap over time. A line that keeps rising or falling indicates persistent one-sided bias; movement that returns toward zero behaves more like offsetting noise'],
-						[<strong key="breaks">Breaks by rule type</strong>, 'Shows the global alert count split by template and status, helping identify which class of control creates the most operational work'],
-					]}
-				/>
-
-				<Callout kind="info" title="What Insights does not invent">
-					Failed captures contain the measured deviation and can be plotted precisely. Passing captures
-					prove that the control held, but may not store the exact safe value; the chart therefore shows a
-					pass marker rather than fabricating a measurement.
-				</Callout>
-
-				<Callout kind="tip" title="No chart yet?">
-					Evaluate the rule from its detail screen to create an evaluation receipt in rule activity. Ledger-invariant rules still
-					contribute to break distribution, but their normalized sum is not currently plotted in the
-					deviation chart.
 				</Callout>
 			</Section>
 		),
