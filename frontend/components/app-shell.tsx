@@ -80,10 +80,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 	if (embedded) {
 		return (
 			<div className="flex h-screen flex-col">
-				<header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/80 px-4 backdrop-blur">
-					<div className="flex items-center gap-6">
-						<Brand />
-						<nav className="flex items-center gap-1">
+				<header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b bg-background/80 px-4 backdrop-blur">
+					<div className="flex min-w-0 items-center gap-3 sm:gap-6">
+						<Brand compact />
+						<nav className="flex min-w-0 items-center gap-1">
 							{NAV.map((item) => (
 								<NavLink key={item.href} {...item} active={isActive(pathname, item.href)} horizontal />
 							))}
@@ -138,16 +138,19 @@ function NavLink({
 	return (
 		<Link
 			href={href}
+			aria-label={title}
+			title={title}
 			className={cn(
-				'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-				horizontal ? 'h-9' : 'w-full',
+				'flex items-center gap-2.5 rounded-md py-2 text-sm font-medium transition-colors',
+				horizontal ? 'h-9 shrink-0 px-2 sm:px-3' : 'w-full px-3',
 				active
 					? 'bg-sidebar-accent text-sidebar-accent-foreground'
 					: 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
 			)}
 		>
 			<Icon className="size-4 shrink-0" />
-			{title}
+			{/* Embedded on a phone, the top bar shows the icons only. */}
+			<span className={horizontal ? 'hidden sm:inline' : undefined}>{title}</span>
 		</Link>
 	)
 }
