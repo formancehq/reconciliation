@@ -69,7 +69,8 @@ tools/lettering-duckdb/lettering queries
 
 ```text
 tools/lettering-duckdb/
-  lettering            the shell wrapper: arguments, pre-checks, exit codes
+  lettering            the shell wrapper: arguments, directory checks, exit codes
+  sql/shape.sql        a run's shape, read before any data file: verdict, files, reduced manifest
   sql/schema.sql       readers, one table macro per file kind
   sql/run.sql          views over ONE run (variable `run`)
   sql/rule.sql         views over MANY days of a rule, current runs only (variable `rule`)
@@ -89,6 +90,8 @@ flowchart LR
     R1 --> C[check.sql]
     R1 --> CC[check-chain.sql]
     R2 --> Q[queries/*.sql]
+    SH[shape.sql<br/>a run's shape] -. first .-> C
+    SH -. first .-> CC
     W[lettering<br/>wrapper] -. runs .-> C
     W -. runs .-> CC
     W -. runs .-> Q
@@ -137,6 +140,24 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
 - **Guard.** The last statement fails when `day` names a day with no complete run. That day's
   activity is in the next complete run's window, so an empty answer would mislead.
 
+### A run's shape (`sql/shape.sql`)
+
+`check.sql` and `check-chain.sql` build a view over each kind of data file, and DuckDB fails on a
+view over a glob that matches no file. So a run's shape is checked first, from its manifest and
+its file names only. `shape.sql` needs no other file and holds three table macros, each taking a
+run's directory:
+
+- **`run_shape(dir)`.** One row: the verdict, an incomplete run's reason, the run id, the number
+  of data files, the kinds of data file that have no file, and the fields a reduced manifest lacks
+  (`no expiresAt`) or should not have (`has counts`).
+- **`shape_violations(dir)`.** The rules the shape breaks, as `rule`, `key`, `detail`:
+  `incomplete_files` and `incomplete_fields` for an incomplete run, `file_missing` for a complete
+  run with no file of a kind.
+- **`chain_shape_violations(prev)`.** `previous_run` when the earlier run is incomplete: it is not
+  a link in the chain.
+
+The wrapper runs them before `check.sql` and `check-chain.sql`.
+
 ### Checks (`check.sql`, `check-chain.sql`)
 
 A check is a list of `INSERT INTO violations` statements, one per rule of the results doc, each
@@ -182,7 +203,8 @@ The wrapper is a POSIX `sh` script. It concatenates the SQL layers and pipes the
 CLI. It also handles what SQL cannot:
 
 - **Directory checks.** Before running anything, it refuses a directory that is not a run's or a
-  rule's, and it checks an incomplete run's shape on its own (§4, "Incomplete run").
+  rule's. It then checks the run's shape with `sql/shape.sql`, and prints each broken rule as
+  `violation: <rule>: <detail>` (§4, "Incomplete run").
 - **Quoting.** A trailing slash is removed from a directory, and a quote in a value is escaped.
 - **Init file and exit status.** It runs `LETTERING_INIT` first and maps each outcome to an exit
   status (§6).
@@ -256,8 +278,8 @@ The suite checks four things:
 
 1. **Soundness.** Every run passes `check`, and every run chains onto the run its manifest names.
 2. **Answers.** Every query returns exactly the CSV in `expected/`.
-3. **Every rule fires.** Each rule of `check.sql` and `check-chain.sql` fires on at least one
-   corrupted copy of a run. The suite fails when a rule is never exercised, so a new rule needs a
+3. **Every rule fires.** Each rule of `check.sql`, `check-chain.sql` and `sql/shape.sql` fires on
+   at least one corrupted copy of a run. The suite fails when a rule is never exercised, so a new rule needs a
    test.
 4. **Variants and wrong arguments.**
    - Legitimate variants pass: a field unknown to `lettering/1`, and an incomplete run.
@@ -432,7 +454,9 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 ## 5. Maintaining it
 
 - **A new rule.** Add an `INSERT INTO violations` to `check.sql` (or `chain_violations` to
-  `check-chain.sql`), named with an underscore and citing the results doc section. Add a corrupted
+  `check-chain.sql`), named with an underscore and citing the results doc section. A rule on a
+  run's shape, which must hold before any data file is read, goes to `shape_violations` in
+  `sql/shape.sql`, written `SELECT '<rule>', …` so that the test suite finds it. Add a corrupted
   copy to `test.sh` that makes it fire; the suite fails until you do. Add the rule to the table in
   §6.
 - **A new query.** Add `queries/<name>.sql` with its three header lines. Compute its expected
@@ -469,8 +493,8 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | Rule | What it checks |
 |---|---|
 | `schema_version` | The manifest's `schemaVersion` is `lettering/1` |
-| `incomplete_files`, `incomplete_fields` | An incomplete run has no data file, and its reduced manifest has every field the results doc §6 requires and none it leaves out. The wrapper checks these before any SQL runs, and stops there |
-| `file_missing`, `file_unlisted`, `file_rows`, `file_sha256` | The manifest lists exactly the files present, with their row counts and SHA-256 |
+| `incomplete_files`, `incomplete_fields` | An incomplete run has no data file, and its reduced manifest has every field the results doc §6 requires and none it leaves out. `sql/shape.sql` checks these before `check.sql` runs, and the wrapper stops there |
+| `file_missing`, `file_unlisted`, `file_rows`, `file_sha256` | The manifest lists exactly the files present, with their row counts and SHA-256. `sql/shape.sql` reports first a kind of data file with no file at all, as `file_missing` |
 | `counts_flow`, `counts_flow_outcome`, `counts_stock`, `counts_breaks` | The manifest's counts match the files |
 | `counts_unclassified` | The manifest's unclassified counts per side match the statement's unclassified lines (the run writes no file for them, results doc §6) |
 | `bridge_net`, `bridge_totals`, `bridge_line`, `bridge_carried_outside`, `bridge_gross` | The net is `SUM(impact)` and `psp − product`; each line matches the flow rows; the carried lines and the gross match |
@@ -491,7 +515,7 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 
 | Rule | What it checks |
 |---|---|
-| `previous_run` | `previousRun` names the earlier run: run id, day and manifest SHA-256 |
+| `previous_run` | `previousRun` names the earlier run: run id, day and manifest SHA-256. `sql/shape.sql` reports first an earlier run that is incomplete |
 | `window_start` | Each side's window starts at the earlier run's cut |
 | `carried_in`, `carried_drift` | Every carried item shows up again, and its drift moves only by this window's impact |
 | `from_lookups` | `fromLookups` equals the drift of the rows not carried in |

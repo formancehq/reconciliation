@@ -103,9 +103,30 @@ has_manifest() {
     [ "$(sql_value "SELECT count(*) FROM glob($(quote "$(dir "$1")/manifest.json"));")" != 0 ]
 }
 
+# shape_sql SELECT: prints the rows of SELECT, one per line, after loading sql/shape.sql, the
+# shape of a run's directory read before any data file (run_shape, shape_violations…).
+shape_sql() {
+    {
+        init
+        printf '.output /dev/null\n'
+        cat "$here/sql/shape.sql"
+        printf '\n.output\n%s\n' "$1"
+    } | "$duckdb" -bail -list -noheader || exit 3
+}
+
 # verdict_of DIR: the verdict in a run's manifest.
 verdict_of() {
-    sql_value "SELECT coalesce(content::JSON->>'verdict', '-') FROM read_text($(quote "$(dir "$1")/manifest.json"));"
+    shape_sql "SELECT coalesce(verdict, '-') FROM run_shape($(quote "$(dir "$1")"));"
+}
+
+# report_violations SELECT: prints each violation SELECT returns as "violation: <rule>: <detail>"
+# on stderr and exits 1, or returns when there is none.
+report_violations() {
+    violations=$(shape_sql "SELECT 'violation: ' || rule || ': ' || detail FROM $1;")
+    if [ -n "$violations" ]; then
+        printf '%s\n' "$violations" >&2
+        exit 1
+    fi
 }
 
 [ $# -ge 1 ] || usage
@@ -120,41 +141,13 @@ check)
         echo "no manifest.json in $1: pass a run's directory, …/rule=<id>/day=<YYYY-MM-DD>/run=<runId>" >&2
         exit 2
     fi
-    # One query reads the verdict, the reason of an incomplete run, the number of data files, the
-    # kinds of data file that are missing, and the fields an incomplete run's reduced manifest
-    # lacks or has too many (results doc §6): verdict|reason|files|missing kinds|fields.
-    missing=""
-    for kind in flow carried stock breaks; do
-        missing="$missing, CASE WHEN (SELECT count(*) FROM glob($(quote "$run/$kind*.ndjson.gz"))) = 0 THEN '$kind' END"
-    done
-    required="'schemaVersion', 'engine', 'rule', 'runId', 'period', 'startedAt', 'finishedAt', 'verdict', 'incomplete.reason', 'incomplete.detail', 'expiresAt'"
-    absent="'counts', 'statement', 'books', 'paymentAccounts', 'files'"
-    state=$(sql_value "SELECT concat_ws('|', coalesce(m->>'verdict', '-'), coalesce(m->'incomplete'->>'reason', '-'),
-        (SELECT count(*) FROM glob($(quote "$run/*.ndjson.gz"))), concat_ws(' ' $missing),
-        coalesce(array_to_string(list_concat(
-            list_transform(list_filter([$required], lambda k: json_extract(m, '\$.' || k) IS NULL), lambda k: 'no ' || k),
-            list_transform(list_filter([$absent], lambda k: json_extract(m, '\$.' || k) IS NOT NULL), lambda k: 'has ' || k)), ', '), ''))
-        FROM (SELECT content::JSON AS m FROM read_text($(quote "$run/manifest.json")));")
-    IFS='|' read -r verdict reason files missing fields <<EOF
-$state
-EOF
-    if [ "$verdict" = incomplete ]; then
-        if [ "$files" != 0 ]; then
-            echo "violation: incomplete_files: incomplete run ($reason) with $files data file(s); an incomplete run writes no data file" >&2
-            exit 1
-        fi
-        if [ -n "$fields" ]; then
-            echo "violation: incomplete_fields: incomplete run ($reason): $fields; its manifest is reduced to the fields of results doc §6" >&2
-            exit 1
-        fi
-        echo "incomplete run ($reason): it writes no data file, so there is nothing else to check"
+    # The shape first (sql/shape.sql): an incomplete run writes a reduced manifest and no data
+    # file, and a complete run writes every kind of data file (results doc §6, §8).
+    report_violations "shape_violations($(quote "$run"))"
+    state=$(shape_sql "SELECT coalesce(verdict, '-') || '|' || coalesce(reason, '-') FROM run_shape($(quote "$run"));")
+    if [ "${state%%|*}" = incomplete ]; then
+        echo "incomplete run (${state#*|}): it writes no data file, so there is nothing else to check"
         exit 0
-    fi
-    if [ -n "$missing" ]; then
-        for kind in $missing; do
-            echo "violation: file_missing: no $kind file; a complete run writes every data file, even empty" >&2
-        done
-        exit 1
     fi
     run_sql "SET VARIABLE run = $(quote "$run");" \
         "$here/sql/schema.sql" "$here/sql/run.sql" "$here/check.sql"
@@ -171,10 +164,7 @@ check-chain)
         echo "$2 is an incomplete run: it is not a link in the chain, so there is nothing to check" >&2
         exit 2
     fi
-    if [ "$(verdict_of "$1")" = incomplete ]; then
-        echo "violation: previous_run: $1 is an incomplete run, so it cannot be a link in the chain; pass the run the later manifest's previousRun names" >&2
-        exit 1
-    fi
+    report_violations "chain_shape_violations($(quote "$(dir "$1")"))"
     run_sql "SET VARIABLE prev = $(quote "$(dir "$1")"); SET VARIABLE run = $(quote "$(dir "$2")");" \
         "$here/sql/schema.sql" "$here/sql/run.sql" "$here/check-chain.sql"
     ;;

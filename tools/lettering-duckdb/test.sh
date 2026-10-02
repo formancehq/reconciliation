@@ -3,8 +3,9 @@
 #
 # 1. Every run of the test data passes `check`, and every run chains onto the run its manifest names.
 # 2. Every query returns the results testdata/generate.py computed without DuckDB.
-# 3. Every rule of check.sql and check-chain.sql fires on at least one corrupted copy (a rule
-#    name always contains an underscore, which tells it from the other literals of the SQL).
+# 3. Every rule of check.sql, check-chain.sql and sql/shape.sql fires on at least one corrupted
+#    copy (a rule name always contains an underscore, which tells it from the other literals of
+#    the SQL).
 # 4. Legitimate variants pass, and wrong arguments get an exit status and a message that says why.
 set -eu
 
@@ -246,11 +247,19 @@ edit "$work/prev/carried.ndjson.gz" '$p;$s/"PAY-40"/"PAY-77"/'
 expect_violation "a carried item that vanished" carried_in "$lettering" check-chain "$work/prev" "$day24"
 expect_violation "a chain onto an incomplete run" previous_run \
     "$lettering" check-chain "$data/rule=qa-verdicts/day=2026-10-09/run=r-20261010T000004Z" "$data/rule=qa-verdicts/day=2026-10-10/run=r-20261011T000004Z"
+rm -rf "$work/run" && mkdir -p "$work/run"
+printf '%s\n' '{"schemaVersion":"lettering/1","engine":"reconciliation v1.4.0","rule":{"id":"psp-vs-billing","version":7},"runId":"r-20260925T060000Z","period":{"type":"daily","day":"2026-09-24","cutoff":"2026-09-24T23:59:59+02:00","tz":"Europe/Paris"},"startedAt":"2026-09-25T06:00:00Z","finishedAt":"2026-09-25T06:00:04Z","cuts":[{"side":"psp","ledger":"psp","txFrom":1204000,"txTo":1318500,"txHead":1321400},{"side":"product","ledger":"main","txFrom":880400,"txTo":902750,"txHead":905100}],"verdict":"incomplete","incomplete":{"reason":"short_range","detail":"test"},"expiresAt":"2026-12-24T06:00:00Z"}' > "$work/incomplete.json"
+cp "$work/incomplete.json" "$work/run/manifest.json"
+cp "$day24/flow.ndjson.gz" "$work/run/"
+expect_violation "an incomplete run with a data file" incomplete_files "$lettering" check "$work/run"
+fresh "$data/rule=qa-verdicts/day=2026-10-06/run=r-20261007T000003Z"
+edit "$work/run/manifest.json" 's/,"expiresAt":"[^"]*"/,"counts":{}/'
+expect_violation "an incomplete manifest with counts and no expiresAt" incomplete_fields "$lettering" check "$work/run"
 
-sed -n "s/.*SELECT '\([a-z0-9]*_[a-z0-9_]*\)', .*/\1/p" "$here/check.sql" "$here/check-chain.sql" | sort -u > "$work/rules"
+sed -n "s/.*SELECT '\([a-z0-9]*_[a-z0-9_]*\)', .*/\1/p" "$here/check.sql" "$here/check-chain.sql" "$here/sql/shape.sql" | sort -u > "$work/rules"
 sort -u "$work/fired" > "$work/fired.sorted"
 if [ -s "$work/rules" ] && comm -23 "$work/rules" "$work/fired.sorted" > "$work/out" && [ ! -s "$work/out" ]; then
-    pass "every rule of check.sql and check-chain.sql is exercised ($(wc -l < "$work/rules" | tr -d ' ') rules)"
+    pass "every rule of check.sql, check-chain.sql and sql/shape.sql is exercised ($(wc -l < "$work/rules" | tr -d ' ') rules)"
 else
     fail "rules never exercised by a corruption"
 fi
@@ -261,14 +270,8 @@ edit "$work/run/flow.ndjson.gz" '/"ref":"PAY-42"/s/"drift":"0",/"drift":"0","new
 reseal "$work/run/flow.ndjson.gz"
 expect_ok "a row with a field unknown to lettering/1" "$lettering" check "$work/run"
 rm -rf "$work/run" && mkdir -p "$work/run"
-printf '%s\n' '{"schemaVersion":"lettering/1","engine":"reconciliation v1.4.0","rule":{"id":"psp-vs-billing","version":7},"runId":"r-20260925T060000Z","period":{"type":"daily","day":"2026-09-24","cutoff":"2026-09-24T23:59:59+02:00","tz":"Europe/Paris"},"startedAt":"2026-09-25T06:00:00Z","finishedAt":"2026-09-25T06:00:04Z","cuts":[{"side":"psp","ledger":"psp","txFrom":1204000,"txTo":1318500,"txHead":1321400},{"side":"product","ledger":"main","txFrom":880400,"txTo":902750,"txHead":905100}],"verdict":"incomplete","incomplete":{"reason":"short_range","detail":"test"},"expiresAt":"2026-12-24T06:00:00Z"}' > "$work/incomplete.json"
 cp "$work/incomplete.json" "$work/run/manifest.json"
 expect_ok "an incomplete run with its reduced manifest and no data file" "$lettering" check "$work/run"
-cp "$day24/flow.ndjson.gz" "$work/run/"
-expect_violation "an incomplete run with a data file" incomplete_files "$lettering" check "$work/run"
-fresh "$data/rule=qa-verdicts/day=2026-10-06/run=r-20261007T000003Z"
-edit "$work/run/manifest.json" 's/,"expiresAt":"[^"]*"/,"counts":{}/'
-expect_violation "an incomplete manifest with counts and no expiresAt" incomplete_fields "$lettering" check "$work/run"
 
 expect_fail "an unknown query" "$lettering" query no-such-query "$data/rule=qa-scenarios"
 expect_fail "a query given a run's directory instead of a rule's" "$lettering" query bridge "$day24"
