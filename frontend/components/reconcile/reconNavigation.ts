@@ -2,7 +2,6 @@ export type ReconTab =
   | "overview"
   | "rules"
   | "alerts"
-  | "insights"
   | "audit"
   | "results"
 export type ReconAlertFilter = "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "ALL"
@@ -35,7 +34,6 @@ const TABS = new Set<ReconTab>([
   "overview",
   "rules",
   "alerts",
-  "insights",
   "audit",
   "results",
 ])

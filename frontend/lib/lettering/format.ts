@@ -3,16 +3,31 @@
  * enum → badge metadata (the verdict chips follow the Alerts tab's palette:
  * green for a pass, red for breaks, amber for no conclusion).
  */
-import { assetScale } from "@/lib/recon/analytics"
 import type { EnumMeta } from "@/lib/recon/format"
 import type { LetteringVerdict } from "./manifest"
 
 const GROUP = new Intl.NumberFormat("en-US")
 
+/** Decimal places from the asset's scale suffix: `EUR/2` → 2, `USD` or a bad suffix → 0. */
+export function assetScale(asset: string | undefined | null): number {
+  if (!asset) return 0
+  const i = asset.lastIndexOf("/")
+  if (i < 0) return 0
+  const n = Number(asset.slice(i + 1))
+  return Number.isInteger(n) && n >= 0 ? n : 0
+}
+
+/** Currency part before the scale suffix: `EUR/2` → `EUR`, `USD` → `USD`. */
+export function assetCode(asset: string | undefined | null): string {
+  if (!asset) return ""
+  const i = asset.lastIndexOf("/")
+  return i < 0 ? asset : asset.slice(0, i)
+}
+
 /**
  * Integer minor units in an asset (`EUR/2`: 2 decimals) as major units with
- * grouping: `-15000` in `EUR/2` is `−150.00`. Exact, unlike lib/recon's
- * formatAmount: a bigint never goes through a float.
+ * grouping: `-15000` in `EUR/2` is `−150.00`. Exact: a bigint never goes through
+ * a float.
  */
 export function formatMinor(
   minor: bigint | string | number | null | undefined,
