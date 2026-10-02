@@ -288,9 +288,11 @@ an operator wants from a list. Use the grouped aggregate above.
 
 ## Provisioning and schema evolution
 
-The provisioner runs at startup. It creates the control ledger when absent, then reconciles missing
-account types and typed metadata fields, creates indexes, and saves every
-Numscript version. Re-running it is idempotent.
+The provisioner runs at startup. It creates the control ledger when absent, then adds the missing
+account types, typed metadata fields, indexes and Numscript versions. Each step reads what the
+ledger has before it writes: a write the ledger refuses as already done is still a signed, rejected
+audit entry, so a boot on a provisioned ledger writes nothing. Re-running it is idempotent, and two
+replicas booting at once still converge, because a create that loses the race is ignored.
 
 Additive changes are applied to an existing ledger. Destructive changes—removing or retyping a
 field, or changing an account type that already contains accounts—are not silently migrated and

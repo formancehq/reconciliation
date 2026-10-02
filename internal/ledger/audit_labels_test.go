@@ -62,10 +62,18 @@ func TestListAuditEntriesLabelsEachWrite(t *testing.T) {
 
 	unsigned := &auditpb.AuditEntry{Sequence: 3, Ledgers: []string{auditLedger}, OrderCount: 1}
 
-	entries, err := dialBufconn(t, &auditServer{entries: []*auditpb.AuditEntry{ack, provisioning, unsigned}}).
+	// An activity written before contract versions were stamped.
+	legacy := signedBatchEntry(t, 12, &servicepb.Request{Type: &servicepb.Request_Apply{Apply: &servicepb.LedgerApplyRequest{
+		Ledger: auditLedger,
+		Action: &servicepb.LedgerAction{Data: &servicepb.LedgerAction_CreateTransaction{CreateTransaction: &servicepb.CreateTransactionPayload{
+			Metadata: metadataValues(map[string]string{schema.ActivityMetaKind: "rule.created", schema.ActivityMetaRule: ruleID}),
+		}}},
+	}}})
+
+	entries, err := dialBufconn(t, &auditServer{entries: []*auditpb.AuditEntry{ack, provisioning, unsigned, legacy}}).
 		ListAuditEntries(context.Background(), auditLedger, AuditScopeAll, 10)
 	require.NoError(t, err)
-	require.Len(t, entries, 3)
+	require.Len(t, entries, 4)
 
 	t.Run("an action carries its activity", func(t *testing.T) {
 		t.Parallel()
@@ -88,6 +96,12 @@ func TestListAuditEntriesLabelsEachWrite(t *testing.T) {
 			{Kind: "Create index", Ledger: auditLedger, Detail: "transaction address"},
 			{Kind: "Register numscript", Ledger: auditLedger, Detail: "capture v2.0.0"},
 		}, entries[1].Actions)
+	})
+
+	t.Run("an activity without a contract version is V1, as the timeline reads it", func(t *testing.T) {
+		t.Parallel()
+
+		require.Equal(t, 1, entries[3].Activity.ContractVersion)
 	})
 
 	t.Run("an unsigned entry has nothing to decode", func(t *testing.T) {

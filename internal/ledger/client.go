@@ -356,6 +356,16 @@ const (
 	AuditScopeAll AuditScope = "all"
 )
 
+// ParseAuditScope reads a scope from untrusted input, such as a query parameter.
+func ParseAuditScope(s string) (AuditScope, error) {
+	switch scope := AuditScope(s); scope {
+	case AuditScopeActions, AuditScopeSystem, AuditScopeAll:
+		return scope, nil
+	default:
+		return "", fmt.Errorf("invalid scope %q: want actions, system or all", s)
+	}
+}
+
 // ListAuditEntries returns the ledger's audit entries for one ledger (recon's
 // control ledger) in the given scope, newest first, up to limit. Each entry carries the batch
 // Ed25519 signature the ledger stored, so a third party can verify it from the
@@ -601,6 +611,7 @@ func auditScopeFilter(ledgerName string, scope AuditScope) (*commonpb.QueryFilte
 
 		return auditAnd(onLedger, &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_Or{Or: &commonpb.OrFilter{Filters: anyOf}}}), nil
 	default:
+		// Unreachable for a scope from ParseAuditScope.
 		return nil, fmt.Errorf("unknown audit scope %q", scope)
 	}
 }
@@ -731,12 +742,15 @@ func activityOf(md map[string]*commonpb.MetadataValue) *AuditActivity {
 		return nil
 	}
 
+	// An activity without a contract version predates its stamp: V1, as the
+	// rule timeline reads it (ledgerstore.activityFromTransaction).
 	activity := &AuditActivity{
-		Kind:          kind,
-		RuleID:        md[schema.ActivityMetaRule].GetStringValue(),
-		CorrelationID: md[schema.ActivityMetaCorrelation].GetStringValue(),
+		Kind:            kind,
+		RuleID:          md[schema.ActivityMetaRule].GetStringValue(),
+		ContractVersion: 1,
+		CorrelationID:   md[schema.ActivityMetaCorrelation].GetStringValue(),
 	}
-	if v, err := strconv.Atoi(md[schema.ActivityMetaContractVersion].GetStringValue()); err == nil {
+	if v, err := strconv.Atoi(md[schema.ActivityMetaContractVersion].GetStringValue()); err == nil && v > 0 {
 		activity.ContractVersion = v
 	}
 	if at, err := time.Parse(time.RFC3339Nano, md[schema.ActivityMetaAt].GetStringValue()); err == nil {
@@ -806,10 +820,7 @@ func decodeAuditAction(serialized []byte) (AuditAction, bool) {
 		case *raftcmdpb.LedgerScopedOrder_SaveNumscript:
 			action.Kind = "Register numscript"
 			if n := payload.SaveNumscript.GetName(); n != "" {
-				action.Detail = n
-				if v := payload.SaveNumscript.GetVersion(); v != "" {
-					action.Detail = n + " v" + v
-				}
+				action.Detail = nameVersion(n, payload.SaveNumscript.GetVersion())
 			}
 		case *raftcmdpb.LedgerScopedOrder_CreatePreparedQuery:
 			action.Kind = "Create prepared query"

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -190,7 +191,7 @@ func TestGetAuditEntryByTransactionHandler(t *testing.T) {
 
 	t.Run("resolves a transaction id to its signed audit entry", func(t *testing.T) {
 		t.Parallel()
-		// tx (log sequence) 38 -> audit entry with the bucket-wide sequence 41.
+		// Control-ledger tx 38 -> the audit entry with the bucket-wide sequence 41.
 		fake := &fakeIntrospector{resolveByTx: map[uint64]ledger.AuditEntryInfo{
 			38: {Sequence: 41, KeyID: "6d00a939e0c68f7a", Payload: []byte{0x0a}, Signature: []byte{0x0c}, Signed: true, Outcome: "success"},
 		}}
@@ -213,6 +214,13 @@ func TestGetAuditEntryByTransactionHandler(t *testing.T) {
 		t.Parallel()
 		rec := serve(&fakeIntrospector{}, "/audit/entries/by-transaction/not-a-number")
 		require.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("404, never a proof, when the entry's signed payload does not carry the transaction", func(t *testing.T) {
+		t.Parallel()
+		mismatch := fmt.Errorf("%w: entry 41, transaction 38", ledger.ErrAuditEntryMismatch)
+		rec := serve(&fakeIntrospector{auditErr: mismatch}, "/audit/entries/by-transaction/38")
+		require.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
 	t.Run("404 on a resolver read error (best-effort, no 500)", func(t *testing.T) {

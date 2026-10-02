@@ -227,6 +227,13 @@ paths:
         published public key — `ed25519.Verify(publicKey, payload, signature)` —
         with no ledger access and nobody from Formance in the loop.
 
+        `scope` picks the writes, and the ledger applies it: `actions` (the
+        default) are the control ledger's transactions, i.e. rule changes,
+        evaluations and alert transitions; `system` are the provisioning writes
+        (the ledger, its chart of accounts, metadata types, indexes and
+        numscripts); `all` is both. A rejected write appears in the scope of what
+        it tried to do. An unknown scope is a 400.
+
         Note: `sequence` is the ledger's dense, bucket-wide audit sequence, shared
         with any other ledgers in the same bucket; per-entry authenticity is
         absolute, but a gapless subset requires an isolated bucket (see the audit
@@ -234,12 +241,17 @@ paths:
       operationId: listAuditEntries
       tags: [reconciliation]
       parameters:
+        - name: scope
+          in: query
+          description: Which writes to list.
+          schema: { type: string, enum: [actions, system, all], default: actions }
         - name: limit
           in: query
           description: Maximum entries to return (default 50, max 500).
           schema: { type: integer, format: int64, minimum: 1, maximum: 500, default: 50 }
       responses:
         '200': { $ref: '#/components/responses/AuditEntries' }
+        '400': { $ref: '#/components/responses/ErrorResponse' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:read]
@@ -249,17 +261,20 @@ paths:
       summary: Resolve a transaction to its signed audit entry
       description: |
         Given a control-ledger transaction id (the `transactionId` an alert event
-        carries — which equals the write's log sequence), return the signed audit
-        entry for that write. The audit entry's own `sequence` is a different,
-        bucket-wide number; this bridges a business action to its cryptographic
-        proof. 404 when no entry matches.
+        carries), return the signed audit entry that committed that write. The
+        transaction id is neither the write's log id nor the entry's `sequence`;
+        the resolver matches the transaction's insertion instant to its audit
+        entry and confirms it through the entry's log. This bridges a business
+        action to its cryptographic proof. 404 when no entry matches, and also
+        when the entry's signed payload does not carry the transaction (logged
+        as an error, never served as a proof).
       operationId: getAuditEntryByTransaction
       tags: [reconciliation]
       parameters:
         - name: transactionId
           in: path
           required: true
-          description: The control-ledger transaction id (log sequence) from an alert event.
+          description: The control-ledger transaction id from an alert event.
           schema: { type: integer, format: int64, minimum: 1 }
       responses:
         '200':
@@ -683,18 +698,44 @@ components:
         actions:
           type: array
           description: >-
-            Decoded per-order business intent (kind of write, target ledger, and a
-            cheap identifier where the order carries one). Populated only on GET
-            /audit/entries/{sequence}; an Apply batch is reported as one action
-            without decoding its numscript.
+            What the batch requested, one action per request (kind of write,
+            target ledger, and an identifier where the request carries one). Read
+            from the signed payload on the list and the single read; for an
+            unsigned entry, from the ledger's per-order items, which only GET
+            /audit/entries/{sequence} carries.
           items: { $ref: '#/components/schemas/AuditAction' }
+        activity:
+          $ref: '#/components/schemas/AuditActivity'
+    AuditActivity:
+      type: object
+      description: >-
+        The reconciliation action a write records, read from its signed payload.
+        Present on actions only, absent on provisioning writes.
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          description: The activity kind, as in the rule timeline, e.g. "rule.created" or "alert.acknowledged".
+        ruleId: { type: string }
+        contractVersion:
+          type: integer
+          format: int64
+          description: The rule's contract version; 1 for an activity written before versions were stamped.
+        occurredAt: { type: string, format: date-time }
+        correlationId:
+          type: string
+          description: The evaluation id for an evaluation-driven transition.
+        payload:
+          type: object
+          additionalProperties: true
+          description: The kind's detail, e.g. an alert transition's envelope or a rule snapshot.
     AuditAction:
       type: object
       required: [kind]
       properties:
         kind:
           type: string
-          description: Short human label, e.g. "Apply batch", "Register numscript".
+          description: Short human label, e.g. "Create transaction", "Create index", "Register numscript".
         ledger:
           type: string
           description: Target ledger for a ledger-scoped order; empty for system-scoped orders.

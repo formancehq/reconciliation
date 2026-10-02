@@ -280,13 +280,15 @@ function AuditTrailCard({
           <button
             key={s.scope}
             type="button"
+            // A running "Verify all" writes its results for the view it started on.
+            disabled={running}
             onClick={() => {
               setScope(s.scope)
               setResults({})
             }}
             aria-pressed={scope === s.scope}
             className={cn(
-              "rounded px-2.5 py-1 text-xs transition-colors",
+              "rounded px-2.5 py-1 text-xs transition-colors disabled:opacity-50",
               scope === s.scope
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-accent"
@@ -312,10 +314,10 @@ function AuditTrailCard({
         </p>
       )}
 
-      {res.loading || switching ? (
-        <Loading label="Loading audit trail…" />
-      ) : res.error ? (
+      {res.error ? (
         <ErrorState error={res.error} onRetry={res.refetch} />
+      ) : res.loading || switching ? (
+        <Loading label="Loading audit trail…" />
       ) : shown.length === 0 ? (
         <p className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
           {entries.length === 0 ? view.empty : "No entries match this filter."}

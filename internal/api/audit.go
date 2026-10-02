@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -154,11 +153,12 @@ func listAuditEntriesHandler(client ledgerIntrospector, control ControlLedger) h
 
 		scope := ledger.AuditScopeActions
 		if v := r.URL.Query().Get("scope"); v != "" {
-			scope = ledger.AuditScope(v)
-		}
-		if !slices.Contains([]ledger.AuditScope{ledger.AuditScopeActions, ledger.AuditScopeSystem, ledger.AuditScopeAll}, scope) {
-			api.BadRequest(w, ErrValidation, fmt.Errorf("invalid scope %q: want actions, system or all", scope))
-			return
+			parsed, err := ledger.ParseAuditScope(v)
+			if err != nil {
+				api.BadRequest(w, ErrValidation, err)
+				return
+			}
+			scope = parsed
 		}
 
 		entries, err := client.ListAuditEntries(r.Context(), string(control), scope, limit)
