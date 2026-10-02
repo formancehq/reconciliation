@@ -6,7 +6,7 @@ export type ReconTab =
   | "audit"
   | "results"
 export type ReconAlertFilter = "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "ALL"
-export type ResultsSection = "days" | "run" | "queries"
+export type ResultsSection = "days" | "run" | "queries" | "checks"
 
 /** Results tab state. `day` is the day looked at: the run's day, and a query's `day` variable. */
 export interface ResultsNav {
@@ -18,6 +18,8 @@ export interface ResultsNav {
   query?: string
   /** The `id` variable of a query (business-id). */
   id?: string
+  /** Checks: the earlier run a chain check reads, when not the one `previousRun` names. */
+  prev?: string
 }
 
 export interface ReconNav {
@@ -37,8 +39,8 @@ const TABS = new Set<ReconTab>([
   "audit",
   "results",
 ])
-const RESULTS_SECTIONS = new Set<ResultsSection>(["days", "run", "queries"])
-const RESULTS_KEYS = ["rule", "section", "day", "run", "query", "id"] as const
+const RESULTS_SECTIONS = new Set<ResultsSection>(["days", "run", "queries", "checks"])
+const RESULTS_KEYS = ["rule", "section", "day", "run", "query", "id", "prev"] as const
 const ALERT_FILTERS = new Set<ReconAlertFilter>([
   "OPEN",
   "ACKNOWLEDGED",

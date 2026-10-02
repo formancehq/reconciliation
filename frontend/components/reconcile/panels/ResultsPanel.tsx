@@ -4,11 +4,14 @@
  * Results — reads the result files of transaction-level (lettering) rules in the
  * browser with DuckDB-WASM, running the SQL of tools/lettering-duckdb as it is.
  *
+ * For one rule: its days and their current runs, one run's statement and breaks,
+ * the tool's queries, and the wrapper's checks on every run and chain link.
+ *
  * An internal reading and validation prototype: it reads the tool's test data
  * through a dev-only route (lib/lettering/source.ts). It does not replace the
  * production path, where the breaks and the statement come from recon's API.
  */
-import { CalendarDays, FileText, FlaskConical, Files, TerminalSquare } from 'lucide-react';
+import { BadgeCheck, CalendarDays, FileText, FlaskConical, Files, TerminalSquare } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -22,6 +25,7 @@ import { EmptyState, ErrorState, Loading } from '../ui';
 import { RunView } from '../results/RunView';
 import { DaysView } from '../results/DaysView';
 import { QueriesView } from '../results/QueriesView';
+import { ChecksView } from '../results/ChecksView';
 
 const source = testdataSource;
 
@@ -46,6 +50,7 @@ const SECTIONS: { id: ResultsSection; label: string; icon: typeof CalendarDays }
   { id: 'days', label: 'Days', icon: CalendarDays },
   { id: 'run', label: 'Run', icon: FileText },
   { id: 'queries', label: 'Queries', icon: TerminalSquare },
+  { id: 'checks', label: 'Checks', icon: BadgeCheck },
 ];
 
 function RuleResults({ files }: { files: LetteringFile[] }) {
@@ -93,6 +98,14 @@ function RuleResults({ files }: { files: LetteringFile[] }) {
         <DaysView runs={runs.data ?? []} onOpen={(day, run) => go({ section: 'run', day, run })} />
       ) : section === 'run' ? (
         <RunSection files={files} rule={rule} runs={runs.data ?? []} state={state} go={go} />
+      ) : section === 'checks' ? (
+        <ChecksView
+          rule={rule}
+          runs={runs.data ?? []}
+          selected={state.run}
+          prev={state.prev}
+          onSelect={(r, prev) => go({ day: r.day, run: r.run, prev })}
+        />
       ) : (
         <QueriesView
           files={files}

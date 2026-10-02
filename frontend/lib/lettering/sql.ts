@@ -4,6 +4,7 @@
  * loads its files and reads the header each query declares, the same header
  * the `lettering` wrapper reads.
  */
+import shapeSql from "../../../tools/lettering-duckdb/sql/shape.sql"
 import schemaSql from "../../../tools/lettering-duckdb/sql/schema.sql"
 import runSql from "../../../tools/lettering-duckdb/sql/run.sql"
 import ruleSql from "../../../tools/lettering-duckdb/sql/rule.sql"
@@ -11,6 +12,7 @@ import checkSql from "../../../tools/lettering-duckdb/check.sql"
 import checkChainSql from "../../../tools/lettering-duckdb/check-chain.sql"
 
 export const SQL = {
+  shape: shapeSql,
   schema: schemaSql,
   run: runSql,
   rule: ruleSql,
