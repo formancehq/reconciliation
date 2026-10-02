@@ -156,7 +156,8 @@ run's directory:
 - **`chain_shape_violations(prev)`.** `previous_run` when the earlier run is incomplete: it is not
   a link in the chain.
 
-The wrapper runs them before `check.sql` and `check-chain.sql`.
+The wrapper runs them before `check.sql` and `check-chain.sql`, and so does the UI's Results tab
+(§4, "UI: the Results tab").
 
 ### Checks (`check.sql`, `check-chain.sql`)
 
@@ -450,6 +451,46 @@ for path in ["sql/schema.sql", "sql/rule.sql"]:
     con.execute(open(f"tools/lettering-duckdb/{path}").read())
 print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df())
 ```
+
+### UI: the Results tab
+
+The reconciliation UI (`frontend/`, `pnpm dev` on port 3003) has a **Results** tab that runs this
+SQL in the browser with DuckDB-WASM. It reads and validates result files without the CLI, standalone
+or embedded in the console. It is an internal prototype: it shows under `next dev` only, and reads
+`testdata/` through a dev-only route.
+
+For one rule, it has four sections:
+
+| Section | What it runs |
+|---|---|
+| Days | `current-runs`: each day's current run and its verdict, with the runs it replaced or that concluded nothing |
+| Run | `run.sql`: one run's statement, from its manifest, and its breaks file, filtered by class, priority and lifecycle |
+| Queries | every file of `queries/`, with the variables its header declares |
+| Checks | `check` on every run (`sql/shape.sql`, then `check.sql`) and `check-chain` on every link (`sql/shape.sql`, then `check-chain.sql`), with the wrapper's messages |
+
+How it runs the same SQL:
+
+- **The files as they are.** The UI bundles every `.sql` file of the tool as text when it builds,
+  so the tab and the tool cannot drift. It lists `queries/` at build time: a new query shows up in
+  the tab with no change to the UI.
+- **No directory listing.** A browser cannot list a directory. The UI fetches each file from an
+  index and registers it under its `rule=/day=/run=` path, and DuckDB matches the globs of
+  `rule.sql` against the registered names.
+- **The same DuckDB.** `@duckdb/duckdb-wasm` 1.32.0 bundles DuckDB 1.4.3, the version the tests run
+  on. Its single-threaded build needs no cross-origin isolation, so it runs in the console's iframe.
+
+What the UI expects from the tool, besides the layers:
+
+- **Its file names.** The UI's build imports `sql/*.sql`, `check.sql`, `check-chain.sql` and
+  `queries/`: renaming or moving one breaks `pnpm build` in `frontend/`, which `test.sh` does not
+  run.
+- **One statement per query.** DuckDB-WASM returns the first statement's result, so the tab runs a
+  query file as one statement.
+- **The checks' temp tables.** The tab reads `violations` and `chain_violations` after the error
+  `check.sql` and `check-chain.sql` raise.
+
+The code is in `frontend/lib/lettering/`. Its data source is the one seam where recon's API, which
+will list a run's files with pre-signed URLs (feature inventory E20), replaces the test data.
 
 ## 5. Maintaining it
 
