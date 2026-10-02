@@ -14,6 +14,7 @@ import { Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useReconResource } from '@/lib/recon';
+import { TOOLBAR_SELECT } from '@/lib/uiClasses';
 import { checkChain, checkRun, runPath, type CheckResult, type RuleRun, type Violation } from '@/lib/lettering/read';
 import { formatDay, words } from '@/lib/lettering/format';
 import { ErrorState, Loading } from '../ui';
@@ -225,7 +226,7 @@ function RunChecks({
         >
           {earlier.length > 0 && run.verdict !== 'incomplete' && (
             <Select value={chosen?.run ?? ''} onValueChange={(v) => onPrev(v === run.previousRun ? undefined : v)}>
-              <SelectTrigger className="h-8 w-full text-xs sm:w-64" aria-label="Earlier run">
+              <SelectTrigger className={`${TOOLBAR_SELECT} sm:w-64`} aria-label="Earlier run">
                 <SelectValue placeholder="Earlier run" />
               </SelectTrigger>
               <SelectContent>

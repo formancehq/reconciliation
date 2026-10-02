@@ -17,6 +17,12 @@ export const TABBAR_ICON = 'h-4 w-4 shrink-0';
 // ── Toolbars ────────────────────────────────────────────────────────────────
 /** Filter / action toolbar card sitting above a tab's content. */
 export const FILTER_TOOLBAR = 'flex flex-wrap items-center gap-3 rounded-md border p-3';
+/** A compact Select trigger in a toolbar: full width on a phone; add an `sm:w-*` width. */
+export const TOOLBAR_SELECT = 'h-8 w-full text-xs';
+
+// ── Data tables ─────────────────────────────────────────────────────────────
+/** The header row of a bordered data table. */
+export const TABLE_HEAD = 'bg-muted/35 text-[10px] tracking-wide text-muted-foreground uppercase';
 
 // ── Explorer tab scrolling ──────────────────────────────────────────────────
 export const V3_VIEWPORT = 'h-[70vh] min-h-[480px]';

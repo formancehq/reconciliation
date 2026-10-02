@@ -7,10 +7,10 @@
  */
 import { useMemo, useState } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FILTER_TOOLBAR } from '@/lib/uiClasses';
+import { FILTER_TOOLBAR, TOOLBAR_SELECT } from '@/lib/uiClasses';
 import type { Cell, Rows } from '@/lib/lettering/duckdb';
 import { formatDay, words } from '@/lib/lettering/format';
-import { Amount, DataTable, LifecycleBadge, PriorityBadge, SectionTitle, Td, Th, THead } from './ui';
+import { Amount, DataTable, EmptyNote, LifecycleBadge, PriorityBadge, SectionTitle, Td, Th, THead } from './ui';
 
 const ALL = '*';
 
@@ -61,9 +61,7 @@ export function BreaksTable({ breaks }: { breaks: Rows }) {
         </span>
       </div>
       {breaks.rows.length === 0 ? (
-        <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
-          No break in this run.
-        </p>
+        <EmptyNote>No break in this run.</EmptyNote>
       ) : (
         <DataTable minWidth="44rem">
           <THead>
@@ -126,7 +124,7 @@ function Filter({
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-8 w-full text-xs sm:w-44" aria-label={label}>
+      <SelectTrigger className={`${TOOLBAR_SELECT} sm:w-44`} aria-label={label}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

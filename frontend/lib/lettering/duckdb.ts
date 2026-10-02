@@ -220,8 +220,3 @@ export async function withSession<T>(
     await conn.close()
   }
 }
-
-/** The DuckDB version the bundle runs (the tool's tests run on 1.4.3). */
-export async function duckdbVersion(): Promise<string> {
-  return withSession({}, async (s) => String((await s.query("SELECT version() AS v")).rows[0].v))
-}

@@ -1,7 +1,7 @@
 /**
  * The fields of a lettering run's manifest.json the Results tab renders
  * (results doc §6). Amounts are integer minor units written as strings, so
- * they stay exact; `formatAmount` turns them into major units of their asset.
+ * they stay exact; `formatMinor` turns them into major units of their asset.
  *
  * The statement renders from the manifest alone (results doc §5), as the UI
  * will render it from the alert's evidence once recon's API exists.

@@ -9,8 +9,9 @@ import type { ReactNode } from 'react';
 import { Check, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@workspace/ui/lib/utils';
+import { TABLE_HEAD } from '@/lib/uiClasses';
 import {
-  formatAmount,
+  formatMinor,
   LETTERING_VERDICT_META,
   LIFECYCLE_META,
   OUTCOME_META,
@@ -32,7 +33,7 @@ export function Amount({
 }) {
   return (
     <span className={cn('font-mono tabular-nums whitespace-nowrap', className)}>
-      {formatAmount(value, asset, { signed })}
+      {formatMinor(value, asset, { signed })}
     </span>
   );
 }
@@ -57,8 +58,8 @@ export function OutcomeBadge({ outcome }: { outcome: string }) {
   return <Badge variant={meta.variant} size="sm">{meta.label}</Badge>;
 }
 
-/** An identity or continuity flag: ✓ when it holds. */
-export function Holds({ ok, label }: { ok: boolean; label?: string }) {
+/** An identity or continuity flag: ✓ when it holds, ✗ when it does not. */
+export function CheckMark({ ok, label }: { ok: boolean; label?: string }) {
   return ok ? (
     <Check className="inline h-3.5 w-3.5 text-green-foreground" aria-label={label ?? 'holds'} />
   ) : (
@@ -100,7 +101,7 @@ export function Th({ children, right, className }: { children?: ReactNode; right
 
 export function THead({ children }: { children: ReactNode }) {
   return (
-    <thead className="bg-muted/35 text-[10px] tracking-wide text-muted-foreground uppercase">
+    <thead className={TABLE_HEAD}>
       <tr>{children}</tr>
     </thead>
   );
@@ -108,4 +109,9 @@ export function THead({ children }: { children: ReactNode }) {
 
 export function Td({ children, right, className }: { children?: ReactNode; right?: boolean; className?: string }) {
   return <td className={cn('px-3 py-2 align-top', right && 'text-right', className)}>{children}</td>;
+}
+
+/** A small empty state inside a section: no row, nothing to show, a variable to enter. */
+export function EmptyNote({ children }: { children: ReactNode }) {
+  return <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">{children}</p>;
 }

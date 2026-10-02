@@ -10,14 +10,16 @@ import { AlertTriangle } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { useReconResource } from '@/lib/recon';
 import { readRun, type RunResults } from '@/lib/lettering/read';
-import { assetCode, formatDay, words } from '@/lib/lettering/format';
+import { assetCode } from '@/lib/recon/analytics';
+import { formatDay, words } from '@/lib/lettering/format';
 import type { AssetStatement, Book, Manifest, PaymentAccount, StatementLine } from '@/lib/lettering/manifest';
 import { ErrorState, Loading } from '../ui';
 import { BreaksTable } from './BreaksTable';
 import {
   Amount,
   DataTable,
-  Holds,
+  CheckMark,
+  EmptyNote,
   LetteringVerdictBadge,
   OutcomeBadge,
   SectionTitle,
@@ -26,8 +28,8 @@ import {
   THead,
 } from './ui';
 
-export function RunView({ path, deps }: { path: string; deps: unknown[] }) {
-  const res = useReconResource<RunResults>(() => readRun(path), [path, ...deps]);
+export function RunView({ path }: { path: string }) {
+  const res = useReconResource<RunResults>(() => readRun(path), [path]);
   if (res.loading) return <Loading label="Reading the run with DuckDB…" />;
   if (res.error) return <ErrorState error={res.error} onRetry={res.refetch} />;
   if (!res.data) return null;
@@ -143,6 +145,9 @@ function IncompleteNotice({ manifest: m }: { manifest: Manifest }) {
 
 // ── Statement ────────────────────────────────────────────────────────────────
 
+/** The heading of a part of the statement: Bridge, Open items, Unclassified. */
+const EYEBROW = 'mb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase';
+
 /** One row of a statement: label, amount, count and chips, with an operator in front. */
 function Row({
   op,
@@ -178,7 +183,7 @@ function Row({
       <span className="w-9 shrink-0 text-right text-[11px] text-muted-foreground tabular-nums">
         {count !== undefined ? `(${count})` : ''}
       </span>
-      <span className="w-4 shrink-0">{check !== undefined && <Holds ok={check} />}</span>
+      <span className="w-4 shrink-0">{check !== undefined && <CheckMark ok={check} />}</span>
     </div>
   );
 }
@@ -199,7 +204,7 @@ function StatementCard({ asset, statement: s, previousDay }: { asset: string; st
       <SectionTitle title={`Statement · ${assetCode(asset)}`} hint={`Amounts in ${asset}, psp − product.`} />
       <Card className="grid gap-6 p-4 text-sm md:grid-cols-2">
         <div className="min-w-0">
-          <h4 className="mb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Bridge</h4>
+          <h4 className={EYEBROW}>Bridge</h4>
           <Row label="PSP — finalised payments in the window" amount={s.psp.amount} count={s.psp.count} asset={asset} />
           <Row op="−" label="Product — applications in the window" amount={s.product.amount} count={s.product.count} asset={asset} />
           <Row op="=" label="Net difference" amount={s.net} asset={asset} signed strong />
@@ -240,7 +245,7 @@ function StatementCard({ asset, statement: s, previousDay }: { asset: string; st
 
         <div className="min-w-0 space-y-6">
           <div>
-            <h4 className="mb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Open items</h4>
+            <h4 className={EYEBROW}>Open items</h4>
             <Row
               label={previousDay ? `At the previous cut (${formatDay(previousDay)})` : 'Seeded at the previous cut'}
               amount={s.suspense.openPrev}
@@ -261,7 +266,7 @@ function StatementCard({ asset, statement: s, previousDay }: { asset: string; st
           </div>
 
           <div>
-            <h4 className="mb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Unclassified</h4>
+            <h4 className={EYEBROW}>Unclassified</h4>
             {(s.unclassified ?? []).length === 0 ? (
               <p className="text-xs text-muted-foreground">None.</p>
             ) : (
@@ -289,7 +294,7 @@ function StatementCard({ asset, statement: s, previousDay }: { asset: string; st
 const BUCKETS = ['0-1d', '2-7d', '8-30d', '>30d'];
 
 function BooksSection({ books, wrongSign }: { books: Book[]; wrongSign: NonNullable<RunResults['wrongSign']> }) {
-  const otherTotal = books.filter((b) => BigInt(b.letteredOther) !== 0n);
+  const letteredOutside = books.filter((b) => BigInt(b.letteredOther) !== 0n);
   return (
     <section>
       <SectionTitle title="Open books at the cut" hint="Per side, hold prefix and asset, in the open direction: open = prev + opened − lettered." />
@@ -340,7 +345,7 @@ function BooksSection({ books, wrongSign }: { books: Book[]; wrongSign: NonNulla
                     {b.buckets?.[k] ? <span className="text-foreground">{b.buckets[k]}</span> : '—'}
                   </Td>
                 ))}
-                <Td right><Holds ok={b.continuityOk} /></Td>
+                <Td right><CheckMark ok={b.continuityOk} /></Td>
               </tr>
             );
           })}
@@ -348,9 +353,9 @@ function BooksSection({ books, wrongSign }: { books: Book[]; wrongSign: NonNulla
       </DataTable>
       <p className="mt-2 text-xs text-muted-foreground">
         Lettered outside matching:{' '}
-        {otherTotal.length === 0
+        {letteredOutside.length === 0
           ? 'none.'
-          : otherTotal.map((b, i) => (
+          : letteredOutside.map((b, i) => (
               <Fragment key={i}>
                 {i > 0 && ', '}
                 <span className="font-mono">{b.prefix}</span> <Amount value={b.letteredOther} asset={b.asset} />
@@ -368,7 +373,7 @@ function Residual({ value, asset }: { value: string; asset: string }) {
   return (
     <span className="inline-flex items-center gap-1">
       <Amount value={value} asset={asset} signed className={zero ? undefined : 'text-destructive-foreground'} />
-      <Holds ok={zero} />
+      <CheckMark ok={zero} />
     </span>
   );
 }
@@ -381,7 +386,7 @@ function PaymentAccountsSection({ accounts }: { accounts: PaymentAccount[] }) {
         hint="Did the PSP payment account move only as the flow says? Residual = the account's movement since the previous cut − the flow's."
       />
       {accounts.length === 0 ? (
-        <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">No payment account.</p>
+        <EmptyNote>No payment account.</EmptyNote>
       ) : (
         <DataTable minWidth="52rem">
           <THead>

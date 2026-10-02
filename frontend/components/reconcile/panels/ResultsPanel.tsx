@@ -15,10 +15,10 @@ import { BadgeCheck, CalendarDays, FileText, FlaskConical, Files, TerminalSquare
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { FILTER_TOOLBAR } from '@/lib/uiClasses';
+import { FILTER_TOOLBAR, TOOLBAR_SELECT } from '@/lib/uiClasses';
 import { useReconResource } from '@/lib/recon';
 import { testdataSource, type LetteringFile } from '@/lib/lettering/source';
-import { readRuleRuns, rulesOf, type RuleRun } from '@/lib/lettering/read';
+import { readRuleRuns, rulesOf, runPath, type RuleRun } from '@/lib/lettering/read';
 import { formatDay } from '@/lib/lettering/format';
 import { useReconNav, type ResultsNav, type ResultsSection } from '../ReconContext';
 import { EmptyState, ErrorState, Loading } from '../ui';
@@ -97,7 +97,7 @@ function RuleResults({ files }: { files: LetteringFile[] }) {
       ) : section === 'days' ? (
         <DaysView runs={runs.data ?? []} onOpen={(day, run) => go({ section: 'run', day, run })} />
       ) : section === 'run' ? (
-        <RunSection files={files} rule={rule} runs={runs.data ?? []} state={state} go={go} />
+        <RunSection rule={rule} runs={runs.data ?? []} state={state} go={go} />
       ) : section === 'checks' ? (
         <ChecksView
           rule={rule}
@@ -111,7 +111,7 @@ function RuleResults({ files }: { files: LetteringFile[] }) {
           files={files}
           rule={rule}
           runs={runs.data ?? []}
-          state={{ query: state.query, day: state.day, id: state.id }}
+          state={{ query: state.query, day: state.day, vars: state.vars }}
           onChange={(q) => go(q)}
         />
       )}
@@ -119,15 +119,13 @@ function RuleResults({ files }: { files: LetteringFile[] }) {
   );
 }
 
-/** One run: the day's current run unless another is picked (slice 1's view). */
+/** One run: the day's current run unless another run of the day is picked. */
 function RunSection({
-  files,
   rule,
   runs,
   state,
   go,
 }: {
-  files: LetteringFile[];
   rule: string;
   runs: RuleRun[];
   state: ResultsNav;
@@ -160,7 +158,7 @@ function RunSection({
           wide
         />
       </div>
-      {run && day && <RunView key={`${rule}/${run.run}`} path={`rule=${rule}/day=${day}/run=${run.run}`} deps={[files]} />}
+      {run && <RunView key={`${rule}/${run.run}`} path={runPath(rule, run)} />}
     </div>
   );
 }
@@ -170,19 +168,17 @@ function Picker({
   value,
   onChange,
   options,
-  disabled,
   wide,
 }: {
   label: string;
   value?: string;
   onChange: (v: string) => void;
   options: { value: string; label: string; hint?: string }[];
-  disabled?: boolean;
   wide?: boolean;
 }) {
   return (
-    <Select value={value} onValueChange={onChange} disabled={disabled}>
-      <SelectTrigger className={`h-8 w-full text-xs ${wide ? 'sm:w-64' : 'sm:w-44'}`} aria-label={label}>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className={`${TOOLBAR_SELECT} ${wide ? 'sm:w-64' : 'sm:w-44'}`} aria-label={label}>
         <SelectValue placeholder={label} />
       </SelectTrigger>
       <SelectContent>

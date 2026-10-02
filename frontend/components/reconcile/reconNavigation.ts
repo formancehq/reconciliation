@@ -16,8 +16,8 @@ export interface ResultsNav {
   run?: string
   /** A query file of tools/lettering-duckdb/queries, by name. */
   query?: string
-  /** The `id` variable of a query (business-id). */
-  id?: string
+  /** A query's variables other than `day`, by name (`q.<name>=` in the hash): business-id's `id`. */
+  vars?: Record<string, string>
   /** Checks: the earlier run a chain check reads, when not the one `previousRun` names. */
   prev?: string
 }
@@ -40,7 +40,9 @@ const TABS = new Set<ReconTab>([
   "results",
 ])
 const RESULTS_SECTIONS = new Set<ResultsSection>(["days", "run", "queries", "checks"])
-const RESULTS_KEYS = ["rule", "section", "day", "run", "query", "id", "prev"] as const
+const RESULTS_KEYS = ["rule", "section", "day", "run", "query", "prev"] as const
+/** The hash prefix of a query variable: `q.id=INV-12`. */
+const QUERY_VAR = "q."
 const ALERT_FILTERS = new Set<ReconAlertFilter>([
   "OPEN",
   "ACKNOWLEDGED",
@@ -81,6 +83,10 @@ export function parseReconHash(hash: string): ReconNav | null {
     }
     if (results.section && !RESULTS_SECTIONS.has(results.section))
       delete results.section
+    for (const [key, value] of params) {
+      if (key.startsWith(QUERY_VAR) && value)
+        results.vars = { ...results.vars, [key.slice(QUERY_VAR.length)]: value }
+    }
     return results.rule ? { tab, results } : { tab }
   }
   return { tab }
@@ -101,6 +107,9 @@ export function buildReconHash(nav: ReconNav): string {
       const value = nav.results[key]
       if (value) params.set(key, value)
     }
+    for (const [name, value] of Object.entries(nav.results.vars ?? {})) {
+      if (value) params.set(QUERY_VAR + name, value)
+    }
   }
   if (nav.contractVersion === 2 && (nav.ruleId || nav.alertId))
     params.set("contract", "2")
@@ -114,6 +123,7 @@ export function sameReconNav(a: ReconNav, b: ReconNav): boolean {
     a.alertId === b.alertId &&
     a.alertFilter === b.alertFilter &&
     a.contractVersion === b.contractVersion &&
-    RESULTS_KEYS.every((key) => a.results?.[key] === b.results?.[key])
+    RESULTS_KEYS.every((key) => a.results?.[key] === b.results?.[key]) &&
+    JSON.stringify(a.results?.vars ?? {}) === JSON.stringify(b.results?.vars ?? {})
   )
 }

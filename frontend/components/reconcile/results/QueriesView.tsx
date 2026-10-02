@@ -11,16 +11,17 @@ import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FILTER_TOOLBAR } from '@/lib/uiClasses';
+import { FILTER_TOOLBAR, TOOLBAR_SELECT } from '@/lib/uiClasses';
 import { useReconResource } from '@/lib/recon';
 import type { Cell, Column, Rows } from '@/lib/lettering/duckdb';
-import { formatAmount, formatDay } from '@/lib/lettering/format';
+import { formatDay, formatMinor } from '@/lib/lettering/format';
 import { readQuery, type RuleRun } from '@/lib/lettering/read';
 import { QUERIES, type LetteringQuery } from '@/lib/lettering/sql';
 import type { LetteringFile } from '@/lib/lettering/source';
 import { ErrorState, Loading } from '../ui';
 import {
   DataTable,
+  EmptyNote,
   LetteringVerdictBadge,
   LifecycleBadge,
   OutcomeBadge,
@@ -38,8 +39,10 @@ const MAX_ROWS = 500;
 
 export interface QueryState {
   query?: string;
+  /** The `day` variable, shared with the Run section. */
   day?: string;
-  id?: string;
+  /** Every other variable, by name. */
+  vars?: Record<string, string>;
 }
 
 export function QueriesView({
@@ -63,7 +66,7 @@ export function QueriesView({
     <div className="space-y-3">
       <div className={FILTER_TOOLBAR}>
         <Select value={query.name} onValueChange={(name) => onChange({ ...state, query: name })}>
-          <SelectTrigger className="h-8 w-full text-xs sm:w-56" aria-label="Query">
+          <SelectTrigger className={`${TOOLBAR_SELECT} sm:w-56`} aria-label="Query">
             <SelectValue>
               <span className="font-mono">{query.name}</span>
             </SelectValue>
@@ -84,7 +87,7 @@ export function QueriesView({
               value={state.day ?? LATEST}
               onValueChange={(d) => onChange({ ...state, day: d === LATEST ? undefined : d })}
             >
-              <SelectTrigger className="h-8 w-full text-xs sm:w-56" aria-label="Day">
+              <SelectTrigger className={`${TOOLBAR_SELECT} sm:w-56`} aria-label="Day">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -100,7 +103,13 @@ export function QueriesView({
               </SelectContent>
             </Select>
           ) : (
-            <IdSearch key={`${v.name}:${state.id ?? ''}`} name={v.name} hint={v.hint} value={state.id} onSubmit={(id) => onChange({ ...state, id })} />
+            <VariableInput
+              key={`${v.name}:${state.vars?.[v.name] ?? ''}`}
+              name={v.name}
+              hint={v.hint}
+              value={state.vars?.[v.name]}
+              onSubmit={(value) => onChange({ ...state, vars: { ...state.vars, [v.name]: value } })}
+            />
           ),
         )}
       </div>
@@ -109,14 +118,15 @@ export function QueriesView({
         files={files}
         rule={rule}
         query={query}
-        vars={{ day: state.day, id: state.id }}
+        vars={{ ...state.vars, day: state.day }}
         latestDay={[...complete].sort().at(-1)}
       />
     </div>
   );
 }
 
-function IdSearch({ name, hint, value, onSubmit }: { name: string; hint?: string; value?: string; onSubmit: (v: string) => void }) {
+/** A variable other than `day`, typed then submitted: business-id's `id`. */
+function VariableInput({ name, hint, value, onSubmit }: { name: string; hint?: string; value?: string; onSubmit: (v: string) => void }) {
   const [draft, setDraft] = useState(value ?? '');
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -131,7 +141,7 @@ function IdSearch({ name, hint, value, onSubmit }: { name: string; hint?: string
         onChange={(e) => setDraft(e.target.value)}
         placeholder={examples ? `${name}: ${examples}` : name}
         aria-label={name}
-        className="h-8 w-full text-xs sm:w-56"
+        className={`${TOOLBAR_SELECT} sm:w-56`}
       />
       <Button type="submit" size="sm" variant="outline" className="h-8" disabled={!draft.trim()}>
         <Search className="h-3.5 w-3.5" />
@@ -151,16 +161,15 @@ function QueryResult({
   files: LetteringFile[];
   rule: string;
   query: LetteringQuery;
-  vars: { day?: string; id?: string };
+  vars: Record<string, string | undefined>;
   /** The day a query about one day answers for when `day` is not set (rule.sql `lettering_target_day`). */
   latestDay?: string;
 }) {
-  const own = Object.fromEntries(query.variables.map((v) => [v.name, vars[v.name as keyof typeof vars]]));
-  const missing = query.variables.find((v) => v.required && !own[v.name]);
-  const key = JSON.stringify(own);
+  const declared = Object.fromEntries(query.variables.map((v) => [v.name, vars[v.name]]));
+  const missing = query.variables.find((v) => v.required && !declared[v.name]);
   const res = useReconResource<Rows | null>(
-    () => (missing ? Promise.resolve(null) : readQuery(files, rule, query, own)),
-    [files, rule, query.name, key],
+    () => (missing ? Promise.resolve(null) : readQuery(files, rule, query, declared)),
+    [files, rule, query.name, JSON.stringify(declared)],
   );
 
   const varsHint = query.variables.length > 0 ? query.variables.map((v) => `${v.name} (${v.hint ?? 'optional'})`).join(', ') : 'none';
@@ -176,9 +185,9 @@ function QueryResult({
         }
       />
       {missing ? (
-        <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
+        <EmptyNote>
           Enter {missing.name} to run <span className="font-mono">{query.name}</span>.
-        </p>
+        </EmptyNote>
       ) : res.loading ? (
         <Loading label={`Running ${query.name}…`} />
       ) : res.error ? (
@@ -219,7 +228,7 @@ function withCode(text: string): ReactNode[] {
 /** A query's rows, each column rendered by its DuckDB type and its name. */
 export function QueryTable({ rows: { columns, rows }, empty = 'No row.' }: { rows: Rows; empty?: string }) {
   if (rows.length === 0) {
-    return <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">{empty}</p>;
+    return <EmptyNote>{empty}</EmptyNote>;
   }
   const hasAsset = columns.some((c) => c.name === 'asset');
   const shown = rows.slice(0, MAX_ROWS);
@@ -273,7 +282,7 @@ function renderCell(value: Cell, column: Column, row: Record<string, Cell>): Rea
     case 'amount':
       return (
         <span className="font-mono tabular-nums">
-          {formatAmount(value as bigint, typeof row.asset === 'string' ? row.asset : '')}
+          {formatMinor(value as bigint, typeof row.asset === 'string' ? row.asset : '')}
         </span>
       );
     case 'integer':
