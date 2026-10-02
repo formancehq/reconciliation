@@ -36,10 +36,22 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilder' }
+        - name: query
+          in: query
+          required: false
+          description: |
+            The filter, as URL-encoded JSON in the `QueryBuilder` format. It is
+            the only filter. The server reads only `query`, `pageSize`, and
+            `cursor`.
+
+            Rule keys: `id` (a prefix match), `name`, `templateKind`, `enabled`
+            (a boolean), `lastVerdict` (`pass`, `fail`, or `error`), and the
+            datetimes `createdAt`, `updatedAt`, and `lastEvaluatedAt`. A rule
+            that has never run has no `lastEvaluatedAt`, so a comparison on it
+            never returns that rule, but `$not` returns it.
+          schema: { type: string }
+          example: '{"$match":{"lastVerdict":"error"}}'
+      requestBody: { $ref: '#/components/requestBodies/ListFilter' }
       responses:
         '200': { $ref: '#/components/responses/Rules' }
         default: { $ref: '#/components/responses/ErrorResponse' }
@@ -336,10 +348,20 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/Cursor'
-      requestBody:
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/QueryBuilder' }
+        - name: query
+          in: query
+          required: false
+          description: |
+            The filter, as URL-encoded JSON in the `QueryBuilder` format. It is
+            the only filter. The server reads only `query`, `pageSize`, and
+            `cursor`, so `?status=OPEN` returns every alert.
+
+            Alert keys: `id`, `ruleID` (not `ruleId`), `status` (`OPEN`,
+            `ACKNOWLEDGED`, or `RESOLVED`), `severity`, `fingerprint`,
+            `periodID`, and the datetimes `firstSeenAt` and `lastSeenAt`.
+          schema: { type: string }
+          example: '{"$and":[{"$match":{"periodID":"2026-03"}},{"$match":{"status":"OPEN"}}]}'
+      requestBody: { $ref: '#/components/requestBodies/ListFilter' }
       responses:
         '200': { $ref: '#/components/responses/Alerts' }
         default: { $ref: '#/components/responses/ErrorResponse' }
@@ -480,10 +502,12 @@ components:
       name: cursor
       in: query
       description: |
-        Parameter used in pagination requests. Maximum page size is set to 15.
+        Parameter used in pagination requests.
         Set to the value of next for the next page of results.
         Set to the value of previous for the previous page of results.
-        No other parameters can be set when this parameter is set.
+        The cursor carries the page size and the filter of the first request,
+        so the server ignores the other query parameters when this parameter
+        is set.
       schema:
         type: string
         example: aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ==
@@ -596,6 +620,14 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/RulePatchRequest' }
+    ListFilter:
+      description: |
+        The same filter as the `query` parameter, sent as the JSON body of the
+        GET. When the body is not empty, the server reads it and ignores
+        `query`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/QueryBuilder' }
   schemas:
     ServerInfo:
       type: object
@@ -897,6 +929,14 @@ components:
     QueryBuilder:
       type: object
       additionalProperties: true
+      description: |
+        A list filter: a tree of operator objects. `$match` tests that a key
+        equals a value. `$gt`, `$gte`, `$lt`, and `$lte` compare a datetime key
+        with an RFC 3339 value. `$and` and `$or` take a list of filters, and
+        `$not` takes one filter. `$match` and each comparison take exactly one
+        key. Each list operation documents its keys. The server returns 400
+        for an unknown key or for an operator that the key does not support.
+      example: { "$and": [ { "$match": { "status": "OPEN" } }, { "$gte": { "lastSeenAt": "2026-06-01T00:00:00Z" } } ] }
     ContractVersion:
       type: integer
       format: int32

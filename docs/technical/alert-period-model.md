@@ -105,10 +105,11 @@ in the `continuous` scope regardless of the rule's period type.
 
 The product's headline question — *"is March green?"* — is **green ⇔ zero
 active (OPEN/ACKNOWLEDGED) alerts** in the period, read via the wired path
-`GET /alerts?periodID=2026-03&status=OPEN` (and internally
-`Storage.ListActiveAlertFingerprints(rule, period)`, whose empty result means
-green). Resolved/accepted alerts don't count against it but remain on record,
-so a period that went green stays auditable: the resolved cases (and the
+`GET /alerts` filtered on `periodID` and on both active statuses (the filter is in
+[api.md](./api.md#get-alerts--list)). Internally, an empty
+`Storage.ListActiveAlertFingerprints(rule, period)` means green.
+Resolved/accepted alerts don't count against it but remain on record, so a
+period that went green stays auditable: the resolved cases (and the
 adjustments that justified them) are still there. If an adjustment later looks
 questionable, the proof that there *was* an issue is preserved. (A dedicated
 period-status endpoint can wrap this when a UI needs it — deferred until then

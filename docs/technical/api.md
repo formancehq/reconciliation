@@ -177,6 +177,39 @@ EE-gated. The contracts below match what's wired in [`internal/api/router.go`](.
 
 > Handler-level tests live in [v1_handlers_test.go](../../internal/api/v1_handlers_test.go); the end-to-end orchestration test ([v1_orchestration_test.go](../../internal/api/service/v1_orchestration_test.go)) is the canonical reference for the open/update/auto-resolve/re-open flow these endpoints drive.
 
+### Filtering lists
+
+`GET /rules` and `GET /alerts` take one filter, as JSON in the `query` parameter. They read only
+`query`, `pageSize`, and `cursor`, so `GET /alerts?status=OPEN` returns every alert.
+
+URL-encode the filter:
+
+```bash
+curl -G "${RECON_URL:-http://localhost:8081}/alerts" --data-urlencode 'query={"$match":{"status":"OPEN"}}'
+```
+
+You can also send the filter as the JSON body of the `GET`. When the body is not empty, the server
+reads the body and ignores `query`.
+
+A filter is a tree of these operators:
+
+| Operator | Meaning | Example |
+|---|---|---|
+| `$match` | The key equals the value. | `{"$match": {"status": "OPEN"}}` |
+| `$gt`, `$gte`, `$lt`, `$lte` | Compares a datetime key with the value. | `{"$gte": {"lastSeenAt": "2026-06-01T00:00:00Z"}}` |
+| `$and`, `$or` | All or any of a list of filters. | `{"$and": [{…}, {…}]}` |
+| `$not` | The opposite of one filter. | `{"$not": {"$match": {"status": "RESOLVED"}}}` |
+
+`$match` and each comparison take exactly one key. To filter on two keys, combine them with `$and`.
+Datetimes are RFC 3339 strings. A record with no value for a key never matches a comparison on that
+key, but `$not` returns it.
+
+The server returns `400 VALIDATION` for an unknown key or for an operator that the key does not
+support. Each endpoint lists its keys below.
+
+The `next` and `previous` cursors carry the filter, so later pages stay filtered. When you pass
+`cursor`, the server ignores `query`.
+
 ### Rules
 
 #### `POST /rules` — create
@@ -212,8 +245,25 @@ See [templates.md](./templates.md) for per-template spec schemas.
 
 #### `GET /rules` — cursor-paginated list
 
-Filterable via query builder: `?type=balance_equation`, `?ledger=buildr`, `?enabled=true`, `?label.team=treasury`,
-plus the liveness fields below (`?lastVerdict=error`, `?lastEvaluatedAt<2026-09-17T06:00:00Z`).
+Filter the list with the `query` parameter (see [Filtering lists](#filtering-lists)). The rule keys
+are:
+
+| Key | Operators | Value |
+|---|---|---|
+| `id` | `$match` | A rule id. The match is on a prefix: `"3f"` returns every rule whose id starts with `3f`. |
+| `name` | `$match` | A rule name. |
+| `templateKind` | `$match` | A template kind, for example `balance_equation`. |
+| `enabled` | `$match` | `true` or `false`, as a JSON boolean. |
+| `lastVerdict` | `$match` | `pass`, `fail`, or `error`. |
+| `createdAt`, `updatedAt`, `lastEvaluatedAt` | `$match`, `$gt`, `$gte`, `$lt`, `$lte` | An RFC 3339 datetime. |
+
+Labels and source ledgers are not filter keys.
+
+This filter returns the rules whose last evaluation failed with an engine error:
+
+```json
+{"$match": {"lastVerdict": "error"}}
+```
 
 ##### Liveness: `lastEvaluatedAt` / `lastVerdict`
 
@@ -232,8 +282,17 @@ the absence as green reports a dead scheduler as a clean book.
 They exist so a caller can answer "did this rule actually run, and what did it say?" from the rules
 list alone, instead of one [`GET /rules/{id}/captures`](#get-rulesidcaptures--evaluation-history-captures)
 call per rule — the read shape a multi-stack collector needs, since a stack whose scheduler is down
-raises no alerts and otherwise looks reconciled. Pair `?lastEvaluatedAt<{cutoff}` with `GET /alerts?status=OPEN`
-to separate *green* from *silent*.
+raises no alerts and otherwise looks reconciled.
+
+To separate *green* from *silent*, pair two filters. On `GET /alerts`, filter on
+`{"$match": {"status": "OPEN"}}`. On `GET /rules`, list the rules that have not run since a cutoff:
+
+```json
+{"$not": {"$gte": {"lastEvaluatedAt": "2026-09-17T06:00:00Z"}}}
+```
+
+Use `$not` here, not `$lt`. A rule that has never run has no `lastEvaluatedAt`, so `$lt` does not
+return it, but `$not` returns it.
 
 ##### Live alert tally: `alerts`
 
@@ -249,7 +308,7 @@ whole page costs **one** control-ledger call regardless of how many alerts exist
 [ledger-v3-storage.md](./ledger-v3-storage.md#counting-alerts-one-grouped-aggregate-not-a-scan)).
 
 `alerts` is **absent from `GET /rules/{id}`**, where it would buy a round trip for a number
-`GET /alerts?ruleID=…` already answers. Absent therefore means *not asked for* — never zero. A rule
+`GET /alerts` filtered on `ruleID` already answers. Absent therefore means *not asked for* — never zero. A rule
 with nothing live appears in the list with explicit zeroes.
 
 They are a projection, not a new record: each evaluation stamps them onto the rule's control-ledger
@@ -287,7 +346,7 @@ the template's `tolerance`. Returns `200` + the evaluation result (not persisted
 ```json
 {
   "id":        "ev_…",
-  "ruleId":    "rul_…",
+  "ruleID":    "rul_…",
   "startedAt": "…",
   "endedAt":   "…",
   "result":    "PASS" | "FAIL" | "ERROR",
@@ -354,14 +413,40 @@ An **Alert** is the stable, dedup'd entity for one `(rule, fingerprint, period)`
 
 #### `GET /alerts` — list
 
-Filterable: `?status=OPEN`, `?ruleId=…`, `?severity=high`, `?periodID=2026-03`, `?since=2026-06-01T00:00:00Z`. Filtering by `periodID` answers "is this period reconciled?" — a period with no OPEN/ACKNOWLEDGED alerts is green.
+Filter the list with the `query` parameter (see [Filtering lists](#filtering-lists)). The alert keys
+are:
+
+| Key | Operators | Value |
+|---|---|---|
+| `id` | `$match` | An alert id. |
+| `ruleID` | `$match` | A rule id. The key is `ruleID`, as in the response. The server rejects `ruleId` with `400 VALIDATION`. |
+| `status` | `$match` | `OPEN`, `ACKNOWLEDGED`, or `RESOLVED`. Values are case-sensitive. |
+| `severity` | `$match` | `info`, `low`, `medium`, `high`, or `critical`. |
+| `fingerprint` | `$match` | A fingerprint, for example `asset:USD/2`. |
+| `periodID` | `$match` | A period, for example `2026-03` or `continuous`. |
+| `firstSeenAt`, `lastSeenAt` | `$match`, `$gt`, `$gte`, `$lt`, `$lte` | An RFC 3339 datetime. |
+
+There is no `since` key. This filter returns the alerts seen since 1 June 2026:
+
+```json
+{"$gte": {"lastSeenAt": "2026-06-01T00:00:00Z"}}
+```
+
+This filter returns the active alerts of March 2026. When it returns none, March 2026 is green:
+
+```json
+{"$and": [
+  {"$match": {"periodID": "2026-03"}},
+  {"$or": [{"$match": {"status": "OPEN"}}, {"$match": {"status": "ACKNOWLEDGED"}}]}
+]}
+```
 
 #### `GET /alerts/{id}` — fetch
 
 ```json
 {
   "id":               "alr_…",
-  "ruleId":           "rul_…",
+  "ruleID":           "rul_…",
   "fingerprint":      "asset:USD/2",
   "periodID":         "2026-03",
   "status":           "OPEN" | "ACKNOWLEDGED" | "RESOLVED",
@@ -602,7 +687,7 @@ All endpoints share the existing `ErrorResponse` shape:
 
 | HTTP | `errorCode` | When |
 |---|---|---|
-| 400 | `VALIDATION`         | Bad request body, unknown templateKind, invalid spec |
+| 400 | `VALIDATION`         | Bad request body, unknown templateKind, invalid spec, invalid list filter |
 | 400 | `INVALID_ID`         | Path UUID malformed |
 | 401 | `UNAUTHORIZED`       | Missing/invalid token |
 | 403 | `FORBIDDEN`          | Token lacks the required scope |
