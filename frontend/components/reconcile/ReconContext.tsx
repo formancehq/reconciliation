@@ -48,6 +48,8 @@ interface ReconContextValue {
   openRule: (id: string, contractVersion?: 1 | 2) => void
   goAlerts: (filter?: ReconAlertFilter) => void
   openAlert: (id: string, contractVersion?: 1 | 2) => void
+  /** Results tab: show a lettering rule, and optionally one day and run. */
+  openResults: (results: NonNullable<ReconNav["results"]>) => void
   health: HealthStatus
   recheckHealth: () => void
   /** Increment to force list views to refetch. */
@@ -169,6 +171,7 @@ export function ReconProvider({ children }: { children: ReactNode }) {
           alertId: id,
           contractVersion: contractVersion === 2 ? 2 : undefined,
         }),
+      openResults: (results) => navigate({ tab: "results", results }),
       health,
       recheckHealth,
       dataVersion,

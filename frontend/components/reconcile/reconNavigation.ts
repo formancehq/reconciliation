@@ -1,4 +1,10 @@
-export type ReconTab = "overview" | "rules" | "alerts" | "insights" | "audit"
+export type ReconTab =
+  | "overview"
+  | "rules"
+  | "alerts"
+  | "insights"
+  | "audit"
+  | "results"
 export type ReconAlertFilter = "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "ALL"
 
 export interface ReconNav {
@@ -7,6 +13,8 @@ export interface ReconNav {
   alertId?: string
   alertFilter?: ReconAlertFilter
   contractVersion?: 1 | 2
+  /** Results tab: the lettering rule, day and run shown (`rule=`, `day=`, `run=`). */
+  results?: { rule?: string; day?: string; run?: string }
 }
 
 const TABS = new Set<ReconTab>([
@@ -15,6 +23,7 @@ const TABS = new Set<ReconTab>([
   "alerts",
   "insights",
   "audit",
+  "results",
 ])
 const ALERT_FILTERS = new Set<ReconAlertFilter>([
   "OPEN",
@@ -48,6 +57,14 @@ export function parseReconHash(hash: string): ReconNav | null {
     const contractVersion = params.get("contract") === "2" ? 2 : undefined
     return { tab, alertId, alertFilter, contractVersion }
   }
+  if (tab === "results") {
+    const results = {
+      rule: params.get("rule") || undefined,
+      day: params.get("day") || undefined,
+      run: params.get("run") || undefined,
+    }
+    return results.rule ? { tab, results } : { tab }
+  }
   return { tab }
 }
 
@@ -61,6 +78,11 @@ export function buildReconHash(nav: ReconNav): string {
     if (nav.alertId) params.set("alert", nav.alertId)
     else if (nav.alertFilter) params.set("status", nav.alertFilter)
   }
+  if (nav.tab === "results" && nav.results?.rule) {
+    params.set("rule", nav.results.rule)
+    if (nav.results.day) params.set("day", nav.results.day)
+    if (nav.results.run) params.set("run", nav.results.run)
+  }
   if (nav.contractVersion === 2 && (nav.ruleId || nav.alertId))
     params.set("contract", "2")
   return `#reconcile?${params.toString()}`
@@ -72,6 +94,9 @@ export function sameReconNav(a: ReconNav, b: ReconNav): boolean {
     a.ruleId === b.ruleId &&
     a.alertId === b.alertId &&
     a.alertFilter === b.alertFilter &&
-    a.contractVersion === b.contractVersion
+    a.contractVersion === b.contractVersion &&
+    a.results?.rule === b.results?.rule &&
+    a.results?.day === b.results?.day &&
+    a.results?.run === b.results?.run
   )
 }

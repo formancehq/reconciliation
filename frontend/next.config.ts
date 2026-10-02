@@ -10,6 +10,13 @@ const nextConfig: NextConfig = {
 	eslint: {
 		ignoreDuringBuilds: true,
 	},
+	// The Results tab runs the SQL of ../tools/lettering-duckdb as it is: each .sql
+	// file is bundled as a string at build time (lib/lettering/sql.ts), so the tab
+	// and the tool never drift.
+	webpack(config) {
+		config.module.rules.push({ test: /\.sql$/, type: 'asset/source' })
+		return config
+	},
 	async headers() {
 		return [
 			{

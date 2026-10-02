@@ -11,7 +11,7 @@
  * Structurally mirrors the V3 Ledger Explorer (same DS tab-bar primitives) so
  * it feels native next to "Explore Ledger" in the sidebar.
  */
-import { LayoutDashboard, ListChecks, Bell, LineChart, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { LayoutDashboard, ListChecks, Bell, LineChart, ShieldCheck, AlertTriangle, TableProperties } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TABBAR_ROW, TABBAR_LIST, TABBAR_TRIGGER, TABBAR_ICON } from '@/lib/uiClasses';
 import { ReconProvider, useReconNav, type ReconTab } from './ReconContext';
@@ -22,6 +22,8 @@ import { RulesPanel } from './panels/RulesPanel';
 import { AlertsPanel } from './panels/AlertsPanel';
 import { InsightsPanel } from './panels/InsightsPanel';
 import { AuditPanel } from './panels/AuditPanel';
+import { ResultsPanel } from './panels/ResultsPanel';
+import { LETTERING_SOURCE_AVAILABLE } from '@/lib/lettering/source';
 
 const TABS: { id: ReconTab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -29,6 +31,8 @@ const TABS: { id: ReconTab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'alerts', label: 'Alerts', icon: Bell },
   { id: 'insights', label: 'Insights', icon: LineChart },
   { id: 'audit', label: 'Audit', icon: ShieldCheck },
+  // Lettering result files read with DuckDB-WASM: shown while a source exists (the dev server's test data).
+  ...(LETTERING_SOURCE_AVAILABLE ? [{ id: 'results' as const, label: 'Results', icon: TableProperties }] : []),
 ];
 
 function ReconcileInner() {
@@ -70,6 +74,7 @@ function ReconcileInner() {
         {nav.tab === 'alerts' && <AlertsPanel />}
         {nav.tab === 'insights' && <InsightsPanel />}
         {nav.tab === 'audit' && <AuditPanel />}
+        {nav.tab === 'results' && LETTERING_SOURCE_AVAILABLE && <ResultsPanel />}
       </div>
     </div>
   );
