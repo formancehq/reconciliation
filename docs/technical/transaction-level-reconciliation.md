@@ -97,7 +97,7 @@ continuity holds in every row above.
   only carrier.
   - Connectivity's `formancepayments` profile already does this: `payments.formance.com/payment-id`
     and `formance.com/observation.event-type` are indexed (`formancehq/connectivity-plugins-poc`,
-    `plugins/formancepayments/profiles/formancepayments.yaml:1143-1147` @ `9df05c5b`).
+    `plugins/formancepayments/profiles/formancepayments.yaml:1155-1166` @ `ae604968`).
   - The shipped Stripe plugin does not model holds at all. It books Stripe balance transactions with
     `stripe_txn_id` indexed (`formancehq/connectivity`,
     `plugins/stripe/internal/adapter/grpc/server.go:227-236` @ `e7ca3e29`).
@@ -120,6 +120,10 @@ listing the holds by prefix costs O(open accounts).
 | **Postings** | exact amounts, with fees split out | application **strict on the amount** (`send [$asset $amount]`, never `*`): an over-application takes the hold past zero, to the sign opposite its opening (`wrong_sign`), and a partial payment leaves an honest residual |
 | **Indexes** | **`payment_ref` and the `psp.movementKeys` fields (mandatory: they drive the flow read)**; **`inserted_at` (mandatory: it resolves the cut)**; `merchant_ref` (investigation) | **`payment_ref` and `business_ref` (mandatory: together they drive the flow read)**; **`inserted_at` (mandatory)** |
 | **Mutability** | key and state metadata are **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one. Recon does not monitor this in V1 (ADR-005 decision 25); **labels** (ask L8) would make it structural | same |
+
+In this table the clearing account, `kind`, the `reference` format and the `merchant_ref` index are
+*recommended*: good practice that the engine never reads. The rest is required by the rule (ADR-005
+§8).
 
 **Why `merchant_ref` matters.** Without it, an `unapplied_payment` is known only by its
 `payment_ref`. With it, the engine pairs it with the **open invoice** it was meant for, and the
@@ -157,62 +161,75 @@ describes both.
 The PSP ledger is fed by a Connectivity connector, and the mapping from PSP events to ledger
 transactions is configured **per customer, when they implement it**. Nothing here requires a change
 to a connector. It is the checklist an implementer follows so that the connector's output can be
-reconciled with a `lettering_match` rule. The rule adapts to field names: it names the key field
+reconciled with a `lettering_match` rule. A row marked *recommended* is good practice that the
+engine never reads (ADR-005 §8). The rule adapts to field names: it names the key field
 and the state field per side, so `payment_id` and `event_type` work as well as `payment_ref` and
 `state`.
 
-| # | The connector mapping must… | Why |
-|---|---|---|
-| 1 | carry the **PSP payment reference** as declared transaction metadata, **with an index**, on every transaction of a payment | The flow is read by filtering on its presence. The rule rejects a key without an index (EN-2316). The hold address is never used as the key (§7.6) |
-| 2 | book **one transaction per event of one payment reference**. A batched payout that settles many payments is split into one transaction per payment | The control cannot split a multi-reference transaction: it reads the key from the transaction, not from the postings' addresses |
-| 3 | carry the **state** of the event (pending, succeeded, failed…) as transaction metadata | The rule maps its values to `pending`, `final` and `failed` per deployment |
-| 4 | carry **`merchant_ref`**, the business id the merchant passed when creating the payment (Stripe `metadata`, Adyen `merchantReference`…) | It turns an `unapplied_payment` into "invoice X is paid: apply it" |
-| 5 | keep key and state metadata **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one | A filtered re-read of a past day must not change. Recon does not monitor it in V1 (ADR-005 decision 25); immutable labels (L8) would enforce it |
-| 6 | book **refunds and chargebacks as their own payment references**, not as a reversal of the original payment | Each is its own 1-to-1 pair (ADR-005 decision 7) |
-| 7 | book **fees and FX as explicit postings** to their own accounts | The comparison is exact, with no tolerance |
-| 8 | use **EPHEMERAL holds, one per payment, under one prefix per kind**, and note the sign each kind opens with | The open book is then a prefix listing, and lettered holds leave it. The rule declares each prefix with its sign (`holds[].openSign`) |
-| 9 | set `reference = {payment_ref}:{state}` | Re-delivery of an event is idempotent |
-| 10 | have the **`inserted_at` index** created on the ledger | It resolves the cut-off in one read. The rule is rejected without it (EN-2316) |
-| 11 | credit the **payment amount of a final event to one account per payment kind**, which the rule names as `psp.paymentAccount` (an address pattern), and **credit nothing else to it** | The PSP amount is read there; the hold alone misses a final event with no `pending` before it, or one whose amount differs. The book of that account is then the only check that sees a final with no `pending` and no key (§7.9, ADR-005 §8 rule 10) |
-| 12 | carry a **declared, indexed key on every other movement of that account**, debits included: `payment_ref` for a refund, the reference of its own object for a payout, a fee or a conversion, declared in the rule as `psp.movementKeys` | The book of the payment account then closes at 0; an unkeyed movement is a P1 break, `unkeyed_payment_movement` (§7.9) |
+| # | The connector mapping must… | Required by the rule | Why |
+|---|---|---|---|
+| 1 | carry the **PSP payment reference** as declared transaction metadata, **with an index**, on every transaction of a payment | yes | The flow is read by filtering on its presence. The rule rejects a key without an index (EN-2316). The hold address is never used as the key (§7.6) |
+| 2 | book **one transaction per event of one payment reference**. A batched payout that settles many payments is split into one transaction per payment | yes | The control cannot split a multi-reference transaction: it reads the key from the transaction, not from the postings' addresses |
+| 3 | carry the **state** of the event (pending, succeeded, failed…) as transaction metadata | yes | The rule maps its values to `pending`, `final` and `failed` per deployment |
+| 4 | carry **`merchant_ref`**, the business id the merchant passed when creating the payment (Stripe `metadata`, Adyen `merchantReference`…) | only with `psp.merchantRef` | It turns an `unapplied_payment` into "invoice X is paid: apply it" |
+| 5 | keep key and state metadata **write-once**. A correction is a new transaction, never a `SavedMetadata` on an existing one | yes | A filtered re-read of a past day must not change. Recon does not monitor it in V1 (ADR-005 decision 25); immutable labels (L8) would enforce it |
+| 6 | book **refunds and chargebacks as their own payment references**, not as a reversal of the original payment | yes | Each is its own 1-to-1 pair (ADR-005 decision 7) |
+| 7 | book **fees and FX as explicit postings** to their own accounts | yes | The comparison is exact, with no tolerance |
+| 8 | use **EPHEMERAL holds, one per payment, under one prefix per kind**, and note the sign each kind opens with | yes | The open book is then a prefix listing, and lettered holds leave it. The rule declares each prefix with its sign (`holds[].openSign`) |
+| 9 | set `reference = {payment_ref}:{state}` | recommended | Re-delivery of an event is idempotent |
+| 10 | have the **`inserted_at` index** created on the ledger | yes | It resolves the cut-off in one read. The rule is rejected without it (EN-2316) |
+| 11 | credit the **payment amount of a final event to one account per payment kind**, which the rule names as `psp.paymentAccount` (an address pattern), and **credit nothing else to it** | yes | The PSP amount is read there; the hold alone misses a final event with no `pending` before it, or one whose amount differs. The book of that account is then the only check that sees a final with no `pending` and no key (§7.9, ADR-005 §8 rule 10) |
+| 12 | carry a **declared, indexed key on every other movement of that account**, debits included: `payment_ref` for a refund, the reference of its own object for a payout, a fee or a conversion, declared in the rule as `psp.movementKeys` | yes, pending the Connectivity review | The book of the payment account then closes at 0; an unkeyed movement is a P1 break, `unkeyed_payment_movement` (§7.9) |
 
 **Where two existing mappings stand**, as a starting point:
 
 - `formancepayments`, in
   [`formancehq/connectivity-plugins-poc`](https://github.com/formancehq/connectivity-plugins-poc)
-  (`plugins/formancepayments/profiles/formancepayments.yaml` @ `9df05c5b`):
+  (`plugins/formancepayments/profiles/formancepayments.yaml` @ `ae604968`, unchanged at `016dcf41`):
   - **covered:** row 1, with `payments.formance.com/payment-id` on every payment transaction and
-    indexed (`:1143-1147`); row 3, with `formance.com/observation.event-type` indexed and
+    indexed (`:1155-1166`); row 3, with `formance.com/observation.event-type` indexed and
     `payments.formance.com/payment-status`; row 8, with an EPHEMERAL
     `fpay:{conn}:payment:hold:pending:{payment_id}` hold (`:64-73`); row 9 in intent, since
-    `reference = {conn}:padj:{adjustment_id}` is idempotent per event; row 11, as
+    `reference = {conn}:padj:{adjustment_key}` (its `adjustment_id` when there is no key) is
+    idempotent per event; row 10, as the profile declares the `inserted_at` index since `9896f9fd`
+    (connectivity-plugins-poc #698, 2026-09-29); row 11, as
     `payin.succeeded` credits `fpay:{conn}:account:{acct}:main` with the payment amount;
   - **to configure:** row 4, as there is no merchant reference on transactions
     (`payments.formance.com/reference` is account metadata); row 6, as refunds are mapped
-    (`PAYIN_REFUNDED` and five siblings, `:430-704`) but as deltas **on the original payment id**,
+    (`PAYIN_REFUNDED` and five siblings, `:430-716`) but as deltas **on the original payment id**,
     not as their own payment reference; row 7, as a `fees` account is declared (`:82`) but no
-    mapping posts to it; row 10, as the profile indexes `timestamp` but no `inserted_at`; row 12,
+    mapping posts to it; row 12,
     as conversions and order fills post on `…:account:{acct}:main` under
-    `payments.formance.com/conversion-id` and `order-id`, declared but not indexed (`:1073-1078`,
-    `:1143-1147`). Row 11 does not hold today: see the open question below.
+    `payments.formance.com/conversion-id` and `order-id`, declared but not indexed (`:1085-1090`,
+    `:1155-1166`). Row 11 does not hold today: see the open question below.
 - The Stripe plugin, in [`formancehq/connectivity`](https://github.com/formancehq/connectivity)
   (`plugins/stripe` @ `e7ca3e29`), does not model holds. It books balance transactions keyed by
   `stripe_txn_id`, so rows 1–3 and 8 need a lettering mapping first.
+- `stripecore`, in `connectivity-plugins-poc` (`plugins/stripecore/profiles/stripecore.yaml` @
+  `9896f9fd`), sets an indexed `stripe.com/stripe-object-id` on all 46 of its transaction kinds and
+  books Stripe processing and FX fees as transactions of their own: rows 7 and 12 look covered by
+  construction. Not checked against a run.
 
 **Open question for the Connectivity team: the payment account with `formancepayments`.** No
 decision is taken here; the table is for that review.
 
-- **The facts** (`formancepayments.yaml` @ `9df05c5b`):
+- **The facts** (`formancepayments.yaml` @ `ae604968`, unchanged at `016dcf41`):
   - `fpay:{conn}:account:{acct}:main` is credited by `PAYIN_SUCCEEDED` (`:191`), and also by
     `OUTFLOW_PENDING` (`:279`), `PAYOUT_SUCCEEDED` (`:329`), `TRANSFER_SUCCEEDED` (`:376`,
-    `:381`), `OUTFLOW_COMPENSATE` (`:418`, `:422`), `PAYIN_REFUND_REVERSED` (`:503`) and
-    `PAYOUT_REFUNDED` (`:548`);
+    `:381`), `OUTFLOW_COMPENSATE` (`:418`, `:422`), `PAYIN_REFUND_REVERSED` (`:509`),
+    `PAYOUT_REFUNDED` (`:553`, `:557`), `TRANSFER_REFUNDED` (`:648`, `:652`) and
+    `TRANSFER_REFUND_REVERSED` (`:699`);
+  - since `ae604968` (#744, 2026-09-29) a refund also releases the payment's pending hold up to
+    its amount: `PAYIN_REFUNDED` to the provider mirror, `PAYOUT_REFUNDED` and `TRANSFER_REFUNDED`
+    to `…:main` (`:557`, `:652`). These carry the payment id like the rest;
   - every payment event, payins, payouts, transfers and refunds, sets
     `payments.formance.com/payment-id`, with its own `formance.com/observation.event-type`
     (`:157-701`);
   - `CONVERSION` and `ORDER_FILL` debit `…:account:{src}:main` and credit `…:account:{dst}:main`
-    (`:736-741`, `:781-786`) with no payment id: they set `payments.formance.com/conversion-id`
-    and `order-id` (`:745`, `:790`), which are declared but not indexed.
+    (`:748-753`, `:793-798`) with no payment id: they set `payments.formance.com/conversion-id`
+    and `order-id` (`:757`, `:802`), which are declared but not indexed. They also set the state
+    field, `formance.com/observation.event-type`, to `conversion` and `order.fill` (`:755`,
+    `:800`), and that field is indexed (`:1155-1166`).
 - **What follows, with the rule as specified today:**
   - the flow read returns the payment events, since they carry the key. Their states are in no
     set, so they are `unclassified`, which caps every day at `reconciled_with_warnings`;
@@ -227,6 +244,18 @@ decision is taken here; the table is for that review.
 | A. The connector mapping gives every movement kind its own key | The mapping, per customer | Clean, but depends on Connectivity and on each implementation |
 | B. The rule declares a set of **movement states** (payout, transfer, refund and outflow event types): transactions with the key in those states feed the payment-account book, not the matching nor `unclassified` | The rule contract (EN-2316) | Works with the connector as it is and keeps the book strict; conversions and order fills still need their ids in `psp.movementKeys`, indexed |
 | C. The book becomes a warning instead of a P1 break | Decision 23 | Loses the only check that sees a final with no pending and no reference |
+
+**New inputs for the review** (connectivity-plugins-poc @ `016dcf41`, 2026-10-02), facts only:
+
+- **A variant of B needs no new index.** Conversions and order fills carry the indexed state field
+  with values of their own, so the PSP membership could read them by value, `Or(payment-id EXISTS,
+  event-type = "conversion", event-type = "order.fill")`, instead of naming their ids in
+  `psp.movementKeys`. The rule rejects a `movementKeys` field equal to `state.field` today, so this
+  would add movement states read by value to the contract (EN-2316). Its cost is not measured; one
+  `EXISTS` term cost +31 % on the PSP flow read (§7.9), and conversions are rare.
+- **Option A already holds for `stripecore`**, which keys every one of its transaction kinds with
+  an indexed `stripe.com/stripe-object-id` (above). Naming that field in `psp.movementKeys` should
+  close the book with no connector change; not checked against a run.
 
 **What this means for the debit book and `psp.movementKeys`** (decision 23, feature inventory E13
 and A9), for the same review:
@@ -371,8 +400,9 @@ a log id would only label the cut.
   an open filter would cost everything written since the cut-off, the whole history on an old
   day's replay (§7.12). **The index is mandatory**: the rule is rejected without it, a run waits
   while it builds, as for the key's index, and an index missing at run time is an engine error
-  (`incomplete`), never a silent fallback. `formancepayments` does not create it today, so a
-  Connectivity-fed ledger needs it added at implementation (checklist row 10).
+  (`incomplete`), never a silent fallback. The `formancepayments` profile declares it since
+  `9896f9fd` (connectivity-plugins-poc #698, 2026-09-29); a ledger created from an older profile
+  needs it added (checklist row 10).
 - **The insertion date, not `timestamp`**, so a past day is **frozen**: a transaction inserted
   today always gets an id above yesterday's `T`, even backdated. Why, and why bisection of the id
   range was dropped, are in [ADR-005

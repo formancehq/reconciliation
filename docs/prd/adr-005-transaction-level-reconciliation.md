@@ -734,34 +734,40 @@ V1 runs no periodic proof against a checkpoint.
    lifecycle; the UI shows them this way. The API also lists every file of a run with a pre-signed
    URL, so a customer reads them without access to the bucket.
 
-## 8. Booking conventions we recommend
+## 8. Booking conventions: what the rule requires, and what we recommend
 
 The full table, the reasons and the connector checklist are in the design doc ([recommended booking
-design](../technical/transaction-level-reconciliation.md#recommended-booking-design-adr-005-8)). The
-rules that the engine's efficiency depends on:
+design](../technical/transaction-level-reconciliation.md#recommended-booking-design-adr-005-8)). Each
+rule below is marked **required**, when the engine's correctness or efficiency depends on it, or
+**recommended**, when it is good practice that the engine never reads (owner, 2026-10-02). The
+booking guide (EN-2335) keeps the two apart, so that onboarding asks only for what the rule needs.
 
-1. **EPHEMERAL holds, one prefix per kind**: one hold per external payment on the PSP ledger, one
-   per **business object** (not per state) on the product ledger, each prefix declared in `holds`
-   with its sign (§6).
-2. **One transaction = one event of one payment reference.**
-3. **Declared transaction metadata**: `payment_ref`, `merchant_ref`, `state`, `kind` on the PSP
-   ledger; `payment_ref`, a `business_ref` per hold kind and `kind` on the product ledger, where
+1. *Required.* **EPHEMERAL holds, one prefix per kind**: one hold per external payment on the PSP
+   ledger, one per **business object** (not per state) on the product ledger, each prefix declared
+   in `holds` with its sign (§6).
+2. *Required.* **One transaction = one event of one payment reference.**
+3. *Required, except `kind` and the `merchant_ref` index.* **Declared transaction metadata**:
+   `payment_ref`, `merchant_ref`, `state`, `kind` on the PSP ledger; `payment_ref`, a `business_ref` per hold kind and `kind` on the product ledger, where
    **every** transaction that touches a business hold carries its `business_ref`, including the one
    that opens it. `payment_ref` **must be declared and indexed on both ledgers** and `business_ref`
-   **must be indexed** on the product ledger, since the flow read filters on them (§5); `merchant_ref` is indexed for investigation and named
-   as `psp.merchantRef`. **These fields are write-once** (§5, caveat 1).
-4. **Strict amounts, explicit fees and FX** (decision 6): `send [$asset $amount]`, never `*`; PSP
+   **must be indexed** on the product ledger, since the flow read filters on them (§5). `kind` is
+   recommended, for people reading the ledger; the engine never reads it. `merchant_ref` is read
+   only when the rule names it as `psp.merchantRef`, and its index, for investigation, is
+   recommended. **These fields are write-once** (§5, caveat 1).
+4. *Required.* **Strict amounts, explicit fees and FX** (decision 6): `send [$asset $amount]`, never `*`; PSP
    fees are their own posting to `psp:{conn}:fees`.
-5. **Clearing account** `main:clearing:{conn}` on the product side, as an aggregate control total.
-6. **`reference = {payment_ref}:{state}`** on the PSP side and `{payment_ref}:{business_ref}` on the
+5. *Recommended.* **Clearing account** `main:clearing:{conn}` on the product side, as an aggregate
+   control total.
+6. *Recommended.* **`reference = {payment_ref}:{state}`** on the PSP side and `{payment_ref}:{business_ref}` on the
    product side: idempotent on re-delivery.
-7. **`timestamp` = event time; `inserted_at` is the cut.**
-8. **The `inserted_at` index on both ledgers: mandatory** (§5).
-9. **Traffic unrelated to payments costs nothing on the flow leg.** Only the rewind window reads
+7. *Required.* **`timestamp` = event time; `inserted_at` is the cut.** A hold's age counts from its
+   opening transaction's `timestamp` (§6).
+8. *Required.* **The `inserted_at` index on both ledgers: mandatory** (§5).
+9. *A consequence, not a rule.* **Traffic unrelated to payments costs nothing on the flow leg.** Only the rewind window reads
    all traffic, from the cut-off to the run. A metadata-only write costs recon nothing; on the
    fields of rule 3 it breaks the write-once convention.
-10. **One payment account per payment kind on the PSP ledger, and a declared key on every movement
-    of it**, named as `psp.paymentAccount` (decision 17). No other flow uses it. Every credit is a
+10. *Required, pending the Connectivity review for its other movements (§10).* **One payment
+    account per payment kind on the PSP ledger, and a declared key on every movement of it**, named as `psp.paymentAccount` (decision 17). No other flow uses it. Every credit is a
     payment final that carries `payment_ref`, and every debit carries a declared key (`payment_ref`
     for a refund, the reference of its own object for a payout or a fee, `psp.movementKeys`). Its
     book is then a strict check, the only one that sees a final with no `pending` and no reference; recon checks
