@@ -11,8 +11,9 @@ penalty this design does not depend on, is fixed by formancehq/ledger#2165.
 **Decision owners:** Reconciliation maintainers
 **Related:** [feature inventory](./adr-005-feature-inventory.md) (V1 scope review) · [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [design, measurements and evidence](../technical/transaction-level-reconciliation.md)
 **Upstream facts verified at:** ledger `release/v3.0` @ `7dd615dba` (rewind source, date filters,
-`And` order, `ListLogs`) and @ `03d8792b5` (EPHEMERAL purge, account listing, index-building
-error), all re-checked @ `c56aeb98` (2026-10-02); Connectivity
+`And` order, `ListLogs`) and @ `03d8792b5` (index-building error), all re-checked @ `c56aeb98`
+(2026-10-02). The EPHEMERAL purge, the account listing and the address filters are checked at the
+tags `v3.0.0-beta.7` (`23ea97c7f`) and `v3.0.0-beta.6` (`118531bc7`), 2026-10-02 (§2.2); Connectivity
 `formancehq/connectivity-plugins-poc` @ `016dcf41` and `formancehq/connectivity` @ `3119b24a`. The
 measurements' own SHAs are in the design doc.
 
@@ -77,8 +78,8 @@ account, named after the id **of the thing it tracks on that ledger**:
 the join key. The link from a payment to the invoice it settled exists only in the product
 transaction: its postings name the business hold.
 
-Hold accounts are **EPHEMERAL**, so a lettered hold is **purged** at zero. Connectivity already
-books this way:
+Hold accounts are **EPHEMERAL**, so a lettered hold is **purged** at zero: the ledger deletes its
+zeroed volume (§2.2). Connectivity already books this way:
 
 - the `formancepayments` profile uses `fpay:{conn}:payment:hold:pending:{payment_id}` (EPHEMERAL);
 - its payment transactions carry `payments.formance.com/payment-id`,
@@ -89,39 +90,60 @@ books this way:
 
 ### 2.2 What a purged hold leaves behind (verified)
 
-This was checked on a live throwaway ledger at `0b4676d97`. The account type was `hold:{id}`,
-EPHEMERAL, and the address, source, destination and reference indexes were created up front.
+When a transaction brings an EPHEMERAL hold to zero, the ledger deletes its zeroed volume as that
+transaction commits. What else goes with it depends on the ledger version:
 
-| Question | Observed |
-|---|---|
-| Is a lettered hold still listed by `ListAccounts` or `AggregateVolumes` under its prefix? | **No.** Only open holds remain, so the book opposite only ever contains open items. |
-| Are its transactions still found **by address** (any, source or destination role)? | **No, neither of them.** The lettering transaction is never indexed under the purged volume (`internal/application/indexbuilder/process_logs.go`, `isExcluded`, at `0b4676d97`; since `38c6eef55` the mappings skip only TRANSIENT volumes, `process_logs.go:1380` at `c56aeb98`). The *opening* transaction, which was found while the hold was open, **stops being returned** once the hold is purged. |
-| Are they found by `reference`? | **Yes**: `reference == "dep_1:done"` returns the lettering transaction. |
-| Does the lettering transaction still carry the hold's balance? | **Yes.** Its `post_commit_volumes` includes `hold:dep_1 = 100 − 100 = 0`. |
+- **`v3.0.0-beta.7`, and every build before `38c6eef55`:** only the zeroed (account, asset, color)
+  volume cell is deleted. The account's metadata stays (`partitionVolumes` and
+  `applyEphemeralPurge`, `internal/infra/state/write_set_ephemeral_purge.go:57-166` at
+  `23ea97c7f`). `23ea97c7f` is formancehq/ledger#2169, which reverts EN-2036 in full, and it is the
+  commit the `v3.0.0-beta.7` tag points at.
+- **`v3.0.0-beta.6` only:** EN-2036 (formancehq/ledger#2058, squash `38c6eef55`) also deleted the
+  account's metadata once all its volumes were zero (`PrepareEphemeralAccountPurge`,
+  `write_set_ephemeral_purge.go:20` at `118531bc7`, the `v3.0.0-beta.6` tag) and named the account
+  in `LedgerLog.purged_accounts`. EN-2036 is reopened for Ledger v3.1.
 
-So a lettered item is **reachable only through its transactions**, and only through **indexed
-transaction metadata or `reference`**. The address alone cannot find it. The control reads through
-the metadata; `reference`, being single-valued and exact-match, only serves point lookups.
+The middle column was observed on a live throwaway ledger at `0b4676d97`, which predates
+`38c6eef55`. The account type was `hold:{id}`, EPHEMERAL, the hold carried no account metadata, and
+the address, source, destination and reference indexes were created up front. At `23ea97c7f` the
+code of every path the table depends on is identical to `0b4676d97`: the volume purge, the account
+listing, the address filters and the indexer's skip of a purged volume. So the observations hold on
+`v3.0.0-beta.7` for a hold with no account metadata. It was not re-probed on beta.7.
 
-**Since EN-2036** (formancehq/ledger#2058, merged as squash `38c6eef55` on `release/v3.0`, first
-released in `v3.0.0-beta.6`), the TRANSACTIONS target reads the retained account→tx mappings, so a purged hold is
-reachable by address again. But an address prefix now scales with every hold ever created, purged
-ones included; the merged prefix path was not re-measured ([design doc
+| Question | `0b4676d97`, observed; `v3.0.0-beta.7`, same code | `v3.0.0-beta.6` |
+|---|---|---|
+| Is a lettered hold still listed by `ListAccounts` or `AggregateVolumes` under its prefix? | **No**, when the hold has no account metadata. A prefix listing returns the accounts that still have a volume or a metadata row (`NewPebbleAccountPrefixIterator`, `internal/storage/readstore/iterator_pebble.go:76-95` at `23ea97c7f`). A hold that carries account metadata stays listed, with no volume (below). | **No**, with or without account metadata: both are deleted. |
+| Are its transactions still found **by address** (any, source or destination role)? | **No, neither of them.** An address filter first checks that the account still has a volume or a metadata row (`compileAddressExact`, `internal/query/compile.go:1100-1111`; a prefix goes through the account listing, `:1069-1098`, at `23ea97c7f`). So the *opening* transaction, which was found while the hold was open, **stops being returned** once the hold is purged. The lettering transaction is never indexed under the purged volume (`indexPostingAddressMappings` and `isExcluded`, `internal/application/indexbuilder/process_logs.go:1149-1217` and `:1436-1444`). | **Yes, both.** The mappings skip only TRANSIENT volumes (`process_logs.go:1380-1381`), and an address filter reads them with no existence check (`compile.go:1104-1133`; a prefix walks the mapping keys, `NewAccountTxAddressPrefixIterator`, `internal/storage/readstore/iterator_address.go:64`, all at `118531bc7`). A prefix therefore covers every hold ever created. |
+| Are they found by `reference`? | **Yes**: `reference == "dep_1:done"` returns the lettering transaction. | **Yes** (probed on `7dd615dba`, a build with the purge). |
+| Does the lettering transaction still carry the hold's balance? | **Yes.** Its `post_commit_volumes` includes `hold:dep_1 = 100 − 100 = 0`. | **Yes.** |
+
+**A hold that carries account metadata** keeps it on `v3.0.0-beta.7`. It then stays in the prefix
+listing with no volume, and an address filter returns the transactions indexed while it was open,
+but not the one that lettered it. This follows from the code above and was not probed.
+Connectivity's `formancepayments` profile writes three account metadata keys on every pending hold
+(`set_account_meta` at `formancepayments.yaml:154-156` and `:285-287`, `connectivity-plugins-poc`
+@ `ae604968`, unchanged at `0bf72398`). On beta.7 its hold listing therefore grows with every
+payment ever booked, not only with the open ones (§10, open).
+
+So a lettered item is **reachable through its transactions, on every build**, through **indexed
+transaction metadata or `reference`**. The address alone cannot be relied on: on beta.7 it finds
+nothing once a hold without account metadata is purged, and on beta.6 a prefix costs every hold ever
+created on each page ([design doc
 §7.6](../technical/transaction-level-reconciliation.md#76-where-the-key-comes-from-transaction-metadata-not-the-hold-address)).
-None of it changes this design, which never reads the flow by address. The ACCOUNTS target is
-unaffected (`03d8792b5`): a purge deletes the volume and metadata rows
-(`PrepareEphemeralAccountPurge`), so the stock listing stays bounded to the open holds.
+The control reads through the metadata; `reference`, being single-valued and exact-match, only
+serves point lookups. None of it changes this design, which never reads the flow by address.
 
 Ask **L5** keeps only what this design needs: the metadata and `reference` paths stay a tested
-contract for purged accounts, pinned by recon's own it-tests (EN-2318, EN-2319; §9).
+contract for purged accounts, pinned by recon's own it-tests (EN-2318, EN-2319; §9). Neither path
+depends on whether the ledger purges the account.
 
 **Consequence for the recommended booking.** Every lettering transaction, on both ledgers, must
 carry the **PSP payment reference** as declared, indexed transaction metadata. On the product
 ledger, it should also carry the **business id** of the hold it letters. Its postings name that
-hold, and an exact-address filter reaches a purged hold again since `v3.0.0-beta.6`, but a metadata
-field makes "which payments settled invoice X" one indexed query. On an application the business
-id is recommended, not required: the PSP payment reference is the key. Every product transaction
-that touches a business hold *without* the payment reference must carry it (§8 rule 3).
+hold, but an exact-address filter reaches a purged hold only on `v3.0.0-beta.6`, while a metadata
+field makes "which payments settled invoice X" one indexed query on every build. On an application
+the business id is recommended, not required: the PSP payment reference is the key. Every product
+transaction that touches a business hold *without* the payment reference must carry it (§8 rule 3).
 
 ### 2.3 The need
 
@@ -135,7 +157,7 @@ Two legs:
 | Leg | Question | Universe | Source of truth |
 |---|---|---|---|
 | **Flow** (per payment reference) | Is every payment the PSP finalised applied by the product with the same amount, and does every product application point at a payment the PSP really finalised? | The window's final and failed PSP transactions, the window's product applications, and the **references still open from earlier days** (drift ≠ 0) | `ListTransactions` over the window's id range, filtered on the reference's presence (the ledger is the permanent record, and a past day is re-read through its transactions), plus the previous run's carried items (seeded on a first run, §7 item 6) |
-| **Stock** (per hold, on each side) | What is still open at the cut `T`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds, bounded by construction because lettered holds purge | Live listing **rewound** to the cut with the unfiltered transactions `(T, head_tx]` (§5) |
+| **Stock** (per hold, on each side) | What is still open at the cut `T`, and for how long? PSP holds are pending payments; product holds are unpaid business objects | Open holds. Lettered holds leave the listing, so it stays bounded, except on `v3.0.0-beta.7` for holds that carry account metadata (§2.2) | Live listing **rewound** to the cut with the unfiltered transactions `(T, head_tx]` (§5) |
 | **Continuity** (self-check) | `open(T) = open(T_prev) + opened(W) − lettered(W)`, per side, per hold prefix and per asset | Aggregates | `open(T)` from the rewind and `open(T_prev)` from the previous run's stored stock (rewound only when there is none); `opened(W)` and `lettered(W)` from the flow read, which on the product side must therefore also return hold openings (§5) |
 
 The two stock books do not join to each other: an unpaid invoice has no PSP counterpart by design.
@@ -359,6 +381,12 @@ Why this is exact:
   `internal/domain/processing/processor_revert_transaction.go:188-207` at `7dd615dba`).
 - A hold untouched in the window held one value throughout the listing.
 - A hold touched in it is recomputed from its own transaction.
+- **It does not depend on the purge.** A hold lettered after `T` is either missing from the
+  listing (on `v3.0.0-beta.6`, and on `v3.0.0-beta.7` when it has no account metadata) or listed
+  with no volume (on beta.7 when it has some). Either way it is touched in the window, so its
+  balance at `T` comes from its first touch and is added back. Its volumes restart from zero when
+  the address is re-funded, on both versions, so the rewind uses balances only (§2.2; [design doc
+  §4](../technical/transaction-level-reconciliation.md#4-the-rewind-an-exact-state-at-t-with-no-checkpoint)).
 - It needs no baseline and no stored state, and it works for NORMAL accounts too.
 
 **Why the transactions and not the logs** (decision 22). The logs written since the cut have the
@@ -828,7 +856,8 @@ booking guide (EN-2335) keeps the two apart, so that onboarding asks only for wh
 
 1. *Required.* **EPHEMERAL holds, one prefix per kind**: one hold per external payment on the PSP
    ledger, one per **business object** (not per state) on the product ledger, each prefix declared
-   in `holds` with its sign (§6).
+   in `holds` with its sign (§6). On `v3.0.0-beta.7` a lettered hold leaves the listing only if it
+   carries no account metadata (§2.2, §10).
 2. *Required.* **One transaction = one event of one payment reference.**
 3. *Required, except `kind`, the `merchant_ref` index and `business_ref` on applications.*
    **Declared transaction metadata**: `payment_ref`, `merchant_ref`, `state`, `kind` on the PSP
@@ -873,7 +902,7 @@ No connector change is required.
 | Ask | Why | Size |
 |---|---|---|
 | **L2** ([EN-2327](https://formance-team.atlassian.net/browse/EN-2327)): drop the per-account INFO line `scanAccount complete` on list paths. **Done** in formancehq/ledger#2128 (`199bee364`): logged at TRACE | A listing of 1M accounts wrote 1M log lines | XS |
-| **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. **Closed** with formancehq/ledger#2058 (`38c6eef55`) without such a test; the paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the rewind's transactions | The flow leg finds lettered items through indexed transaction metadata, and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
+| **L5** ([EN-2331](https://formance-team.atlassian.net/browse/EN-2331)): a tested contract that **a purged EPHEMERAL account's transactions stay reachable through indexed transaction metadata and `reference`**. **Closed** with formancehq/ledger#2058 (`38c6eef55`) without such a test; the paths behave correctly (probed on `7dd615dba`), so **recon pins the contract itself**: EN-2318 for the flow, EN-2319 for the rewind's transactions. `v3.0.0-beta.7` reverts #2058 (`23ea97c7f`): the metadata and `reference` paths do not change, but address filters miss a purged hold again, as they did before #2058 (§2.2; design doc §8, F-d) | The flow leg finds lettered items through indexed transaction metadata, and investigations use `reference`. Nothing in this design reads by address. Not blocking | S |
 | **L6** ([EN-2328](https://formance-team.atlassian.net/browse/EN-2328)): `ListLogs` throughput. On the same 1M transactions it is 5–9× slower than `ListTransactions` (13.8k/s against 94.5k/s on one stream). At `7dd615dba` the gap holds (×5.4 on 8 ranges, ×9 on one stream), except in one session of the node where the same reads ran 4 to 9 times faster; that variance is part of the ask (design doc §7.13) | No longer on recon's path in V1: the cut and the rewind read the transactions (§5) and there is no metadata watch (decision 25), so a run reads no logs. The gap still deserves an explanation for the ledger's other log readers, and for a watch after V1 | S–M |
 | **L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326)): **immutable transaction labels**. Key/value pairs set when a transaction is created, never changed by `SavedMetadata` or `DeletedMetadata`. They are declared and typed like metadata, indexed as **add-only** (like `reference` or `timestamp`, with no old-value history to resolve at a pin), and filterable with equality, `EXISTS` and prefix on `ListTransactions`. Because they never change, they can also be filterable on `ListLogs`. | Removes caveat 1 of §5 by construction instead of by convention: a filtered re-read of a past window becomes as reproducible as the logs. V1 does not monitor the write-once convention (decision 25), so L8 is the condition to bring that guarantee back. Cheaper to index than mutable metadata. Gives the payment key an immutable, auditable home. `reference` comes close (immutable, indexed) but is single-valued, unique and exact-match only, so it cannot drive a window filter | M |
 | **L9** ([EN-2356](https://formance-team.atlassian.net/browse/EN-2356), epic EN-1336, Ledger v3.1): make a read's cost independent of the order of an `And`'s terms. Led by a dense id range, the `And` seeks its membership once per row, and seeking an `Or` seeks every term (`internal/query/compile.go:299-346`, `internal/storage/readstore/combinator_or.go:69-85` at `7dd615dba`) | The product `Or` of three keys read 2.7 to 3.4 times slower id range first (design doc §7.11). Recon writes the membership first, so not blocking; other clients pay it unknowingly | S |
@@ -936,6 +965,19 @@ them, but they are `unclassified` every day. Its conversions and order fills pos
 under ids of their own, which only `psp.movementKeys` would bring into the book. The facts, the
 options and what they mean for the debit book are in the [design doc
 §2](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation).
+
+**Open, for the owner (no decision): the `formancepayments` hold listing on `v3.0.0-beta.7`.** The
+profile writes three account metadata keys on every pending hold, and beta.7 keeps them when the
+hold is lettered (§2.2). Its prefix listing then returns every hold ever booked, each lettered one
+with no volume. The rewind stays exact: a hold listed with no volume has a balance of zero, and its
+first touch after `T` overrides it. The cost is the listing's: at the 48k accounts/s measured on a
+cold cache ([design doc
+§7.10](../technical/transaction-level-reconciliation.md#710-daily-stock-list-and-rewind-or-forward-from-the-stored-stock)),
+each million lettered holds adds about 21 s to the PSP side of every run, which grows with the
+ledger's history (an extrapolation, not measured). The product holds of the recommended booking
+carry no account metadata, so they are not affected. Three ways out, none chosen: the connector
+mapping stops writing account metadata on holds, or deletes it in the same request as the
+transaction that letters the hold; or the purge returns with EN-2036, now planned for Ledger v3.1.
 
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
