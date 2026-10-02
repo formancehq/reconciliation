@@ -8,17 +8,20 @@
  * through a dev-only route (lib/lettering/source.ts). It does not replace the
  * production path, where the breaks and the statement come from recon's API.
  */
-import { FlaskConical, Files } from 'lucide-react';
+import { CalendarDays, FileText, FlaskConical, Files, TerminalSquare } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FILTER_TOOLBAR } from '@/lib/uiClasses';
 import { useReconResource } from '@/lib/recon';
 import { testdataSource, type LetteringFile } from '@/lib/lettering/source';
 import { readRuleRuns, rulesOf, type RuleRun } from '@/lib/lettering/read';
 import { formatDay } from '@/lib/lettering/format';
-import { useReconNav } from '../ReconContext';
+import { useReconNav, type ResultsNav, type ResultsSection } from '../ReconContext';
 import { EmptyState, ErrorState, Loading } from '../ui';
 import { RunView } from '../results/RunView';
+import { DaysView } from '../results/DaysView';
+import { QueriesView } from '../results/QueriesView';
 
 const source = testdataSource;
 
@@ -39,19 +42,20 @@ export function ResultsPanel() {
   return <RuleResults files={files} />;
 }
 
+const SECTIONS: { id: ResultsSection; label: string; icon: typeof CalendarDays }[] = [
+  { id: 'days', label: 'Days', icon: CalendarDays },
+  { id: 'run', label: 'Run', icon: FileText },
+  { id: 'queries', label: 'Queries', icon: TerminalSquare },
+];
+
 function RuleResults({ files }: { files: LetteringFile[] }) {
   const { nav, openResults } = useReconNav();
+  const state = nav.results ?? {};
   const rules = rulesOf(files);
-  const rule = nav.results?.rule && rules.includes(nav.results.rule) ? nav.results.rule : rules[0];
+  const rule = state.rule && rules.includes(state.rule) ? state.rule : rules[0];
+  const section = state.section ?? 'days';
+  const go = (next: ResultsNav) => openResults({ ...state, rule, ...next });
   const runs = useReconResource<RuleRun[]>(() => readRuleRuns(files, rule), [files, rule]);
-
-  const all = runs.data ?? [];
-  const days = [...new Set(all.map((r) => r.day))];
-  const latestCurrent = [...all].reverse().find((r) => r.current)?.day;
-  const day = nav.results?.day && days.includes(nav.results.day) ? nav.results.day : (latestCurrent ?? days.at(-1));
-  const dayRuns = all.filter((r) => r.day === day);
-  const run =
-    dayRuns.find((r) => r.run === nav.results?.run) ?? dayRuns.find((r) => r.current) ?? dayRuns.at(-1);
 
   return (
     <div className="mx-auto max-w-6xl min-w-0 space-y-4 p-3 sm:p-4">
@@ -62,41 +66,88 @@ function RuleResults({ files }: { files: LetteringFile[] }) {
         <Picker
           label="Rule"
           value={rule}
-          onChange={(r) => openResults({ rule: r })}
+          onChange={(r) => openResults({ rule: r, section: state.section, query: state.query })}
           options={rules.map((r) => ({ value: r, label: r }))}
         />
-        <Picker
-          label="Day"
-          value={day}
-          onChange={(d) => openResults({ rule, day: d })}
-          options={days.map((d) => ({ value: d, label: formatDay(d) }))}
-          disabled={!runs.data}
-        />
-        <Picker
-          label="Run"
-          value={run?.run}
-          onChange={(r) => openResults({ rule, day, run: r })}
-          options={dayRuns.map((r) => ({
-            value: r.run,
-            label: r.run,
-            hint: r.current ? 'current' : r.verdict === 'incomplete' ? 'incomplete' : 'replaced',
-          }))}
-          disabled={!runs.data}
-          wide
-        />
+        <Tabs value={section} onValueChange={(v) => go({ section: v as ResultsSection })} className="w-full sm:ml-auto sm:w-auto">
+          <TabsList variant="line" className="w-full sm:w-auto">
+            {SECTIONS.map((s) => (
+              <TabsTrigger key={s.id} value={s.id} className="cursor-pointer text-xs">
+                <s.icon className="h-3.5 w-3.5" aria-hidden />
+                {s.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </div>
 
       {runs.loading ? (
         <Loading label="Starting DuckDB and reading the rule's manifests…" />
       ) : runs.error ? (
         <ErrorState error={runs.error} onRetry={runs.refetch} />
-      ) : run && day ? (
-        <RunView key={`${rule}/${run.run}`} path={`rule=${rule}/day=${day}/run=${run.run}`} deps={[files]} />
-      ) : (
+      ) : (runs.data ?? []).length === 0 ? (
         <EmptyState icon={<Files className="h-7 w-7" />} title="No run">
           This rule has no run.
         </EmptyState>
+      ) : section === 'days' ? (
+        <DaysView runs={runs.data ?? []} onOpen={(day, run) => go({ section: 'run', day, run })} />
+      ) : section === 'run' ? (
+        <RunSection files={files} rule={rule} runs={runs.data ?? []} state={state} go={go} />
+      ) : (
+        <QueriesView
+          files={files}
+          rule={rule}
+          runs={runs.data ?? []}
+          state={{ query: state.query, day: state.day, id: state.id }}
+          onChange={(q) => go(q)}
+        />
       )}
+    </div>
+  );
+}
+
+/** One run: the day's current run unless another is picked (slice 1's view). */
+function RunSection({
+  files,
+  rule,
+  runs,
+  state,
+  go,
+}: {
+  files: LetteringFile[];
+  rule: string;
+  runs: RuleRun[];
+  state: ResultsNav;
+  go: (next: ResultsNav) => void;
+}) {
+  const days = [...new Set(runs.map((r) => r.day))];
+  const latestCurrent = [...runs].reverse().find((r) => r.current)?.day;
+  const day = state.day && days.includes(state.day) ? state.day : (latestCurrent ?? days.at(-1));
+  const dayRuns = runs.filter((r) => r.day === day);
+  const run = dayRuns.find((r) => r.run === state.run) ?? dayRuns.find((r) => r.current) ?? dayRuns.at(-1);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <Picker
+          label="Day"
+          value={day}
+          onChange={(d) => go({ day: d, run: undefined })}
+          options={days.map((d) => ({ value: d, label: formatDay(d) }))}
+        />
+        <Picker
+          label="Run"
+          value={run?.run}
+          onChange={(r) => go({ day, run: r })}
+          options={dayRuns.map((r) => ({
+            value: r.run,
+            label: r.run,
+            hint: r.current ? 'current' : r.verdict === 'incomplete' ? 'incomplete' : 'replaced',
+          }))}
+          wide
+        />
+      </div>
+      {run && day && <RunView key={`${rule}/${run.run}`} path={`rule=${rule}/day=${day}/run=${run.run}`} deps={[files]} />}
     </div>
   );
 }

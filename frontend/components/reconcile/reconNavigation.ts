@@ -6,6 +6,19 @@ export type ReconTab =
   | "audit"
   | "results"
 export type ReconAlertFilter = "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "ALL"
+export type ResultsSection = "days" | "run" | "queries"
+
+/** Results tab state. `day` is the day looked at: the run's day, and a query's `day` variable. */
+export interface ResultsNav {
+  rule?: string
+  section?: ResultsSection
+  day?: string
+  run?: string
+  /** A query file of tools/lettering-duckdb/queries, by name. */
+  query?: string
+  /** The `id` variable of a query (business-id). */
+  id?: string
+}
 
 export interface ReconNav {
   tab: ReconTab
@@ -13,8 +26,7 @@ export interface ReconNav {
   alertId?: string
   alertFilter?: ReconAlertFilter
   contractVersion?: 1 | 2
-  /** Results tab: the lettering rule, day and run shown (`rule=`, `day=`, `run=`). */
-  results?: { rule?: string; day?: string; run?: string }
+  results?: ResultsNav
 }
 
 const TABS = new Set<ReconTab>([
@@ -25,6 +37,8 @@ const TABS = new Set<ReconTab>([
   "audit",
   "results",
 ])
+const RESULTS_SECTIONS = new Set<ResultsSection>(["days", "run", "queries"])
+const RESULTS_KEYS = ["rule", "section", "day", "run", "query", "id"] as const
 const ALERT_FILTERS = new Set<ReconAlertFilter>([
   "OPEN",
   "ACKNOWLEDGED",
@@ -58,11 +72,13 @@ export function parseReconHash(hash: string): ReconNav | null {
     return { tab, alertId, alertFilter, contractVersion }
   }
   if (tab === "results") {
-    const results = {
-      rule: params.get("rule") || undefined,
-      day: params.get("day") || undefined,
-      run: params.get("run") || undefined,
+    const results: ResultsNav = {}
+    for (const key of RESULTS_KEYS) {
+      const value = params.get(key)
+      if (value) (results as Record<string, string>)[key] = value
     }
+    if (results.section && !RESULTS_SECTIONS.has(results.section))
+      delete results.section
     return results.rule ? { tab, results } : { tab }
   }
   return { tab }
@@ -79,9 +95,10 @@ export function buildReconHash(nav: ReconNav): string {
     else if (nav.alertFilter) params.set("status", nav.alertFilter)
   }
   if (nav.tab === "results" && nav.results?.rule) {
-    params.set("rule", nav.results.rule)
-    if (nav.results.day) params.set("day", nav.results.day)
-    if (nav.results.run) params.set("run", nav.results.run)
+    for (const key of RESULTS_KEYS) {
+      const value = nav.results[key]
+      if (value) params.set(key, value)
+    }
   }
   if (nav.contractVersion === 2 && (nav.ruleId || nav.alertId))
     params.set("contract", "2")
@@ -95,8 +112,6 @@ export function sameReconNav(a: ReconNav, b: ReconNav): boolean {
     a.alertId === b.alertId &&
     a.alertFilter === b.alertFilter &&
     a.contractVersion === b.contractVersion &&
-    a.results?.rule === b.results?.rule &&
-    a.results?.day === b.results?.day &&
-    a.results?.run === b.results?.run
+    RESULTS_KEYS.every((key) => a.results?.[key] === b.results?.[key])
   )
 }

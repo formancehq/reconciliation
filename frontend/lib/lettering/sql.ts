@@ -21,34 +21,46 @@ export const SQL = {
 export interface LetteringQuery {
   /** The file name without .sql: `open-breaks`. */
   name: string
-  /** The question on the file's first line. */
+  /** The question: the header's first sentence. */
   question: string
+  /** The rest of the header's description, before `-- Variables:`. */
+  detail: string
   /** Its variables besides `rule`, from the `-- Variables:` line. */
-  variables: { name: string; required: boolean }[]
+  variables: QueryVariable[]
   sql: string
 }
 
+export interface QueryVariable {
+  name: string
+  /** Marked `(required…`, as the wrapper reads it. */
+  required: boolean
+  /** The text in parentheses: `optional, default the latest day`. */
+  hint?: string
+}
+
 /**
- * Reads a query's header like the wrapper does:
+ * Reads a query's header, the lines the wrapper reads:
  *   -- What must be done today? The open breaks, most urgent first.
  *   -- Variables: rule, day (optional, default the latest day).
+ * The description may run over several lines, up to `-- Variables:`.
  */
 function parseQuery(name: string, sql: string): LetteringQuery {
   const lines = sql.split("\n")
-  const question = (lines[0] ?? "").replace(/^--\s*/, "")
-  const header =
-    lines.find((l) => l.startsWith("-- Variables:"))?.replace(/^-- Variables:\s*/, "") ?? ""
-  const required = new Set(
-    [...header.matchAll(/([A-Za-z_][A-Za-z0-9_]*) *\(required/g)].map((m) => m[1])
-  )
-  const variables = header
-    .replace(/\([^)]*\)/g, "")
-    .replace(/\.$/, "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter((v) => v && v !== "rule")
-    .map((v) => ({ name: v, required: required.has(v) }))
-  return { name, question, variables, sql }
+  const at = lines.findIndex((l) => l.startsWith("-- Variables:"))
+  const description = lines
+    .slice(0, Math.max(at, 1))
+    .map((l) => l.replace(/^--\s*/, ""))
+    .join(" ")
+    .trim()
+  const end = description.search(/[.?](\s|$)/)
+  const question = end < 0 ? description : description.slice(0, end + 1)
+  const detail = description.slice(question.length).trim()
+  const header = at < 0 ? "" : lines[at].replace(/^-- Variables:\s*/, "")
+  // `name (text)` pairs: the parentheses may hold commas, so they are matched whole.
+  const variables = [...header.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?/g)]
+    .map((m) => ({ name: m[1], hint: m[2]?.trim(), required: /^required/.test(m[2] ?? "") }))
+    .filter((v) => v.name !== "rule")
+  return { name, question, detail, variables, sql }
 }
 
 const queries = require.context("../../../tools/lettering-duckdb/queries", false, /\.sql$/)

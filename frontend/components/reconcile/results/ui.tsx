@@ -78,11 +78,14 @@ export function SectionTitle({ title, hint, children }: { title: string; hint?: 
   );
 }
 
-/** A bordered table that scrolls inside its box when the screen is narrower than `minWidth`. */
-export function DataTable({ minWidth = '40rem', children }: { minWidth?: string; children: ReactNode }) {
+/**
+ * A bordered table that scrolls inside its box when the screen is narrower than
+ * `minWidth`, or than its content with `fit`.
+ */
+export function DataTable({ minWidth = '40rem', fit, children }: { minWidth?: string; fit?: boolean; children: ReactNode }) {
   return (
     <div className="min-w-0 overflow-x-auto rounded-md border">
-      <table className="w-full text-left text-xs" style={{ minWidth }}>
+      <table className={cn('text-left text-xs', fit ? 'w-max min-w-full' : 'w-full')} style={fit ? undefined : { minWidth }}>
         {children}
       </table>
     </div>

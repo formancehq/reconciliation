@@ -35,9 +35,16 @@ import {
   type ReconAlertFilter,
   type ReconNav,
   type ReconTab,
+  type ResultsNav,
 } from "./reconNavigation"
 
-export type { ReconAlertFilter, ReconNav, ReconTab } from "./reconNavigation"
+export type {
+  ReconAlertFilter,
+  ReconNav,
+  ReconTab,
+  ResultsNav,
+  ResultsSection,
+} from "./reconNavigation"
 export type HealthStatus = "checking" | "up" | "down"
 
 interface ReconContextValue {
@@ -49,7 +56,7 @@ interface ReconContextValue {
   goAlerts: (filter?: ReconAlertFilter) => void
   openAlert: (id: string, contractVersion?: 1 | 2) => void
   /** Results tab: show a lettering rule, and optionally one day and run. */
-  openResults: (results: NonNullable<ReconNav["results"]>) => void
+  openResults: (results: ResultsNav) => void
   health: HealthStatus
   recheckHealth: () => void
   /** Increment to force list views to refetch. */

@@ -8,7 +8,7 @@
 import { letteringDir, loadFiles, withSession, type Rows } from "./duckdb"
 import type { Manifest } from "./manifest"
 import type { LetteringFile } from "./source"
-import { QUERIES, SQL } from "./sql"
+import { QUERIES, SQL, type LetteringQuery } from "./sql"
 
 /** The rules a source holds, from the `rule=` segment of its paths. */
 export function rulesOf(files: LetteringFile[]): string[] {
@@ -41,6 +41,28 @@ export async function readRuleRuns(files: LetteringFile[], rule: string): Promis
     return s.query(query.sql)
   })
   return result.rows as unknown as RuleRun[]
+}
+
+/**
+ * One query of tools/lettering-duckdb/queries over every day of a rule, as
+ * `lettering query` runs it: the query's own variables only, set before
+ * schema.sql and rule.sql, whose last statement refuses a day with no complete run.
+ */
+export async function readQuery(
+  files: LetteringFile[],
+  rule: string,
+  query: LetteringQuery,
+  vars: Record<string, string | undefined>
+): Promise<Rows> {
+  const missing = query.variables.find((v) => v.required && !vars[v.name])
+  if (missing) throw new Error(`Query ${query.name} needs ${missing.name}.`)
+  await loadFiles(filesOf(files, rule))
+  const own = Object.fromEntries(query.variables.map((v) => [v.name, vars[v.name] || undefined]))
+  return withSession({ rule: letteringDir(`rule=${rule}`), ...own }, async (s) => {
+    await s.exec(SQL.schema)
+    await s.exec(SQL.rule)
+    return s.query(query.sql)
+  })
 }
 
 export interface RunResults {
