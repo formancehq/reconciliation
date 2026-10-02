@@ -42,13 +42,15 @@ const TABS: { id: ReconTab; label: string; icon: typeof LayoutDashboard }[] = [
 ];
 
 function ReconcileInner() {
-  const { nav, setTab, health, recheckHealth } = useReconNav();
+  const { nav, navReady, setTab, health, recheckHealth } = useReconNav();
+  // No tab is selected or rendered until the hash is read, as on the server.
+  const tab = navReady ? nav.tab : null;
 
   return (
     <div className="flex h-full flex-col">
       {/* Tab bar + health pill (Explore-Ledger tab style). */}
       <div className={`${TABBAR_ROW} flex flex-wrap items-center gap-2`}>
-        <Tabs value={nav.tab} onValueChange={(v) => setTab(v as ReconTab)} className="min-w-0 flex-1">
+        <Tabs value={tab ?? ''} onValueChange={(v) => setTab(v as ReconTab)} className="min-w-0 flex-1">
           <TabsList className={TABBAR_LIST}>
             {TABS.map((t) => (
               <TabsTrigger key={t.id} value={t.id} className={TABBAR_TRIGGER}>
@@ -75,12 +77,12 @@ function ReconcileInner() {
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {nav.tab === 'overview' && <OverviewPanel />}
-        {nav.tab === 'rules' && <RulesPanel />}
-        {nav.tab === 'alerts' && <AlertsPanel />}
-        {nav.tab === 'insights' && <InsightsPanel />}
-        {nav.tab === 'audit' && <AuditPanel />}
-        {nav.tab === 'results' && LETTERING_SOURCE_AVAILABLE && <ResultsPanel />}
+        {tab === 'overview' && <OverviewPanel />}
+        {tab === 'rules' && <RulesPanel />}
+        {tab === 'alerts' && <AlertsPanel />}
+        {tab === 'insights' && <InsightsPanel />}
+        {tab === 'audit' && <AuditPanel />}
+        {tab === 'results' && LETTERING_SOURCE_AVAILABLE && <ResultsPanel />}
       </div>
     </div>
   );

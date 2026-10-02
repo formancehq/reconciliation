@@ -48,7 +48,10 @@ export type {
 export type HealthStatus = "checking" | "up" | "down"
 
 interface ReconContextValue {
+  /** The tab and drill-down shown: Overview until `navReady`. */
   nav: ReconNav
+  /** False until the hash is read after mount: render no tab before. */
+  navReady: boolean
   setTab: (tab: ReconTab) => void
   goOverview: () => void
   goRules: () => void
@@ -71,18 +74,18 @@ interface ReconContextValue {
 
 const Ctx = createContext<ReconContextValue | null>(null)
 
+const OVERVIEW: ReconNav = { tab: "overview" }
+
 export function ReconProvider({ children }: { children: ReactNode }) {
-  const [nav, setNav] = useState<ReconNav>(() =>
-    typeof window === "undefined"
-      ? { tab: "overview" }
-      : (parseReconHash(window.location.hash) ?? { tab: "overview" })
-  )
-  const navRef = useRef(nav)
+  // The server sees neither the hash nor the tab's session storage, so the
+  // first client render starts from the same state and the effects below read
+  // both after mount. `nav` stays null until then: no panel mounts, and
+  // fetches, for a tab the hash is about to replace.
+  const [nav, setNav] = useState<ReconNav | null>(null)
+  const navRef = useRef<ReconNav>(OVERVIEW)
   const [health, setHealth] = useState<HealthStatus>("checking")
   const [dataVersion, setDataVersion] = useState(0)
-  const [endpoint, setEndpointState] = useState<ReconEndpoint>(() =>
-    getReconEndpoint()
-  )
+  const [endpoint, setEndpointState] = useState<ReconEndpoint>({ url: "" })
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -103,11 +106,15 @@ export function ReconProvider({ children }: { children: ReactNode }) {
     setNav(next)
   }, [])
 
-  // Canonicalize the first Reconcile entry without adding a Back step, then
+  // Read the entry's hash and canonicalize it without adding a Back step, then
   // restore internal navigation whenever browser history is traversed. Both
   // events are observed because pushState entries are browser-dependent here.
   useEffect(() => {
-    const desired = buildReconHash(navRef.current)
+    const initial = parseReconHash(window.location.hash) ?? OVERVIEW
+    navRef.current = initial
+    setNav(initial)
+
+    const desired = buildReconHash(initial)
     if (
       window.location.hash.startsWith("#reconcile") &&
       window.location.hash !== desired
@@ -149,6 +156,12 @@ export function ReconProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // The client reads the endpoint from session storage on every call; only
+  // its label waits for mount, like the hash.
+  useEffect(() => {
+    setEndpointState(getReconEndpoint())
+  }, [])
+
   const setEndpoint = useCallback(
     (ep: ReconEndpoint) => {
       setReconEndpoint(ep)
@@ -161,7 +174,8 @@ export function ReconProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ReconContextValue>(
     () => ({
-      nav,
+      nav: nav ?? OVERVIEW,
+      navReady: nav !== null,
       setTab: (tab) => navigate({ tab }),
       goOverview: () => navigate({ tab: "overview" }),
       goRules: () => navigate({ tab: "rules" }),
