@@ -10,16 +10,6 @@ import type { Manifest } from "./manifest"
 import type { LetteringFile } from "./source"
 import { QUERIES, SQL, type LetteringQuery } from "./sql"
 
-/** The rules a source holds, from the `rule=` segment of its paths. */
-export function rulesOf(files: LetteringFile[]): string[] {
-  return [...new Set(files.map((f) => f.path.split("/")[0].replace(/^rule=/, "")))].sort()
-}
-
-/** The files of one rule. */
-export function filesOf(files: LetteringFile[], rule: string): LetteringFile[] {
-  return files.filter((f) => f.path.startsWith(`rule=${rule}/`))
-}
-
 export interface RuleRun {
   day: string
   run: string
@@ -33,9 +23,12 @@ export interface RuleRun {
   previousRun?: string | null
 }
 
-/** Every run of a rule, through the tool's `current-runs` query, with the run each one chains onto. */
+/**
+ * Every run of a rule, through the tool's `current-runs` query, with the run each one chains
+ * onto. `files` are the rule's files, from its LetteringSource.
+ */
 export async function readRuleRuns(files: LetteringFile[], rule: string): Promise<RuleRun[]> {
-  await loadFiles(filesOf(files, rule))
+  await loadFiles(files)
   const query = QUERIES.find((q) => q.name === "current-runs")
   if (!query) throw new Error("tools/lettering-duckdb/queries/current-runs.sql is missing")
   return withSession({ rule: letteringDir(`rule=${rule}`) }, async (s) => {
@@ -145,7 +138,7 @@ function errorText(e: unknown): string {
 }
 
 /**
- * One query of tools/lettering-duckdb/queries over every day of a rule, as
+ * One query of tools/lettering-duckdb/queries over every day of a rule (`files`: its files), as
  * `lettering query` runs it: the query's own variables only, set before
  * schema.sql and rule.sql, whose last statement refuses a day with no complete run.
  */
@@ -157,9 +150,9 @@ export async function readQuery(
 ): Promise<Rows> {
   const missing = query.variables.find((v) => v.required && !vars[v.name])
   if (missing) throw new Error(`Query ${query.name} needs ${missing.name}.`)
-  await loadFiles(filesOf(files, rule))
-  const own = Object.fromEntries(query.variables.map((v) => [v.name, vars[v.name] || undefined]))
-  return withSession({ rule: letteringDir(`rule=${rule}`), ...own }, async (s) => {
+  await loadFiles(files)
+  const declared = Object.fromEntries(query.variables.map((v) => [v.name, vars[v.name] || undefined]))
+  return withSession({ rule: letteringDir(`rule=${rule}`), ...declared }, async (s) => {
     await s.exec(SQL.schema)
     await s.exec(SQL.rule)
     return s.query(query.sql)

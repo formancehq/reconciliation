@@ -2,8 +2,9 @@
  * Dev-only, read-only access to tools/lettering-duckdb/testdata, the lettering
  * result files the Results tab reads (lib/lettering/source.ts).
  *
- *   GET /api/lettering/testdata          the index: every file under rule=…
- *   GET /api/lettering/testdata/<path>   one file's bytes
+ *   GET /api/lettering/testdata              the rules: { rules: ["psp-vs-billing", …] }
+ *   GET /api/lettering/testdata?rule=<id>    one rule's files: { files: [{ path, url }] }
+ *   GET /api/lettering/testdata/<path>       one file's bytes
  *
  * Outside `next dev` every request is a 404, and nothing reads the directory, so
  * a production build neither serves nor ships the test data.
@@ -26,13 +27,20 @@ async function listFiles(dir: string): Promise<string[]> {
 	return nested.flat()
 }
 
-export async function GET(_req: Request, ctx: { params: Promise<{ path?: string[] }> }): Promise<Response> {
+export async function GET(req: Request, ctx: { params: Promise<{ path?: string[] }> }): Promise<Response> {
 	if (process.env.NODE_ENV !== 'development') return new Response(null, { status: 404 })
 
 	const segments = (await ctx.params).path ?? []
 	if (segments.length === 0) {
-		const rules = (await readdir(ROOT).catch(() => [] as string[])).filter((name) => name.startsWith('rule='))
-		const files = (await Promise.all(rules.map((rule) => listFiles(path.join(ROOT, rule))))).flat().sort()
+		const rules = (await readdir(ROOT).catch(() => [] as string[]))
+			.filter((name) => name.startsWith('rule='))
+			.map((name) => name.slice('rule='.length))
+			.sort()
+		const rule = new URL(req.url).searchParams.get('rule')
+		if (rule === null) return Response.json({ rules })
+		// Only a rule the directory holds, so the parameter never builds a path of its own.
+		if (!rules.includes(rule)) return new Response(null, { status: 404 })
+		const files = (await listFiles(path.join(ROOT, `rule=${rule}`))).sort()
 		return Response.json({
 			files: files.map((file) => {
 				const rel = path.relative(ROOT, file).split(path.sep).join('/')

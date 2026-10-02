@@ -7,9 +7,10 @@
  * For one rule: its days and their current runs, one run's statement and breaks,
  * the tool's queries, and the wrapper's checks on every run and chain link.
  *
- * An internal reading and validation prototype: it reads the tool's test data
- * through a dev-only route (lib/lettering/source.ts). It does not replace the
- * production path, where the breaks and the statement come from recon's API.
+ * An internal reading and validation prototype: it reads the files of
+ * `letteringSource` (lib/lettering/source.ts), today the tool's test data. It
+ * does not replace the production path, where the breaks and the statement
+ * come from recon's API.
  */
 import { BadgeCheck, CalendarDays, FileText, FlaskConical, Files, TerminalSquare } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -17,8 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FILTER_TOOLBAR, TOOLBAR_SELECT } from '@/lib/uiClasses';
 import { useReconResource } from '@/lib/recon';
-import { testdataSource, type LetteringFile } from '@/lib/lettering/source';
-import { readRuleRuns, rulesOf, runPath, type RuleRun } from '@/lib/lettering/read';
+import { letteringSource, type LetteringFile, type LetteringSource } from '@/lib/lettering/source';
+import { readRuleRuns, runPath, type RuleRun } from '@/lib/lettering/read';
 import { formatDay } from '@/lib/lettering/format';
 import { useReconNav, type ResultsNav, type ResultsSection } from '../ReconContext';
 import { EmptyState, ErrorState, Loading } from '../ui';
@@ -27,23 +28,36 @@ import { DaysView } from '../results/DaysView';
 import { QueriesView } from '../results/QueriesView';
 import { ChecksView } from '../results/ChecksView';
 
-const source = testdataSource;
-
 export function ResultsPanel() {
-  const index = useReconResource<LetteringFile[]>(() => source.list(), []);
-  if (index.loading) return <Loading label="Listing result files…" />;
+  // The tab is hidden when there is no source; this only keeps the panel honest.
+  return letteringSource ? <SourceResults source={letteringSource} /> : null;
+}
+
+function SourceResults({ source }: { source: LetteringSource }) {
+  const index = useReconResource<string[]>(() => source.rules(), [source]);
+  if (index.loading) return <Loading label="Listing the rules…" />;
   if (index.error) return <ErrorState error={index.error} onRetry={index.refetch} />;
-  const files = index.data ?? [];
-  if (files.length === 0) {
+  const rules = index.data ?? [];
+  if (rules.length === 0) {
     return (
       <div className="p-6">
         <EmptyState icon={<Files className="h-7 w-7" />} title="No result files">
-          The source lists no lettering result file.
+          The source holds no lettering rule.
         </EmptyState>
       </div>
     );
   }
-  return <RuleResults files={files} />;
+  return <RuleResults source={source} rules={rules} />;
+}
+
+// Stable empty values: a new [] on each render would refetch what depends on it.
+const NO_FILES: LetteringFile[] = [];
+const NO_RUNS: RuleRun[] = [];
+
+interface RuleData {
+  /** The rule's files, from the source. */
+  files: LetteringFile[];
+  runs: RuleRun[];
 }
 
 const SECTIONS: { id: ResultsSection; label: string; icon: typeof CalendarDays }[] = [
@@ -53,21 +67,26 @@ const SECTIONS: { id: ResultsSection; label: string; icon: typeof CalendarDays }
   { id: 'checks', label: 'Checks', icon: BadgeCheck },
 ];
 
-function RuleResults({ files }: { files: LetteringFile[] }) {
+function RuleResults({ source, rules }: { source: LetteringSource; rules: string[] }) {
   const { nav, openResults } = useReconNav();
   const state = nav.results ?? {};
-  const rules = rulesOf(files);
   const rule = state.rule && rules.includes(state.rule) ? state.rule : rules[0];
   const section = state.section ?? 'days';
   const go = (next: ResultsNav) => openResults({ ...state, rule, ...next });
-  const runs = useReconResource<RuleRun[]>(() => readRuleRuns(files, rule), [files, rule]);
+  const data = useReconResource<RuleData>(async () => {
+    const files = await source.files(rule);
+    return { files, runs: await readRuleRuns(files, rule) };
+  }, [source, rule]);
+  const runs = data.data?.runs ?? NO_RUNS;
 
   return (
     <div className="mx-auto max-w-6xl min-w-0 space-y-4 p-3 sm:p-4">
       <div className={FILTER_TOOLBAR}>
-        <Badge variant="amber" size="sm" title={`Source: ${source.label}`}>
-          <FlaskConical className="h-3 w-3" /> Test data
-        </Badge>
+        {source.testData && (
+          <Badge variant="amber" size="sm" title={`Source: ${source.label}`}>
+            <FlaskConical className="h-3 w-3" /> Test data
+          </Badge>
+        )}
         <Picker
           label="Rule"
           value={rule}
@@ -86,31 +105,31 @@ function RuleResults({ files }: { files: LetteringFile[] }) {
         </Tabs>
       </div>
 
-      {runs.loading ? (
+      {data.loading ? (
         <Loading label="Starting DuckDB and reading the rule's manifests…" />
-      ) : runs.error ? (
-        <ErrorState error={runs.error} onRetry={runs.refetch} />
-      ) : (runs.data ?? []).length === 0 ? (
+      ) : data.error ? (
+        <ErrorState error={data.error} onRetry={data.refetch} />
+      ) : runs.length === 0 ? (
         <EmptyState icon={<Files className="h-7 w-7" />} title="No run">
           This rule has no run.
         </EmptyState>
       ) : section === 'days' ? (
-        <DaysView runs={runs.data ?? []} onOpen={(day, run) => go({ section: 'run', day, run })} />
+        <DaysView runs={runs} onOpen={(day, run) => go({ section: 'run', day, run })} />
       ) : section === 'run' ? (
-        <RunSection rule={rule} runs={runs.data ?? []} state={state} go={go} />
+        <RunSection rule={rule} runs={runs} state={state} go={go} />
       ) : section === 'checks' ? (
         <ChecksView
           rule={rule}
-          runs={runs.data ?? []}
+          runs={runs}
           selected={state.run}
           prev={state.prev}
           onSelect={(r, prev) => go({ day: r.day, run: r.run, prev })}
         />
       ) : (
         <QueriesView
-          files={files}
+          files={data.data?.files ?? NO_FILES}
           rule={rule}
-          runs={runs.data ?? []}
+          runs={runs}
           state={{ query: state.query, day: state.day, vars: state.vars }}
           onChange={(q) => go(q)}
         />
