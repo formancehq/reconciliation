@@ -31,7 +31,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ path?: string[
 
 	const segments = (await ctx.params).path ?? []
 	if (segments.length === 0) {
-		const rules = (await readdir(ROOT)).filter((name) => name.startsWith('rule='))
+		const rules = (await readdir(ROOT).catch(() => [] as string[])).filter((name) => name.startsWith('rule='))
 		const files = (await Promise.all(rules.map((rule) => listFiles(path.join(ROOT, rule))))).flat().sort()
 		return Response.json({
 			files: files.map((file) => {
@@ -41,8 +41,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ path?: string[
 		})
 	}
 
+	// Checked on the resolved path, so an encoded `..` cannot leave rule=… for expected/ or generate.py.
 	const file = path.resolve(ROOT, ...segments)
-	if (!file.startsWith(ROOT + path.sep) || !segments[0].startsWith('rule=')) {
+	const rel = path.relative(ROOT, file)
+	if (rel.startsWith('..') || path.isAbsolute(rel) || !rel.split(path.sep)[0].startsWith('rule=')) {
 		return new Response(null, { status: 404 })
 	}
 	try {
