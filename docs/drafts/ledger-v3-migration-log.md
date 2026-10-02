@@ -21,8 +21,9 @@ discharged. Dedicated PR still to open.
 > after the fact. The two sections above them — this handoff and the phase tables — are *status*
 > artifacts and are kept current. When the two disagree, the status sections win.
 
-**Last updated:** 2026-10-02, for the EN-2036 revert only: ledger `v3.0.0-beta.7` reverts the
-purge (`23ea97c7f`), and recon's vendored protos are re-synced to protocol 16 (`342268d1`). The rest
+**Last updated:** 2026-10-02, for the EN-2036 revert and the EN-2644 docs fix only: ledger
+`v3.0.0-beta.7` reverts the purge (`23ea97c7f`), recon's vendored protos are re-synced to protocol 16
+(`342268d1`), and the list filter docs match the handlers (`37e3e76a`). The rest
 of this handoff was last reviewed 2026-09-26 (Jira tracking: epic [EN-2344](https://formance-team.atlassian.net/browse/EN-2344) for this migration; code status then unchanged since `400578da`).
 
 **Tracking.** This migration is epic [EN-2344](https://formance-team.atlassian.net/browse/EN-2344):
@@ -71,6 +72,7 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 | Catalogue | 6 templates, one contract: `balance_equation`, `exchange_rate_bounds`, `source_consensus`, `coverage_ratio_bounds`, `balance_bounds`, `stale_holds` |
 | Scheduler | in-process cron, single-instance; `enabled` filtered server-side and every page drained ([EN-2239](https://formance-team.atlassian.net/browse/EN-2239), `27bf3d88`); in-flight evaluations drained on shutdown (`cc86d99f`, `41d14305`) |
 | Chart hygiene | per-rule alert tally on `GET /rules` ([EN-2240](https://formance-team.atlassian.net/browse/EN-2240), `4e0bec4f`); unexecuted prepared queries dropped ([EN-2241](https://formance-team.atlassian.net/browse/EN-2241), `01965140`); address conventions and pool split written down ([EN-2242](https://formance-team.atlassian.net/browse/EN-2242), `2f86c20e`) |
+| API docs | list filters documented as the handlers read them: the `query` parameter and the real keys of `GET /rules` and `GET /alerts`, in `api.md` and `openapi.yaml` ([EN-2644](https://formance-team.atlassian.net/browse/EN-2644), `37e3e76a`) |
 
 ### What is NOT done
 
