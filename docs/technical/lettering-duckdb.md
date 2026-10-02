@@ -124,9 +124,10 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
 
 - **Variable.** `rule` is the rule's directory.
 - **Runs.** `runs` reads every manifest under `day=*/run=*`.
-- **Current runs.** `current_runs` keeps, per day, the latest run that is not incomplete. Run ids
-  sort by start instant, and an incomplete run writes a reduced manifest and no data file, so this
-  is the results doc's current run (§2), even when a failed run came last.
+- **Current runs.** `current_runs` keeps, per day, the latest run that is neither incomplete nor a
+  verification run. Run ids sort by start instant, an incomplete run writes a reduced manifest and
+  no data file, and a verification run (a replay of an earlier day) says `verification` in its
+  manifest, so this is the results doc's current run (§2), even when one of those came last.
 - **Day views.** `flow_days`, `carried_days`, `stock_days` and `breaks_days` keep only the current
   runs' rows, with `day`, `run` and `rule` from the path.
 - **Manifest views.** `statement_days`, `books_days` and `cuts_days` flatten the current runs'
@@ -221,9 +222,9 @@ python3 tools/lettering-duckdb/testdata/generate.py
   |---|---|---|
   | S23 | Paid on 30 Sep, applied on 1 Oct | seeded as an `unapplied_payment`, then `matched` on an earlier day; its invoice is `cleared` on 1 Oct |
   | S25 | Applied on 30 Sep while the PSP is `pending`, finalised on 2 Oct | seeded as `applied_before_final`, carried outside the net on 1 Oct, `matched` on an earlier day on 2 Oct; its PSP hold, open at the start, is `persisting`, then `cleared` |
-  | S12 | Paid on 28 Sep, before the PSP seed, applied on 3 Oct | not seeded: a PSP lookup finds the payment, so `fromLookups` is 50.00 |
+  | S12 | Paid on 28 Sep, before the PSP seed, applied on 3 Oct | not seeded: a PSP lookup finds the payment, so `fromLookups` is 50.00; its invoice, opened on 28 Sep inside the product seed but before `backfillFrom`, has a null `openedAt` |
   | S24 | An invoice opened on 15 Sep, before the product seed, never paid | `openedAt` null, `ageDays` a lower bound from `backfillFrom`: 2 days on 1 Oct, in `2-7d`, for an invoice 16 days old |
-  | S26 | A PSP `pending` on 27 Sep, before the PSP seed, finalised and applied on 2 Oct | its hold has a null `openedAt`, open on 1 Oct, `cleared` on 2 Oct |
+  | S26 | A PSP `pending` on 27 Sep, before the PSP seed, finalised and applied on 2 Oct | its hold has a null `openedAt`, open on 1 Oct, `cleared` on 2 Oct; its invoice, opened on 27 Sep, has a null `openedAt` too, and ages from `backfillFrom` like S24's: 2 days on 1 Oct, never younger than an invoice opened later |
 
   Two more stories move the PSP payment account with no key, so that the flow read cannot return
   them (results doc §5, the payment-account book):
@@ -264,6 +265,8 @@ The suite checks four things:
    test.
 4. **Variants and wrong arguments.**
    - Legitimate variants pass: a field unknown to `lettering/1`, and an incomplete run.
+   - A day's current run is its latest complete run: neither an earlier run, a later incomplete
+     retry nor a verification run counts.
    - Wrong arguments get their exit status and a message that says why: an unknown or missing
      variable, a wrong directory, a bad or missing day, an unreadable file. An init file that
      prints and an empty CSV result are handled too.
@@ -484,7 +487,7 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `breaks_vs_rows`, `break_vs_row` | Every open break of the flow and stock files, and every non-zero residual of the payment-account book, is in the breaks file, and back, with the same class and amount; a book break, open or resolved, carries its account's `paymentAccounts` entry as it stands |
 | `break_amount`, `break_outcome`, `break_priority` | What `break_vs_row` cannot see: an open book break's amount is its direction's residual and a resolved one's residual is 0 again, and a resolved stock break keeps its hold's last open balance; a break's outcome and priority follow its lifecycle and class |
 | `row_drift`, `row_break_on` | A pending or break row has a drift and a matched, in-progress or failed one has none; `breakOn` is `firstSeen` plus the lagging side's grace |
-| `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone from its `openedAt`, or from `rule.backfillFrom` when `openedAt` is null (a lower bound), and its bucket and each book's bucket counts follow from the engine's fixed buckets (0-1d, 2-7d, 8-30d, >30d) |
+| `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone from its `openedAt`, or from `rule.backfillFrom` when `openedAt` is null (a lower bound), no `openedAt` precedes `rule.backfillFrom` (results doc §6), and its bucket and each book's bucket counts follow from the engine's fixed buckets (0-1d, 2-7d, 8-30d, >30d) |
 | `row_amounts`, `row_impact`, `row_outcome` | A flow row's amounts follow from its transactions, a carried row has no `impact`, and each row's outcome (and a stock row's sign) follows from its class |
 | `row_class` | A flow row's class follows from its net amounts: applications that sum to 0 count as none |
 | `unique_key`, `row_order` | Each file's unique key and row order (results doc §8) |

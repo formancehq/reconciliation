@@ -56,8 +56,8 @@
   the storage can also read the prefix directly. The `key=value` path segments let DuckDB, Spark or
   Athena read `rule`, `day` and `run` as columns.
 - **A run exists once its manifest is written.** The manifest is the run's last file, written
-  after the data files and the signed capture that holds its verdict and its SHA-256 (ADR-005 §7,
-  item 2); every run's status comes from its capture. A run
+  after the data files and the signed capture that holds its verdict, its cuts and its SHA-256,
+  and no counts (ADR-005 §7, item 2); every run's status comes from its capture. A run
   directory with no manifest is a run that stopped: no reader counts it, and its files expire under
   the prefix's lifecycle rule.
 - **An `incomplete` run writes its capture and a reduced manifest, and no data file.** Like a
@@ -65,18 +65,25 @@
   verdict, `incomplete.reason`, the cut `T` of each ledger where it was resolved and the
   manifest's SHA-256; its manifest carries no counts and no statement (§6). It raises the
   engine-error alert (§4), and it is not a link in the chain.
-- **The day's current run is its latest complete run**: the latest run whose manifest exists and
-  whose `verdict` is not `incomplete`. A `runId` is `r-` followed by the run's start instant in UTC
-  (`r-20260925T000004Z`), so run ids sort in time order. Replaying or retrying a day writes a new
-  run, which replaces the earlier ones once its manifest is written. A reader picks the current runs
-  from the manifests, then reads their data files (§9).
-- **Runs are chained.** `previousRun` names the current run of the most recent earlier day that has
-  one, with its day and its manifest's SHA-256. When that day is not the day before (a day missed or
-  incomplete), this run's window starts at that run's cut and covers every day since. The statement
-  then says "window since …".
-- **A first run compares one day too.** A first run, a new rule's, a restart's (below) or a
-  replay's once the previous run's files have expired, has no `previousRun`, and its window is
-  still `(T_prev, T]`, with `T_prev` the cut of the day before (ADR-005 §7, item 6).
+- **The day's current run is its latest complete run that is not a verification run**: the
+  latest run whose manifest exists, whose `verdict` is not `incomplete` and whose manifest does not
+  say `verification`. A `runId` is `r-` followed by the run's start instant in UTC
+  (`r-20260925T000004Z`), so run ids sort in time order. A retry of the latest day, or a catch-up
+  through it, writes new runs, which replace the earlier ones once their manifests are written. A
+  reader picks the current runs from the manifests, then reads their data files (§9).
+- **Verification runs.** A catch-up whose last day is earlier than the latest day that has a current
+  run as it starts, a replay of an earlier day included, writes verification runs, whose manifests
+  say `verification` (§6): the next day's current run did not chain on them, so they never become
+  current, and no alert counts them. A reader opens one by its `runId`, for instance to compare its
+  files with the current run's (§8).
+- **Runs are chained.** `previousRun` names the run this one chained on: the current run of the most
+  recent earlier day that has one, or, for a verification run after the first day of its catch-up,
+  that catch-up's run of the day before; with its day and its manifest's SHA-256. When that day is
+  not the day before (a day missed or incomplete), this run's window starts at that run's cut and
+  covers every day since. The statement then says "window since …".
+- **A first run compares one day too.** A first run, a new rule's, a restart's (below) or a replay's
+  once the previous run has expired (Expiry, below), has no `previousRun`, and its window is still
+  `(T_prev, T]`, with `T_prev` the cut of the day before (ADR-005 §7, item 6).
   - **Its starting values are rewound to `T_prev`** by its own stock rewind, read one day further:
     the books' `openPrev`, the payment account's `inputPrev` and `outputPrev`, and the stock the
     lifecycle of its stock rows is read against (a hold open at `T_prev` is `persisting`, or
@@ -88,8 +95,9 @@
     bridge, books or payment-account book. `backfillFrom` is a date in the rule's timezone, by
     default cut-off − max(`psp.grace`, `product.grace`) − 1 day; one on or after the compared day
     means no seed. The manifest's `rule.backfillFrom` records it (§6).
-  - The statement says "open items seeded since …". A hold opened before the seed has a null
-    `openedAt` and a lower-bound age (§6).
+  - The statement says "open items seeded since …". A hold opened before `backfillFrom`, on
+    either ledger, has a null `openedAt` and an age counted from `backfillFrom`, a lower bound
+    (§6).
 - **Restarting a chain.** Some causes of `incomplete` come back on every run until they are fixed,
   and each run's window grows (§4). When the fix cannot enter the window (a booking corrected by a
   new transaction leaves the faulty one in it, or a stored file was altered), an operator restarts
@@ -103,27 +111,34 @@
   - The restart takes an optional `backfillFrom`, rejected when it is later than the next run's
     cut. Nothing else is stored: the next run's manifest, a first run with no `previousRun` and
     "open items seeded since …", is the trace of the restart.
-- **Catching up from a past day.** An API action on the rule writes a normal run for every day
-  from a day X to its last day `to`, yesterday by default, as if the rule had run since X (ADR-005
-  §7, item 7). A catch-up with `to` = X is how one past day is replayed. The caught-up
-  runs are normal runs, chained day by day, with day X a first run unless day X−1 already has a
-  current run. Nothing marks them but their `startedAt` and `runId`, later than their day, and they
-  raise no alert for a closed period. A catch-up that stops leaves complete runs up to the
-  interrupted day, which has no manifest.
+- **Catching up from a past day.** An API action on the rule writes a normal run for every day from
+  a day X to its last day `to`, yesterday by default, as if the rule had run since X (ADR-005 §7,
+  item 7). A catch-up with `to` = X is how one past day is replayed. The caught-up runs are normal
+  runs, chained day by day, with day X a first run unless day X−1 already has a current run that is
+  still usable (Expiry, below). When `to` is earlier than the latest day that has a current run as
+  the catch-up starts, its runs are verification runs (above). Otherwise nothing marks them but
+  their `startedAt` and `runId`, later than their day, and they raise no alert for a closed period.
+  A catch-up that stops leaves complete runs up to the interrupted day, which has no manifest.
 - **Expiry.** A run's files are kept for the deployment's retention, the operator setting
   `--lettering-retention`, 90 days by default. A lifecycle rule of the storage on
   `{bucketID}/reconciliation/` deletes them; recon deletes nothing. The retention is not a rule
   parameter: it applies to every rule under the product ledger's prefix. The storage counts from
   each file's creation, so the manifest's `expiresAt` is the run's start (`startedAt`, the instant
-  in its `runId`) plus the retention, for information only: a replayed or caught-up day's files
-  expire a retention after that run, not after the day. A customer bound to a longer legal
+  in its `runId`) plus the retention: a replayed or caught-up day's files expire a retention after
+  that run, not after the day. A customer bound to a longer legal
   retention has the operator raise both ([design doc
   §5](./transaction-level-reconciliation.md#result-artifacts-and-retention)).
-  - **A replay's stock at its cut is always rewound from head.** Within the retention, the previous
-    day's carried, stock and breaks files give its carried items, `openPrev`, the `cleared` holds,
-    `openedAt` and the lifecycle, and the replay reproduces the day's files byte for byte (§8).
-  - An expired day can still be recomputed from the ledgers' transactions. With the previous day's
-    files expired, the replay is a first run and its carried items are seeded (ADR-005 §7, item 7),
+  - **A previous run is used while its `expiresAt` is more than one day away** when the job
+    starts. The lifecycle rule deletes expired files later and one by one, so around `expiresAt`
+    some may be gone and others still there. Past that margin the run counts as expired even if
+    its files remain, and the run that would chain on it is a first run. Before it, a missing or
+    altered file is `stored_file_mismatch` (§4).
+  - **A replay's stock at its cut is always rewound from head.** While the previous run is usable,
+    the previous day's carried, stock and breaks files give its carried items, `openPrev`, the
+    `cleared` holds, `openedAt` and the lifecycle, and the replay reproduces the day's files byte
+    for byte (§8).
+  - An expired day can still be recomputed from the ledgers' transactions. With the previous run
+    expired, the replay is a first run and its carried items are seeded (ADR-005 §7, item 7),
     so an item open for longer than the seed window is missed unless the replay is given an
     earlier `backfillFrom`.
 
@@ -180,7 +195,7 @@ The verdict is evaluated in this order, and the first condition that holds wins:
 
 | `verdict` | Condition | What it tells the controller |
 |---|---|---|
-| `incomplete` | A required index is missing, a transaction range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, or a previous run's file this run reads (its stock, carried or breaks file) is missing or differs from the SHA-256 its signed capture holds. There is no silent fallback: a missing file is an altered one, and the operator restarts the rule, whose next run is a first run (§2). `incomplete.reason` says which: `missing_index`, `short_range`, `continuity`, `residual`, `stored_file_mismatch`. `missing_index` and `short_range` usually clear on the next scheduled run. The other three come back on every run until the cause is fixed: the engine-error alert then says that an operator must act, and when the fix cannot enter the window the operator restarts the rule (§2). `incomplete.detail` names the first 20 items at fault (the books and holds that do not close with the transactions that moved them, the applications no flow row attributes, or the altered files), and the engine's logs list them all | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes its signed capture and a reduced manifest (§6), no data file, and opens the engine-error alert, never a green one |
+| `incomplete` | A required index is missing, a transaction range came back shorter than `hi − lo`, a continuity identity fails, the bridge's residual is not 0, or a previous run's file this run reads (its stock, carried or breaks file) is missing or differs from the SHA-256 its signed capture holds, while that run is still usable (§2). There is no silent fallback: a missing file is an altered one, and the operator restarts the rule, whose next run is a first run (§2). `incomplete.reason` says which: `missing_index`, `short_range`, `continuity`, `residual`, `stored_file_mismatch`. `missing_index` and `short_range` usually clear on the next scheduled run. The other three come back on every run until the cause is fixed: the engine-error alert then says that an operator must act, and when the fix cannot enter the window the operator restarts the rule (§2). `incomplete.detail` names the first 20 items at fault (the books and holds that do not close with the transactions that moved them, the applications no flow row attributes, or the altered files), and the engine's logs list them all | No conclusion can be drawn. The read is incomplete, or a hold moved in a transaction that carries neither the key nor a business id. The run writes its signed capture and a reduced manifest (§6), no data file, and opens the engine-error alert, never a green one |
 | `breaks` | At least one open break | The breaks, by priority, new or persisting |
 | `reconciled_with_warnings` | No break, but at least one unclassified transaction | Money moved that the rule does not classify: the rule's state sets or the connector mapping need attention |
 | `reconciled_with_pending` | No break and no warning, but unapplied payments within `product.grace` or applications within `psp.grace` | "OK for now". Each pending item comes with the day it becomes a break |
@@ -369,7 +384,8 @@ text.
 | `engine` | The version of recon that produced the run. A replay reproduces the files only with the same one |
 | `rule` | The whole rule as evaluated: `id`, `version`, `sha256` and every parameter, including each side's `key`, `state` sets, `grace`, `holds` (`prefix`, `openSign`, `businessId` on the product side), `psp.paymentAccount`, `psp.movementKeys` and `psp.merchantRef`. `backfillFrom` is the date, in the rule's timezone, where the chain's first run seeded its open items from (§2): the seed covers the days from it up to `T_prev`, and one on or after the first run's day means no seed. It is the rule's parameter or its default, or the restart's; every later run of the chain repeats it, since a null `openedAt` counts its age from it. The retention is not a rule parameter (§2) |
 | `runId` | `r-{UTC start instant}`; run ids sort in time order |
-| `previousRun` | `runId`, `day` and `manifestSha256` of the current run of the most recent earlier day that has one. Absent on the first run |
+| `previousRun` | `runId`, `day` and `manifestSha256` of the run this one chained on: the current run of the most recent earlier day that has one, or, for a verification run after the first day of its catch-up, that catch-up's run of the day before. Absent on the first run |
+| `verification` | `true` on a run a catch-up wrote while its last day `to` was earlier than the latest day that had a current run, a replay of an earlier day included. Such a run is never a day's current run (§2). Absent otherwise |
 | `period` | `type`, `day`, `cutoff` (with the rule's offset) and `tz` |
 | `startedAt`, `finishedAt` | When the run started and finished. Per-step durations and read counts go to the engine's metrics and logs, not to the manifest |
 | `cuts` | One entry per side (on an `incomplete` run, per side whose cut was resolved): `ledger` and the transaction window `(txFrom, txTo]`. `txTo` is the cut `T`; `txFrom` is `T_prev` on every run: the previous run's `txTo`, or on a first run the cut of the day before. A cut with no transaction at or before its cut-off is 0, since ids start at 1. A first run's seed lies before it and counts in no figure of the day; `rule.backfillFrom` records where the seed started. Also `txHead`, the transaction head the run read up to: the rewind reads the transactions `(txTo, txHead]`, and on a first run `(txFrom, txHead]` |
@@ -384,7 +400,7 @@ text.
 | `books` | One entry per side, prefix and asset: `openSign`, `openPrev`, `opened`, `lettered`, `letteredOther`, `open`, `count`, `buckets`, `continuityOk` |
 | `paymentAccounts` | The payment-account book (§5): one entry per account matching `psp.paymentAccount` and asset, with `account`, `asset`, `inputPrev`, `input`, `outputPrev`, `output` (the account's volumes at the previous cut and at this one), `flowCredits`, `flowDebits` (what the flow read's transactions posted on it) and `creditResidual`, `debitResidual`. The next run reads its `T_prev` values here |
 | `files` | One entry per file: `name`, `rows`, `sha256` |
-| `expiresAt` | For information: the run's start (`startedAt`, the instant in `runId`) plus the deployment's retention, as an instant. The storage's lifecycle rule deletes the files, counting from their creation, so a replayed or caught-up day's files expire a retention after that run (§2) |
+| `expiresAt` | The run's start (`startedAt`, the instant in `runId`) plus the deployment's retention, as an instant. The storage's lifecycle rule deletes the files, counting from their creation, so a replayed or caught-up day's files expire a retention after that run. A later run chains on this one only while `expiresAt` is more than one day away (§2) |
 
 **An `incomplete` run's manifest is reduced** (§2). It always has `schemaVersion`, `engine`,
 `rule`, `runId`, `previousRun` (absent on a first run, as on any run), `period`, `startedAt`,
@@ -446,10 +462,10 @@ One row per hold open at the cut, plus one row per hold cleared since the previo
 |---|---|
 | `side`, `hold`, `asset` | The unique key |
 | `prefix`, `holdId`, `openSign` | The rule's hold kind and the id after its prefix |
-| `balance` | The ledger's balance at the cut, signed as the ledger shows it |
+| `balance` | The ledger's balance at the cut, signed as the ledger shows it, with every color of the asset summed |
 | `class`, `outcome` | Below |
 | `lifecycle` | `new`, `persisting` or `cleared`, against the previous run, or on a first run against the stock rewound to `T_prev` (§2) |
-| `openedAt`, `ageDays`, `bucket` | When the hold opened (its opening transaction's `timestamp`, the business date), its age at the cut in days, and its age bucket: `0-1d`, `2-7d`, `8-30d` or `>30d`, fixed by the engine (ADR-005 §7 item 8). The opening is known when it lies in a window recon read, a first run's seed included. `openedAt` is null for a hold opened before the chain's seed (§2): before `backfillFrom`, or on the product side before the seed's start, `psp.grace` earlier. Its opening was never read, so `ageDays` is a lower bound counted from `rule.backfillFrom`, and `bucket` follows it |
+| `openedAt`, `ageDays`, `bucket` | When the hold opened (its opening transaction's `timestamp`, the business date), its age at the cut in days, and its age bucket: `0-1d`, `2-7d`, `8-30d` or `>30d`, fixed by the engine (ADR-005 §7 item 8). `openedAt` is null for a hold opened before `rule.backfillFrom`, on either ledger, even when the product side's seed, which starts `psp.grace` earlier, read its opening: `ageDays` is then a lower bound counted from `rule.backfillFrom`, and `bucket` follows it. Every such hold ages from the same date, so a hold opened earlier never shows a lower age than one opened later. A hold opened on or after `backfillFrom` lies in a window recon read, the seed included, so its opening is known |
 | `previousBalance`, `clearedAt`, `clearedBy` | On a cleared hold: its balance at the previous cut, then the `insertedAt` and the `ref` of the transaction that brought it to 0. No `clearedBy` means that transaction carried no PSP reference |
 | `pairedRef` | The unapplied payment whose `merchantRef` names this hold |
 
@@ -554,15 +570,15 @@ side in the manifest's `cuts`, with the field names from its `rule`.
   - the same engine version;
   - the same rule version;
   - the same previous run, whose carried, stock and breaks files the day starts from, so a replay
-    while that run's files are kept (a retention after that run, §2);
+    while that run is usable (until a day before its `expiresAt`, §2);
   - no key, state, business-id or merchant-reference metadata changed since the original run,
     because the ledger serves the current metadata. Recon does not watch for such a change
     (ADR-005 decision 25).
 
-  Only the manifest differs, through its instants. So a replay within the retention can be
-  compared with the original by the SHA-256s in their manifests' `files`, a query over the day's
-  manifests. With the same rule version and previous run, a mismatch reveals a metadata change or
-  an engine change, which `engine` shows.
+  Only the manifest differs, through its instants and, for a replay of an earlier day, its
+  `verification` flag. So a replay within the retention can be compared with the original by the
+  SHA-256s in their manifests' `files`, a query over the day's manifests. With the same rule version
+  and previous run, a mismatch reveals a metadata change or an engine change, which `engine` shows.
 - **Compatibility.** A new optional field may appear within `lettering/1`, so a reader ignores
   fields it does not know. Removing or renaming a field, changing its meaning, or adding a value to
   an enumeration changes `schemaVersion`.
@@ -583,13 +599,13 @@ A few standalone examples follow, on the worked example; the paths are relative 
 prefix.
 
 **The current run of each day.** Pick it from the manifests before anything else, with DuckDB,
-then read only its data files. A run that stopped before its manifest, or an `incomplete` one, is
-never picked.
+then read only its data files. A run that stopped before its manifest, an `incomplete` one or a
+verification run is never picked.
 
 ```sql
 CREATE VIEW current_runs AS
 SELECT day, run FROM read_json_objects('rule=psp-vs-billing/day=*/run=*/manifest.json', hive_partitioning = true)
-WHERE json->>'verdict' <> 'incomplete'
+WHERE json->>'verdict' <> 'incomplete' AND (json->>'verification') IS DISTINCT FROM 'true'
 QUALIFY run = max(run) OVER (PARTITION BY day);
 
 CREATE VIEW flow AS

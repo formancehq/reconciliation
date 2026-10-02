@@ -1,7 +1,8 @@
 -- Which run counts for each day?
 -- Variables: rule.
 -- Columns: day, run, verdict, current (true for the day's current run: its latest
--- complete run), reason (why an incomplete run concluded nothing).
+-- complete run that is not a verification run), reason (why an incomplete run
+-- concluded nothing).
 SELECT r.day, r.run, r.verdict,
        c.run IS NOT NULL AS current,
        r.m->'incomplete'->>'reason' AS reason

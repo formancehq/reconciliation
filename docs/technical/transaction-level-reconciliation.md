@@ -313,7 +313,7 @@ sequenceDiagram
     J->>Q: ListTransactions(key = ref, id ≤ T_Q) · history of refs found final, window refs failed
     J->>J: join on the PSP reference (+ carried, + lookups) · age both stock books · continuity
     J->>O: {bucketID}/reconciliation/rule=…/day=…/run=…/ flow / carried / stock / breaks
-    J->>C: capture(verdict, counts, drifts, T per ledger, manifest sha256) — Ed25519
+    J->>C: capture(verdict, T per ledger, manifest sha256) — Ed25519
     J->>O: manifest.json, last: the run exists once it is written
     J->>C: rebuild the open period's alert (day list, latest entry as headline · latest day's statement, books, payment accounts)
 ```
@@ -524,7 +524,8 @@ first touch after the cut*: each touch overwrites the account's value with its b
 that touch, so the last value written is the one before the first touch.
 
 ```text
-pre = post_commit_volumes[account] − Σ(this transaction's postings on account)
+pre[account, asset, color] = post_commit_volumes[account, asset, color]
+                             − Σ(this transaction's postings on account, in that asset and color)
 ```
 
 - Touched accounts that are missing from the listing are added back when `pre ≠ 0`.
@@ -536,6 +537,15 @@ pre = post_commit_volumes[account] − Σ(this transaction's postings on account
   read in chunks by K workers and applied chunk by chunk, newest first.
 - An account untouched in the window held one value for the whole listing, so the listed value is
   its value at the cut.
+- **The fold is per color.** It keys each value by (account, asset, color), as the ledger does. The
+  empty color is the uncolored bucket, not a sum of the colors (`misc/proto/common.proto:169-170`).
+  `ListAccounts` has no `collapse_colors` option, unlike `GetAccount` and `AggregateVolumes`
+  (`misc/proto/bucket.proto:193-196`, `215-218`, `1348-1351`), and a transaction's
+  `post_commit_volumes` holds only the (account, asset, color) tuples its own postings touch
+  (`internal/domain/processing/processor_volumes.go:50-51`), all at `c56aeb98`. A fold keyed by
+  asset alone would overwrite a hold's balance with one color's whenever a colored posting
+  touched it. The colors are summed per asset once the fold is done, so the stock rows, the books
+  and the ages read one balance per (hold, asset).
 
 **A first run reads one day further.** It has no stored stock and no stored payment-account
 volumes for its starting values, so its rewind reads `(T_prev, head_tx]` instead of `(T, head_tx]`,
@@ -623,20 +633,26 @@ four times as long: ~25 min at the end of the retention. An id-order fold that k
 touch would hold every hold created since the day, about
 760 bytes each (7.6 GB of heap for 10M, §7.16): about 70 GB for a 90-day-old day.
 
-**The carried items come from the previous run while it is kept.** The previous day's files are
-kept for the retention after that run, a deployment setting (`--lettering-retention`, §5). Until
-then its carried, stock and breaks files give the replay's carried items, `openPrev`, the `cleared`
-holds, each hold's `openedAt` and the lifecycle, and the replay reproduces the day's files byte for
-byte (results reference §8). A query over the day's manifests compares the SHA-256s in the two
-runs' `files`: a mismatch reveals a metadata change or an engine change. Once those files have
-expired, the replay is a first run (ADR-005 §7, item 6): its seed ends at `T_prev` and starts at
-`backfillFrom`, by default cut-off − max(`psp.grace`, `product.grace`) − 1 day, with the product
-side starting `psp.grace` earlier, and its rewind reads one day further for its starting stock and
-payment account (§4). An item carried for longer than the seed is missed unless the replay is
-given an earlier `backfillFrom`, the statement says "open items seeded since …", and the files are
-no longer byte-identical to the original. The previous run's `expiresAt` tells recon which days a
-replay still reproduces. A customer who must reproduce older days raises the retention and the
-storage's lifecycle rule together.
+**The carried items come from the previous run while it is usable.** The previous day's files are
+kept for the retention after that run, a deployment setting (`--lettering-retention`, §5), and recon
+uses them until a day before that run's `expiresAt` (§5). Until then its carried, stock and breaks
+files give the replay's carried items, `openPrev`, the `cleared` holds, each hold's `openedAt` and
+the lifecycle, and the replay reproduces the day's files byte for byte (results reference §8). A
+query over the day's manifests compares the SHA-256s in the two runs' `files`: a mismatch reveals a
+metadata change or an engine change. Past that margin, the replay is a first run (ADR-005 §7, item
+6): its seed ends at `T_prev` and starts at `backfillFrom`, by default cut-off − max(`psp.grace`,
+`product.grace`) − 1 day, with the product side starting `psp.grace` earlier, and its rewind reads
+one day further for its starting stock and payment account (§4). An item carried for longer than the
+seed is missed unless the replay is given an earlier `backfillFrom`, the statement says "open items
+seeded since …", and the files are no longer byte-identical to the original. The previous run's
+`expiresAt` tells recon which days a replay still reproduces. A customer who must reproduce older
+days raises the retention and the storage's lifecycle rule together.
+
+**A replay of an earlier day is a verification run.** When the replayed day is earlier than the
+latest day that has a current run, the next day's current run did not chain on the replay, so its
+manifest says `verification` and the day's current run stays as it was. The comparison above
+reads the replay by its `runId`. A replay of the latest day replaces its current run, as a retry
+does (results reference §2).
 
 #### Catching up from a past day
 
@@ -659,8 +675,8 @@ day; a catch-up rewinds once, in two passes:
    flow and its lookups, the join with the carried items, the stock from the day's snapshot,
    lifecycle against the day before, then the data files, the capture, the manifest last and the
    alert. Day X is a first run, its open items seeded and its starting values taken from the
-   snapshot at `T_{X−1}`, unless day X−1 already has a current run, which it then chains on. Each
-   later day chains on the one before.
+   snapshot at `T_{X−1}`, unless day X−1 already has a current run that is still usable (§5),
+   which it then chains on. Each later day chains on the one before.
 
 - **A catch-up that stops** leaves the days already written as complete runs. The interrupted day
   has no manifest, so no reader counts it. The operator starts a new catch-up from that day, which
@@ -674,8 +690,11 @@ day; a catch-up rewinds once, in two passes:
   yesterday); a catch-up asked for while a job runs is refused.
 - **X ≤ `to` ≤ yesterday.** Day X seeds from its own first-run default `backfillFrom` (X's
   cut-off − max(`psp.grace`, `product.grace`) − 1 day) unless the action gives one.
-- **Nothing marks a caught-up run** but its `startedAt` and its `runId`, later than its day
-  (results reference §2).
+- **Verification runs.** A catch-up whose `to` is earlier than the latest day that has a current
+  run as it starts writes verification runs: their manifests say `verification`, they never
+  become current, and they raise no alert. A catch-up through the latest day replaces the current
+  runs of its days. Nothing else marks a caught-up run but its `startedAt` and its `runId`, later
+  than its day (results reference §2).
 
 **Cost, at 1M transactions a day.** There is no depth limit. The backward pass costs about 4 s per
 day of distance in all, not per day: its window grows with X's age, as a replay's does (§7.16).
@@ -786,28 +805,32 @@ every recon rule under that product ledger's prefix, and the leftover files of a
   `baseBlob.delete.daysAfterCreationGreaterThan` set to the retention.
 - **`file`:** no expiry, which is fine for local development.
 
-Both stores count the age from each file's creation and delete asynchronously, so a file can
-outlive it by a day or more. The manifest's `expiresAt`, the run's start (`startedAt`, the instant
-in its `runId`) plus the retention, is for information only. A replayed or caught-up day's files
-therefore expire a retention after that run, not after the day.
+Both stores count the age from each file's creation and delete asynchronously, so a file can outlive
+it by a day or more. The manifest's `expiresAt` is the run's start (`startedAt`, the instant in its
+`runId`) plus the retention, so a replayed or caught-up day's files expire a retention after that
+run, not after the day. Since a store deletes expired files later and one by one, **recon uses a
+previous run only while its `expiresAt` is more than one day away** when the job starts. Past that
+margin the run counts as expired even if files remain, and the run that would chain on it is a first
+run; before it, a missing or altered file is `stored_file_mismatch` ([results reference
+§2](./transaction-level-results.md#2-where-the-files-are-and-which-run-counts)).
 
-**A run that cannot conclude** writes its signed capture and a reduced manifest, the manifest
-last as on every run, and no data file. It raises the engine-error alert, and the next run chains
-on the last complete one ([results reference
-§2](./transaction-level-results.md#2-where-the-files-are-and-which-run-counts)). `missing_index`
-and `short_range` usually clear on the next run. `continuity`, `residual` and
-`stored_file_mismatch` repeat until the cause is fixed; `incomplete.detail` names the first items at
-fault. When the fix cannot enter the window, an operator restarts the rule: its next run is a first
-run, its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run
-default and the oldest `firstSeen` of the last complete run's carried items (ADR-005 decision 26).
-The restart takes an optional `backfillFrom`, rejected when it is later than the next run's cut.
-When the carried file failed its signed check, the default cannot be computed from it, so a
-restart without `backfillFrom` is refused; a mismatch on the stock or breaks file alone keeps the
-default. The carried items, the stored stock and the break history therefore never come from a
-run that failed its checks. A previous run's stock, carried or breaks file that is missing, or that
-does not match its signed capture, counts as altered (`stored_file_mismatch`): the run never falls
-back to a rewind on its own, which would hide the loss and could not rebuild what the file carried,
-such as a hold's `openedAt` or a break's history.
+**A run that cannot conclude** writes its signed capture and a reduced manifest, the manifest last
+as on every run, and no data file. It raises the engine-error alert, and the next run chains on the
+last complete one ([results reference
+§2](./transaction-level-results.md#2-where-the-files-are-and-which-run-counts)). `missing_index` and
+`short_range` usually clear on the next run. `continuity`, `residual` and `stored_file_mismatch`
+repeat until the cause is fixed; `incomplete.detail` names the first items at fault. When the fix
+cannot enter the window, an operator restarts the rule: its next run is a first run, its open items
+seeded from `backfillFrom`, which defaults to the earlier of the first-run default and the oldest
+`firstSeen` of the last complete run's carried items (ADR-005 decision 26). The restart takes an
+optional `backfillFrom`, rejected when it is later than the next run's cut. When the carried file
+failed its signed check, the default cannot be computed from it, so a restart without `backfillFrom`
+is refused; a mismatch on the stock or breaks file alone keeps the default. The carried items, the
+stored stock and the break history therefore never come from a run that failed its checks. A
+previous run's stock, carried or breaks file that is missing, or that does not match its signed
+capture, while that run is still usable, counts as altered (`stored_file_mismatch`): the run never
+falls back to a rewind on its own, which would hide the loss and could not rebuild what the file
+carried, such as a hold's `openedAt` or a break's history.
 
 ## 6. Could Pebble do better?
 

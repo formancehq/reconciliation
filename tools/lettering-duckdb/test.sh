@@ -217,6 +217,8 @@ fresh "$day24"; edit "$work/run/stock.ndjson.gz" '/INV-9/s/"ageDays":12/"ageDays
 expect_violation "a hold's age" stock_age "$lettering" check "$work/run"
 fresh "$qa1"; edit "$work/run/stock.ndjson.gz" '/INV-S24/s/"ageDays":2,/"ageDays":3,/'
 expect_violation "a hold opened before the seed, aged from elsewhere than backfillFrom" stock_age "$lettering" check "$work/run"
+fresh "$qa1"; edit "$work/run/stock.ndjson.gz" '/INV-S26/s/"openedAt":null,"ageDays":2,/"openedAt":"2026-09-27T07:05:00Z","ageDays":4,/'
+expect_violation "a hold opened before backfillFrom that keeps its openedAt" stock_age "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"buckets":{"0-1d":0,"2-7d":2,"8-30d":2,">30d":1}/"buckets":{"0-1d":0,"2-7d":2,"8-30d":3,">30d":1}/'
 expect_violation "a book's age buckets" books_buckets "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/breaks.ndjson.gz" '/"ref":"PAY-44"/s/"class":"under_applied"/"class":"over_applied"/'
@@ -323,6 +325,19 @@ if [ "$(LETTERING_MODE=csv "$lettering" query bridge "$work/rule" | sort)" = "$(
 else
     : > "$work/out"
     fail "the current run is the latest complete one"
+fi
+
+# A verification run, written after the next day's current run, never counts.
+cp -R "$worked" "$work/verify"
+mkdir -p "$work/verify/day=2026-09-23/run=r-20260930T120000Z"
+cp "$day23"/* "$work/verify/day=2026-09-23/run=r-20260930T120000Z/"
+edit "$work/verify/day=2026-09-23/run=r-20260930T120000Z/manifest.json" 's/^{/{"verification":true,/'
+if [ "$(LETTERING_MODE=csv "$lettering" query current-runs "$work/verify" | grep -c ',true,')" = 2 ] &&
+    LETTERING_MODE=csv "$lettering" query current-runs "$work/verify" | grep -q '^2026-09-23,r-20260930T120000Z,.*,false,'; then
+    pass "a verification run is never the current run"
+else
+    : > "$work/out"
+    fail "a verification run is never the current run"
 fi
 
 echo

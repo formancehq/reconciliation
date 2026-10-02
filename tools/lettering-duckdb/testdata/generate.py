@@ -10,7 +10,7 @@ Three rules come out:
   SHA-256 values. The run of 23 September is partial: only what check-chain reads (its manifest,
   carried, stock and breaks files).
 - rule=qa-scenarios: seven days, two assets, one scripted story per class and edge case, including
-  a first run that seeds its open items, holds opened before that seed (a null openedAt), and
+  a first run that seeds its open items, holds opened before backfillFrom (a null openedAt), and
   unkeyed movements of the PSP payment account (book breaks: new, persisting, resolved).
 - rule=qa-verdicts: a week that walks through every verdict, an empty day, and two incomplete
   runs: one retried the same day, one followed by a two-day window.
@@ -549,9 +549,10 @@ class Engine:
                           for (side, prefix, hid, asset), h in self.holds_at(f_psp, f_prod).items() if h['balance'] != 0}
 
         def aged(side, h):
-            """The opening's time and the age at the cut. A hold opened before the seed of the
-            chain's first run has no known opening: its age is a lower bound, from backfillFrom."""
-            if h['opened_tx'] <= self.seed_from[side]:
+            """The opening's time and the age at the cut. A hold opened before backfillFrom, on
+            either side, has a null openedAt, even when the product seed read its opening: its age
+            is a lower bound, from backfillFrom, so ages keep the order of the openings."""
+            if h['opened_tx'] <= self.seed_from[side] or local_day(h['opened']) < self.rule.backfill_from:
                 return None, (day - self.rule.backfill_from).days
             return h['opened'], (day - local_day(h['opened'])).days
 
@@ -1066,7 +1067,9 @@ def scenarios():
     # and its age a lower bound counted from backfillFrom (2 days on day 1, for 16 really)
     opening('2026-09-15', '07:00', inv('INV-S24', 3300))
     # S26: a PSP pending opened on 27 Sep, before the PSP seed, finalised and applied on day 2: its
-    # hold has a null openedAt, open on day 1, then cleared
+    # hold has a null openedAt, open on day 1, then cleared. Its invoice, opened the same day inside
+    # the product seed, also has a null openedAt, since it precedes backfillFrom: it ages from
+    # backfillFrom like S24's, opened earlier, never older than it (results doc §6)
     opening('2026-09-27', '07:05', inv('INV-S26', 1700))
     psp.append(Psp(at('2026-09-27', '12:00'), 'S26', 'EUR/2', 'pending', 0, 1700))
     psp.append(Psp(at(D[2], '09:30'), 'S26', 'EUR/2', 'final', 1700, -1700))

@@ -330,7 +330,7 @@ flowchart LR
     Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, payment-account book and open-items identities"]
     Stock --> Join
     Join --> Art["flow / carried / stock / breaks .ndjson.gz<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: no data file)"]
-    Art --> Cap["Capture on _recon<br/>(verdict, counts, drifts, T per ledger, the manifest's SHA-256) — Ed25519"]
+    Art --> Cap["Capture on _recon<br/>(verdict, T per ledger, the manifest's SHA-256) — Ed25519"]
     Cap --> Man["Manifest, written last (files' SHA-256)<br/>the run exists once it is written<br/>(incomplete run: reduced manifest)"]
     Man --> Alert["Alert per (rule, fingerprint, period), rebuilt each tick while the period is open<br/>structured evidence: the period's day list (verdict, counts, net, gross, link), its latest entry as headline<br/>+ the latest day's statement, books and payment-account book as JSON<br/>opens on an open break (never on the net alone) · breaks paged from the API"]
 ```

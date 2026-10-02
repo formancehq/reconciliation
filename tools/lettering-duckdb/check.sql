@@ -375,20 +375,22 @@ WHERE (f.class = 'unapplied_payment' AND f.breakOn IS DISTINCT FROM f.firstSeen 
    OR (f.class = 'orphan_application' AND f.breakOn IS NOT NULL AND f.breakOn <> f.firstSeen + g.psp_grace);
 
 -- A hold's age is counted in the rule's timezone, and its bucket follows from its age. A hold
--- opened before the seed has a null openedAt: its age is a lower bound, counted from backfillFrom
--- (results doc §6).
+-- opened before backfillFrom, on either side, has a null openedAt: its age is a lower bound,
+-- counted from backfillFrom, so no openedAt precedes it (results doc §6).
 INSERT INTO violations
 WITH aged AS (
-    SELECT s.*, r.day - CASE WHEN s.openedAt IS NULL THEN g.backfill_from
-                             ELSE timezone(g.tz, s.openedAt AT TIME ZONE 'UTC')::DATE END AS age, g.bounds
+    SELECT s.*, timezone(g.tz, s.openedAt AT TIME ZONE 'UTC')::DATE AS opened_day, g.backfill_from,
+           r.day - coalesce(opened_day, g.backfill_from) AS age, g.bounds
     FROM stock s, m_run r, v_rule g)
 SELECT 'stock_age', side || '/' || hold || '/' || asset,
        class || ', ageDays ' || coalesce(ageDays::VARCHAR, 'missing') || ' ('
        || CASE WHEN openedAt IS NULL THEN 'no openedAt: backfillFrom is ' ELSE 'opened ' END
        || coalesce(age::VARCHAR, '?') || ' days before the cut), bucket ' || coalesce(bucket, 'missing')
+       || CASE WHEN opened_day < backfill_from THEN ', opened before backfillFrom ' || backfill_from ELSE '' END
 FROM aged
 WHERE ageDays IS DISTINCT FROM age
-   OR bucket IS DISTINCT FROM v_bucket(ageDays, bounds);
+   OR bucket IS DISTINCT FROM v_bucket(ageDays, bounds)
+   OR opened_day < backfill_from;
 
 INSERT INTO violations
 WITH listed AS (

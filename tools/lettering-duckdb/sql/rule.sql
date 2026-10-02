@@ -3,10 +3,11 @@
 --
 --   SET VARIABLE rule = 'path/to/rule=psp-vs-billing';
 --
--- A day's current run is its latest complete run (results doc §2): run ids sort
--- by start instant, and an incomplete run writes a reduced manifest and no data
--- file, so it is left out here even when it came last. `day` and `run` come from
--- the path.
+-- A day's current run is its latest complete run that is not a verification run
+-- (results doc §2): run ids sort by start instant, an incomplete run writes a
+-- reduced manifest and no data file, and a verification run, a replay of an
+-- earlier day, says so in its manifest. Both are left out here even when they came
+-- last. `day` and `run` come from the path.
 
 CREATE OR REPLACE MACRO lettering_glob(name) AS
     getvariable('rule') || '/day=*/run=*/' || name || '*.ndjson.gz';
@@ -18,7 +19,7 @@ FROM read_json_objects(getvariable('rule') || '/day=*/run=*/manifest.json', hive
 
 CREATE OR REPLACE VIEW current_runs AS
 SELECT * FROM runs
-WHERE verdict <> 'incomplete'
+WHERE verdict <> 'incomplete' AND (m->>'verification') IS DISTINCT FROM 'true'
 QUALIFY run = max(run) OVER (PARTITION BY day);
 
 -- The day a query is about: the `day` variable, or the latest day with a current run.
