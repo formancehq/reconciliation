@@ -90,6 +90,14 @@ tests:
 lettering-duckdb-tests:
     tools/lettering-duckdb/test.sh
 
+# Lint and build the reconciliation UI (frontend/) as production would. Its build
+# bundles the SQL of tools/lettering-duckdb (the Results tab), so renaming or
+# moving one of the tool's files fails here, not in `lettering-duckdb-tests`.
+# Builds into frontend/.next-check, so it runs next to `pnpm dev`. Needs Node and
+# pnpm on PATH: the Nix shell does not provide them.
+frontend-build:
+    cd frontend && pnpm install --frozen-lockfile && pnpm lint && RECON_UI_DIST_DIR=.next-check pnpm build
+
 # Run the serial integration suite against a live Ledger v3 on localhost:8888
 tests-integration:
     go test -race -covermode atomic -tags it -p 1 ./...

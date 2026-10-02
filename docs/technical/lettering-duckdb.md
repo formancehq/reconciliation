@@ -482,15 +482,16 @@ How it runs the same SQL:
 What the UI expects from the tool, besides the layers:
 
 - **Its file names.** The UI's build imports `sql/*.sql`, `check.sql`, `check-chain.sql` and
-  `queries/`: renaming or moving one breaks `pnpm build` in `frontend/`, which `test.sh` does not
-  run.
+  `queries/`: renaming or moving one breaks the UI's build. `just frontend-build` runs it;
+  `test.sh` does not.
 - **One statement per query.** DuckDB-WASM returns the first statement's result, so the tab runs a
   query file as one statement.
 - **The checks' temp tables.** The tab reads `violations` and `chain_violations` after the error
   `check.sql` and `check-chain.sql` raise.
 
-The code is in `frontend/lib/lettering/`. Its data source is the one seam where recon's API, which
-will list a run's files with pre-signed URLs (feature inventory E20), replaces the test data.
+The code is in `frontend/lib/lettering/`. `letteringSource` in `source.ts` lists a rule's files,
+and is the one place where recon's API, which will list a rule's runs and their files with
+pre-signed URLs (feature inventory E20), replaces the test data.
 
 ## 5. Maintaining it
 

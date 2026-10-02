@@ -7,6 +7,8 @@ import type { NextConfig } from 'next'
 const FRAME_ANCESTORS = process.env.RECONCILIATION_FRAME_ANCESTORS || "'self' http://localhost:* http://127.0.0.1:*"
 
 const nextConfig: NextConfig = {
+	// `just frontend-build` builds into its own directory, so it runs next to `pnpm dev`.
+	...(process.env.RECON_UI_DIST_DIR ? { distDir: process.env.RECON_UI_DIST_DIR } : {}),
 	eslint: {
 		ignoreDuringBuilds: true,
 	},
