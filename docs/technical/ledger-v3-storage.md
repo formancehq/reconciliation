@@ -158,10 +158,11 @@ Two caveats. This is a distinct question from the client-side analysis in
 *client* ledger — that finding does not by itself clear the control ledger, and this one does not
 clear a client book. The clearance was first reasoned from the ticket's acceptance criteria, while
 ledger PR [#2058](https://github.com/formancehq/ledger/pull/2058) was still open. It merged on
-2026-09-25 (`38c6eef55` on `release/v3.0`), and the one behaviour the module relies on — **close →
-purge → reopen**, a purged address accepting a fresh mint — is now tested on builds with and
-without the purge: `TestIntegration_AlertTransitions` asserts that the drained marker has no
-current state left before the reopen re-mints it
+2026-09-25 (`38c6eef55` on `release/v3.0`), and `v3.0.0-beta.7` reverts it (`23ea97c7f`, ledger
+#2169): beta.7 again removes only the zeroed volume cell. The one behaviour the module relies on —
+**close → purge → reopen**, a purged address accepting a fresh mint — is tested on builds with and
+without the purge, and passes on beta.7: `TestIntegration_AlertTransitions` asserts that the
+drained marker has no current state left before the reopen re-mints it
 ([EN-2345](https://formance-team.atlassian.net/browse/EN-2345)). Note that `GetAccount` never
 answers `NotFound` for an address; a drained or purged account comes back empty.
 
