@@ -692,7 +692,8 @@ day; a catch-up rewinds once, in two passes:
    the fold crosses each day's cut, it records a snapshot of that day: the balances of the holds
    open there (the day's raw stock) and the payment account's volumes. A snapshot is one open book,
    about 13 MB gzipped for 1M open holds (§7.10), so the snapshots stay in memory or in a local
-   temporary file. Nothing goes to the bucket.
+   temporary file. Nothing goes to the bucket. The file is deleted when the job ends, and recon
+   empties its temporary directory at startup, so a catch-up that crashed leaves nothing behind.
 2. **Forward pass.** The days run in order, X to `to`, each a normal run: the day's filtered
    flow and its lookups, the join with the carried items, the stock from the day's snapshot,
    lifecycle against the day before, then the data files, the capture, the manifest last and the
@@ -815,8 +816,9 @@ is never touched.
 **Expiry is one lifecycle rule of the storage, which the operator must set.** Recon deletes no
 file. At installation, the operator adds a rule on `{bucketID}/reconciliation/` that deletes
 objects older than the deployment's retention, the `serve` flag `--lettering-retention` (90 days
-by default); without it the files are never deleted (ADR-005 §7, item 4). It covers the files of
-every recon rule under that product ledger's prefix, and the leftover files of a stopped run.
+by default, a whole number of days and at least 32); without it the files are never deleted
+(ADR-005 §7, item 4). It covers the files of every recon rule under that product ledger's prefix,
+and the leftover files of a stopped run.
 
 - **S3:** a lifecycle rule with `Filter.Prefix` `{bucketID}/reconciliation/` and
   `Expiration.Days` set to the retention (`aws s3api put-bucket-lifecycle-configuration`). On a
@@ -826,6 +828,22 @@ every recon rule under that product ledger's prefix, and the leftover files of a
   `["{container}/{bucketID}/reconciliation/"]` (a prefix starts with the container name) and
   `baseBlob.delete.daysAfterCreationGreaterThan` set to the retention.
 - **`file`:** no expiry, which is fine for local development.
+
+**Recon checks that rule.** A lettering rule is rejected at creation when its product ledger's
+destination has no lifecycle rule on `{bucketID}/reconciliation/` (or a parent prefix) that deletes
+files at the retention's age, and on a versioned S3 bucket also expires noncurrent versions. Each
+job checks it again before writing; when it is missing or differs, the job logs it and counts it in
+a metric, and the run goes on, since its files are still right. Without the check, a missing rule
+lets the storage grow with no signal, and a shorter one deletes a previous run's files while its
+`expiresAt` still calls it usable, so a replay of an old day ends in `stored_file_mismatch` instead
+of becoming a first run. The check needs read access to the lifecycle configuration besides write
+access to the prefix:
+
+- **S3:** `GetBucketLifecycleConfiguration` and `GetBucketVersioning` on the bucket
+  (`s3:GetLifecycleConfiguration`, `s3:GetBucketVersioning`).
+- **Azure:** the storage account's lifecycle management policy, which Azure Resource Manager
+  serves, not the blob endpoint, so recon also needs read access to the account's management
+  policy.
 
 Both stores count the age from each file's creation and delete asynchronously, so a file can outlive
 it by a day or more. The manifest's `expiresAt` is the run's start (`startedAt`, the instant in its

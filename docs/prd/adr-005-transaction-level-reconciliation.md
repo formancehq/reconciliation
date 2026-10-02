@@ -628,12 +628,19 @@ V1 runs no periodic proof against a checkpoint.
 
    The writes follow that order, and **a run exists once its manifest is written**: a job that
    stops earlier leaves files and perhaps a capture that no reader counts, and the day's current
-   run is unchanged. A run that did not finish is started again from the beginning, with a new
+   run is unchanged. A write the storage refuses stops the job there, like a read that fails five
+   times (item 8). A run that did not finish is started again from the beginning, with a new
    `runId`, when the process restarts or at the next tick; nothing records its progress, since the
    reads of a daily run take about 20 s at 1M payments ([design doc
    §7.15](../technical/transaction-level-reconciliation.md#715-one-days-run-end-to-end)) and the
    same cut gives the same result. Its leftover files expire under the
    prefix's lifecycle rule.
+
+   **V1 runs on a single recon instance**, as the scheduler already assumes
+   (`docs/technical/scheduler.md`). With a rule running one job at a time, that is what keeps a
+   `runId`, the job's start instant to the second, unique: two instances could start two jobs of
+   one rule in the same second and write into the same run directory. Running several instances
+   waits for the scheduler's planned lease.
 
    The alert is derived from the manifests, never stored beside them: **every tick rebuilds the
    alert of the rule's open period from the current run of each of its days** (item 5), and the
@@ -668,12 +675,21 @@ V1 runs no periodic proof against a checkpoint.
      retention. The operator sets it at installation, and it is **required**: without it the files
      are never deleted. How to set it: [design doc
      §5](../technical/transaction-level-reconciliation.md#result-artifacts-and-retention).
-   - The retention is the `serve` flag `--lettering-retention`, 90 days by default (item 8), and
-     the lifecycle rule carries the same age. It is not a rule parameter: it applies to every rule
-     under the product ledger's prefix. The lifecycle rule counts from each file's creation, so the
+   - **Recon checks the lifecycle rule.** A lettering rule is rejected at creation when its product
+     ledger's destination has no lifecycle rule on `{bucketID}/reconciliation/` that deletes files
+     at the retention's age, and on a versioned S3 bucket also expires noncurrent versions. Each job
+     checks it again before writing; when it is missing or differs, the job logs it and counts it in
+     a metric, and the run goes on, since its files are still right. The check reads the bucket's
+     lifecycle configuration, a permission recon needs besides writing (design doc §5). The `file`
+     driver has no lifecycle rule and is not checked.
+   - The retention is the `serve` flag `--lettering-retention`, 90 days by default (item 8), and the
+     lifecycle rule carries the same age. It is a whole number of days, **at least 32**: the longest
+     period, 31 days, plus the one-day margin, so that no day of the open period loses its manifest
+     before the period closes (item 5). It is not a rule parameter: it applies to every rule under
+     the product ledger's prefix. The lifecycle rule counts from each file's creation, so the
      manifest's `expiresAt` is the run's start (its `startedAt`, the instant in its `runId`) plus
-     the retention: a replayed or caught-up day's files expire a retention after that run, not
-     after the day.
+     the retention: a replayed or caught-up day's files expire a retention after that run, not after
+     the day.
    - **A previous run is used while its `expiresAt` is more than one day away** when the job
      starts. The lifecycle rule deletes expired files later and one by one, so around `expiresAt`
      some may be gone and others still there. Past that margin the run counts as expired even if
@@ -709,7 +725,9 @@ V1 runs no periodic proof against a checkpoint.
    - **No period file.** Any other view of a period is a query over its daily manifests, which are
      kept for as long ([results reference
      §9](../technical/transaction-level-results.md#9-queries)).
-   - The 90-day default retention covers a monthly period plus a review margin.
+   - The 90-day default retention covers a monthly period plus a review margin, and the retention
+     cannot go below 32 days (item 4). A closed period's alert keeps its own figures; its links to
+     the days' files stop working once those files expire.
 6. **First run: one day, like every run, with its open items seeded.** A first run (a new rule, a
    restart per decision 26, or a replay whose previous run has expired, item 4) has no previous
    run: no carried items, no stored stock and no payment-account volumes at `T_prev`. Left alone,
@@ -790,7 +808,9 @@ V1 runs no periodic proof against a checkpoint.
        the current run of day X−1, whose stored stock and payment account give its starting
        values. It reads the unfiltered transactions from that cut to `head_tx`. As it crosses each
        day's cut it records that day's open holds' balances and the payment account's volumes:
-       one small snapshot per day, in memory or in a local temporary file, never in the bucket;
+       one small snapshot per day, in memory or in a local temporary file, never in the bucket.
+       The file is deleted when the job ends, and recon empties its temporary directory at
+       startup, so a catch-up that crashed leaves nothing behind;
      - **forward**, the days in order, X to `to`, each a normal run: the day's filtered flow,
        the join, lifecycle against the day before, then data files, capture, manifest last, and
        the alert. Day X is a first run (item 6) unless day X−1 already has a current run that is
@@ -824,7 +844,8 @@ V1 runs no periodic proof against a checkpoint.
 
    The process validates them at startup and refuses to start, with an error that names the flag,
    unless both read flags are positive integers, `--lettering-read-ranges` is at most
-   `--lettering-max-concurrent-reads`, and the retention is a positive duration.
+   `--lettering-max-concurrent-reads`, and the retention is a whole number of days, at least 32
+   (item 4).
 
    Three more values are **constants of the engine**, not settings: the age buckets `0–1 d`,
    `2–7 d`, `8–30 d` and `> 30 d` (§6), key lookups by groups of **100** references (§6), and a

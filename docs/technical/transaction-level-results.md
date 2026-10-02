@@ -59,18 +59,20 @@
   after the data files and the signed capture that holds its verdict, its cuts and its SHA-256,
   and no counts (ADR-005 §7, item 2); every run's status comes from its capture. A run
   directory with no manifest is a run that stopped: no reader counts it, and its files expire under
-  the prefix's lifecycle rule.
+  the prefix's lifecycle rule. A write the storage refuses stops the job there, so it leaves no run
+  either.
 - **An `incomplete` run writes its capture and a reduced manifest, and no data file.** Like a
   complete run, it writes the capture first and the manifest last. Its signed capture holds the
   verdict, `incomplete.reason`, the cut `T` of each ledger where it was resolved and the
   manifest's SHA-256; its manifest carries no counts and no statement (§6). It raises the
   engine-error alert (§4), and it is not a link in the chain.
-- **The day's current run is its latest complete run that is not a verification run**: the
-  latest run whose manifest exists, whose `verdict` is not `incomplete` and whose manifest does not
-  say `verification`. A `runId` is `r-` followed by the run's start instant in UTC
-  (`r-20260925T000004Z`), so run ids sort in time order. A retry of the latest day, or a catch-up
-  through it, writes new runs, which replace the earlier ones once their manifests are written. A
-  reader picks the current runs from the manifests, then reads their data files (§9).
+- **The day's current run is its latest complete run that is not a verification run**: the latest
+  run whose manifest exists, whose `verdict` is not `incomplete` and whose manifest does not say
+  `verification`. A `runId` is `r-` followed by the run's start instant in UTC
+  (`r-20260925T000004Z`), so run ids sort in time order. They are unique because a rule runs one job
+  at a time and V1 runs on a single recon instance (ADR-005 §7, item 2). A retry of the latest day,
+  or a catch-up through it, writes new runs, which replace the earlier ones once their manifests are
+  written. A reader picks the current runs from the manifests, then reads their data files (§9).
 - **Verification runs.** A catch-up whose last day is earlier than the latest day that has a current
   run as it starts, a replay of an earlier day included, writes verification runs, whose manifests
   say `verification` (§6): the next day's current run did not chain on them, so they never become
@@ -120,13 +122,15 @@
   their `startedAt` and `runId`, later than their day, and they raise no alert for a closed period.
   A catch-up that stops leaves complete runs up to the interrupted day, which has no manifest.
 - **Expiry.** A run's files are kept for the deployment's retention, the operator setting
-  `--lettering-retention`, 90 days by default. A lifecycle rule of the storage on
-  `{bucketID}/reconciliation/` deletes them; recon deletes nothing. The retention is not a rule
-  parameter: it applies to every rule under the product ledger's prefix. The storage counts from
-  each file's creation, so the manifest's `expiresAt` is the run's start (`startedAt`, the instant
-  in its `runId`) plus the retention: a replayed or caught-up day's files expire a retention after
-  that run, not after the day. A customer bound to a longer legal
-  retention has the operator raise both ([design doc
+  `--lettering-retention`, 90 days by default and never below 32 days, so that no day of the open
+  period loses its manifest before the period closes. A lifecycle rule of the storage on
+  `{bucketID}/reconciliation/` deletes them; recon deletes nothing, and checks that rule when a
+  lettering rule is created and before each run's writes (ADR-005 §7, item 4). The retention is not
+  a rule parameter: it applies to every rule under the product ledger's prefix. The storage counts
+  from each file's creation, so the manifest's `expiresAt` is the run's start (`startedAt`, the
+  instant in its `runId`) plus the retention: a replayed or caught-up day's files expire a retention
+  after that run, not after the day. A customer bound to a longer legal retention has the operator
+  raise both ([design doc
   §5](./transaction-level-reconciliation.md#result-artifacts-and-retention)).
   - **A previous run is used while its `expiresAt` is more than one day away** when the job
     starts. The lifecycle rule deletes expired files later and one by one, so around `expiresAt`
@@ -372,7 +376,8 @@ items 2 and 5).
 
 It carries no list of breaks or pending items. The UI renders the reconciliation statement from
 this data alone, and shows the breaks by paging them from recon's API. The engine renders no
-text.
+text. Once a day's files expire, its link in a closed alert stops working; the alert's figures
+stay.
 
 ## 6. File reference
 
@@ -580,8 +585,10 @@ side in the manifest's `cuts`, with the field names from its `rule`.
   SHA-256s in their manifests' `files`, a query over the day's manifests. With the same rule version
   and previous run, a mismatch reveals a metadata change or an engine change, which `engine` shows.
 - **Compatibility.** A new optional field may appear within `lettering/1`, so a reader ignores
-  fields it does not know. Removing or renaming a field, changing its meaning, or adding a value to
-  an enumeration changes `schemaVersion`.
+  fields it does not know, except the ones that choose a day's run: a reader reads `verdict` and
+  `verification` before anything else (§2), and a future field that changes which run counts
+  changes `schemaVersion`. Removing or renaming a field, changing its meaning, or adding a value to
+  an enumeration changes `schemaVersion` too.
 
 | File | Unique key | Order |
 |---|---|---|
