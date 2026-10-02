@@ -12,18 +12,24 @@
  * it feels native next to "Explore Ledger" in the sidebar.
  */
 import { LayoutDashboard, ListChecks, Bell, LineChart, ShieldCheck, AlertTriangle, TableProperties } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TABBAR_ROW, TABBAR_LIST, TABBAR_TRIGGER, TABBAR_ICON } from '@/lib/uiClasses';
 import { ReconProvider, useReconNav, type ReconTab } from './ReconContext';
-import { HealthPill } from './ui';
+import { HealthPill, Loading } from './ui';
 import { EndpointSwitcher } from './EndpointSwitcher';
 import { OverviewPanel } from './panels/OverviewPanel';
 import { RulesPanel } from './panels/RulesPanel';
 import { AlertsPanel } from './panels/AlertsPanel';
 import { InsightsPanel } from './panels/InsightsPanel';
 import { AuditPanel } from './panels/AuditPanel';
-import { ResultsPanel } from './panels/ResultsPanel';
 import { LETTERING_SOURCE_AVAILABLE } from '@/lib/lettering/source';
+
+// The Results tab's code (DuckDB-WASM, the lettering SQL) loads when the tab opens, never with the page.
+const ResultsPanel = dynamic(() => import('./panels/ResultsPanel').then((m) => m.ResultsPanel), {
+  ssr: false,
+  loading: () => <Loading label="Loading Results…" />,
+});
 
 const TABS: { id: ReconTab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },

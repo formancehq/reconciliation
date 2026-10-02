@@ -10,6 +10,9 @@ const nextConfig: NextConfig = {
 	eslint: {
 		ignoreDuringBuilds: true,
 	},
+	// DuckDB-WASM runs in the browser only (lib/lettering/duckdb.ts imports it on
+	// demand): keep the server build from bundling its Node entry point.
+	serverExternalPackages: ['@duckdb/duckdb-wasm'],
 	// The Results tab runs the SQL of ../tools/lettering-duckdb as it is: each .sql
 	// file is bundled as a string at build time (lib/lettering/sql.ts), so the tab
 	// and the tool never drift.
