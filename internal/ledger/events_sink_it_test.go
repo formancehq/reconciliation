@@ -13,8 +13,8 @@ import (
 )
 
 // TestIntegration_EventsSink proves the ED-2 delivery primitives against a live
-// ledger: register an HTTP webhook sink, read it back, update it in place
-// (add-or-update), then remove it (idempotently). A unique name + benign
+// ledger: register an HTTP webhook sink, read it back, re-add it (a no-op: the
+// server is add-only), then remove it (idempotently). A unique name + benign
 // unreachable endpoint + immediate removal keep the shared dev cluster clean.
 func TestIntegration_EventsSink(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
