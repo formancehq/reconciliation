@@ -21,7 +21,9 @@ discharged. Dedicated PR still to open.
 > after the fact. The two sections above them — this handoff and the phase tables — are *status*
 > artifacts and are kept current. When the two disagree, the status sections win.
 
-**Last updated:** 2026-09-26 (Jira tracking: epic [EN-2344](https://formance-team.atlassian.net/browse/EN-2344) for this migration; EN-2036 merged upstream; code status unchanged since `400578da`).
+**Last updated:** 2026-10-02, for the EN-2036 revert only: ledger `v3.0.0-beta.7` reverts the
+purge (`23ea97c7f`), and recon's vendored protos are re-synced to protocol 16 (`342268d1`). The rest
+of this handoff was last reviewed 2026-09-26 (Jira tracking: epic [EN-2344](https://formance-team.atlassian.net/browse/EN-2344) for this migration; code status then unchanged since `400578da`).
 
 **Tracking.** This migration is epic [EN-2344](https://formance-team.atlassian.net/browse/EN-2344):
 its description carries the done table (Phase 1, W-1 to W-14, head commits), and its children are
@@ -108,7 +110,7 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 
 | Ticket | State | Bearing on this branch |
 |---|---|---|
-| [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) | merged: [ledger#2058](https://github.com/formancehq/ledger/pull/2058) (squash `38c6eef55` on `release/v3.0`, 2026-09-25; not yet released). Every build carrying it is at protocol 13; recon re-synced to 13 in `09d3fcf3` | Purges `EPHEMERAL` accounts fully at zero. **Version-gate** — do not delete — the released-hold post-filter at `stale_holds.go:289` and the `holdsReleased` evidence key: older ledgers still return released holds, `NORMAL` holds are never purged, and existing captures carry the key. Validated in [EN-2345](https://formance-team.atlassian.net/browse/EN-2345): the post-filter stays, and the it suite passes on builds with (`7dd615dba`) and without (`9e1e10aac`) the purge. |
+| [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) | reverted; reopened and moved to Ledger v3.1 (2026-10-02). Merged as [ledger#2058](https://github.com/formancehq/ledger/pull/2058) (squash `38c6eef55` on `release/v3.0`, 2026-09-25) and shipped in `v3.0.0-beta.6` only. `v3.0.0-beta.7` reverts it in full ([ledger#2169](https://github.com/formancehq/ledger/pull/2169), `23ea97c7f`) and drops `LedgerLog.purged_accounts` (tag 7) from the protos; recon re-synced to protocol 16 in `342268d1` and never read the field | Would purge `EPHEMERAL` accounts fully at zero. On beta.7 a zeroed `EPHEMERAL` account keeps its row and metadata again; only the zeroed volume cell goes. **Keep** the released-hold post-filter at `stale_holds.go:294` and the `holdsReleased` evidence key: V3.0 ledgers return released holds, `NORMAL` holds are never purged, and existing captures carry the key. Validated in [EN-2345](https://formance-team.atlassian.net/browse/EN-2345): the it suite passes on builds with (`7dd615dba`) and without (`9e1e10aac`) the purge, and on beta.7 (561 tests, 2026-10-02), where `TestIntegration_StaleHolds_EphemeralPurge` logs `ledger purges released EPHEMERAL accounts: false`. |
 | [EN-1480](https://formance-team.atlassian.net/browse/EN-1480) | backlog, v3.1 | Batched multi-ledger aggregate on one snapshot. **Not blocking** — ADR-003 is per-source reads + tolerance. |
 | [EN-1873](https://formance-team.atlassian.net/browse/EN-1873) | backlog, gated on EN-1480 | Ledger-signed attestation of a read result. The value of a completeness proof is gated with it. |
 | [EN-1351](https://formance-team.atlassian.net/browse/EN-1351) | backlog, v3.1 | `order_by` on list results. Server-side ordering for F23 ([EN-2348](https://formance-team.atlassian.net/browse/EN-2348)). |
@@ -129,7 +131,7 @@ named-source contract: six templates, no positional V1 shapes, no `/v2` route pr
 - **This branch carries** the design ([transaction-level-reconciliation.md](../technical/transaction-level-reconciliation.md))
   and its bench (`tools/bench-txlevel`) only.
 - **Reconciliation wave 2 filed** (epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315)): R9 [EN-2333](https://formance-team.atlassian.net/browse/EN-2333) (period summary, blocked by EN-2322), R10 [EN-2334](https://formance-team.atlassian.net/browse/EN-2334) (rewind oracle test, blocked by EN-2319), R11 [EN-2335](https://formance-team.atlassian.net/browse/EN-2335) (booking guide). Connectivity C1 is **not a ticket**: the PSP-side conventions are a per-customer connector mapping, listed as an implementer checklist in the design doc §2.
-- **Ledger asks filed:** L2 [EN-2327](https://formance-team.atlassian.net/browse/EN-2327), L6 [EN-2328](https://formance-team.atlassian.net/browse/EN-2328), L7 [EN-2329](https://formance-team.atlassian.net/browse/EN-2329) (relates to EN-1480), L8 [EN-2326](https://formance-team.atlassian.net/browse/EN-2326), L5 [EN-2331](https://formance-team.atlassian.net/browse/EN-2331) (closed 2026-09-26 on the #2058 merge; relates to EN-2036; review comment on [ledger#2058](https://github.com/formancehq/ledger/pull/2058#issuecomment-5813203857)).
+- **Ledger asks filed:** L2 [EN-2327](https://formance-team.atlassian.net/browse/EN-2327), L6 [EN-2328](https://formance-team.atlassian.net/browse/EN-2328), L7 [EN-2329](https://formance-team.atlassian.net/browse/EN-2329) (relates to EN-1480), L8 [EN-2326](https://formance-team.atlassian.net/browse/EN-2326), L5 [EN-2331](https://formance-team.atlassian.net/browse/EN-2331) (closed 2026-09-26 on the #2058 merge; relates to EN-2036; beta.7 reverts the fix with the purge, but purges no account, so the case cannot arise on V3.0; review comment on [ledger#2058](https://github.com/formancehq/ledger/pull/2058#issuecomment-5813203857)).
 - **Checkpoint findings, information only** (read ×20 slower, no consistent export, no owner or TTL): evaluations take no checkpoint, so recon asks nothing. The read penalty was posted as a [comment on EN-2108](https://formance-team.atlassian.net/browse/EN-2108?focusedCommentId=25936), then filed at gfyrag's request as [EN-2336](https://formance-team.atlassian.net/browse/EN-2336) (ex-L1, Ledger v3.1).
 
 ### Open findings
@@ -1467,6 +1469,11 @@ superseding EN-1972's proposed live-volume query predicate (`0127f22`). When it 
 should be **version-gated, not deleted**: older ledgers still return released holds, and captures
 already written carry the key in a `schemaVersion: 2` evidence document.
 
+> **Update 2026-10-02.** EN-2036 shipped in ledger `v3.0.0-beta.6` (`38c6eef55`), and
+> `v3.0.0-beta.7` reverts it (`23ea97c7f`, ledger#2169). The ticket is reopened for Ledger v3.1. So
+> on V3.0 the dependency stays open: the post-filter (now `stale_holds.go:294`) and `holdsReleased`
+> stay as they are. See the *Upstream dependencies* table above.
+
 ---
 
 ## W-9 — Catalogue convergence: one contract, one catalogue (2026-09-07 → 09-08) `!`
@@ -1542,6 +1549,11 @@ nothing referenced the removed code. Three corrections (`ec869c6`):
 Also `faa9993` (clear EN-2036 against the control ledger's own `EPHEMERAL` usage — recon's alert
 markers are burn-on-close, so the purge change is safe for `_recon` itself) and `5facf76` (re-sync
 protos **and** declare the service protocol revision — see the appendix).
+
+> **Update 2026-10-02.** Ledger `v3.0.0-beta.7` reverts the purge (`23ea97c7f`), so the clearance
+> now covers a change that is no longer in V3.0. The markers do not depend on it either way:
+> `TestIntegration_AlertTransitions` passes on beta.7, where a drained marker keeps its row
+> ([ledger-v3-storage.md](../technical/ledger-v3-storage.md#the-one-ephemeral-type-and-why-en-2036-does-not-affect-it)).
 
 **This is a recurring class of drift, not a one-off.** Ledger renumbers proto fields between
 revisions and Go names do not move, so a stale vendored proto misdecodes silently. Diff the protos

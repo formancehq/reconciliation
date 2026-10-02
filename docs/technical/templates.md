@@ -571,15 +571,16 @@ zero-balance accounts are dropped after the read and reported as `holdsReleased`
 own query a liveness predicate (`metadata[hold_status] = active`, above) if released holds accumulate
 — otherwise the matched set grows without bound and eventually trips the accounts budget.
 
-> **Changing in Ledger V3.0.** [EN-2036](https://formance-team.atlassian.net/browse/EN-2036) (not
-> shipped at the time of writing, and superseding the live-volume query predicate proposed in
-> [EN-1972](https://formance-team.atlassian.net/browse/EN-1972)) deletes an `EPHEMERAL` account
+> **Planned for Ledger v3.1, not V3.0.** [EN-2036](https://formance-team.atlassian.net/browse/EN-2036)
+> (superseding the live-volume query predicate proposed in
+> [EN-1972](https://formance-team.atlassian.net/browse/EN-1972)) would delete an `EPHEMERAL` account
 > outright — row, metadata and every secondary-index entry — when its last non-zero volume reaches
-> zero. A released hold then matches nothing and `holdsReleased` reads zero without anyone writing
-> anything; no change is needed in this module. The purge is **type-gated**, so this applies only
-> where the hold accounts are declared `EPHEMERAL` — for `NORMAL` hold accounts the paragraph above
-> remains the answer. See [stale-holds.md §5 Q2b](./stale-holds.md) for the mechanism and the ask
-> that goes with it.
+> zero. A released hold would then match nothing, and `holdsReleased` would read zero without anyone
+> writing anything; no change is needed in this module. It shipped in `v3.0.0-beta.6` (`38c6eef55`) and
+> `v3.0.0-beta.7` reverts it (`23ea97c7f`), so on V3.0 the paragraph above is the answer for every
+> hold book. When it returns, the purge is **type-gated**: it applies only where the hold accounts
+> are declared `EPHEMERAL`, and for `NORMAL` hold accounts the paragraph above remains the answer.
+> See [stale-holds.md §5 Q2b](./stale-holds.md) for the mechanism and the ask that goes with it.
 
 **Warning vs breach.** Severity is declared per rule, so "warn early, page late" is **two rules**: an
 `approaching` rule at a low severity and a `stale` rule at a high one. `approaching` matches a
