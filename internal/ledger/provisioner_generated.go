@@ -99,6 +99,36 @@ func (mr *MockprovisionAPIMockRecorder) GetLedgerInfo(ctx, name any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLedgerInfo", reflect.TypeOf((*MockprovisionAPI)(nil).GetLedgerInfo), ctx, name)
 }
 
+// ListIndexIDs mocks base method.
+func (m *MockprovisionAPI) ListIndexIDs(ctx context.Context, ledger string) ([]*commonpb.IndexID, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListIndexIDs", ctx, ledger)
+	ret0, _ := ret[0].([]*commonpb.IndexID)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListIndexIDs indicates an expected call of ListIndexIDs.
+func (mr *MockprovisionAPIMockRecorder) ListIndexIDs(ctx, ledger any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListIndexIDs", reflect.TypeOf((*MockprovisionAPI)(nil).ListIndexIDs), ctx, ledger)
+}
+
+// NumscriptVersions mocks base method.
+func (m *MockprovisionAPI) NumscriptVersions(ctx context.Context, ledger, name string) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NumscriptVersions", ctx, ledger, name)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// NumscriptVersions indicates an expected call of NumscriptVersions.
+func (mr *MockprovisionAPIMockRecorder) NumscriptVersions(ctx, ledger, name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NumscriptVersions", reflect.TypeOf((*MockprovisionAPI)(nil).NumscriptVersions), ctx, ledger, name)
+}
+
 // SaveNumscript mocks base method.
 func (m *MockprovisionAPI) SaveNumscript(ctx context.Context, ledger, name, content, version string) error {
 	m.ctrl.T.Helper()

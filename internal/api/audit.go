@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -87,9 +89,22 @@ type auditEntry struct {
 	// Populated only for outcome == "failure": why the write was rejected.
 	FailureReason  string `json:"failureReason,omitempty"`
 	FailureMessage string `json:"failureMessage,omitempty"`
-	// Decoded per-order business intent. Populated only on the single-entry read
-	// (the list omits the items these are decoded from).
+	// Decoded per-order business intent, from the signed payload (or, for an
+	// unsigned entry, from the items only the single-entry read carries).
 	Actions []auditAction `json:"actions,omitempty"`
+	// The reconciliation action the write records; absent on provisioning.
+	Activity *auditActivity `json:"activity,omitempty"`
+}
+
+// auditActivity is the activity envelope of a reconciliation action, as signed:
+// what happened (kind), to which rule, when, and its kind-specific payload.
+type auditActivity struct {
+	Kind            string          `json:"kind"`
+	RuleID          string          `json:"ruleId,omitempty"`
+	ContractVersion int             `json:"contractVersion,omitempty"`
+	OccurredAt      string          `json:"occurredAt,omitempty"`
+	CorrelationID   string          `json:"correlationId,omitempty"`
+	Payload         json.RawMessage `json:"payload,omitempty"`
 }
 
 // auditAction is the human-readable intent of one order in a proposal.
@@ -118,6 +133,8 @@ func prettyFailureReason(reason string) string {
 // entries — the ledger's native AuditEntry stream scoped to the control ledger —
 // so an auditor gets the {payload, signature, sequence} of every write without
 // ledger credentials, and verifies each one against the published public key.
+// `scope` picks the view: `actions` (default: rule changes, evaluations, alert
+// transitions), `system` (provisioning) or `all`.
 //
 // Best-effort, matching the other ledger-introspection handlers: on a read error
 // it returns an empty set (debug-logged) rather than failing the page.
@@ -135,7 +152,16 @@ func listAuditEntriesHandler(client ledgerIntrospector, control ControlLedger) h
 			limit = maxAuditEntriesLimit
 		}
 
-		entries, err := client.ListAuditEntries(r.Context(), string(control), limit)
+		scope := ledger.AuditScopeActions
+		if v := r.URL.Query().Get("scope"); v != "" {
+			scope = ledger.AuditScope(v)
+		}
+		if !slices.Contains([]ledger.AuditScope{ledger.AuditScopeActions, ledger.AuditScopeSystem, ledger.AuditScopeAll}, scope) {
+			api.BadRequest(w, ErrValidation, fmt.Errorf("invalid scope %q: want actions, system or all", scope))
+			return
+		}
+
+		entries, err := client.ListAuditEntries(r.Context(), string(control), scope, limit)
 		if err != nil {
 			v5log.FromContext(r.Context()).Debugf("list audit entries for the audit tab failed; returning empty: %v", err)
 			api.Ok(w, resp)
@@ -232,6 +258,12 @@ func toAuditEntryRow(e ledger.AuditEntryInfo) auditEntry {
 	}
 	for _, a := range e.Actions {
 		row.Actions = append(row.Actions, auditAction{Kind: a.Kind, Ledger: a.Ledger, Detail: a.Detail})
+	}
+	if a := e.Activity; a != nil {
+		row.Activity = &auditActivity{Kind: a.Kind, RuleID: a.RuleID, ContractVersion: a.ContractVersion, CorrelationID: a.CorrelationID, Payload: a.Payload}
+		if !a.OccurredAt.IsZero() {
+			row.Activity.OccurredAt = a.OccurredAt.UTC().Format(time.RFC3339Nano)
+		}
 	}
 	return row
 }

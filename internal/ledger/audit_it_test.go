@@ -91,3 +91,54 @@ func TestIntegration_ResolveAuditEntryByTransaction(t *testing.T) {
 	require.False(t, found, "an unknown transaction resolves to no entry")
 }
 
+// TestIntegration_ListAuditEntriesByScope proves the audit trail's views split a
+// control ledger's writes by what they are. Actions are its transactions (rule
+// changes, evaluations, alert transitions); System is provisioning (the ledger,
+// its chart, indexes and numscripts); All is both.
+//
+//	go test -tags it -run TestIntegration_ListAuditEntriesByScope ./internal/ledger/...
+func TestIntegration_ListAuditEntriesByScope(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	client, err := NewClient(itAddr(), nil)
+	require.NoError(t, err)
+
+	defer func() { _ = client.Close() }()
+
+	l := "recon-it-scope-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(ctx, l) }()
+
+	require.NoError(t, NewProvisioner(client, l, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT).Provision(ctx))
+	require.NoError(t, client.SaveNumscript(ctx, l, "mint", "send [USD/2 100] (\n\tsource = @world\n\tdestination = @a\n)", "1.0.0"))
+
+	txKeys := []string{"recon-it-scope-a-" + uuid.NewString(), "recon-it-scope-b-" + uuid.NewString()}
+	for _, key := range txKeys {
+		require.NoError(t, client.CreateTransaction(ctx, CreateTransactionInput{Ledger: l, ScriptName: "mint", ScriptVersion: "1.0.0", IdempotencyKey: key}))
+	}
+
+	list := func(scope AuditScope) []AuditEntryInfo {
+		t.Helper()
+		entries, err := client.ListAuditEntries(ctx, l, scope, 500)
+		require.NoError(t, err, scope)
+
+		return entries
+	}
+	keys := func(entries []AuditEntryInfo) []string {
+		out := []string{}
+		for _, e := range entries {
+			out = append(out, e.IdempotencyKey)
+		}
+
+		return out
+	}
+
+	actions, system, all := list(AuditScopeActions), list(AuditScopeSystem), list(AuditScopeAll)
+
+	require.ElementsMatch(t, txKeys, keys(actions), "actions are the transaction writes")
+	require.NotEmpty(t, system, "provisioning is audited")
+	for _, key := range txKeys {
+		require.NotContains(t, keys(system), key, "a transaction is not a system write")
+	}
+	require.Len(t, all, len(actions)+len(system), "all is actions plus system")
+}

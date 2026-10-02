@@ -8,6 +8,8 @@
  *   2. Audit trail: the ledger's own signed entries (GET /audit/entries) with a
  *      one-click in-browser check — the JS twin of ed25519.Verify. Nothing here
  *      is recomputed by us; the signatures are the ledger's, verified client-side.
+ *      It shows reconciliation actions by default; System and All add the
+ *      provisioning writes. Each row is titled from its own signed payload.
  *   3. Handling activity: who worked which break, with a verified-vs-declared
  *      provenance badge from the signed metadata (P1.2).
  */
@@ -32,7 +34,9 @@ import {
   reconClient,
   listAllAlerts,
   listAllRules,
+  activityLabel,
   contractVersionOf,
+  describeAlertPayload,
   formatRelative,
   formatDateTime,
   resourceKey,
@@ -41,32 +45,30 @@ import {
   type Actor,
   type SigningKey,
   type AuditEntry,
+  type AuditScope,
 } from "@/lib/recon"
 import { Loading, ErrorState, SeverityBadge, StatusBadge, EmptyState } from "../ui"
 
 interface Data {
   keys: SigningKey[]
-  entries: AuditEntry[]
   alerts: Alert[]
   rules: Rule[]
 }
 
 export function AuditPanel() {
   const res = useReconResource<Data>(async (signal) => {
-    const [keys, entries, alerts, rules] = await Promise.all([
+    const [keys, alerts, rules] = await Promise.all([
       reconClient.getSigningKeys(signal),
-      reconClient.getAuditEntries(100, signal),
       listAllAlerts(signal),
       listAllRules(signal),
     ])
-    return { keys, entries, alerts, rules }
+    return { keys, alerts, rules }
   }, [])
 
   if (res.loading) return <Loading label="Loading audit trail…" />
   if (res.error) return <ErrorState error={res.error} onRetry={res.refetch} />
 
   const keys = res.data?.keys ?? []
-  const entries = res.data?.entries ?? []
   const alerts = res.data?.alerts ?? []
   const rules = res.data?.rules ?? []
 
@@ -86,7 +88,7 @@ export function AuditPanel() {
     <div className="mx-auto max-w-6xl space-y-6 p-3 sm:p-4">
       <VerificationCard keys={keys} />
 
-      <AuditTrailCard entries={entries} keys={keys} />
+      <AuditTrailCard keys={keys} rules={rules} />
 
       <section>
         <h3 className="mb-3 text-sm font-semibold">Who handled what</h3>
@@ -139,13 +141,44 @@ export function AuditPanel() {
 type VerifyState = "checking" | "valid" | "invalid" | "nokey"
 type TrailFilter = "all" | "committed" | "rejected"
 
+const SCOPES: { scope: AuditScope; label: string; noun: [string, string]; empty: string }[] = [
+  {
+    scope: "actions",
+    label: "Actions",
+    noun: ["action", "actions"],
+    empty: "No reconciliation actions yet. Evaluate a rule or work a break to record one.",
+  },
+  {
+    scope: "system",
+    label: "System",
+    noun: ["system write", "system writes"],
+    empty: "No system writes yet.",
+  },
+  {
+    scope: "all",
+    label: "All",
+    noun: ["write", "writes"],
+    empty: "No signed entries yet. Evaluate a rule or work a break to record one.",
+  },
+]
+
 function AuditTrailCard({
-  entries,
   keys,
+  rules,
 }: {
-  entries: AuditEntry[]
   keys: SigningKey[]
+  rules: Rule[]
 }) {
+  const [scope, setScope] = useState<AuditScope>("actions")
+  // The loaded entries carry their view, so a switch never shows one view's rows
+  // under another's heading while the next one loads.
+  const res = useReconResource<{ scope: AuditScope; entries: AuditEntry[] }>(
+    async (signal) => ({ scope, entries: await reconClient.getAuditEntries(100, scope, signal) }),
+    [scope]
+  )
+  const switching = res.data !== undefined && res.data.scope !== scope
+  const entries = switching ? [] : (res.data?.entries ?? [])
+  const view = SCOPES.find((s) => s.scope === scope) ?? SCOPES[0]
   const [results, setResults] = useState<Record<number, VerifyState>>({})
   const [running, setRunning] = useState(false)
   const [unsupported, setUnsupported] = useState(false)
@@ -212,7 +245,7 @@ function AuditTrailCard({
         <Hash className="h-5 w-5 text-muted-foreground" />
         <span className="text-base font-medium">Audit trail</span>
         <span className="text-xs text-muted-foreground">
-          {entries.length} most recent {entries.length === 1 ? "write" : "writes"}
+          {entries.length} most recent {view.noun[entries.length === 1 ? 0 : 1]}
         </span>
         <div className="ml-auto flex items-center gap-2">
           {invalidCount > 0 ? (
@@ -240,6 +273,30 @@ function AuditTrailCard({
         </div>
       </div>
 
+      {/* Which writes: reconciliation actions, provisioning, or both. Each view is
+          filtered by the ledger, not here. */}
+      <div role="group" aria-label="Audit trail view" className="inline-flex rounded-md border p-0.5">
+        {SCOPES.map((s) => (
+          <button
+            key={s.scope}
+            type="button"
+            onClick={() => {
+              setScope(s.scope)
+              setResults({})
+            }}
+            aria-pressed={scope === s.scope}
+            className={cn(
+              "rounded px-2.5 py-1 text-xs transition-colors",
+              scope === s.scope
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent"
+            )}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
       {/* Filter by outcome. Both committed and rejected writes are signed — the
           signature verifies regardless; this filters what the ledger *applied*. */}
       <div className="flex flex-wrap items-center gap-1.5">
@@ -255,11 +312,13 @@ function AuditTrailCard({
         </p>
       )}
 
-      {shown.length === 0 ? (
+      {res.loading || switching ? (
+        <Loading label="Loading audit trail…" />
+      ) : res.error ? (
+        <ErrorState error={res.error} onRetry={res.refetch} />
+      ) : shown.length === 0 ? (
         <p className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-          {entries.length === 0
-            ? "No signed entries yet. Evaluate a rule or work a break to record one."
-            : "No entries match this filter."}
+          {entries.length === 0 ? view.empty : "No entries match this filter."}
         </p>
       ) : (
         <ul className="divide-y overflow-hidden rounded-md border">
@@ -282,19 +341,7 @@ function AuditTrailCard({
                   <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">
                     #{e.sequence}
                   </span>
-                  <div className="min-w-0 flex-1">
-                    <span className="text-sm">
-                      {e.outcome === "failure" ? "Rejected" : "Committed"}
-                    </span>
-                    {e.outcome === "failure" && e.failureReason && (
-                      <span className="ml-2 text-xs text-destructive-foreground">
-                        {e.failureReason}
-                      </span>
-                    )}
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      · {e.orderCount} action{e.orderCount === 1 ? "" : "s"}
-                    </span>
-                  </div>
+                  <EntryTitle entry={e} rules={rules} />
                   <VerifyCell signed={e.signed} state={results[e.sequence]} />
                   <span
                     className="w-20 shrink-0 text-right text-xs text-muted-foreground"
@@ -323,6 +370,61 @@ function AuditTrailCard({
       </p>
     </Card>
   )
+}
+
+// EntryTitle says what a write did, from its signed payload: the reconciliation
+// action and its rule, or what a system write provisioned. A rejected write
+// keeps its "Rejected" mark and the ledger's reason.
+function EntryTitle({ entry, rules }: { entry: AuditEntry; rules: Rule[] }) {
+  const { title, subject, detail } = describeEntry(entry, rules)
+  const rejected = entry.outcome === "failure"
+  return (
+    <div className="min-w-0 flex-1 truncate">
+      {rejected && (
+        <span className="mr-2 text-xs font-medium text-destructive-foreground">Rejected</span>
+      )}
+      <span className="text-sm">{title}</span>
+      {subject && <span className="ml-2 text-xs text-muted-foreground">· {subject}</span>}
+      {detail && <span className="ml-2 text-xs text-muted-foreground">· {detail}</span>}
+      {rejected && entry.failureReason && (
+        <span className="ml-2 text-xs text-destructive-foreground">{entry.failureReason}</span>
+      )}
+    </div>
+  )
+}
+
+function describeEntry(
+  entry: AuditEntry,
+  rules: Rule[]
+): { title: string; subject?: string; detail?: string } {
+  const activity = entry.activity
+  if (activity) {
+    const rule = rules.find(
+      (r) => r.id === activity.ruleId && contractVersionOf(r) === contractVersionOf(activity)
+    )
+    const transition = activity.kind.startsWith("alert.") ? activity.payload?.payload : undefined
+    return {
+      title: activityLabel(activity.kind) ?? activity.kind,
+      subject: rule?.name ?? (activity.ruleId ? `rule ${activity.ruleId.slice(0, 8)}` : undefined),
+      detail: isRecord(transition) ? describeAlertPayload(transition) : undefined,
+    }
+  }
+  const [first, ...rest] = entry.actions ?? []
+  if (first) {
+    return {
+      title: first.kind,
+      subject: first.detail,
+      detail: rest.length > 0 ? `+${rest.length} more` : undefined,
+    }
+  }
+  return {
+    title: entry.outcome === "failure" ? "Write" : "Committed",
+    detail: `${entry.orderCount} action${entry.orderCount === 1 ? "" : "s"}`,
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function TrailFilterChip({

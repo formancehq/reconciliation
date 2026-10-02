@@ -149,6 +149,43 @@ export function alertActivityDetails(
   }
 }
 
+/** The human label of an activity kind, as the timeline and the audit trail show it. */
+export function activityLabel(kind: RuleActivity["kind"]): string {
+  return {
+    "rule.created": "Rule created",
+    "rule.updated": "Configuration updated",
+    "rule.deleted": "Rule deleted",
+    "evaluation.completed": "Evaluation completed",
+    "alert.opened": "Alert opened",
+    "alert.occurred": "Discrepancy observed again",
+    "alert.reopened": "Alert reopened",
+    "alert.acknowledged": "Acknowledged",
+    "alert.resolved": "Resolved after booking",
+    "alert.accepted": "Accepted by business",
+    "alert.auto_resolved": "Resolved automatically",
+    "alert.snoozed": "Snoozed",
+    "alert.unsnoozed": "Unsnoozed",
+  }[kind]
+}
+
+/** A one-line summary of an alert transition's payload: who, how many times, which bookings, and the note. */
+export function describeAlertPayload(payload: Record<string, unknown> | undefined): string | undefined {
+  if (!payload) return undefined
+  const nested = [payload.ack, payload.resolution, payload.snooze].find(isRecord)
+  const actor = typeof nested?.by === "string" ? nested.by : typeof payload.by === "string" ? payload.by : undefined
+  const note = typeof nested?.note === "string" ? nested.note : undefined
+  const count = typeof payload.occurrenceCount === "number" ? payload.occurrenceCount : undefined
+  const refs = Array.isArray(nested?.transactionRefs)
+    ? nested.transactionRefs.filter((value): value is string => typeof value === "string")
+    : []
+  return [
+    actor ? `by ${actor}` : undefined,
+    count !== undefined ? `occurrence ${count}` : undefined,
+    refs.length > 0 ? `booking refs ${refs.join(", ")}` : undefined,
+    note,
+  ].filter(Boolean).join(" · ") || undefined
+}
+
 export function activitySnapshot(
   activity: RuleActivity
 ): Record<string, unknown> | undefined {

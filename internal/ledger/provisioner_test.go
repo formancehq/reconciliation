@@ -13,11 +13,65 @@ import (
 
 const testLedger = "reconciliation"
 
+// fullChart is the LedgerInfo of a ledger that already carries the whole chart.
+func fullChart() *commonpb.LedgerInfo {
+	fields := map[string]*commonpb.MetadataFieldSchema{}
+	for _, cmd := range schema.MetadataSchema() {
+		fields[cmd.GetKey()] = &commonpb.MetadataFieldSchema{Type: cmd.GetType()}
+	}
+
+	return &commonpb.LedgerInfo{
+		AccountTypes:   schema.AccountTypes(),
+		MetadataSchema: &commonpb.MetadataSchema{AccountFields: fields},
+	}
+}
+
+// expectIndexesAndNumscriptsCreated registers the index and numscript passes of
+// a ledger that has none yet, and returns the numscript names registered.
+func expectIndexesAndNumscriptsCreated(t *testing.T, m *MockprovisionAPI) *[]string {
+	t.Helper()
+
+	m.EXPECT().ListIndexIDs(gomock.Any(), testLedger).Return(nil, nil)
+
+	// The queryable metadata indexes are created (id at minimum, for id→address
+	// resolution).
+	m.EXPECT().
+		CreateIndex(gomock.Any(), testLedger, gomock.Any()).
+		Return(nil).
+		Times(len(schema.MetadataIndexes()) + len(schema.TransactionIndexes()))
+
+	m.EXPECT().NumscriptVersions(gomock.Any(), testLedger, gomock.Any()).Return(nil, nil).Times(len(schema.Numscripts()))
+
+	// Capture the numscripts actually registered (assert non-empty content +
+	// pinned version).
+	scripts := &[]string{}
+
+	m.EXPECT().
+		SaveNumscript(gomock.Any(), testLedger, gomock.Any(), gomock.Any(), schema.NumscriptVersion).
+		DoAndReturn(func(_ context.Context, _, name, content, _ string) error {
+			if content == "" {
+				t.Errorf("numscript %q has empty content", name)
+			}
+
+			*scripts = append(*scripts, name)
+
+			return nil
+		}).
+		Times(len(schema.Numscripts()))
+
+	return scripts
+}
+
 func TestProvisioner_Provision(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
 	m := NewMockprovisionAPI(ctrl)
+
+	// No ledger yet: the first read finds nothing, the second reads the chart
+	// CreateLedger applied.
+	m.EXPECT().GetLedgerInfo(gomock.Any(), testLedger).Return(nil, nil)
+	m.EXPECT().GetLedgerInfo(gomock.Any(), testLedger).Return(fullChart(), nil)
 
 	// Assert the ledger is created with AUDIT enforcement AND the real chart:
 	// a non-empty metadata schema and the alert-state family marked EPHEMERAL.
@@ -40,13 +94,34 @@ func TestProvisioner_Provision(t *testing.T) {
 			return nil
 		})
 
-	// Bare ledger (nothing declared yet) → the reconcile applies the full chart.
-	m.EXPECT().
-		GetLedgerInfo(gomock.Any(), testLedger).
-		Return(nil, nil)
+	// CreateLedger applied the whole chart, so no AddAccountType or
+	// SetMetadataFieldType follows: gomock fails the test on either.
+	scripts := expectIndexesAndNumscriptsCreated(t, m)
 
-	// Reconcile pass (F8): every account type is added so a stale ledger picks up
-	// additive chart changes. Capture the names actually reconciled.
+	p := NewProvisioner(m, testLedger, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
+	if err := p.Provision(context.Background()); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	for _, want := range []string{schema.NumscriptAlertOpen, schema.NumscriptAlertBump, schema.NumscriptAlertReopen, schema.NumscriptAlertMove} {
+		if !slices.Contains(*scripts, want) {
+			t.Errorf("numscript %q not registered (got %v)", want, *scripts)
+		}
+	}
+}
+
+// TestProvisioner_ReconcilesAStaleLedger is F8: an existing ledger whose chart
+// predates the current one gets every missing account type and metadata field,
+// without being re-created.
+func TestProvisioner_ReconcilesAStaleLedger(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	m := NewMockprovisionAPI(ctrl)
+
+	// The ledger exists with nothing declared. No CreateLedger is expected.
+	m.EXPECT().GetLedgerInfo(gomock.Any(), testLedger).Return(&commonpb.LedgerInfo{}, nil)
+
 	var addedTypes []string
 
 	m.EXPECT().
@@ -58,8 +133,6 @@ func TestProvisioner_Provision(t *testing.T) {
 		}).
 		Times(len(schema.AccountTypes()))
 
-	// Reconcile pass (F8): every typed metadata field is (re-)declared. Capture
-	// the keys actually reconciled.
 	var setFields []string
 
 	m.EXPECT().
@@ -71,42 +144,13 @@ func TestProvisioner_Provision(t *testing.T) {
 		}).
 		Times(len(schema.MetadataSchema()))
 
-	// The queryable metadata indexes are created (id at minimum, for id→address
-	// resolution).
-	m.EXPECT().
-		CreateIndex(gomock.Any(), testLedger, gomock.Any()).
-		Return(nil).
-		Times(len(schema.MetadataIndexes()) + len(schema.TransactionIndexes()))
-
-	// Capture the numscripts actually registered (assert non-empty content +
-	// pinned version).
-	var scripts []string
-
-	m.EXPECT().
-		SaveNumscript(gomock.Any(), testLedger, gomock.Any(), gomock.Any(), schema.NumscriptVersion).
-		DoAndReturn(func(_ context.Context, _, name, content, _ string) error {
-			if content == "" {
-				t.Errorf("numscript %q has empty content", name)
-			}
-
-			scripts = append(scripts, name)
-
-			return nil
-		}).
-		Times(len(schema.Numscripts()))
+	expectIndexesAndNumscriptsCreated(t, m)
 
 	p := NewProvisioner(m, testLedger, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	if err := p.Provision(context.Background()); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 
-	for _, want := range []string{schema.NumscriptAlertOpen, schema.NumscriptAlertBump, schema.NumscriptAlertReopen, schema.NumscriptAlertMove} {
-		if !slices.Contains(scripts, want) {
-			t.Errorf("numscript %q not registered (got %v)", want, scripts)
-		}
-	}
-
-	// Every account type and metadata field in the chart is reconciled (F8).
 	for wantType := range schema.AccountTypes() {
 		if !slices.Contains(addedTypes, wantType) {
 			t.Errorf("account type %q not reconciled (got %v)", wantType, addedTypes)
@@ -120,38 +164,28 @@ func TestProvisioner_Provision(t *testing.T) {
 	}
 }
 
-// TestProvisioner_UpToDateLedgerSkipsReconcile is the churn guard: on a ledger
-// that already carries the full chart, the reconcile must issue ZERO
-// AddAccountType / SetMetadataFieldType calls — re-declaring an indexed metadata
-// field would re-trigger a forward-index rewrite on every boot.
-func TestProvisioner_UpToDateLedgerSkipsReconcile(t *testing.T) {
+// TestProvisioner_UpToDateLedgerWritesNothing is the boot guard: on a ledger
+// that already carries the chart, every index and every numscript version, a
+// boot issues no write at all. Re-declaring an indexed metadata field would
+// rewrite its index, and every refused re-create is still a signed, rejected
+// audit entry.
+func TestProvisioner_UpToDateLedgerWritesNothing(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
 	m := NewMockprovisionAPI(ctrl)
 
-	m.EXPECT().CreateLedger(gomock.Any(), testLedger, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-
-	// The ledger already has every account type and every metadata field with the
-	// declared type — a fully-provisioned ledger.
-	fields := map[string]*commonpb.MetadataFieldSchema{}
-	for _, cmd := range schema.MetadataSchema() {
-		fields[cmd.GetKey()] = &commonpb.MetadataFieldSchema{Type: cmd.GetType()}
-	}
-
+	m.EXPECT().GetLedgerInfo(gomock.Any(), testLedger).Return(fullChart(), nil)
 	m.EXPECT().
-		GetLedgerInfo(gomock.Any(), testLedger).
-		Return(&commonpb.LedgerInfo{
-			AccountTypes:   schema.AccountTypes(),
-			MetadataSchema: &commonpb.MetadataSchema{AccountFields: fields},
-		}, nil)
+		ListIndexIDs(gomock.Any(), testLedger).
+		Return(slices.Concat(schema.MetadataIndexes(), schema.TransactionIndexes()), nil)
+	m.EXPECT().
+		NumscriptVersions(gomock.Any(), testLedger, gomock.Any()).
+		Return([]string{"1.0.0", schema.NumscriptVersion}, nil).
+		Times(len(schema.Numscripts()))
 
-	// The delta is empty → no schema-mutating reconcile calls. gomock fails the
-	// test if either is called (no EXPECT registered).
-
-	// The remaining passes still run (idempotent no-ops at the client layer).
-	m.EXPECT().CreateIndex(gomock.Any(), testLedger, gomock.Any()).Return(nil).Times(len(schema.MetadataIndexes()) + len(schema.TransactionIndexes()))
-	m.EXPECT().SaveNumscript(gomock.Any(), testLedger, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(len(schema.Numscripts()))
+	// No EXPECT for CreateLedger, AddAccountType, SetMetadataFieldType,
+	// CreateIndex or SaveNumscript: gomock fails the test if one is called.
 
 	p := NewProvisioner(m, testLedger, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	if err := p.Provision(context.Background()); err != nil {
@@ -165,6 +199,7 @@ func TestProvisioner_CreateLedgerErrorShortCircuits(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	m := NewMockprovisionAPI(ctrl)
 
+	m.EXPECT().GetLedgerInfo(gomock.Any(), testLedger).Return(nil, nil)
 	m.EXPECT().
 		CreateLedger(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("boom"))

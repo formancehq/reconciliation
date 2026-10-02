@@ -21,9 +21,11 @@ read-scoped token (`reconciliation:read`); neither needs ledger access.
    `{ data: { keys: [{ keyId, publicKey }] } }`. `publicKey` is the base64 of the
    raw 32-byte Ed25519 public key; `keyId` identifies which key signed an entry.
 
-2. **Read the entries.** `GET /audit/entries?limit=N` →
+2. **Read the entries.** `GET /audit/entries?scope=all&limit=N` →
    `{ data: { entries: [{ sequence, keyId, payload, signature, signed, outcome, … }] } }`,
-   newest first. `payload` is the exact signed batch bytes (base64) and
+   newest first. `scope=all` lists every write; the default, `actions`, lists only the
+   reconciliation actions (rule changes, evaluations, alert transitions), and
+   `system` only the provisioning writes. `payload` is the exact signed batch bytes (base64) and
    `signature` is the Ed25519 signature over them (base64). A rejected write is
    still signed and audited (`outcome: "failure"`) — signing proves the *attempt*
    was authentic, independent of whether the ledger accepted it.

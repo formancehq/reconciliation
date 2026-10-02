@@ -450,6 +450,42 @@ Records a mute intent until `until` (which must be in the future): the alert kee
 
 Clears an active snooze before its window elapses. Idempotent — unsnoozing an alert that isn't snoozed returns it unchanged and emits no event.
 
+### Audit
+
+The signed record of reconciliation's control-ledger writes. An auditor verifies it from the public key alone: see [audit-verification.md](./audit-verification.md) for the recipe and [audit-chain-v3.md](./audit-chain-v3.md) for the model.
+
+#### `GET /audit/signing-keys` — the public keys
+
+Each key has a `keyId`, a `publicKey` (base64 of the raw 32-byte Ed25519 key) and, after a rotation, a `parentKeyId`.
+
+#### `GET /audit/entries` — the audit trail
+
+The control ledger's audit entries, newest first.
+
+| Parameter | Values | Default |
+|---|---|---|
+| `scope` | `actions`: reconciliation actions (rule changes, evaluations, alert transitions) · `system`: provisioning (the ledger, its chart of accounts, metadata types, indexes, numscripts) · `all` | `actions` |
+| `limit` | 1–500 | 50 |
+
+An unknown `scope` returns `400 VALIDATION`. The ledger applies the scope, and a rejected write appears in the scope of what it tried to do.
+
+Each entry carries:
+
+- `sequence`: the ledger's bucket-wide audit sequence, shared with other ledgers, so numbers skip.
+- `timestamp`, `orderCount`, `ledgers`.
+- `outcome` (`success` or `failure`), with `failureReason` and `failureMessage` on a failure.
+- `payload` and `signature` (base64), `keyId` and `signed`. The check is `ed25519.Verify(publicKey, payload, signature)`.
+- `actions`, read from the signed payload: what the batch requested, for example `{"kind": "Create index", "detail": "transaction address"}`.
+- `activity`, on an action only: what reconciliation recorded, read from the signed payload. It has the `kind` (the rule timeline's kinds, for example `alert.acknowledged`), `ruleId`, `contractVersion`, `occurredAt`, `correlationId` and the kind's `payload`.
+
+#### `GET /audit/entries/{sequence}` — one entry
+
+The same fields. For an unsigned entry, `actions` come from the ledger's per-order items, which only this read carries.
+
+#### `GET /audit/entries/by-transaction/{transactionId}` — the proof of one write
+
+The entry that committed a control-ledger transaction, such as an alert event's `transactionId`. Returns `404` when no entry matches. It also returns `404`, and logs an error, when the entry's signed payload does not carry that transaction. See [audit-chain-v3.md §10](./audit-chain-v3.md#10-per-event-verification--resolving-an-alert-event-to-its-audit-entry).
+
 ---
 
 <a id="events"></a>

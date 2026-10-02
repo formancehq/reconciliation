@@ -30,6 +30,7 @@ type fakeIntrospector struct {
 	auditItems  []ledger.AuditEntryInfo
 	auditErr    error
 	auditLimit  int
+	auditScope  ledger.AuditScope
 	resolveByTx map[uint64]ledger.AuditEntryInfo
 	// gotFilter records what the handler pushed down, so a test can tell a
 	// ledger-side predicate from a Go-side one.
@@ -49,7 +50,8 @@ func (f *fakeIntrospector) ListSigningKeys(context.Context) ([]ledger.SigningKey
 	return f.signingKeys, f.signingErr
 }
 
-func (f *fakeIntrospector) ListAuditEntries(_ context.Context, _ string, limit int) ([]ledger.AuditEntryInfo, error) {
+func (f *fakeIntrospector) ListAuditEntries(_ context.Context, _ string, scope ledger.AuditScope, limit int) ([]ledger.AuditEntryInfo, error) {
+	f.auditScope = scope
 	f.auditLimit = limit
 	return f.auditItems, f.auditErr
 }

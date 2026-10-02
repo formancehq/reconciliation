@@ -19,6 +19,7 @@ import type {
   AuditEntriesResponse,
   AuditEntry,
   AuditEntryResponse,
+  AuditScope,
   Cursor,
   EvaluateRuleRequest,
   ResolveAlertRequest,
@@ -171,11 +172,15 @@ export const reconClient = {
     )
     return r.data.keys ?? []
   },
-  async getAuditEntries(limit = 50, signal?: AbortSignal): Promise<AuditEntry[]> {
+  async getAuditEntries(
+    limit = 50,
+    scope: AuditScope = "actions",
+    signal?: AbortSignal
+  ): Promise<AuditEntry[]> {
     const r = await reconRequest<AuditEntriesResponse>(
       "GET",
       "/audit/entries",
-      { query: { limit }, signal }
+      { query: { limit, scope }, signal }
     )
     return r.data.entries ?? []
   },

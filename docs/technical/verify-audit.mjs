@@ -46,8 +46,9 @@ if (keys.size === 0) {
   process.exit(2)
 }
 
-// 2. Read the served audit entries (newest first, up to `limit`).
-const entries = (await getJSON(`/audit/entries?limit=${LIMIT}`)).data.entries ?? []
+// 2. Read the served audit entries (newest first, up to `limit`): every write,
+//    actions and system writes alike.
+const entries = (await getJSON(`/audit/entries?scope=all&limit=${LIMIT}`)).data.entries ?? []
 
 // 3. Verify each signed entry: ed25519.verify(publicKey, payload, signature).
 let ok = 0

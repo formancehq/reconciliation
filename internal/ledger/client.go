@@ -8,12 +8,15 @@ package ledger
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"math/big"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/formancehq/reconciliation/internal/ledgerpb/auditpb"
@@ -22,6 +25,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/ledgerpb/raftcmdpb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/signaturepb"
+	schema "github.com/formancehq/reconciliation/internal/ledgerschema"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -299,10 +303,27 @@ type AuditEntryInfo struct {
 	// and human message — e.g. why a guarded write was rejected.
 	FailureReason  string
 	FailureMessage string
-	// Actions is the decoded per-order business intent of the proposal. Populated
-	// only on the single-entry read (GetAuditEntry) — the stream omits the items
-	// these are decoded from. Usually one entry (a batch is one Apply order).
+	// Actions is the decoded per-order business intent of the proposal: read from
+	// the signed payload on both reads, or for an unsigned entry from its items,
+	// which only the single-entry read (GetAuditEntry) carries.
 	Actions []AuditAction
+	// Activity is the reconciliation action the write records, read from the
+	// signed payload. Nil for a provisioning write or an unsigned entry.
+	Activity *AuditActivity
+}
+
+// AuditActivity is the activity envelope recon stamps on every control-ledger
+// transaction (rule change, evaluation, alert transition), as signed.
+type AuditActivity struct {
+	// Kind is the activity kind, e.g. "rule.created" or "alert.acknowledged".
+	Kind            string
+	RuleID          string
+	ContractVersion int
+	OccurredAt      time.Time
+	CorrelationID   string
+	// Payload is the kind-specific JSON detail (an alert transition's envelope,
+	// a rule snapshot, an evaluation's verdict).
+	Payload json.RawMessage
 }
 
 // AuditAction is the human-readable intent of one order in an audit proposal,
@@ -321,18 +342,35 @@ type AuditAction struct {
 	Detail string
 }
 
+// AuditScope selects which of a control ledger's audit entries to list.
+type AuditScope string
+
+const (
+	// AuditScopeActions lists the reconciliation actions: the ledger's
+	// transactions, i.e. rule changes, evaluations and alert transitions.
+	AuditScopeActions AuditScope = "actions"
+	// AuditScopeSystem lists the provisioning writes: the ledger itself, its
+	// chart of accounts, metadata schema, indexes and numscripts.
+	AuditScopeSystem AuditScope = "system"
+	// AuditScopeAll lists every entry that names the ledger.
+	AuditScopeAll AuditScope = "all"
+)
+
 // ListAuditEntries returns the ledger's audit entries for one ledger (recon's
-// control ledger), newest first, up to limit. Each entry carries the batch
+// control ledger) in the given scope, newest first, up to limit. Each entry carries the batch
 // Ed25519 signature the ledger stored, so a third party can verify it from the
 // public key with no ledger access. The audit sequence is bucket-wide, so a
 // filtered subset is authentic per-entry but not necessarily gapless — see the
 // P1.3 completeness note.
-func (c *Client) ListAuditEntries(ctx context.Context, ledgerName string, limit int) ([]AuditEntryInfo, error) {
+func (c *Client) ListAuditEntries(ctx context.Context, ledgerName string, scope AuditScope, limit int) ([]AuditEntryInfo, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	filter := auditLedgerFilter(ledgerName)
+	filter, err := auditScopeFilter(ledgerName, scope)
+	if err != nil {
+		return nil, err
+	}
 
 	var (
 		entries []AuditEntryInfo
@@ -535,14 +573,49 @@ func metadataStored(signed, stored map[string]*commonpb.MetadataValue) bool {
 	return true
 }
 
-// auditLedgerFilter is the QueryFilter scoping audit entries to one ledger.
-func auditLedgerFilter(ledgerName string) *commonpb.QueryFilter {
+// actionOrderType and systemOrderTypes are the ledger's audit order-type tokens
+// (ledger internal/domain/audit_order_type.go, extended additively, never
+// renamed) for recon's two kinds of control-ledger writes: every action is a
+// transaction, and provisioning writes the ledger, its chart, indexes and
+// numscripts.
+const actionOrderType = "create_transaction"
+
+var systemOrderTypes = []string{"create_ledger", "add_account_type", "set_metadata_field_type", "create_index", "save_numscript"}
+
+// auditScopeFilter is the QueryFilter selecting one ledger's audit entries in a
+// scope. The ledger matches an order type against any order of a proposal, so a
+// rejected write counts in its scope too.
+func auditScopeFilter(ledgerName string, scope AuditScope) (*commonpb.QueryFilter, error) {
+	onLedger := auditStringFilter(commonpb.AuditField_AUDIT_FIELD_LEDGER, ledgerName)
+
+	switch scope {
+	case AuditScopeAll:
+		return onLedger, nil
+	case AuditScopeActions:
+		return auditAnd(onLedger, auditStringFilter(commonpb.AuditField_AUDIT_FIELD_ORDER_TYPE, actionOrderType)), nil
+	case AuditScopeSystem:
+		anyOf := make([]*commonpb.QueryFilter, 0, len(systemOrderTypes))
+		for _, orderType := range systemOrderTypes {
+			anyOf = append(anyOf, auditStringFilter(commonpb.AuditField_AUDIT_FIELD_ORDER_TYPE, orderType))
+		}
+
+		return auditAnd(onLedger, &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_Or{Or: &commonpb.OrFilter{Filters: anyOf}}}), nil
+	default:
+		return nil, fmt.Errorf("unknown audit scope %q", scope)
+	}
+}
+
+func auditStringFilter(field commonpb.AuditField, value string) *commonpb.QueryFilter {
 	return &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_Audit{Audit: &commonpb.AuditCondition{
-		Field: commonpb.AuditField_AUDIT_FIELD_LEDGER,
+		Field: field,
 		Condition: &commonpb.AuditCondition_StringCond{StringCond: &commonpb.StringCondition{
-			Value: &commonpb.StringCondition_Hardcoded{Hardcoded: ledgerName},
+			Value: &commonpb.StringCondition_Hardcoded{Hardcoded: value},
 		}},
 	}}}
+}
+
+func auditAnd(filters ...*commonpb.QueryFilter) *commonpb.QueryFilter {
+	return &commonpb.QueryFilter{Filter: &commonpb.QueryFilter_And{And: &commonpb.AndFilter{Filters: filters}}}
 }
 
 // auditEntryInfoFrom maps a ledger AuditEntry to the caller-facing shape. Shared
@@ -571,6 +644,14 @@ func auditEntryInfoFrom(entry *auditpb.AuditEntry) AuditEntryInfo {
 		info.Payload = sig.GetPayload()
 		info.Signed = len(sig.GetSignature()) > 0
 	}
+	// A signed entry carries the batch recon signed, on the list as well: read
+	// what it requested from there.
+	if len(info.Payload) > 0 {
+		if actions, activity, ok := decodeSignedBatch(info.Payload); ok {
+			info.Actions, info.Activity = actions, activity
+			return info
+		}
+	}
 	// Items are populated only on the single-entry read; decode each order's
 	// business intent for the audit-tab detail. Best-effort — an order we can't
 	// decode is skipped rather than failing the whole entry.
@@ -581,6 +662,123 @@ func auditEntryInfoFrom(entry *auditpb.AuditEntry) AuditEntryInfo {
 	}
 
 	return info
+}
+
+// decodeSignedBatch reads a signed payload (the exact ApplyBatch recon signed)
+// into the actions it requested and, for a control transaction, the activity
+// it records. ok=false when the bytes do not decode.
+func decodeSignedBatch(payload []byte) ([]AuditAction, *AuditActivity, bool) {
+	batch := &servicepb.ApplyBatch{}
+	if err := batch.UnmarshalVT(payload); err != nil {
+		return nil, nil, false
+	}
+
+	var (
+		actions  []AuditAction
+		activity *AuditActivity
+	)
+	for _, req := range batch.GetRequests() {
+		actions = append(actions, requestAction(req))
+		if activity == nil {
+			activity = activityOf(req.GetApply().GetAction().GetCreateTransaction().GetMetadata())
+		}
+	}
+
+	return actions, activity, true
+}
+
+// requestAction names one request of a signed batch, with the identifier it
+// carries when there is one (a numscript, an index, a metadata key).
+func requestAction(req *servicepb.Request) AuditAction {
+	switch t := req.GetType().(type) {
+	case *servicepb.Request_Apply:
+		action := AuditAction{Kind: "Ledger write", Ledger: t.Apply.GetLedger()}
+		switch data := t.Apply.GetAction().GetData().(type) {
+		case *servicepb.LedgerAction_CreateTransaction:
+			action.Kind = "Create transaction"
+			if ref := data.CreateTransaction.GetScriptReference(); ref.GetName() != "" {
+				action.Detail = nameVersion(ref.GetName(), ref.GetVersion())
+			}
+		case *servicepb.LedgerAction_AddMetadata:
+			action.Kind = "Save metadata"
+		case *servicepb.LedgerAction_DeleteMetadata:
+			action.Kind = "Delete metadata"
+		}
+
+		return action
+	case *servicepb.Request_CreateLedger:
+		return AuditAction{Kind: "Create ledger", Ledger: t.CreateLedger.GetName()}
+	case *servicepb.Request_AddAccountType:
+		return AuditAction{Kind: "Add account type", Ledger: t.AddAccountType.GetLedger(), Detail: t.AddAccountType.GetAccountType().GetName()}
+	case *servicepb.Request_SetMetadataFieldType:
+		return AuditAction{Kind: "Declare metadata field", Ledger: t.SetMetadataFieldType.GetLedger(), Detail: t.SetMetadataFieldType.GetKey()}
+	case *servicepb.Request_CreateIndex:
+		return AuditAction{Kind: "Create index", Ledger: t.CreateIndex.GetLedger(), Detail: indexLabel(t.CreateIndex.GetId())}
+	case *servicepb.Request_SaveNumscript:
+		return AuditAction{Kind: "Register numscript", Ledger: t.SaveNumscript.GetLedger(), Detail: nameVersion(t.SaveNumscript.GetName(), t.SaveNumscript.GetVersion())}
+	case *servicepb.Request_RegisterSigningKey:
+		return AuditAction{Kind: "Register signing key", Detail: t.RegisterSigningKey.GetKeyId()}
+	default:
+		return AuditAction{Kind: "Ledger request"}
+	}
+}
+
+// activityOf reads recon's activity envelope from a transaction's metadata; nil
+// when the metadata carries none.
+func activityOf(md map[string]*commonpb.MetadataValue) *AuditActivity {
+	kind := md[schema.ActivityMetaKind].GetStringValue()
+	if kind == "" {
+		return nil
+	}
+
+	activity := &AuditActivity{
+		Kind:          kind,
+		RuleID:        md[schema.ActivityMetaRule].GetStringValue(),
+		CorrelationID: md[schema.ActivityMetaCorrelation].GetStringValue(),
+	}
+	if v, err := strconv.Atoi(md[schema.ActivityMetaContractVersion].GetStringValue()); err == nil {
+		activity.ContractVersion = v
+	}
+	if at, err := time.Parse(time.RFC3339Nano, md[schema.ActivityMetaAt].GetStringValue()); err == nil {
+		activity.OccurredAt = at.UTC()
+	}
+	// Served as raw JSON, so only when it is JSON.
+	if payload := md[schema.ActivityMetaPayload].GetStringValue(); json.Valid([]byte(payload)) {
+		activity.Payload = json.RawMessage(payload)
+	}
+
+	return activity
+}
+
+// indexLabel names an index by what it indexes, e.g. "transaction address" or
+// "account metadata status".
+func indexLabel(id *commonpb.IndexID) string {
+	words := func(name, prefix string) string {
+		return strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(name, prefix), "_", " "))
+	}
+
+	switch kind := id.GetKind().(type) {
+	case *commonpb.IndexID_TxBuiltin:
+		return "transaction " + words(kind.TxBuiltin.String(), "TX_BUILTIN_INDEX_")
+	case *commonpb.IndexID_AccountBuiltin:
+		return "account " + words(kind.AccountBuiltin.String(), "ACCT_BUILTIN_INDEX_")
+	case *commonpb.IndexID_LogBuiltin:
+		return "log " + words(kind.LogBuiltin.String(), "LOG_BUILTIN_INDEX_")
+	case *commonpb.IndexID_Metadata:
+		return words(kind.Metadata.GetTarget().String(), "TARGET_TYPE_") + " metadata " + kind.Metadata.GetKey()
+	default:
+		return ""
+	}
+}
+
+// nameVersion renders a numscript reference as "name vVersion", or the name
+// alone when it has no version.
+func nameVersion(name, version string) string {
+	if version == "" {
+		return name
+	}
+
+	return name + " v" + version
 }
 
 // decodeAuditAction turns one order's business-intent bytes into a shallow,
@@ -810,6 +1008,49 @@ func (c *Client) CreateIndex(ctx context.Context, ledger string, index *servicep
 	}
 
 	return err
+}
+
+// ListIndexIDs returns the ids of the indexes declared on a ledger.
+func (c *Client) ListIndexIDs(ctx context.Context, ledger string) ([]*commonpb.IndexID, error) {
+	stream, err := c.service.ListIndexes(ctx, &servicepb.ListIndexesRequest{
+		Scope:  servicepb.ListIndexesRequest_SCOPE_LEDGER,
+		Ledger: ledger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list indexes of %s: %w", ledger, err)
+	}
+
+	var ids []*commonpb.IndexID
+	for {
+		index, rerr := stream.Recv()
+		if errors.Is(rerr, io.EOF) {
+			return ids, nil
+		}
+		if rerr != nil {
+			return nil, fmt.Errorf("recv index of %s: %w", ledger, rerr)
+		}
+
+		ids = append(ids, index.GetId())
+	}
+}
+
+// NumscriptVersions returns the stored versions of a library numscript; none
+// for a name the ledger does not know.
+func (c *Client) NumscriptVersions(ctx context.Context, ledger, name string) ([]string, error) {
+	resp, err := c.service.ListNumscriptVersions(ctx, &servicepb.ListNumscriptVersionsRequest{Ledger: ledger, Name: name})
+	if status.Code(err) == codes.NotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list versions of numscript %q: %w", name, err)
+	}
+
+	versions := make([]string, 0, len(resp.GetVersions()))
+	for _, v := range resp.GetVersions() {
+		versions = append(versions, v.GetVersion())
+	}
+
+	return versions, nil
 }
 
 // SaveNumscript registers a numscript in the ledger's library so transactions

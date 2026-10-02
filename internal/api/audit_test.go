@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,21 @@ func TestListSigningKeysHandler(t *testing.T) {
 		sharedapi.Decode(t, rec.Body, &got)
 		require.Empty(t, got.Data.Keys)
 	})
+}
+
+// firstEntryField returns the raw JSON of one field of the first served entry.
+func firstEntryField(t *testing.T, body []byte, field string) string {
+	t.Helper()
+
+	var got struct {
+		Data struct {
+			Entries []map[string]json.RawMessage `json:"entries"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(body, &got))
+	require.NotEmpty(t, got.Data.Entries)
+
+	return string(got.Data.Entries[0][field])
 }
 
 func TestListAuditEntriesHandler(t *testing.T) {
@@ -102,6 +118,61 @@ func TestListAuditEntriesHandler(t *testing.T) {
 		var got sharedapi.BaseResponse[auditEntriesResponse]
 		sharedapi.Decode(t, rec.Body, &got)
 		require.Empty(t, got.Data.Entries)
+	})
+
+	t.Run("serves the action a write records and the actions it requested", func(t *testing.T) {
+		t.Parallel()
+		at := time.Date(2026, 10, 2, 13, 30, 0, 0, time.UTC)
+		fake := &fakeIntrospector{auditItems: []ledger.AuditEntryInfo{{
+			Sequence: 325,
+			Outcome:  "success",
+			Actions:  []ledger.AuditAction{{Kind: "Create transaction", Ledger: "reconciliation", Detail: "alert_move v2.0.0"}},
+			Activity: &ledger.AuditActivity{Kind: "alert.acknowledged", RuleID: "r-1", ContractVersion: 2, OccurredAt: at, Payload: []byte(`{"newStatus":"ACKNOWLEDGED"}`)},
+		}}}
+		rec := httptest.NewRecorder()
+		listAuditEntriesHandler(fake, "reconciliation").
+			ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/audit/entries", nil))
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.JSONEq(t, `{
+			"kind": "alert.acknowledged",
+			"ruleId": "r-1",
+			"contractVersion": 2,
+			"occurredAt": "2026-10-02T13:30:00Z",
+			"payload": {"newStatus": "ACKNOWLEDGED"}
+		}`, firstEntryField(t, rec.Body.Bytes(), "activity"))
+		assert.JSONEq(t, `[{"kind": "Create transaction", "ledger": "reconciliation", "detail": "alert_move v2.0.0"}]`, firstEntryField(t, rec.Body.Bytes(), "actions"))
+	})
+
+	t.Run("lists reconciliation actions by default", func(t *testing.T) {
+		t.Parallel()
+		fake := &fakeIntrospector{}
+		listAuditEntriesHandler(fake, "reconciliation").
+			ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/audit/entries", nil))
+
+		assert.Equal(t, ledger.AuditScopeActions, fake.auditScope)
+	})
+
+	t.Run("passes the requested scope", func(t *testing.T) {
+		t.Parallel()
+		for _, scope := range []ledger.AuditScope{ledger.AuditScopeActions, ledger.AuditScopeSystem, ledger.AuditScopeAll} {
+			fake := &fakeIntrospector{}
+			rec := httptest.NewRecorder()
+			listAuditEntriesHandler(fake, "reconciliation").
+				ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/audit/entries?scope="+string(scope), nil))
+
+			require.Equal(t, http.StatusOK, rec.Code, scope)
+			assert.Equal(t, scope, fake.auditScope)
+		}
+	})
+
+	t.Run("an unknown scope is a validation error", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		listAuditEntriesHandler(&fakeIntrospector{}, "reconciliation").
+			ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/audit/entries?scope=everything", nil))
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 }
 

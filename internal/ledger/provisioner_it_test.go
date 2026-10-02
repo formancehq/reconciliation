@@ -69,3 +69,38 @@ func TestIntegration_ProvisionReconcilesExistingLedger(t *testing.T) {
 	// Idempotent re-provision on the now-current ledger: no error, no drift.
 	require.NoError(t, prov.Provision(ctx), "re-provision must be a clean no-op")
 }
+
+// TestIntegration_ReprovisionRecordsNoRejectedWrite proves a boot on an already
+// provisioned control ledger writes nothing the ledger refuses. A refused
+// re-create (ledger, index, numscript) is still a signed audit entry, so every
+// restart used to add one rejected entry per index and numscript to the trail.
+//
+//	go test -tags it -run TestIntegration_ReprovisionRecordsNoRejectedWrite ./internal/ledger/...
+func TestIntegration_ReprovisionRecordsNoRejectedWrite(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	client, err := NewClient(itAddr(), nil)
+	require.NoError(t, err)
+
+	defer func() { _ = client.Close() }()
+
+	control := "recon-it-reboot-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(ctx, control) }()
+
+	prov := NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
+	require.NoError(t, prov.Provision(ctx), "first boot")
+	require.NoError(t, prov.Provision(ctx), "second boot")
+
+	entries, err := client.ListAuditEntries(ctx, control, AuditScopeAll, 500)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries, "the first boot is audited")
+
+	var rejected []string
+	for _, e := range entries {
+		if e.Outcome == "failure" {
+			rejected = append(rejected, e.FailureReason)
+		}
+	}
+	require.Empty(t, rejected, "a boot must not write what the ledger refuses")
+}

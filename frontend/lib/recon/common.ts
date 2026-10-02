@@ -360,11 +360,29 @@ export interface AuditEntry {
   failureReason?: string;
   failureMessage?: string;
   /**
-   * Decoded per-order business intent. Populated only on the single-entry read
-   * (getAuditEntry); the list omits it. An Apply batch is one action, reported
-   * without decoding its numscript.
+   * Decoded per-order business intent, read from the signed payload (or, for an
+   * unsigned entry, from the items only getAuditEntry carries).
    */
   actions?: AuditAction[];
+  /** The reconciliation action the write records; absent on provisioning. */
+  activity?: AuditActivity;
+}
+
+/**
+ * Which of the control ledger's writes the audit trail lists: reconciliation
+ * actions (rule changes, evaluations, alert transitions), system writes
+ * (provisioning), or all of them.
+ */
+export type AuditScope = "actions" | "system" | "all";
+
+/** The activity envelope of a reconciliation action, as signed. */
+export interface AuditActivity {
+  kind: RuleActivityKind;
+  ruleId?: string;
+  contractVersion?: number;
+  occurredAt?: string;
+  correlationId?: string;
+  payload?: Record<string, unknown>;
 }
 
 /** The human-readable intent of one order in an audit proposal. */

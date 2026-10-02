@@ -20,7 +20,9 @@ type provisionAPI interface {
 	GetLedgerInfo(ctx context.Context, name string) (*commonpb.LedgerInfo, error)
 	AddAccountType(ctx context.Context, ledger string, accountType *commonpb.AccountType) error
 	SetMetadataFieldType(ctx context.Context, ledger string, cmd *commonpb.SetMetadataFieldTypeCommand) error
+	ListIndexIDs(ctx context.Context, ledger string) ([]*commonpb.IndexID, error)
 	CreateIndex(ctx context.Context, ledger string, index *servicepb.CreateIndexRequest) error
+	NumscriptVersions(ctx context.Context, ledger, name string) ([]string, error)
 	SaveNumscript(ctx context.Context, ledger, name, content, version string) error
 }
 
@@ -49,10 +51,10 @@ func NewProvisioner(client provisionAPI, ledgerName string, enforcement commonpb
 // indexes and numscripts. Idempotent and safe on every boot.
 //
 // On first boot CreateLedger applies the full chart + schema atomically. On a
-// re-provision it is a no-op (AlreadyExists swallowed) and the account-type /
-// metadata-field reconcile passes below bring an already-created ledger up to the
-// current chart (F8) — so an *additive* chart change (a new account type or
-// metadata key) no longer requires recreating the ledger. Destructive evolution
+// re-provision the ledger exists, so it is not re-created, and the account-type
+// / metadata-field reconcile passes below bring it up to the current chart (F8)
+// — so an *additive* chart change (a new account type or metadata key) no
+// longer requires recreating the ledger. Destructive evolution
 // (removing/retyping a field, or changing an account type that already holds
 // accounts) is out of scope: an orphaned declaration is harmless (no writes),
 // and a real redefinition surfaces its error rather than being silently applied.
@@ -62,19 +64,30 @@ func NewProvisioner(client provisionAPI, ledgerName string, enforcement commonpb
 // bumps a field's forward_encoding_version (a forward-index rewrite) on EVERY
 // SetMetadataFieldType, with no unchanged-type guard, so re-declaring an indexed
 // field it already has would rewrite that index on every boot.
+//
+// Every pass reads before it writes, indexes and numscripts included. A write
+// the ledger refuses (AlreadyExists) is still a signed audit entry, so blind
+// re-creates would add one rejected entry per index and numscript to the trail
+// on every boot.
 func (p *Provisioner) Provision(ctx context.Context) error {
 	accountTypes := schema.AccountTypes()
 	metaSchema := schema.MetadataSchema()
-
-	if err := p.client.CreateLedger(ctx, p.ledger, metaSchema, accountTypes, p.enforcement); err != nil {
-		return fmt.Errorf("create control-ledger %q: %w", p.ledger, err)
-	}
 
 	// Read the current chart so the reconcile applies only the delta. Nil-safe:
 	// getters on a nil LedgerInfo yield nil maps → everything is treated missing.
 	info, err := p.client.GetLedgerInfo(ctx, p.ledger)
 	if err != nil {
 		return fmt.Errorf("read control-ledger %q: %w", p.ledger, err)
+	}
+
+	if info == nil {
+		if err := p.client.CreateLedger(ctx, p.ledger, metaSchema, accountTypes, p.enforcement); err != nil {
+			return fmt.Errorf("create control-ledger %q: %w", p.ledger, err)
+		}
+
+		if info, err = p.client.GetLedgerInfo(ctx, p.ledger); err != nil {
+			return fmt.Errorf("read control-ledger %q: %w", p.ledger, err)
+		}
 	}
 
 	existingTypes := info.GetAccountTypes()
@@ -107,15 +120,34 @@ func (p *Provisioner) Provision(ctx context.Context) error {
 	}
 
 	// Account metadata indexes (list/filter + id resolution) and the transaction
-	// address index (capture-history listing). CreateIndex swallows AlreadyExists,
+	// address index (capture-history listing). Only the missing ones are created,
 	// so a new index added here reconciles onto an existing ledger on next boot.
+	// CreateIndex still swallows AlreadyExists as a race backstop.
+	existingIndexes, err := p.client.ListIndexIDs(ctx, p.ledger)
+	if err != nil {
+		return fmt.Errorf("list indexes of control-ledger %q: %w", p.ledger, err)
+	}
+
 	for _, idx := range slices.Concat(schema.MetadataIndexes(), schema.TransactionIndexes()) {
+		if slices.ContainsFunc(existingIndexes, idx.EqualVT) {
+			continue
+		}
+
 		if err := p.client.CreateIndex(ctx, p.ledger, &servicepb.CreateIndexRequest{Id: idx}); err != nil {
 			return fmt.Errorf("create index %v: %w", idx, err)
 		}
 	}
 
 	for _, ns := range schema.Numscripts() {
+		versions, err := p.client.NumscriptVersions(ctx, p.ledger, ns.Name)
+		if err != nil {
+			return fmt.Errorf("read numscript %q: %w", ns.Name, err)
+		}
+
+		if slices.Contains(versions, ns.Version) {
+			continue
+		}
+
 		if err := p.client.SaveNumscript(ctx, p.ledger, ns.Name, ns.Content, ns.Version); err != nil {
 			return fmt.Errorf("register numscript %q: %w", ns.Name, err)
 		}

@@ -38,9 +38,11 @@ func (s *auditServer) GetTransaction(_ context.Context, req *servicepb.GetTransa
 }
 
 func (s *auditServer) ListAuditEntries(req *servicepb.ListAuditEntriesRequest, stream grpc.ServerStreamingServer[auditpb.AuditEntry]) error {
+	// A timestamp filter (the resolver's) selects that instant; any other filter
+	// lists everything.
 	at := req.GetOptions().GetFilter().GetAudit().GetUintCond().GetMin()
 	for _, e := range s.entries {
-		if e.GetTimestamp().GetData() != at {
+		if at != 0 && e.GetTimestamp().GetData() != at {
 			continue
 		}
 
