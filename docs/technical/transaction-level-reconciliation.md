@@ -1509,7 +1509,7 @@ Encoding and compressing the flow file took 4.6 s (5.4 s with the long reference
 ### 7.15 One day's run, end to end
 
 **Question.** The earlier steps were measured one by one. What does a whole run cost, both sides at once,
-under the process-wide cap of readers (EN-2323), while the ledgers keep writing?
+under the process-wide cap of readers (EN-2318), while the ledgers keep writing?
 
 **Setup** (`day-load`, `day-run`). A fresh node at `7dd615dba`, two ledgers, each with a day before
 (300,000 payments) and a day (1M payments), with the log-date, `inserted_at` and key indexes:

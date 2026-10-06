@@ -294,7 +294,7 @@ payment was changed by hand from 0 to 1:
 ```text
 rule            key                detail
 carried_vs_flow PAY-42/EUR/2       flow row with drift 1 is not carried
-file_sha256     flow.ndjson.gz     manifest de43852e…, file 5c32104a…
+file_sha256     flow.ndjson.gz     manifest 1add21c6…, file 3cb0d7b9…
 row_amounts     flow PAY-42/EUR/2  psp 100000 product 100000 drift 1, transactions give psp 100000 product 100000
 row_drift       flow PAY-42/EUR/2  matched ok with drift 1
 Invalid Input Error: 4 violation(s) of the lettering/1 rules
