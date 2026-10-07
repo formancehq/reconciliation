@@ -53,7 +53,7 @@ Open questions:
 |---|---|---|
 | [Ledger-native storage (drop Postgres)](./rfc-ledger-native-storage.md) | Draft | Make reconciliation stateless by persisting its control-plane state as account metadata in a dedicated control-ledger, instead of Postgres. Aligns with Payments-in-Ledger + Ledger↔Ledger reconciliation. |
 | [Ledger-native migration — dev log](./ledger-v3-migration-log.md) | Living | Phase/step tracker + SDLC review records + tracked follow-ups for the migration. Update as steps land. |
-| [K/V store for control state](./rfc-kv-store-control-state.md) | Draft | Where a planned Ledger 3.1 generic K/V store (CAS + atomic batches) would help — most concretely, safe concurrent rule updates (2.4.1 parity) — by moving mutable control state off the marker/EPHEMERAL/Numscript workarounds while the transaction log keeps the audit trail. |
+| [K/V store for control state](./rfc-kv-store-control-state.md) | Draft | What a planned Ledger 3.1 generic K/V store would change for mutable control state (safe concurrent rule updates for 2.4.1 parity, no more marker accounts). Reviewed 2026-10-07: the store is unspecified and unscheduled (EN-1426), so the defects found are fixed with today's Ledger v3 primitives, and the code hides compare-and-swap behind one storage port so the switch replaces an adapter. |
 
 ---
 
