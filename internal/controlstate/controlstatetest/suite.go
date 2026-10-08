@@ -364,6 +364,10 @@ func testInvalidUnitOfWork(t *testing.T, s Store) {
 			Expect: []controlstate.Precondition{controlstate.ExpectAbsent(a)},
 			Put:    []controlstate.Write{put(a), put(b)},
 		},
+		"absent precondition without a write": {
+			Expect: []controlstate.Precondition{controlstate.ExpectAbsent(a), controlstate.ExpectAbsent(b)},
+			Put:    []controlstate.Write{put(b)},
+		},
 		"two preconditions on one key": {
 			Expect: []controlstate.Precondition{controlstate.ExpectAbsent(a), {Key: a, Version: 1}},
 			Put:    []controlstate.Write{put(a)},

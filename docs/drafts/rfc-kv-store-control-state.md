@@ -94,7 +94,7 @@ The re-implementation must keep the K/V store a drop-in change. Four rules apply
    }
    ```
 
-   The port, its in-memory reference adapter and the contract suite of rule 4 live in `internal/controlstate`, `internal/controlstate/memstate` and `internal/controlstate/controlstatetest`.
+   The port, its in-memory reference adapter, the Ledger v3 adapter and the contract suite of rule 4 live in `internal/controlstate`, `internal/controlstate/memstate`, `internal/controlstate/ledgerstate` and `internal/controlstate/controlstatetest`. The Ledger v3 adapter passes the suite against a live ledger (`TestIntegration_ControlStateContract`).
 
    Listing with filters and pagination goes through a separate query port. In both worlds the ledger metadata index backs it, unless the K/V store offers scans.
 2. **Versions are explicit integers.** Every mutable entity carries a monotonic version. The content hash (`revision`) stays as the identity of a rule configuration in captures. The API exposes the version as an `ETag`. `PATCH /rules/{id}` and the alert actions accept `If-Match` and answer `409 Conflict` on a stale version. Today a lost race answers `500`.

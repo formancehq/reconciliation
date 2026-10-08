@@ -78,7 +78,8 @@ type Precondition struct {
 // Expect builds the precondition that the entry is still as it was loaded.
 func Expect(e Entry) Precondition { return Precondition{Key: e.Key, Version: e.Version} }
 
-// ExpectAbsent builds the precondition that k does not exist.
+// ExpectAbsent builds the precondition that k does not exist. It must come with
+// a write that creates k in the same unit of work.
 func ExpectAbsent(k Key) Precondition { return Precondition{Key: k, Version: Absent} }
 
 // Write replaces the fields of an entity. Its key must carry a precondition
@@ -145,6 +146,14 @@ func (u UnitOfWork) Validate() error {
 		written[w.Key] = true
 		if _, ok := expected[w.Key]; !ok {
 			return fmt.Errorf("%w: write to %s without a precondition", ErrInvalid, w.Key)
+		}
+	}
+	// An absent precondition only guards a create. A ledger can prove that an
+	// entity exists at a version, not that it is still absent without
+	// creating it, so every adapter requires the create alongside.
+	for k, v := range expected {
+		if v == Absent && !written[k] {
+			return fmt.Errorf("%w: absent precondition on %s without a write", ErrInvalid, k)
 		}
 	}
 	for _, r := range u.Records {

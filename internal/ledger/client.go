@@ -135,6 +135,13 @@ func (c *Client) Apply(ctx context.Context, requests ...*servicepb.Request) (*se
 	return c.applyIdempotent(ctx, "", requests...)
 }
 
+// ApplyIdempotent sends requests as one atomic batch under an idempotency key:
+// the ledger replays the first outcome for the same key and content, and
+// rejects the same key with a different content (AlreadyExists).
+func (c *Client) ApplyIdempotent(ctx context.Context, key string, requests ...*servicepb.Request) (*servicepb.ApplyResponse, error) {
+	return c.applyIdempotent(ctx, key, requests...)
+}
+
 // applyIdempotent sends an atomic batch under an idempotency key. A repeated
 // batch with the same key is deduplicated by the ledger (it returns the cached
 // outcome instead of applying twice) — the at-least-once safety net for
