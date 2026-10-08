@@ -7,8 +7,8 @@ it reconciles **live**, and it records each evaluation as an immutable **capture
 the *why* behind the kernel, see
 [ADR-001](../prd/adr-001-cel-kernel.md); for the read/consistency model,
 [ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md) (which supersedes the checkpoint model
-of [ADR-002](../prd/adr-002-pit-consistency.md)); for the storage/event design, the
-[ledger-native storage RFC](../drafts/rfc-ledger-native-storage.md); and for V2 multi-source
+of [ADR-002](../archive/adr-002-pit-consistency.md)); for the storage/event design, the
+[ledger-native storage RFC](../archive/rfc-ledger-native-storage.md); and for V2 multi-source
 semantics, [ADR-004](../prd/adr-004-multi-source-comparisons.md).
 
 ---
@@ -77,8 +77,9 @@ A `Source` is an opaque CEL value naming a backend dataset (`ledgerSet(ledger, q
 over builtins (`balance`, `balances`, `sum`, `abs`). At **rule-create** time the engine
 type-checks the rule's CEL against a *declarations-only* env — no resolver is exercised. Built-in
 **templates evaluate in typed Go** over a single live read per source (ADR-003); they render the
-equivalent CEL into `evidence.compiledCEL` for explainability but do **not** run it (the golden test
-`TestCrossCheck_*` guards that the two agree). `engine.Evaluate` (the CEL runtime) is reserved for
+equivalent CEL into `evidence.compiledCEL` for explainability but do **not** run it. No test checks
+that the two agree: the cross-check was removed in `13b03574`, and [ADR-006](../prd/adr-006-templates-without-cel.md)
+drops the rendered CEL in v3. `engine.Evaluate` (the CEL runtime) is reserved for
 the post-GA raw-CEL power mode.
 
 V2 retains `compiledCEL`, but introduces purpose-built financial built-ins whose implementations use

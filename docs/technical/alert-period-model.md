@@ -150,7 +150,7 @@ payload, so consumers can route/aggregate by period. `reopened` now means a
 |---|---|
 | `PeriodType` + `PeriodID` derivation | [internal/models/rule.go](../../internal/models/rule.go) |
 | `period_id` on the alert | [internal/models/alert.go](../../internal/models/alert.go) |
-| Period-scoped dedup / sweep / status | [internal/storage/alert.go](../../internal/storage/alert.go) |
+| Period-scoped dedup / sweep / status | [internal/ledgerstore/alert.go](../../internal/ledgerstore/alert.go), [alert_transition.go](../../internal/ledgerstore/alert_transition.go) |
 | Period derivation + threading | [internal/api/service/evaluation.go](../../internal/api/service/evaluation.go) |
 | `periodType` on create | [internal/api/service/rule.go](../../internal/api/service/rule.go) |
-| Schema | migration #7 in [internal/storage/migrations/migrations.go](../../internal/storage/migrations/migrations.go) |
+| Storage | the period is a segment of the alert's control-ledger address, `AlertItemAccount` in [internal/ledgerschema/addresses.go](../../internal/ledgerschema/addresses.go) |

@@ -4,7 +4,9 @@
 
 # Formance Reconciliation
 
-Formance Reconciliation compares balances between your Formance Ledger and cash pools to verify financial consistency and identify any discrepancies that need investigation. Regular reconciliation is critical for producing reports that prove the assets in your ledger are backed by actual funds, ensuring audit compliance and financial integrity.
+Formance Reconciliation continuously checks the invariants you define on your Formance ledgers: that two sets of accounts balance, that independent records of the same funds agree, or that a balance stays within bounds. When a check fails, it records the evidence and raises an alert that your team acknowledges, then resolves with a corrective booking or accepts with a note. Every evaluation and every alert transition is recorded in a Ledger v3 control ledger, so the history is auditable.
+
+This branch is the Ledger v3 prototype. The design of reconciliation v3 is in [docs/](./docs/README.md) and in RFC 0022.
 
 
 # Documentation

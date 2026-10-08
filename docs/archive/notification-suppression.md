@@ -5,7 +5,7 @@
 
 ## The problem
 
-Once rules evaluate on a [schedule](./scheduler.md), a rule that stays broken
+Once rules evaluate on a [schedule](../technical/scheduler.md), a rule that stays broken
 produces a transition **every tick**: a 5-minute cron that keeps failing emits a
 `reconciliation.alert.occurred` event every 5 minutes, indefinitely. None of
 those repeats carry information the consumer doesn't already have. Delivered
@@ -18,7 +18,7 @@ page me about this until T".
 
 Reconciliation no longer runs a message bus, and **no longer gates delivery at
 the write layer**. Delivery is the ledger's native events sink
-([api.md §Events](./api.md#events)): the ledger emits one event per committed log
+([api.md §Events](../technical/api.md#events)): the ledger emits one event per committed log
 entry, and the consumer (the Webhooks module, or a future per-recipient digest)
 decides what to page. Reconciliation's job is to make every transition
 **self-describing enough that a consumer can suppress correctly** — it records
@@ -66,4 +66,4 @@ the `occurred`/`snooze` signals above.
   "materially unchanged" marker so consumers don't re-derive equality.
 - **Log-volume roll-up** — collapsing identical repeats in the ledger log itself
   (vs one entry per tick) trades audit granularity for storage; deferred, tracked
-  with the [audit-log direction](./workflows.md#8-audit-history--delivery--the-ledger-log).
+  with the [audit-log direction](../technical/workflows.md#8-combined-rule-history-and-delivery).

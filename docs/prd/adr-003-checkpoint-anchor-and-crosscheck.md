@@ -1,7 +1,7 @@
 # ADR-003 — Live reads + immutable `_recon` capture (query checkpoints removed)
 
-**Status:** Accepted (implemented — see [migration log](../drafts/ledger-v3-migration-log.md), "checkpoint alternative" workstream). Supersedes the Tier-1 aligned-checkpoint model of [ADR-002](./adr-002-pit-consistency.md); narrows [ADR-001](./adr-001-cel-kernel.md) §11.
-**Linked from:** [ADR-002](./adr-002-pit-consistency.md), [RFC §4.4.2/§4.5](../drafts/rfc-ledger-native-storage.md)
+**Status:** Accepted (implemented — see [migration log](../archive/ledger-v3-migration-log.md), "checkpoint alternative" workstream). Supersedes the Tier-1 aligned-checkpoint model of [ADR-002](../archive/adr-002-pit-consistency.md); narrows [ADR-001](./adr-001-cel-kernel.md) §11.
+**Linked from:** [ADR-002](../archive/adr-002-pit-consistency.md), [RFC §4.4.2/§4.5](../archive/rfc-ledger-native-storage.md)
 **Last updated:** 2026-09-14 (upstream-fact corrections: transaction receipts removed by ledger EN-1952; `min_log_sequence` removed by ledger EN-1946; EN-1480 split with EN-1873)
 
 ---

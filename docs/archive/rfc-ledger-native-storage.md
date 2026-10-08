@@ -11,7 +11,7 @@ surface is [architecture.md](../technical/architecture.md).
 **Owner:** Arnaud
 **Date:** 2026-07-02
 **Depends on:** Ledger v3 (`release/v3.0`), ledger-connect, PR #83 (Ledger Clarity V1)
-**Related:** [ADR-002 — PIT consistency](../prd/adr-002-pit-consistency.md), [ADR-003 — live reads + capture](../prd/adr-003-checkpoint-anchor-and-crosscheck.md), [architecture.md](../technical/architecture.md), upstream [ledger#1416](https://github.com/formancehq/ledger/issues/1416)
+**Related:** [ADR-002 — PIT consistency](adr-002-pit-consistency.md), [ADR-003 — live reads + capture](../prd/adr-003-checkpoint-anchor-and-crosscheck.md), [architecture.md](../technical/architecture.md), upstream [ledger#1416](https://github.com/formancehq/ledger/issues/1416)
 
 ---
 

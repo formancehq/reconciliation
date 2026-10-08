@@ -3,7 +3,7 @@
 Traceability record for the Reconciliation → Ledger v3 storage migration. One row per
 phase/step/workstream with status + commit; SDLC reviews and tracked follow-ups below. Design lives
 in the [RFC](./rfc-ledger-native-storage.md) and the ADRs
-([001](../prd/adr-001-cel-kernel.md) · [002](../prd/adr-002-pit-consistency.md) ·
+([001](../prd/adr-001-cel-kernel.md) · [002](adr-002-pit-consistency.md) ·
 [003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md) ·
 [004](../prd/adr-004-multi-source-comparisons.md)).
 

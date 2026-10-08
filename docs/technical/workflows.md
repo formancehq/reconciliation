@@ -8,7 +8,7 @@ Each diagram shows one flow. Since the ledger-native migration, all state lives 
 control-ledger `_recon`; the ledgers being reconciled are read **live** (no query checkpoints) and
 each evaluation is recorded as an immutable `_recon` **capture** transaction
 (see [architecture.md](./architecture.md) and [ADR-003](../prd/adr-003-checkpoint-anchor-and-crosscheck.md),
-which supersedes the checkpoint model of [ADR-002](../prd/adr-002-pit-consistency.md)).
+which supersedes the checkpoint model of [ADR-002](../archive/adr-002-pit-consistency.md)).
 
 > **Canonical reference test.** The evaluate→alert flows are exercised end-to-end in
 > [`v1_orchestration_test.go`](../../internal/api/service/v1_orchestration_test.go) (unit, fakes)
@@ -203,7 +203,7 @@ flowchart LR
   clear + the `last_transition` land in one atomic batch (`Client.ApplyMetadata`).
 - `snooze`/`unsnooze` are status-neutral (`prevStatus == newStatus`).
 
-See [notification-suppression.md](./notification-suppression.md) for why suppression matters and
+See [notification-suppression.md](../archive/notification-suppression.md) for why suppression matters and
 what a consumer needs. Write-side repeat-suppression and delivery muting are **deferred** to the
 consumer/semantic-event work (RFC §4.4).
 

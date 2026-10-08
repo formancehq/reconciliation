@@ -162,7 +162,7 @@ ID and retains a machine path in the detail:
 All source queries are validated before persistence. One invalid/unindexed query rejects the entire
 rule; transient ledger failures remain server errors rather than being misclassified as validation.
 
-See [templates.md](./templates.md#v2-catalog) for the complete specs, arithmetic,
+See [templates.md](./templates.md#catalog) for the complete specs, arithmetic,
 fingerprints, and evidence.
 
 `GET /rules/{id}/captures` returns a cursor envelope with `contractVersion: 2` on each capture and
@@ -175,7 +175,7 @@ that same object.
 
 EE-gated. The contracts below match what's wired in [`internal/api/router.go`](../../internal/api/router.go) and exposed via [`openapi.yaml`](../../openapi.yaml). Underlying models live in [models/rule.go](../../internal/models/rule.go), [models/evaluation.go](../../internal/models/evaluation.go), [models/alert.go](../../internal/models/alert.go).
 
-> Handler-level tests live in [v1_handlers_test.go](../../internal/api/v1_handlers_test.go); the end-to-end orchestration test ([v1_orchestration_test.go](../../internal/api/service/v1_orchestration_test.go)) is the canonical reference for the open/update/auto-resolve/re-open flow these endpoints drive.
+> Handler-level tests live in [handlers_test.go](../../internal/api/handlers_test.go); the end-to-end orchestration test ([v1_orchestration_test.go](../../internal/api/service/v1_orchestration_test.go)) is the canonical reference for the open/update/auto-resolve/re-open flow these endpoints drive.
 
 ### Filtering lists
 
@@ -483,7 +483,7 @@ covered by the ledger's signed audit chain. To get its audit entry, call
 sequence that indexes `GET /audit/entries`.
 
 `notify` is always `true` on this read path. Write-time notification suppression is not replayed
-here (see [notification-suppression.md](notification-suppression.md)): a consumer that suppresses
+here (see [notification-suppression.md](../archive/notification-suppression.md)): a consumer that suppresses
 repeats decides what to publish.
 
 **Cost:** a page scans the rule's whole activity account, so it is O(rule history), like the rule
@@ -526,7 +526,7 @@ Note is **required**. Evidence at acceptance time is frozen onto `resolution.evi
 { "by": "ops@buildr.com", "until": "2026-06-25T18:00:00Z", "note": "migration in flight" }
 ```
 
-Records a mute intent until `until` (which must be in the future): the alert keeps failing, keeps its status, and **keeps counting against period-green**. The `snooze` metadata + a `snoozed` transition are written; a consumer honours the window — recon no longer gates delivery itself (see [notification-suppression.md](./notification-suppression.md) and [workflows.md §5](./workflows.md)). Re-snoozing overwrites the window; resolving the alert clears it. Rejects a RESOLVED alert and a non-future `until`. The current snooze is exposed on the alert as `snooze`.
+Records a mute intent until `until` (which must be in the future): the alert keeps failing, keeps its status, and **keeps counting against period-green**. The `snooze` metadata + a `snoozed` transition are written; a consumer honours the window — recon no longer gates delivery itself (see [notification-suppression.md](../archive/notification-suppression.md) and [workflows.md §5](./workflows.md)). Re-snoozing overwrites the window; resolving the alert clears it. Rejects a RESOLVED alert and a non-future `until`. The current snooze is exposed on the alert as `snooze`.
 
 #### `POST /alerts/{id}/unsnooze` — lift a snooze early
 
@@ -670,7 +670,7 @@ or `saved_metadata` payload):
 auto_resolved), empty for operator actions. **No recon-side notify gate** — the ledger emits an
 event per committed write; repeat-suppression and snooze *muting* are a **consumer** concern (the
 Webhooks module / a future digest), driven by the `occurred` bumps and the `snooze` metadata (see
-[notification-suppression.md](./notification-suppression.md)). This is a deliberate deferral (RFC §4.4);
+[notification-suppression.md](../archive/notification-suppression.md)). This is a deliberate deferral (RFC §4.4);
 the write-side `notify` flag and the watermill publisher were removed with Postgres.
 
 The events sink remains delivery infrastructure. Product history reads use the

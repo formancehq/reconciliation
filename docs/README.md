@@ -20,6 +20,17 @@ Architecture, the API reference, the lifecycle workflows, the template catalog, 
 ### [Drafts (`drafts/`)](./drafts/README.md)
 V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 
+### [Archive (`archive/`)](./archive/README.md)
+Historical documents, kept for the record and not maintained.
+
+### Documents for the v3 re-implementation
+The slices of epic EN-2746 copy these documents as they rewrite the code, as decided in section 7 of the 2026-10-08 review:
+
+- **Kept and updated with their slice:** this page, the PRD and ADR-003, ADR-004 and ADR-006, and in `technical/` the architecture, Ledger v3 storage, API, workflows, templates, alert period model, scheduler and color-of-money documents. The drafts of the v3.0.0 contract and events, and the K/V RFC, which describes the storage port.
+- **Back with a later slice:** [audit-chain-v3.md](./technical/audit-chain-v3.md) and [audit-verification.md](./technical/audit-verification.md) with signing and the audit API (P1, P6), [stale-holds.md](./technical/stale-holds.md) with the `stale_holds` template (P7).
+- **Outside this epic:** the lettering documents, which follow ADR-005.
+- **Archived:** see [archive](./archive/README.md).
+
 ---
 
 ## Quick links
@@ -35,7 +46,7 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | **End-to-end demo UI** | [`../../poc-reconciliation-demo`](../../poc-reconciliation-demo) (sibling repo) |
 | **ADR-001 — CEL kernel choice** *(superseded by ADR-006)* | [prd/adr-001-cel-kernel.md](./prd/adr-001-cel-kernel.md) |
 | **ADR-006 — Templates evaluate in Go, no CEL in v3** | [prd/adr-006-templates-without-cel.md](./prd/adr-006-templates-without-cel.md) |
-| **ADR-002 — PIT consistency model** | [prd/adr-002-pit-consistency.md](./prd/adr-002-pit-consistency.md) |
+| **ADR-002 — PIT consistency model** *(archived, superseded by ADR-003)* | [archive/adr-002-pit-consistency.md](./archive/adr-002-pit-consistency.md) |
 | **ADR-004 — multi-source comparisons** | [prd/adr-004-multi-source-comparisons.md](./prd/adr-004-multi-source-comparisons.md) |
 | **ADR-005 — transaction-level (lettering) reconciliation** *(proposed)* | [prd/adr-005-transaction-level-reconciliation.md](./prd/adr-005-transaction-level-reconciliation.md) · design, measurements and evidence in [technical/transaction-level-reconciliation.md](./technical/transaction-level-reconciliation.md) · result files and how to read them in [technical/transaction-level-results.md](./technical/transaction-level-results.md) · internal checks and queries in [technical/lettering-duckdb.md](./technical/lettering-duckdb.md) · feature inventory for the V1 scope in [prd/adr-005-feature-inventory.md](./prd/adr-005-feature-inventory.md) |
 
@@ -67,7 +78,7 @@ the named-source contract, and every resource carries `contractVersion: 2`.
 Nothing was rewritten or backfilled. A persisted V1 rule still names a retired template kind and
 evaluates to an ERROR rather than being translated, and historical captures, alerts and accepted
 evidence snapshots keep the shape they were written with. See
-[the API reference](./technical/api.md#v1v2-coexistence) and
+[the API reference](./technical/api.md#the-contract-stamp) and
 [ADR-004](./prd/adr-004-multi-source-comparisons.md).
 
 > **Ledger-native migration (branch `feat/reconciliation-ledger-v3`).** The storage layer above was
@@ -76,7 +87,7 @@ evidence snapshots keep the shape they were written with. See
 > every evaluation, and delivering
 > events via the ledger's native sink. Steps 2 (migrations/models → ledger accounts), 5 (event-log →
 > ledger log), and the reads are superseded — see the
-> [migration log](./drafts/ledger-v3-migration-log.md), [architecture.md](./technical/architecture.md),
+> [migration log](./archive/ledger-v3-migration-log.md), [architecture.md](./technical/architecture.md),
 > and the consolidated [Ledger v3 storage model](./technical/ledger-v3-storage.md).
 
 Recon reads data-ledgers live via gRPC `AggregateVolumes` / `ListAccounts` (ADR-003, superseding

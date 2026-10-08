@@ -1,6 +1,6 @@
 # RFC: A generic K/V store for reconciliation's control state (Ledger 3.1)
 
-Status: ⏳ **Draft, forward-looking.** Tracked in [EN-1932](https://formance-team.atlassian.net/browse/EN-1932), blocked by the ledger story [EN-1426](https://formance-team.atlassian.net/browse/EN-1426). Reviewed on 2026-10-07 against `feat/reconciliation-ledger-v3` and the ledger `release/v3.0` branch at `e2d0f4713`. Companion to [rfc-ledger-native-storage.md](./rfc-ledger-native-storage.md) and [audit-chain-v3.md](../technical/audit-chain-v3.md).
+Status: ⏳ **Draft, forward-looking.** Tracked in [EN-1932](https://formance-team.atlassian.net/browse/EN-1932), blocked by the ledger story [EN-1426](https://formance-team.atlassian.net/browse/EN-1426). Reviewed on 2026-10-07 against `feat/reconciliation-ledger-v3` and the ledger `release/v3.0` branch at `e2d0f4713`. Companion to [rfc-ledger-native-storage.md](../archive/rfc-ledger-native-storage.md) and [audit-chain-v3.md](../technical/audit-chain-v3.md).
 
 ---
 

@@ -8,7 +8,7 @@
 | Code module    | `reconciliation` (unchanged)           |
 | Product name   | **Ledger Clarity** *(working title)*   |
 | Tier           | EE (V1) + EE+ "Finance Ops" pack (V2+) |
-| Sub-pages      | [ADR-001](./adr-001-cel-kernel.md) *(superseded)* · [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [ADR-005](./adr-005-transaction-level-reconciliation.md) *(proposed)* · [ADR-006](./adr-006-templates-without-cel.md) |
+| Sub-pages      | [ADR-001](./adr-001-cel-kernel.md) *(superseded)* · [ADR-002](../archive/adr-002-pit-consistency.md) *(archived)* · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [ADR-005](./adr-005-transaction-level-reconciliation.md) *(proposed)* · [ADR-006](./adr-006-templates-without-cel.md) |
 
 ---
 
@@ -252,4 +252,4 @@ migration — the Postgres storage layer and the three template evaluators — a
 - [API reference](../technical/api.md)
 - [ADR-001 — CEL kernel choice](./adr-001-cel-kernel.md) *(superseded by ADR-006)*
 - [ADR-006 — Templates evaluate in Go, CEL leaves reconciliation v3](./adr-006-templates-without-cel.md)
-- [ADR-002 — PIT consistency model](./adr-002-pit-consistency.md)
+- [ADR-002 — PIT consistency model](../archive/adr-002-pit-consistency.md) *(archived, superseded by ADR-003)*

@@ -467,7 +467,7 @@ were correctly ignored.
 | Tests | [stale_holds_test.go](../../internal/templates/stale_holds_test.go) (49 cases) + the live-ledger IT above |
 | Public API | `StaleHoldsSpec` + `stale_holds` in `TemplateKind` ([openapi.yaml](../../openapi.yaml)) |
 | Docs | [templates.md §6](./templates.md), the in-app guide, this design |
-| Web UI | `StaleHoldsEditor` in [CreateRuleDialogV2.tsx](../../frontend/components/reconcile/panels/CreateRuleDialogV2.tsx), `StaleHoldsEvidence` in [V2Evidence.tsx](../../frontend/components/reconcile/V2Evidence.tsx) |
+| Web UI | `StaleHoldsEditor` in [TemplateEditors.tsx](../../frontend/components/reconcile/templates/TemplateEditors.tsx), `StaleHoldsEvidence` in [EvidenceView.tsx](../../frontend/components/reconcile/EvidenceView.tsx) |
 | Demo | `holds:*` book in `seed-data.sh`, the warn/stale rule pair in `seed-demo.mjs` |
 
 **No new CEL builtin was added** (§4.3), and no PIT-read capability was assumed anywhere.
