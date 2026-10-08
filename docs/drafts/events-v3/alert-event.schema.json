@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/formancehq/reconciliation/docs/drafts/events-v3/alert-event",
+  "title": "Reconciliation v3 alert event payload",
+  "description": "Payload of every reconciliation alert event, envelope version v3. Draft: no code publishes it yet. The alert object follows the Alert schema of docs/drafts/openapi-v3.yaml.",
+  "$ref": "#/$defs/AlertEventPayload",
+  "$defs": {
+    "AlertEventPayload": {
+      "type": "object",
+      "required": ["alert", "rule", "transition"],
+      "additionalProperties": false,
+      "properties": {
+        "alert": {
+          "description": "The alert as it stands right after the transition, as GET /alerts/{alertID} returns it.",
+          "$ref": "#/$defs/Alert"
+        },
+        "rule": {
+          "description": "The rule that raised the alert, enough to route or title a notification without an API call.",
+          "$ref": "#/$defs/RuleSummary"
+        },
+        "transition": {
+          "$ref": "#/$defs/Transition"
+        }
+      }
+    },
+    "Transition": {
+      "type": "object",
+      "required": ["kind", "to", "at", "alertVersion", "transactionID"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["opened", "updated", "acknowledged", "resolved", "accepted", "reopened"],
+          "description": "Matches the event type: opened is OPENED_ALERT, and so on."
+        },
+        "from": {
+          "description": "Status before the transition. Absent for opened.",
+          "$ref": "#/$defs/AlertStatus"
+        },
+        "to": {
+          "$ref": "#/$defs/AlertStatus"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "alertVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The alert version after the transition. Per alert, versions grow by one: apply an event only when its alertVersion is greater than the last one applied."
+        },
+        "transactionID": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The control ledger transaction that recorded the transition. Together with the control ledger name it forms the envelope idempotency_key."
+        },
+        "evaluationID": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The evaluation behind an opened, updated, reopened or automatic resolved transition."
+        },
+        "by": {
+          "type": "string",
+          "description": "The operator behind an acknowledged, resolved or accepted transition."
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["auto", "fixed_by_booking", "evidence_changed", "acceptance_expired", "new_failure"],
+          "description": "For resolved: auto (a passing evaluation) or fixed_by_booking. For reopened: evidence_changed or acceptance_expired after an acceptance, or new_failure after a resolution."
+        }
+      }
+    },
+    "RuleSummary": {
+      "type": "object",
+      "required": ["id", "name", "templateKind", "severity"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string" },
+        "templateKind": { "type": "string", "enum": ["balance_bounds", "balance_equation", "source_consensus"] },
+        "severity": { "$ref": "#/$defs/Severity" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "Alert": {
+      "type": "object",
+      "required": ["id", "version", "ruleID", "fingerprint", "periodID", "status", "severity", "firstSeenAt", "lastSeenAt", "occurrenceCount", "lastEvaluationID", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "version": { "type": "integer", "minimum": 1 },
+        "ruleID": { "type": "string", "format": "uuid" },
+        "fingerprint": { "type": "string", "description": "asset:USD/2 for a template outcome; evaluation.failed or alert.cap for a meta-alert." },
+        "periodID": { "type": "string" },
+        "status": { "$ref": "#/$defs/AlertStatus" },
+        "severity": { "$ref": "#/$defs/Severity" },
+        "firstSeenAt": { "type": "string", "format": "date-time" },
+        "lastSeenAt": { "type": "string", "format": "date-time" },
+        "occurrenceCount": { "type": "integer", "minimum": 1, "description": "Number of failing evaluations since the alert opened." },
+        "lastEvaluationID": { "type": "string", "format": "uuid" },
+        "evidence": { "type": "object", "description": "The latest outcome evidence, as in the Evidence schema of the contract." },
+        "ack": { "type": "object" },
+        "resolution": { "type": "object" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "AlertStatus": {
+      "type": "string",
+      "enum": ["OPEN", "ACKNOWLEDGED", "RESOLVED"]
+    },
+    "Severity": {
+      "type": "string",
+      "enum": ["info", "low", "medium", "high", "critical"]
+    }
+  }
+}

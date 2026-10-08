@@ -55,6 +55,7 @@ Open questions:
 | [Ledger-native migration — dev log](./ledger-v3-migration-log.md) | Living | Phase/step tracker + SDLC review records + tracked follow-ups for the migration. Update as steps land. |
 | [K/V store for control state](./rfc-kv-store-control-state.md) | Draft | What a planned Ledger 3.1 generic K/V store would change for mutable control state (safe concurrent rule updates for 2.4.1 parity, no more marker accounts). Reviewed 2026-10-07: the store is unspecified and unscheduled (EN-1426), so the defects found are fixed with today's Ledger v3 primitives, and the code hides compare-and-swap behind one storage port so the switch replaces an adapter. |
 | [Reconciliation v3.0.0 API contract](./openapi-v3.yaml) | Draft | The public HTTP contract decided in RFC 0022: 12 operations, `ETag` and `If-Match`, RFC-0016 error codes (no 422), `Idempotency-Key`, `X-Request-ID`, opaque cursors, integer tolerances in minor units (an asset without an entry is exact). No code serves it yet; S12 (EN-2762) implements it and replaces `openapi.yaml`. |
+| [Reconciliation v3 alert events](./events-v3/README.md) | Draft | The broker events of RFC 0022: the v2.5.0 types kept, envelope `version` `v3`, payload `{alert, rule, transition}` with a JSON Schema, `idempotency_key` = control ledger transaction, ordering by alert version, `UPDATED_ALERT` only when the evidence changes. S13 (EN-2763) implements them. |
 
 ---
 
