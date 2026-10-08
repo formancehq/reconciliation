@@ -18,8 +18,12 @@ info:
       state forbids is `INVALID_TRANSITION`.
     - **Optimistic concurrency.** A rule or an alert carries an integer `version`, returned as
       `ETag`. Writes accept `If-Match` and answer 409 `VERSION_MISMATCH` on a stale version.
-    - **Idempotency.** Writes accept an `Idempotency-Key`, kept 24 hours. A replay returns the first
-      outcome with `Idempotent-Replay: true`.
+    - **Paths.** Every route except `/_info` is served under `/v3/`, as Ledger v3 and Payments v3 do,
+      so the platform SDK exposes v3 next to the v2 client.
+    - **Idempotency.** Every `POST` and `PATCH` accepts an `Idempotency-Key`. The request fingerprint
+      and the outcome are recorded with the write, so a replay within 24 hours returns the first
+      outcome with `Idempotent-Replay: true`, even after a lost response.
+    - **Actor.** Alert actions record the caller's identity from its token. Requests carry no `by`.
     - **Request IDs.** Every response carries `X-Request-ID`, the caller's or a generated one.
     - **Pagination.** Opaque cursors in the Formance cursor envelope. A stable order with a unique
       tie-breaker per list. The absence of `next` ends the traversal.
@@ -31,7 +35,8 @@ info:
     ## Not in v3.0.0
 
     Removed from v2: `/policies`, `/reconciliations`, `/evaluations` (captures replace them), the `at`
-    parameter of evaluate, the rule `notifications` field, `compiledCEL` and `explanationCEL`.
+    parameter of evaluate, the rule `notifications` and `cadence` fields, `compiledCEL`,
+    `explanationCEL`, and the `by` field of alert actions.
 
     Added in later v3 minors: snooze and unsnooze, `/alerts/{alertID}/events`,
     `/rules/{ruleID}/timeline`, the `exchange_rate_bounds`, `coverage_ratio_bounds` and `stale_holds`
@@ -42,6 +47,7 @@ paths:
   /_info:
     get:
       operationId: getServerInfo
+      tags: [reconciliation.v3]
       summary: Server information
       security: []
       parameters:
@@ -51,9 +57,10 @@ paths:
           $ref: '#/components/responses/ServerInfo'
         '500':
           $ref: '#/components/responses/InternalError'
-  /rules:
+  /v3/rules:
     post:
       operationId: createRule
+      tags: [reconciliation.v3]
       summary: Create a rule
       description: |
         Validates the template spec and creates the rule at version 1.
@@ -85,6 +92,7 @@ paths:
               $ref: '#/components/schemas/RuleRequest'
     get:
       operationId: listRules
+      tags: [reconciliation.v3]
       summary: List rules
       description: |
         Ordered by `createdAt` descending, then `id`. The rule ID is a UUIDv7, which starts with the
@@ -111,11 +119,12 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /rules/{ruleID}:
+  /v3/rules/{ruleID}:
     parameters:
     - $ref: '#/components/parameters/RuleID'
     get:
       operationId: getRule
+      tags: [reconciliation.v3]
       summary: Get a rule
       description: |
         Returns the rule and its version in `ETag`.
@@ -138,6 +147,7 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
     patch:
       operationId: patchRule
+      tags: [reconciliation.v3]
       summary: Update a rule
       description: |
         Applies a partial update and increases the version by one.
@@ -172,6 +182,7 @@ paths:
               $ref: '#/components/schemas/RulePatchRequest'
     delete:
       operationId: deleteRule
+      tags: [reconciliation.v3]
       summary: Delete a rule
       description: |
         Stops the rule's evaluations. Its captures stay readable.
@@ -195,11 +206,12 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /rules/{ruleID}/evaluate:
+  /v3/rules/{ruleID}/evaluate:
     parameters:
     - $ref: '#/components/parameters/RuleID'
     post:
       operationId: evaluateRule
+      tags: [reconciliation.v3]
       summary: Evaluate a rule now
       description: |
         Evaluates the rule for the period of the current time and commits the capture and every
@@ -227,11 +239,12 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /rules/{ruleID}/captures:
+  /v3/rules/{ruleID}/captures:
     parameters:
     - $ref: '#/components/parameters/RuleID'
     get:
       operationId: listRuleCaptures
+      tags: [reconciliation.v3]
       summary: List a rule's captures
       description: |
         One capture per evaluation, newest first.
@@ -258,9 +271,10 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /alerts:
+  /v3/alerts:
     get:
       operationId: listAlerts
+      tags: [reconciliation.v3]
       summary: List alerts
       description: |
         Defaults to the active view (`OPEN` and `ACKNOWLEDGED`). Ordered by `id`: a stable order
@@ -290,11 +304,12 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /alerts/{alertID}:
+  /v3/alerts/{alertID}:
     parameters:
     - $ref: '#/components/parameters/AlertID'
     get:
       operationId: getAlert
+      tags: [reconciliation.v3]
       summary: Get an alert
       description: |
         Returns the alert and its version in `ETag`.
@@ -315,11 +330,12 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /alerts/{alertID}/ack:
+  /v3/alerts/{alertID}/ack:
     parameters:
     - $ref: '#/components/parameters/AlertID'
     post:
       operationId: ackAlert
+      tags: [reconciliation.v3]
       summary: Acknowledge an alert
       description: |
         Moves an `OPEN` alert to `ACKNOWLEDGED`. Any other starting state answers 409 `INVALID_TRANSITION`.
@@ -352,11 +368,12 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AckAlertRequest'
-  /alerts/{alertID}/resolve:
+  /v3/alerts/{alertID}/resolve:
     parameters:
     - $ref: '#/components/parameters/AlertID'
     post:
       operationId: resolveAlert
+      tags: [reconciliation.v3]
       summary: Resolve an alert
       description: |
         Closes an `OPEN` or `ACKNOWLEDGED` alert as fixed, for example by a corrective booking. Any other starting state answers 409 `INVALID_TRANSITION`.
@@ -389,11 +406,12 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ResolveAlertRequest'
-  /alerts/{alertID}/accept:
+  /v3/alerts/{alertID}/accept:
     parameters:
     - $ref: '#/components/parameters/AlertID'
     post:
       operationId: acceptAlert
+      tags: [reconciliation.v3]
       summary: Accept an alert
       description: |
         Closes an `OPEN` or `ACKNOWLEDGED` alert as an accepted discrepancy, with a note. Any other starting state answers 409 `INVALID_TRANSITION`.
@@ -497,9 +515,10 @@ components:
         type: string
         maxLength: 256
       description: |
-        Client key for safe retries, scoped by caller and operation and kept 24 hours. The same
-        key with the same request replays the first outcome without executing again. The same
-        key with a different request answers 409 `IDEMPOTENCY_KEY_REUSED`.
+        Client key for safe retries, scoped by caller and operation and kept 24 hours. The request
+        fingerprint and the outcome are recorded with the write, so the same key with the same
+        request replays the first outcome without executing again. The same key with a different
+        request answers 409 `IDEMPOTENCY_KEY_REUSED`.
     RuleEnabled:
       name: enabled
       in: query
@@ -732,11 +751,8 @@ components:
     AcceptAlertRequest:
       type: object
       required:
-      - by
       - note
       properties:
-        by:
-          type: string
         note:
           type: string
           minLength: 1
@@ -784,6 +800,7 @@ components:
       properties:
         by:
           type: string
+          description: The caller, from its token.
         at:
           type: string
           format: date-time
@@ -791,12 +808,7 @@ components:
           type: string
     AckAlertRequest:
       type: object
-      required:
-      - by
       properties:
-        by:
-          type: string
-          example: ops@buildr.com
         note:
           type: string
     Alert:
@@ -848,6 +860,9 @@ components:
         lastSeenAt:
           type: string
           format: date-time
+          description: |
+            The last evaluation that found the failure. Like `occurrenceCount`, it derives from the
+            rule's evaluations: a repeat failure writes nothing on the alert and leaves its version.
         occurrenceCount:
           type: integer
           format: int64
@@ -1278,7 +1293,6 @@ components:
           - INVALID_TRANSITION
           - IDEMPOTENCY_KEY_REUSED
           - UNAVAILABLE
-          - DEADLINE_EXCEEDED
           - INTERNAL
           description: |
             `VERSION_MISMATCH`, `INVALID_TRANSITION` and `IDEMPOTENCY_KEY_REUSED` are specific
@@ -1399,6 +1413,7 @@ components:
           - accepted_by_business
         by:
           type: string
+          description: The caller, from its token.
         at:
           type: string
           format: date-time
@@ -1420,11 +1435,7 @@ components:
           description: 'For an acceptance: when it ends and the alert can reopen.'
     ResolveAlertRequest:
       type: object
-      required:
-      - by
       properties:
-        by:
-          type: string
         note:
           type: string
         transactionRefs:

@@ -2,13 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/formancehq/reconciliation/docs/drafts/events-v3/alert-event",
   "title": "Reconciliation v3 alert event payload",
-  "description": "Payload of every reconciliation alert event, envelope version v3. Draft: no code publishes it yet. The alert object follows the Alert schema of docs/drafts/openapi-v3.yaml.",
+  "description": "Payload of every reconciliation alert event, envelope version v3. Draft: no code publishes it yet. The alert object follows the Alert schema of docs/drafts/openapi-v3.yaml. Later v3 minors only add fields and enum values: consumers ignore what they do not know.",
   "$ref": "#/$defs/AlertEventPayload",
   "$defs": {
     "AlertEventPayload": {
       "type": "object",
       "required": ["alert", "rule", "transition"],
-      "additionalProperties": false,
       "properties": {
         "alert": {
           "description": "The alert as it stands right after the transition, as GET /alerts/{alertID} returns it.",
@@ -26,7 +25,6 @@
     "Transition": {
       "type": "object",
       "required": ["kind", "to", "at", "alertVersion", "transactionID"],
-      "additionalProperties": false,
       "properties": {
         "kind": {
           "type": "string",
@@ -52,7 +50,7 @@
         "transactionID": {
           "type": "integer",
           "minimum": 0,
-          "description": "The control ledger transaction that recorded the transition. Together with the control ledger name it forms the envelope idempotency_key."
+          "description": "The control ledger transaction that recorded the transition. With the control ledger name and the transaction timestamp, it forms the envelope idempotency_key."
         },
         "evaluationID": {
           "type": "string",
@@ -61,7 +59,7 @@
         },
         "by": {
           "type": "string",
-          "description": "The operator behind an acknowledged, resolved or accepted transition."
+          "description": "The caller behind an acknowledged, resolved or accepted transition, from its token."
         },
         "reason": {
           "type": "string",
@@ -73,7 +71,6 @@
     "RuleSummary": {
       "type": "object",
       "required": ["id", "name", "templateKind", "severity"],
-      "additionalProperties": false,
       "properties": {
         "id": { "type": "string", "format": "uuid" },
         "name": { "type": "string" },

@@ -8,7 +8,7 @@ Reconciliation publishes on the Stack broker through the go-libs publisher, on t
 
 ```json
 {
-  "idempotency_key": "reconciliation:4182",
+  "idempotency_key": "reconciliation:4182:1791468312000000",
   "date": "2026-10-08T14:05:12Z",
   "app": "reconciliation",
   "version": "v3",
@@ -18,7 +18,7 @@ Reconciliation publishes on the Stack broker through the go-libs publisher, on t
 ```
 
 - `version` is `v3`, the module major, as Ledger does (`v2` for Ledger v2, `v3` for Ledger v3). v2.5.0 published `v1`.
-- `idempotency_key` is `<control ledger name>:<transaction id>`, the control ledger transaction that recorded the transition. It is the deduplication key.
+- `idempotency_key` is `<control ledger name>:<transaction id>:<transaction timestamp>`, the control ledger transaction that recorded the transition, with its timestamp in Unix microseconds. It is the deduplication key. The timestamp keeps it unique after a cluster restore, which rewinds transaction IDs.
 - Webhooks lowercases `app` and `type` and joins them: subscribers match `reconciliation.opened_alert`.
 
 ## Event types
@@ -36,10 +36,14 @@ The types are the v2.5.0 ones, so existing webhook subscriptions keep matching.
 
 Not published in `v3.0.0`:
 
-- **A repeat failure with unchanged evidence.** It updates `lastSeenAt` and `occurrenceCount` with a minimal write, and does not notify.
+- **A repeat failure with unchanged evidence.** It writes nothing on the alert: `lastSeenAt` and `occurrenceCount` derive from the rule's evaluations, and the alert version does not change.
 - **`SNOOZED_ALERT` and `UNSNOOZED_ALERT`.** They come back with snooze, in a later v3 minor. From then on, a snoozed alert does not publish `UPDATED_ALERT`.
 
 **Meta-alerts** use the same types. Their `alert.fingerprint` is `evaluation.failed` (an evaluation could not read, evaluate or write) or `alert.cap` (an evaluation produced more transitions than one batch allows). A consumer that only wants business discrepancies filters them out by fingerprint.
+
+## Evolution
+
+Within v3 the payload only grows. Later minors add fields and enum values, such as the snooze transitions and new template kinds, and keep `version` at `v3`. A consumer ignores fields and values it does not know.
 
 ## Delivery
 
@@ -109,7 +113,7 @@ Example `RESOLVED_ALERT` payload, after a corrective booking:
 |---|---|---|
 | Envelope `version` | `v1` | `v3` |
 | Payload | `{alert, event}`, with the v2 alert event row | `{alert, rule, transition}` |
-| `idempotency_key` | The alert event row ID | `<control ledger>:<transaction id>` |
+| `idempotency_key` | The alert event row ID | `<control ledger>:<transaction id>:<transaction timestamp>` |
 | Snooze events | Published | Back with snooze, in a later v3 minor |
 | Repeat failure | `UPDATED_ALERT` on every failing run | `UPDATED_ALERT` only when the decision evidence changes |
 
