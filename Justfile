@@ -94,6 +94,36 @@ lettering-duckdb-tests:
 tests-integration:
     go test -race -covermode atomic -tags it -p 1 ./...
 
+# Ledger image the integration suite runs against in CI. Pin a tag, never a
+# branch head: its gRPC protocol revision must equal
+# internal/ledgerpb/grpcprotocol.Version, which
+# TestIntegration_ProtocolVersionMatchesServer checks. Bump it in the same commit
+# as `just sync-ledger-proto`.
+ledger_it_image := "ghcr.io/formancehq/ledger:v3.0.0-beta.7"
+
+# Run the integration suite against a throwaway single-node ledger of the pinned
+# tag, one per run, on a random local port. Data and WAL live on tmpfs: fast,
+# and free of the ledger's disk-usage write block (80% by default) on a full
+# Docker disk. The container is removed on exit, and its logs are printed when
+# the suite fails.
+tests-integration-ephemeral:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="recon-it-ledger-$$"
+    docker run -d --name "$name" -p 127.0.0.1::8888 --tmpfs /var/lib/ledger:size=2g \
+        {{ ledger_it_image }} run --node-id 1 --cluster-id recon-it --bootstrap \
+        --bind-addr 127.0.0.1:7777 --data-dir /var/lib/ledger/data --wal-dir /var/lib/ledger/wal >/dev/null
+    status=1
+    trap '[ "$status" = 0 ] || docker logs --tail 100 "$name" >&2 || true; docker rm -f "$name" >/dev/null' EXIT
+    addr="$(docker port "$name" 8888/tcp | head -1)"
+    for _ in $(seq 1 60); do
+        (exec 3<>"/dev/tcp/${addr%:*}/${addr##*:}") 2>/dev/null && break
+        sleep 1
+    done
+    echo "ledger {{ ledger_it_image }} on $addr"
+    RECON_LEDGER_ADDR="$addr" go test -count=1 -race -tags it -p 1 -run '^TestIntegration_' ./...
+    status=0
+
 # Build the binary locally
 build:
     go build -o ./bin/reconciliation .

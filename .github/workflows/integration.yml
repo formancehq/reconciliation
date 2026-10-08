@@ -1,0 +1,28 @@
+name: Integration
+on:
+  merge_group:
+  push:
+    branches:
+      - main
+      - release/*
+      # The Ledger v3 prototype has no pull request: run the suite on its pushes.
+      - feat/reconciliation-ledger-v3
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs the `it` suite against a throwaway ledger of the tag pinned in the
+  # Justfile (ledger_it_image). TestIntegration_ProtocolVersionMatchesServer
+  # fails the job when the vendored protocol does not match that tag.
+  Integration:
+    uses: formancehq/ci/.github/workflows/go-test.yml@v1
+    with:
+      runner-profile: namespace-profile-linux-amd64-4vcpu
+      test-target: tests-integration-ephemeral

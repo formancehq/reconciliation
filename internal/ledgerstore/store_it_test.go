@@ -55,7 +55,10 @@ func TestIntegration_RuleLifecycle(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it6"
+	// A control ledger per test, deleted afterwards: tests stay isolated on a
+	// shared dev ledger and do not accumulate state across runs.
+	control := "recon-it-ctl-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(context.Background(), control) }()
 
 	// Idempotent bootstrap in AUDIT so the chart is validated but not enforced.
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
@@ -127,7 +130,10 @@ func TestIntegration_OpenAlert(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it6"
+	// A control ledger per test, deleted afterwards: tests stay isolated on a
+	// shared dev ledger and do not accumulate state across runs.
+	control := "recon-it-ctl-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(context.Background(), control) }()
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -234,7 +240,10 @@ func TestIntegration_AlertTransitions(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it6"
+	// A control ledger per test, deleted afterwards: tests stay isolated on a
+	// shared dev ledger and do not accumulate state across runs.
+	control := "recon-it-ctl-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(context.Background(), control) }()
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -370,7 +379,10 @@ func TestIntegration_Lists(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it6"
+	// A control ledger per test, deleted afterwards: tests stay isolated on a
+	// shared dev ledger and do not accumulate state across runs.
+	control := "recon-it-ctl-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(context.Background(), control) }()
 
 	prov := ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT)
 	require.NoError(t, prov.Provision(ctx), "provision control-ledger")
@@ -464,7 +476,10 @@ func TestIntegration_RecordCapture(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it6"
+	// A control ledger per test, deleted afterwards: tests stay isolated on a
+	// shared dev ledger and do not accumulate state across runs.
+	control := "recon-it-ctl-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(context.Background(), control) }()
 	require.NoError(t, ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT).Provision(ctx), "provision control-ledger")
 
 	store := New(client, control)
@@ -514,7 +529,10 @@ func TestIntegration_ListCaptures(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it6"
+	// A control ledger per test, deleted afterwards: tests stay isolated on a
+	// shared dev ledger and do not accumulate state across runs.
+	control := "recon-it-ctl-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(context.Background(), control) }()
 	require.NoError(t, ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT).Provision(ctx), "provision control-ledger")
 
 	store := New(client, control)

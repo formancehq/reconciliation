@@ -38,7 +38,10 @@ func TestIntegration_EvaluateLive(t *testing.T) {
 
 	defer func() { _ = client.Close() }()
 
-	const control = "recon-it6"
+	// A control ledger per test, deleted afterwards: tests stay isolated on a
+	// shared dev ledger and do not accumulate state across runs.
+	control := "recon-it-ctl-" + uuid.NewString()
+	defer func() { _ = client.DeleteLedger(context.Background(), control) }()
 	require.NoError(t, ledger.NewProvisioner(client, control, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_AUDIT).Provision(ctx), "provision control-ledger")
 
 	// Fresh data ledgers per run so the test is isolated on the shared dev ledger.

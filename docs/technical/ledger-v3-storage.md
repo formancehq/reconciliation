@@ -310,8 +310,13 @@ Records stamped V1 keep the shape they were written with; they are not rewritten
 Storage changes should exercise:
 
 - schema, query-filter, Numscript, provisioner, and LedgerStore unit tests with `just tests`;
-- the serial `it`-tagged suite against a live Ledger v3 on `localhost:8888` with
-  `just tests-integration`;
+- the serial `it`-tagged suite with `just tests-integration-ephemeral`, which starts a throwaway
+  single-node ledger of the pinned tag (`ledger_it_image` in the Justfile) in Docker and removes it
+  afterwards. CI runs the same recipe on every pull request (`.github/workflows/integration.yml`).
+  `TestIntegration_ProtocolVersionMatchesServer` fails the run when the vendored protocol does not
+  match that tag, so bump the tag in the same commit as `just sync-ledger-proto`. To run the suite
+  against an existing ledger instead, use `just tests-integration` (`localhost:8888`, or
+  `RECON_LEDGER_ADDR`);
 - a live create, evaluate, alert action, timeline read, and delete flow;
 - restart provisioning against the same control ledger to verify additive idempotency and index
   readiness behavior.
