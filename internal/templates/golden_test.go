@@ -5,9 +5,9 @@ package templates
 // The cases describe the target semantics of reconciliation v3, independent
 // of any implementation: the re-implementation (S5, S6) reuses the JSON files
 // with its own harness. This harness adapts them to the prototype: it turns
-// the per-asset `tolerances` table (major units) into the single minor-unit
-// `tolerance` string the prototype reads, and skips the cases that need
-// per-asset tolerances.
+// the per-asset `tolerances` entries (minor units, an asset without an entry
+// being exact) into the single minor-unit `tolerance` string the prototype
+// reads, and skips the cases that need different tolerances per asset.
 
 import (
 	"context"
@@ -19,8 +19,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/formancehq/reconciliation/internal/engine"
@@ -54,7 +52,7 @@ type goldenRead struct {
 
 // goldenUnsupported lists the semantics the prototype does not implement.
 var goldenUnsupported = map[string]string{
-	"v3-tolerances": "per-asset tolerances in major units (review decision 12c) come with S5",
+	"v3-tolerances": "per-asset tolerances (review decision 12c) come with S5",
 }
 
 func TestGolden(t *testing.T) {
@@ -132,41 +130,48 @@ func runGoldenCase(t *testing.T, evaluator Evaluator, tc goldenCase) {
 	}
 }
 
-// prototypeSpec turns the v3 `tolerances` table into the prototype's single
-// minor-unit `tolerance`. Every asset the case touches must resolve to the
-// same minor-unit value: a case that needs more is marked v3-tolerances.
+// prototypeSpec turns the v3 `tolerances` (per-asset entries in minor units,
+// an asset without an entry being exact) into the prototype's single
+// minor-unit `tolerance`. Every asset the case touches must resolve to the same
+// value: a case that needs more is marked v3-tolerances. A key that is not an
+// asset code is passed on as an invalid tolerance, so the prototype rejects it.
 func prototypeSpec(tc goldenCase) (json.RawMessage, error) {
 	spec := maps.Clone(tc.Spec)
-	rawTolerances, ok := spec["tolerances"]
-	if !ok {
+	tolerances := map[string]string{}
+	if raw, ok := spec["tolerances"]; ok {
+		if err := json.Unmarshal(raw, &tolerances); err != nil {
+			return nil, err
+		}
+		delete(spec, "tolerances")
+	}
+	if _, ok := spec["sources"]; !ok { // balance_bounds has no tolerance
 		return json.Marshal(spec)
 	}
-	delete(spec, "tolerances")
-
-	var tolerances map[string]string
-	if err := json.Unmarshal(rawTolerances, &tolerances); err != nil {
-		return nil, err
+	for key := range tolerances {
+		if !engine.ValidAssetCode(key) {
+			spec["tolerance"], _ = json.Marshal("invalid-key:" + key)
+			return json.Marshal(spec)
+		}
 	}
 	assets, err := caseAssets(tc)
 	if err != nil {
 		return nil, err
 	}
-	minor := ""
+	effective := ""
 	for _, asset := range assets {
-		major, ok := tolerances[asset]
+		value, ok := tolerances[asset]
 		if !ok {
-			major = tolerances["*"]
+			value = "0"
 		}
-		value := toMinorUnits(major, asset)
-		if minor != "" && value != minor {
+		if effective != "" && value != effective {
 			return nil, fmt.Errorf("case %s needs per-asset tolerances: mark it v3-tolerances", tc.Name)
 		}
-		minor = value
+		effective = value
 	}
-	if minor == "" {
-		minor = "0"
+	if effective == "" {
+		effective = "0"
 	}
-	spec["tolerance"], _ = json.Marshal(minor)
+	spec["tolerance"], _ = json.Marshal(effective)
 	return json.Marshal(spec)
 }
 
@@ -191,25 +196,6 @@ func caseAssets(tc goldenCase) ([]string, error) {
 		}
 	}
 	return assets, nil
-}
-
-// toMinorUnits converts a major-unit decimal to minor units of the asset. A
-// value that is negative or finer than the asset's precision is returned in a
-// form the prototype rejects, so the case still exercises validation.
-func toMinorUnits(major, asset string) string {
-	precision := 0
-	if _, p, ok := strings.Cut(asset, "/"); ok {
-		precision, _ = strconv.Atoi(p)
-	}
-	r, ok := new(big.Rat).SetString(major)
-	if !ok {
-		return "not-a-number:" + major
-	}
-	r.Mul(r, new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(precision)), nil)))
-	if !r.IsInt() {
-		return "finer-than-precision:" + major
-	}
-	return r.Num().String()
 }
 
 // goldenLedger serves each source's reads, keyed by ledger and compacted query.

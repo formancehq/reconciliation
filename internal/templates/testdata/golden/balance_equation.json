@@ -1,6 +1,6 @@
 {
   "template": "balance_equation",
-  "about": "Golden cases for balance_equation: template inputs, resolved source reads, and the expected verdict per asset. They describe the target semantics of reconciliation v3 (RFC 0022, ADR-006) and are independent of any implementation. Amounts are integer strings in minor units of the asset (USD/2 counts cents). Tolerances are major units per asset, with a mandatory '*' default (review decision 12c). A case listing 'v3-tolerances' in 'requires' needs per-asset tolerances that the prototype cannot express. 'expect' lists one entry per outcome, sorted by asset, and names only the decisive values: a port maps them to its own evidence fields. 'invalid' means the spec must be rejected at rule creation. 'evaluationError' means evaluation must fail as a whole.",
+  "about": "Golden cases for balance_equation: template inputs, resolved source reads, and the expected verdict per asset. They describe the target semantics of reconciliation v3 (RFC 0022, ADR-006) and are independent of any implementation. Amounts are integer strings in minor units of the asset (USD/2 counts cents). Tolerances follow review decision 12c: 'tolerances' holds per-asset entries in minor units, and an asset without an entry is checked exactly. There is no default and nothing is ever converted or rounded. A case listing 'v3-tolerances' in 'requires' needs per-asset tolerances that the prototype cannot express. 'expect' lists one entry per outcome, sorted by asset, and names only the decisive values: a port maps them to its own evidence fields. 'invalid' means the spec must be rejected at rule creation. 'evaluationError' means evaluation must fail as a whole.",
   "cases": [
     {
       "name": "exact_equation",
@@ -51,10 +51,7 @@
             "source": "c",
             "coefficient": -1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "a": {
@@ -84,7 +81,7 @@
     },
     {
       "name": "residual_within_tolerance",
-      "description": "Tolerance 0.05 USD is 5 cents, and the comparison is inclusive.",
+      "description": "A tolerance of 5 on USD/2 is 5 cents, and the comparison is inclusive.",
       "spec": {
         "sources": [
           {
@@ -133,7 +130,7 @@
           }
         ],
         "tolerances": {
-          "*": "0.05"
+          "USD/2": "5"
         }
       },
       "reads": {
@@ -213,7 +210,7 @@
           }
         ],
         "tolerances": {
-          "*": "0.05"
+          "USD/2": "5"
         }
       },
       "reads": {
@@ -293,7 +290,7 @@
           }
         ],
         "tolerances": {
-          "*": "0.05"
+          "USD/2": "5"
         }
       },
       "reads": {
@@ -357,10 +354,7 @@
             "source": "net",
             "coefficient": -1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "gross": {
@@ -432,10 +426,7 @@
             "source": "c",
             "coefficient": -1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "a": {
@@ -510,10 +501,7 @@
             "source": "c",
             "coefficient": -1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "a": {
@@ -590,10 +578,7 @@
             "source": "c",
             "coefficient": -1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "a": {
@@ -634,11 +619,11 @@
       ]
     },
     {
-      "name": "default_tolerance_scales_with_precision",
+      "name": "unlisted_asset_is_exact",
       "requires": [
         "v3-tolerances"
       ],
-      "description": "A default of 1 major unit is 100 on USD/2 and 1 on JPY (review finding M11: one minor-unit tolerance was $1 on USD/2 but 100 yen on JPY).",
+      "description": "An asset without a tolerance entry is checked exactly: USD/2 tolerates 100 and passes at 100, JPY has no entry and fails at 2 (review finding M11: one tolerance number cannot mean the same on USD/2 and JPY).",
       "spec": {
         "sources": [
           {
@@ -687,7 +672,7 @@
           }
         ],
         "tolerances": {
-          "*": "1"
+          "USD/2": "100"
         }
       },
       "reads": {
@@ -718,11 +703,11 @@
       ]
     },
     {
-      "name": "per_asset_tolerance_overrides_default",
+      "name": "listed_asset_tolerated_others_exact",
       "requires": [
         "v3-tolerances"
       ],
-      "description": "An asset entry overrides the '*' default.",
+      "description": "Only the listed asset is tolerated: EUR/2 passes at 10, USD/2 has no entry and fails at 1.",
       "spec": {
         "sources": [
           {
@@ -771,8 +756,7 @@
           }
         ],
         "tolerances": {
-          "*": "0",
-          "EUR/2": "0.10"
+          "EUR/2": "10"
         }
       },
       "reads": {
@@ -847,10 +831,7 @@
             "source": "b",
             "coefficient": 1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {},
       "invalid": true
@@ -904,10 +885,7 @@
             "source": "c",
             "coefficient": -1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {},
       "invalid": true
@@ -961,10 +939,7 @@
             "source": "c",
             "coefficient": -1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {},
       "invalid": true
@@ -1018,10 +993,7 @@
             "source": "c",
             "coefficient": -1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {},
       "invalid": true
@@ -1075,10 +1047,7 @@
             "source": "c",
             "coefficient": -1
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {},
       "invalid": true
@@ -1134,7 +1103,121 @@
           }
         ],
         "tolerances": {
-          "*": "-1"
+          "USD/2": "-1"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_fractional_tolerance",
+      "description": "A per-asset tolerance is an integer in minor units: a tolerance is never rounded.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "USD/2": "0.5"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_wildcard_tolerance_key",
+      "description": "Tolerance keys are asset codes. There is no '*' default.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "5"
         }
       },
       "reads": {},

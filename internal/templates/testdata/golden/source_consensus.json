@@ -1,6 +1,6 @@
 {
   "template": "source_consensus",
-  "about": "Golden cases for source_consensus: template inputs, resolved source reads, and the expected verdict per asset. They describe the target semantics of reconciliation v3 (RFC 0022, ADR-006) and are independent of any implementation. Amounts are integer strings in minor units of the asset (USD/2 counts cents). Tolerances are major units per asset, with a mandatory '*' default (review decision 12c). A case listing 'v3-tolerances' in 'requires' needs per-asset tolerances that the prototype cannot express. 'expect' lists one entry per outcome, sorted by asset, and names only the decisive values: a port maps them to its own evidence fields. 'invalid' means the spec must be rejected at rule creation. 'evaluationError' means evaluation must fail as a whole.",
+  "about": "Golden cases for source_consensus: template inputs, resolved source reads, and the expected verdict per asset. They describe the target semantics of reconciliation v3 (RFC 0022, ADR-006) and are independent of any implementation. Amounts are integer strings in minor units of the asset (USD/2 counts cents). Tolerances follow review decision 12c: 'tolerances' holds per-asset entries in minor units, and an asset without an entry is checked exactly. There is no default and nothing is ever converted or rounded. A case listing 'v3-tolerances' in 'requires' needs per-asset tolerances that the prototype cannot express. 'expect' lists one entry per outcome, sorted by asset, and names only the decisive values: a port maps them to its own evidence fields. 'invalid' means the spec must be rejected at rule creation. 'evaluationError' means evaluation must fail as a whole.",
   "cases": [
     {
       "name": "all_equal",
@@ -37,10 +37,7 @@
             },
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "bank": {
@@ -72,7 +69,7 @@
     },
     {
       "name": "spread_within_tolerance",
-      "description": "Tolerance 0.02 USD is 2 cents on the max-minus-min spread, inclusive.",
+      "description": "A tolerance of 2 on USD/2 is 2 cents on the max-minus-min spread, inclusive.",
       "spec": {
         "sources": [
           {
@@ -107,7 +104,7 @@
           }
         ],
         "tolerances": {
-          "*": "0.02"
+          "USD/2": "2"
         }
       },
       "reads": {
@@ -174,7 +171,7 @@
           }
         ],
         "tolerances": {
-          "*": "0.02"
+          "USD/2": "2"
         }
       },
       "reads": {
@@ -239,10 +236,7 @@
             },
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "bank": {
@@ -306,10 +300,7 @@
             },
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "bank": {
@@ -373,10 +364,7 @@
             },
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "bank": {
@@ -439,10 +427,7 @@
             },
             "asset": "*"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "bank": {
@@ -506,10 +491,7 @@
             "metadataKey": "closingBalance",
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "ledger": {
@@ -570,10 +552,7 @@
             "metadataKey": "closingBalance",
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "ledger": {
@@ -622,10 +601,7 @@
             "metadataKey": "closingBalance",
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "ledger": {
@@ -677,10 +653,7 @@
             "metadataKey": "closingBalance",
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {
         "ledger": {
@@ -702,11 +675,11 @@
       "evaluationError": true
     },
     {
-      "name": "default_tolerance_scales_with_precision",
+      "name": "unlisted_asset_is_exact",
       "requires": [
         "v3-tolerances"
       ],
-      "description": "A default of 1 major unit is 100 on USD/2 and 1 on JPY.",
+      "description": "An asset without a tolerance entry is checked exactly: USD/2 tolerates 100, JPY has no entry and fails at a spread of 2.",
       "spec": {
         "sources": [
           {
@@ -741,7 +714,7 @@
           }
         ],
         "tolerances": {
-          "*": "1"
+          "USD/2": "100"
         }
       },
       "reads": {
@@ -792,10 +765,7 @@
             },
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {},
       "invalid": true
@@ -825,10 +795,7 @@
             },
             "asset": "EUR/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {},
       "invalid": true
@@ -858,10 +825,7 @@
             },
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {},
       "invalid": true
@@ -891,10 +855,7 @@
             },
             "asset": "USD/2"
           }
-        ],
-        "tolerances": {
-          "*": "0"
-        }
+        ]
       },
       "reads": {},
       "invalid": true
