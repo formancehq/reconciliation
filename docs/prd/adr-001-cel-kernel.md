@@ -1,6 +1,8 @@
 # ADR-001 — Engine kernel: CEL over a typed object model
 
-**Status:** Accepted (implemented in [`internal/engine/`](../../internal/engine/))
+> **Warning:** This ADR has been superseded by [ADR-006](./adr-006-templates-without-cel.md). Reconciliation v3 has no CEL. This page stays as the record of why CEL was chosen, for a future power mode.
+
+**Status:** Superseded by [ADR-006](./adr-006-templates-without-cel.md) on 2026-10-08
 **Linked from:** [PRD §5](./README.md), [architecture.md](../technical/architecture.md)
 **Last updated:** 2026-06-17
 

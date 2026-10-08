@@ -33,7 +33,8 @@ V1.1+ feature carve-outs and EE+ "Finance Ops" notes — not committed scope.
 | **Architecture overview** | [technical/architecture.md](./technical/architecture.md) |
 | **Ledger v3 storage model** | [technical/ledger-v3-storage.md](./technical/ledger-v3-storage.md) |
 | **End-to-end demo UI** | [`../../poc-reconciliation-demo`](../../poc-reconciliation-demo) (sibling repo) |
-| **ADR-001 — CEL kernel choice** | [prd/adr-001-cel-kernel.md](./prd/adr-001-cel-kernel.md) |
+| **ADR-001 — CEL kernel choice** *(superseded by ADR-006)* | [prd/adr-001-cel-kernel.md](./prd/adr-001-cel-kernel.md) |
+| **ADR-006 — Templates evaluate in Go, no CEL in v3** | [prd/adr-006-templates-without-cel.md](./prd/adr-006-templates-without-cel.md) |
 | **ADR-002 — PIT consistency model** | [prd/adr-002-pit-consistency.md](./prd/adr-002-pit-consistency.md) |
 | **ADR-004 — multi-source comparisons** | [prd/adr-004-multi-source-comparisons.md](./prd/adr-004-multi-source-comparisons.md) |
 | **ADR-005 — transaction-level (lettering) reconciliation** *(proposed)* | [prd/adr-005-transaction-level-reconciliation.md](./prd/adr-005-transaction-level-reconciliation.md) · design, measurements and evidence in [technical/transaction-level-reconciliation.md](./technical/transaction-level-reconciliation.md) · result files and how to read them in [technical/transaction-level-results.md](./technical/transaction-level-results.md) · internal checks and queries in [technical/lettering-duckdb.md](./technical/lettering-duckdb.md) · feature inventory for the V1 scope in [prd/adr-005-feature-inventory.md](./prd/adr-005-feature-inventory.md) |

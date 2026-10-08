@@ -8,7 +8,7 @@
 | Code module    | `reconciliation` (unchanged)           |
 | Product name   | **Ledger Clarity** *(working title)*   |
 | Tier           | EE (V1) + EE+ "Finance Ops" pack (V2+) |
-| Sub-pages      | [ADR-001](./adr-001-cel-kernel.md) · [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [ADR-005](./adr-005-transaction-level-reconciliation.md) *(proposed)* |
+| Sub-pages      | [ADR-001](./adr-001-cel-kernel.md) *(superseded)* · [ADR-002](./adr-002-pit-consistency.md) · [ADR-003](./adr-003-checkpoint-anchor-and-crosscheck.md) · [ADR-004](./adr-004-multi-source-comparisons.md) · [ADR-005](./adr-005-transaction-level-reconciliation.md) *(proposed)* · [ADR-006](./adr-006-templates-without-cel.md) |
 
 ---
 
@@ -16,7 +16,7 @@
 
 **Ledger Clarity** is Formance's continuous-controls product for ledger state. It observes financial invariants you define (drift, balance thresholds, account-set equality), produces **evidence** whenever an invariant breaks, raises a stable **alert** with a full transition history, and supports a documented **resolution** — either by **booking a corrective transaction** or by **formally accepting the discrepancy** with note, author, evidence, and audit trail.
 
-The source-agnostic engine that powers it (see [ADR-001](./adr-001-cel-kernel.md)) is implementation detail. **Customers buy clarity over their ledger, not a rule engine.**
+The template engine that powers it (see [ADR-006](./adr-006-templates-without-cel.md)) is implementation detail. **Customers buy clarity over their ledger, not a rule engine.**
 
 The product narrative is a five-stage business lifecycle:
 
@@ -109,7 +109,7 @@ The engine internals (rules, expressions, kernel) exist to serve this lifecycle,
 
 ### Non-goals (V1)
 
-- **No raw-CEL public API.** Templates are the entire surface. Raw CEL = design-partner-gated post-GA. See [ADR-001 addendum](./adr-001-cel-kernel.md#9-implications--consequences).
+- **No raw-CEL public API.** Templates are the entire surface. No CEL in v3: raw CEL rules come back after GA only through a new ADR. See [ADR-006](./adr-006-templates-without-cel.md).
 - **No vendor-specific integrations** (Jira, Asana, Monday, Linear, ServiceNow, PagerDuty, Slack). We publish clean events; Webhooks delivers; customer workflow handles ownership/routing.
 - No UI.
 - No cross-ledger queries (Ledger v3 GA).
@@ -250,5 +250,6 @@ migration — the Postgres storage layer and the three template evaluators — a
 - [Template catalog reference](../technical/templates.md)
 - [Workflows](../technical/workflows.md)
 - [API reference](../technical/api.md)
-- [ADR-001 — CEL kernel choice](./adr-001-cel-kernel.md)
+- [ADR-001 — CEL kernel choice](./adr-001-cel-kernel.md) *(superseded by ADR-006)*
+- [ADR-006 — Templates evaluate in Go, CEL leaves reconciliation v3](./adr-006-templates-without-cel.md)
 - [ADR-002 — PIT consistency model](./adr-002-pit-consistency.md)
