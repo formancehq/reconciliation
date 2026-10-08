@@ -1,0 +1,635 @@
+{
+  "template": "balance_bounds",
+  "about": "Golden cases for balance_bounds: template inputs, resolved source reads, and the expected verdict per asset. They describe the target semantics of reconciliation v3 (RFC 0022, ADR-006) and are independent of any implementation. Amounts are integer strings in minor units of the asset (USD/2 counts cents). Tolerances are major units per asset, with a mandatory '*' default (review decision 12c). A case listing 'v3-tolerances' in 'requires' needs per-asset tolerances that the prototype cannot express. 'expect' lists one entry per outcome, sorted by asset, and names only the decisive values: a port maps them to its own evidence fields. 'invalid' means the spec must be rejected at rule creation. 'evaluationError' means evaluation must fail as a whole.",
+  "cases": [
+    {
+      "name": "within_bounds",
+      "description": "A balance strictly inside [min, max] passes with no excursion.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "100",
+            "max": "1000"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "500"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "excursion": "0"
+        }
+      ]
+    },
+    {
+      "name": "below_min",
+      "description": "Below min fails on min. The excursion is the signed distance to the breached bound.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "100",
+            "max": "1000"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "50"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "breachedBound": "min",
+          "excursion": "-50"
+        }
+      ]
+    },
+    {
+      "name": "above_max",
+      "description": "Above max fails on max.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "100",
+            "max": "1000"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "1500"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "breachedBound": "max",
+          "excursion": "500"
+        }
+      ]
+    },
+    {
+      "name": "min_is_inclusive",
+      "description": "A balance equal to min passes.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "100",
+            "max": "1000"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "100"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "excursion": "0"
+        }
+      ]
+    },
+    {
+      "name": "max_is_inclusive",
+      "description": "A balance equal to max passes.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "100",
+            "max": "1000"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "1000"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "excursion": "0"
+        }
+      ]
+    },
+    {
+      "name": "min_only",
+      "description": "With only min, any larger balance passes, beyond int64 included.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "0"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "99999999999999999999999"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "excursion": "0"
+        }
+      ]
+    },
+    {
+      "name": "max_only_negative_balance",
+      "description": "With only max, a negative balance passes.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "max": "0"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "-200"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "excursion": "0"
+        }
+      ]
+    },
+    {
+      "name": "negative_range",
+      "description": "A liability range [-500, -100]. -50 is above max.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "-500",
+            "max": "-100"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "-50"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "breachedBound": "max",
+          "excursion": "50"
+        }
+      ]
+    },
+    {
+      "name": "absent_asset_reads_zero",
+      "description": "A source that holds none of the asset reads zero, so min 1 fails.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "1"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {}
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "breachedBound": "min",
+          "excursion": "-1"
+        }
+      ]
+    },
+    {
+      "name": "bound_beyond_int64",
+      "description": "A 1e20 bound is valid. The prototype's CEL compile rejected it at rule creation (review finding M10); the Go check must accept it.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "max": "100000000000000000000"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "50000000000000000000"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "excursion": "0"
+        }
+      ]
+    },
+    {
+      "name": "wildcard_checks_bounded_assets_only",
+      "description": "A wildcard source checks every asset that has a bound and ignores the others (GBP/2 here).",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "*"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "0",
+            "max": "1000"
+          },
+          "EUR/2": {
+            "min": "0"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "2000",
+            "EUR/2": "-5",
+            "GBP/2": "999"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "EUR/2",
+          "passed": false,
+          "breachedBound": "min",
+          "excursion": "-5"
+        },
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "breachedBound": "max",
+          "excursion": "1000"
+        }
+      ]
+    },
+    {
+      "name": "wildcard_bounded_asset_not_held",
+      "description": "A bounded asset the source does not hold reads zero.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "*"
+        },
+        "bounds": {
+          "JPY": {
+            "max": "0"
+          }
+        }
+      },
+      "reads": {
+        "treasury": {
+          "balances": {
+            "USD/2": "10"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "JPY",
+          "passed": true,
+          "excursion": "0"
+        }
+      ]
+    },
+    {
+      "name": "metadata_source",
+      "description": "An account_metadata source sums the integer values of its key across the matched accounts.",
+      "spec": {
+        "source": {
+          "id": "stmt",
+          "kind": "account_metadata",
+          "ledger": "bank",
+          "query": {
+            "$match": {
+              "address": "stmt:"
+            }
+          },
+          "metadataKey": "closingBalance",
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "1000"
+          }
+        }
+      },
+      "reads": {
+        "stmt": {
+          "accounts": [
+            {
+              "address": "stmt:0",
+              "metadata": {
+                "closingBalance": "600"
+              }
+            },
+            {
+              "address": "stmt:1",
+              "metadata": {
+                "closingBalance": "300"
+              }
+            }
+          ]
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "breachedBound": "min",
+          "excursion": "-100"
+        }
+      ]
+    },
+    {
+      "name": "invalid_min_above_max",
+      "description": "min greater than max is rejected.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "1000",
+            "max": "100"
+          }
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_no_min_no_max",
+      "description": "A bound needs min, max or both.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {}
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_wildcard_bounds_key",
+      "description": "'*' is not a bounds key: a bound is denominated.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "*"
+        },
+        "bounds": {
+          "*": {
+            "min": "0"
+          }
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_bounds_other_asset",
+      "description": "A fixed-asset source must bound exactly its own asset.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "EUR/2": {
+            "min": "0"
+          }
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_metadata_wildcard",
+      "description": "A metadata source declares the one asset its key represents, never '*'.",
+      "spec": {
+        "source": {
+          "id": "stmt",
+          "kind": "account_metadata",
+          "ledger": "bank",
+          "query": {
+            "$match": {
+              "address": "stmt:"
+            }
+          },
+          "metadataKey": "closingBalance",
+          "asset": "*"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "0"
+          }
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_bound_not_integer",
+      "description": "Bounds are integer strings in minor units.",
+      "spec": {
+        "source": {
+          "id": "treasury",
+          "ledger": "main",
+          "query": {
+            "$match": {
+              "address": "treasury:"
+            }
+          },
+          "asset": "USD/2"
+        },
+        "bounds": {
+          "USD/2": {
+            "min": "10.5"
+          }
+        }
+      },
+      "reads": {},
+      "invalid": true
+    }
+  ]
+}

@@ -1,0 +1,903 @@
+{
+  "template": "source_consensus",
+  "about": "Golden cases for source_consensus: template inputs, resolved source reads, and the expected verdict per asset. They describe the target semantics of reconciliation v3 (RFC 0022, ADR-006) and are independent of any implementation. Amounts are integer strings in minor units of the asset (USD/2 counts cents). Tolerances are major units per asset, with a mandatory '*' default (review decision 12c). A case listing 'v3-tolerances' in 'requires' needs per-asset tolerances that the prototype cannot express. 'expect' lists one entry per outcome, sorted by asset, and names only the decisive values: a port maps them to its own evidence fields. 'invalid' means the spec must be rejected at rule creation. 'evaluationError' means evaluation must fail as a whole.",
+  "cases": [
+    {
+      "name": "all_equal",
+      "description": "Equal sources pass. On a tie, the first source in spec order is both minimum and maximum.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "psp",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "psp:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "bank": {
+          "balances": {
+            "USD/2": "1000"
+          }
+        },
+        "book": {
+          "balances": {
+            "USD/2": "1000"
+          }
+        },
+        "psp": {
+          "balances": {
+            "USD/2": "1000"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "spread": "0",
+          "minimumSource": "bank",
+          "maximumSource": "bank",
+          "missingSources": []
+        }
+      ]
+    },
+    {
+      "name": "spread_within_tolerance",
+      "description": "Tolerance 0.02 USD is 2 cents on the max-minus-min spread, inclusive.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "psp",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "psp:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0.02"
+        }
+      },
+      "reads": {
+        "bank": {
+          "balances": {
+            "USD/2": "1000"
+          }
+        },
+        "book": {
+          "balances": {
+            "USD/2": "1001"
+          }
+        },
+        "psp": {
+          "balances": {
+            "USD/2": "1002"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "spread": "2",
+          "minimumSource": "bank",
+          "maximumSource": "psp"
+        }
+      ]
+    },
+    {
+      "name": "spread_over_tolerance",
+      "description": "A spread of 3 cents exceeds 2.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "psp",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "psp:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0.02"
+        }
+      },
+      "reads": {
+        "bank": {
+          "balances": {
+            "USD/2": "1000"
+          }
+        },
+        "book": {
+          "balances": {
+            "USD/2": "1003"
+          }
+        },
+        "psp": {
+          "balances": {
+            "USD/2": "1001"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "spread": "3",
+          "minimumSource": "bank",
+          "maximumSource": "book"
+        }
+      ]
+    },
+    {
+      "name": "tie_break_is_spec_order",
+      "description": "Ties resolve to the first source in spec order, for both extremes.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "psp",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "psp:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "bank": {
+          "balances": {
+            "USD/2": "7"
+          }
+        },
+        "book": {
+          "balances": {
+            "USD/2": "5"
+          }
+        },
+        "psp": {
+          "balances": {
+            "USD/2": "5"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "spread": "2",
+          "minimumSource": "book",
+          "maximumSource": "bank"
+        }
+      ]
+    },
+    {
+      "name": "negative_balances",
+      "description": "The spread is max minus min across signs.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "psp",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "psp:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "bank": {
+          "balances": {
+            "USD/2": "-10"
+          }
+        },
+        "book": {
+          "balances": {
+            "USD/2": "5"
+          }
+        },
+        "psp": {
+          "balances": {
+            "USD/2": "0"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "spread": "15",
+          "minimumSource": "bank",
+          "maximumSource": "book"
+        }
+      ]
+    },
+    {
+      "name": "missing_source_fails",
+      "description": "Every source must hold the asset. An absent source fails the check even when all values are zero.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "psp",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "psp:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "bank": {
+          "balances": {}
+        },
+        "book": {
+          "balances": {
+            "USD/2": "0"
+          }
+        },
+        "psp": {
+          "balances": {
+            "USD/2": "0"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "spread": "0",
+          "missingSources": [
+            "bank"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "wildcard_missing_per_asset",
+      "description": "With a wildcard, an asset missing from one source fails for that asset only.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "psp",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "psp:"
+              }
+            },
+            "asset": "*"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "bank": {
+          "balances": {
+            "USD/2": "100",
+            "EUR/2": "50"
+          }
+        },
+        "book": {
+          "balances": {
+            "USD/2": "100"
+          }
+        },
+        "psp": {
+          "balances": {
+            "USD/2": "100",
+            "EUR/2": "50"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "EUR/2",
+          "passed": false,
+          "missingSources": [
+            "book"
+          ]
+        },
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "spread": "0",
+          "missingSources": []
+        }
+      ]
+    },
+    {
+      "name": "metadata_source_agrees_with_ledger",
+      "description": "An account_metadata source sums its key across the matched accounts: 1000 + 500 = 1500.",
+      "spec": {
+        "sources": [
+          {
+            "id": "ledger",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "ledger:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "statement",
+            "kind": "account_metadata",
+            "ledger": "bank",
+            "query": {
+              "$match": {
+                "address": "statement:"
+              }
+            },
+            "metadataKey": "closingBalance",
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "ledger": {
+          "balances": {
+            "USD/2": "1500"
+          }
+        },
+        "statement": {
+          "accounts": [
+            {
+              "address": "stmt:0",
+              "metadata": {
+                "closingBalance": "1000"
+              }
+            },
+            {
+              "address": "stmt:1",
+              "metadata": {
+                "closingBalance": "500"
+              }
+            }
+          ]
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "spread": "0",
+          "missingSources": []
+        }
+      ]
+    },
+    {
+      "name": "metadata_source_without_accounts_is_missing",
+      "description": "A metadata source that matches no account is absent.",
+      "spec": {
+        "sources": [
+          {
+            "id": "ledger",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "ledger:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "statement",
+            "kind": "account_metadata",
+            "ledger": "bank",
+            "query": {
+              "$match": {
+                "address": "statement:"
+              }
+            },
+            "metadataKey": "closingBalance",
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "ledger": {
+          "balances": {
+            "USD/2": "0"
+          }
+        },
+        "statement": {
+          "accounts": []
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "missingSources": [
+            "statement"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "metadata_account_without_key",
+      "description": "A matched account without the key fails the evaluation, not the check.",
+      "spec": {
+        "sources": [
+          {
+            "id": "ledger",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "ledger:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "statement",
+            "kind": "account_metadata",
+            "ledger": "bank",
+            "query": {
+              "$match": {
+                "address": "statement:"
+              }
+            },
+            "metadataKey": "closingBalance",
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "ledger": {
+          "balances": {
+            "USD/2": "1500"
+          }
+        },
+        "statement": {
+          "accounts": [
+            {
+              "address": "stmt:0",
+              "metadata": {
+                "closingBalance": "1000"
+              }
+            },
+            {
+              "address": "stmt:1",
+              "metadata": {}
+            }
+          ]
+        }
+      },
+      "evaluationError": true
+    },
+    {
+      "name": "metadata_value_not_integer",
+      "description": "A metadata value must be an integer in minor units.",
+      "spec": {
+        "sources": [
+          {
+            "id": "ledger",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "ledger:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "statement",
+            "kind": "account_metadata",
+            "ledger": "bank",
+            "query": {
+              "$match": {
+                "address": "statement:"
+              }
+            },
+            "metadataKey": "closingBalance",
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "ledger": {
+          "balances": {
+            "USD/2": "1500"
+          }
+        },
+        "statement": {
+          "accounts": [
+            {
+              "address": "stmt:0",
+              "metadata": {
+                "closingBalance": "12.50"
+              }
+            }
+          ]
+        }
+      },
+      "evaluationError": true
+    },
+    {
+      "name": "default_tolerance_scales_with_precision",
+      "requires": [
+        "v3-tolerances"
+      ],
+      "description": "A default of 1 major unit is 100 on USD/2 and 1 on JPY.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "psp",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "psp:"
+              }
+            },
+            "asset": "*"
+          }
+        ],
+        "tolerances": {
+          "*": "1"
+        }
+      },
+      "reads": {
+        "bank": {
+          "balances": {
+            "USD/2": "0",
+            "JPY": "0"
+          }
+        },
+        "book": {
+          "balances": {
+            "USD/2": "100",
+            "JPY": "2"
+          }
+        },
+        "psp": {
+          "balances": {
+            "USD/2": "50",
+            "JPY": "1"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "JPY",
+          "passed": false,
+          "spread": "2"
+        },
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "spread": "100"
+        }
+      ]
+    },
+    {
+      "name": "invalid_single_source",
+      "description": "A consensus needs at least two sources.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_mixed_assets",
+      "description": "All sources declare the same asset.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "EUR/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_duplicate_id",
+      "description": "Source IDs are unique.",
+      "spec": {
+        "sources": [
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "bank:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "other:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_source_id",
+      "description": "A source ID starts with a letter.",
+      "spec": {
+        "sources": [
+          {
+            "id": "1bank",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "1bank:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "book",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "book:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    }
+  ]
+}

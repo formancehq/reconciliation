@@ -1,0 +1,1144 @@
+{
+  "template": "balance_equation",
+  "about": "Golden cases for balance_equation: template inputs, resolved source reads, and the expected verdict per asset. They describe the target semantics of reconciliation v3 (RFC 0022, ADR-006) and are independent of any implementation. Amounts are integer strings in minor units of the asset (USD/2 counts cents). Tolerances are major units per asset, with a mandatory '*' default (review decision 12c). A case listing 'v3-tolerances' in 'requires' needs per-asset tolerances that the prototype cannot express. 'expect' lists one entry per outcome, sorted by asset, and names only the decisive values: a port maps them to its own evidence fields. 'invalid' means the spec must be rejected at rule creation. 'evaluationError' means evaluation must fail as a whole.",
+  "cases": [
+    {
+      "name": "exact_equation",
+      "description": "a + b - c = 0.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "a": {
+          "balances": {
+            "USD/2": "100"
+          }
+        },
+        "b": {
+          "balances": {
+            "USD/2": "50"
+          }
+        },
+        "c": {
+          "balances": {
+            "USD/2": "150"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "residual": "0",
+          "absoluteResidual": "0"
+        }
+      ]
+    },
+    {
+      "name": "residual_within_tolerance",
+      "description": "Tolerance 0.05 USD is 5 cents, and the comparison is inclusive.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0.05"
+        }
+      },
+      "reads": {
+        "a": {
+          "balances": {
+            "USD/2": "100"
+          }
+        },
+        "b": {
+          "balances": {
+            "USD/2": "50"
+          }
+        },
+        "c": {
+          "balances": {
+            "USD/2": "145"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "residual": "5",
+          "absoluteResidual": "5"
+        }
+      ]
+    },
+    {
+      "name": "residual_over_tolerance",
+      "description": "A residual of 6 cents exceeds 5.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0.05"
+        }
+      },
+      "reads": {
+        "a": {
+          "balances": {
+            "USD/2": "100"
+          }
+        },
+        "b": {
+          "balances": {
+            "USD/2": "50"
+          }
+        },
+        "c": {
+          "balances": {
+            "USD/2": "144"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "residual": "6",
+          "absoluteResidual": "6"
+        }
+      ]
+    },
+    {
+      "name": "negative_residual",
+      "description": "The tolerance applies to the absolute residual.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0.05"
+        }
+      },
+      "reads": {
+        "a": {
+          "balances": {
+            "USD/2": "100"
+          }
+        },
+        "b": {
+          "balances": {
+            "USD/2": "50"
+          }
+        },
+        "c": {
+          "balances": {
+            "USD/2": "156"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "residual": "-6",
+          "absoluteResidual": "6"
+        }
+      ]
+    },
+    {
+      "name": "integer_weights",
+      "description": "2 * gross - net = 0.",
+      "spec": {
+        "sources": [
+          {
+            "id": "gross",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "gross:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "net",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "net:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "gross",
+            "coefficient": 2
+          },
+          {
+            "source": "net",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "gross": {
+          "balances": {
+            "USD/2": "75"
+          }
+        },
+        "net": {
+          "balances": {
+            "USD/2": "150"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "residual": "0",
+          "absoluteResidual": "0"
+        }
+      ]
+    },
+    {
+      "name": "absent_source_reads_zero",
+      "description": "A source that holds none of the asset contributes zero; the equation still holds.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "a": {
+          "balances": {
+            "USD/2": "100"
+          }
+        },
+        "b": {
+          "balances": {}
+        },
+        "c": {
+          "balances": {
+            "USD/2": "100"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "residual": "0",
+          "absoluteResidual": "0"
+        }
+      ]
+    },
+    {
+      "name": "beyond_int64",
+      "description": "Arithmetic does not overflow int64.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "a": {
+          "balances": {
+            "USD/2": "9223372036854775807"
+          }
+        },
+        "b": {
+          "balances": {
+            "USD/2": "1"
+          }
+        },
+        "c": {
+          "balances": {
+            "USD/2": "9223372036854775808"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "residual": "0",
+          "absoluteResidual": "0"
+        }
+      ]
+    },
+    {
+      "name": "wildcard_fans_out_per_asset",
+      "description": "A wildcard spec yields one outcome per asset held by any source. GBP/2 is held by a only.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "*"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {
+        "a": {
+          "balances": {
+            "USD/2": "100",
+            "EUR/2": "10",
+            "GBP/2": "7"
+          }
+        },
+        "b": {
+          "balances": {
+            "USD/2": "50"
+          }
+        },
+        "c": {
+          "balances": {
+            "USD/2": "150",
+            "EUR/2": "10"
+          }
+        }
+      },
+      "expect": [
+        {
+          "asset": "EUR/2",
+          "passed": true,
+          "residual": "0"
+        },
+        {
+          "asset": "GBP/2",
+          "passed": false,
+          "residual": "7"
+        },
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "residual": "0"
+        }
+      ]
+    },
+    {
+      "name": "default_tolerance_scales_with_precision",
+      "requires": [
+        "v3-tolerances"
+      ],
+      "description": "A default of 1 major unit is 100 on USD/2 and 1 on JPY (review finding M11: one minor-unit tolerance was $1 on USD/2 but 100 yen on JPY).",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "*"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "1"
+        }
+      },
+      "reads": {
+        "a": {
+          "balances": {
+            "USD/2": "100",
+            "JPY": "2"
+          }
+        },
+        "b": {
+          "balances": {}
+        },
+        "c": {
+          "balances": {}
+        }
+      },
+      "expect": [
+        {
+          "asset": "JPY",
+          "passed": false,
+          "residual": "2"
+        },
+        {
+          "asset": "USD/2",
+          "passed": true,
+          "residual": "100"
+        }
+      ]
+    },
+    {
+      "name": "per_asset_tolerance_overrides_default",
+      "requires": [
+        "v3-tolerances"
+      ],
+      "description": "An asset entry overrides the '*' default.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "*"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0",
+          "EUR/2": "0.10"
+        }
+      },
+      "reads": {
+        "a": {
+          "balances": {
+            "USD/2": "1",
+            "EUR/2": "10"
+          }
+        },
+        "b": {
+          "balances": {}
+        },
+        "c": {
+          "balances": {}
+        }
+      },
+      "expect": [
+        {
+          "asset": "EUR/2",
+          "passed": true,
+          "residual": "10"
+        },
+        {
+          "asset": "USD/2",
+          "passed": false,
+          "residual": "1"
+        }
+      ]
+    },
+    {
+      "name": "invalid_term_missing",
+      "description": "Terms reference every source exactly once.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_duplicate_term",
+      "description": "A source appears in one term only.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_zero_coefficient",
+      "description": "A zero coefficient is rejected.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 0
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_mixed_fixed_assets",
+      "description": "All sources declare the same asset.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "EUR/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_mixed_wildcard",
+      "description": "A spec is wholly wildcard or wholly fixed.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "*"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "0"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    },
+    {
+      "name": "invalid_negative_tolerance",
+      "description": "A tolerance is not negative.",
+      "spec": {
+        "sources": [
+          {
+            "id": "a",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "a:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "b",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "b:"
+              }
+            },
+            "asset": "USD/2"
+          },
+          {
+            "id": "c",
+            "ledger": "main",
+            "query": {
+              "$match": {
+                "address": "c:"
+              }
+            },
+            "asset": "USD/2"
+          }
+        ],
+        "terms": [
+          {
+            "source": "a",
+            "coefficient": 1
+          },
+          {
+            "source": "b",
+            "coefficient": 1
+          },
+          {
+            "source": "c",
+            "coefficient": -1
+          }
+        ],
+        "tolerances": {
+          "*": "-1"
+        }
+      },
+      "reads": {},
+      "invalid": true
+    }
+  ]
+}
