@@ -87,7 +87,9 @@ paths:
       operationId: listRules
       summary: List rules
       description: |
-        Ordered by `createdAt` descending, then `id`. Each rule carries its live alert counts.
+        Ordered by `createdAt` descending, then `id`. The rule ID is a UUIDv7, which starts with the
+        creation time, so the ledger serves this order natively. Each rule carries its live alert
+        counts.
 
         Requires `reconciliation:read`.
       parameters:
@@ -261,8 +263,10 @@ paths:
       operationId: listAlerts
       summary: List alerts
       description: |
-        Defaults to the active view (`OPEN` and `ACKNOWLEDGED`). Ordered by `lastSeenAt`
-        descending, then `id`.
+        Defaults to the active view (`OPEN` and `ACKNOWLEDGED`). Ordered by `id`: a stable order
+        that does not follow time, served natively by the ledger. Sort by `lastSeenAt` on the
+        client. A server-side sort by time waits for the ledger to order lists by a field
+        (Jira EN-1351).
 
         Requires `reconciliation:read`.
       parameters:
@@ -815,6 +819,7 @@ components:
         id:
           type: string
           format: uuid
+          description: Stable identifier. Lists order alerts by it.
         version:
           type: integer
           format: int64
@@ -1452,6 +1457,8 @@ components:
         id:
           type: string
           format: uuid
+          description: A UUIDv7, which starts with the creation time, so lists sort rules by creation
+            natively.
         version:
           type: integer
           format: int64

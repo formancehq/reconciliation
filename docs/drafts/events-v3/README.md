@@ -45,6 +45,7 @@ Not published in `v3.0.0`:
 
 - **After the commit.** An event is published only once its transition is committed in the control ledger. For an evaluation, that is the same atomic batch as its capture.
 - **At least once.** A catch-up loop republishes from a cursor stored in the control ledger, so a crash between commit and publish delays an event and never loses it. A consumer deduplicates on `idempotency_key`.
+- **No duplicate webhook deliveries.** Webhooks deduplicates on the broker message UUID, `(event_id, config_id)` in its delivery table, not on `idempotency_key`, and the go-libs publisher draws a random UUID per message. Reconciliation therefore sets the message UUID to a UUIDv5 of the `idempotency_key` in a fixed namespace, so a republished event carries the same UUID and Webhooks drops it on enqueue.
 - **Ordered per alert by `transition.alertVersion`.** Two events of one alert may arrive out of order after a retry. A consumer applies an event only when its `alertVersion` is greater than the last one it applied for that alert.
 - **No ledger events sink.** Reconciliation no longer asks the Ledger to deliver its events (Jira EN-2724).
 
