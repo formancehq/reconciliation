@@ -378,6 +378,11 @@ paths:
       description: |
         Closes an `OPEN` or `ACKNOWLEDGED` alert as fixed, for example by a corrective booking. Any other starting state answers 409 `INVALID_TRANSITION`.
 
+        Each transaction reference must exist, be committed, be later than the alert's first failure,
+        and sit on one of the rule's ledgers, or the request answers 400 `VALIDATION`. On a continuous
+        rule, the resolve runs an evaluation first and answers 409 `INVALID_TRANSITION` when the rule
+        still fails.
+
         Requires `reconciliation:write`.
       parameters:
       - $ref: '#/components/parameters/XRequestID'
@@ -1213,7 +1218,9 @@ components:
           type: string
           enum:
           - scheduled
+          - closing
           - manual
+          description: '`closing` is the evaluation a periodic rule runs just before its period cut-off.'
         capturedAt:
           type: string
           format: date-time
@@ -1343,6 +1350,13 @@ components:
           format: date-time
           description: When the source was read. Sources of one ledger with disjoint selectors share one
             read.
+        readSequence:
+          type: integer
+          format: int64
+          description: |
+            The ledger log sequence the read reflects, once the Ledger returns it (Jira EN-2329). When
+            the Ledger reads all sources of a rule at one snapshot (Jira EN-1480), every source carries
+            the same value.
     LedgerNamedSource:
       type: object
       required:
@@ -1422,7 +1436,7 @@ components:
         transactionRefs:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/TransactionRef'
         evidenceSnapshot:
           allOf:
           - $ref: '#/components/schemas/Evidence'
@@ -1441,7 +1455,7 @@ components:
         transactionRefs:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/TransactionRef'
     Rule:
       oneOf:
       - $ref: '#/components/schemas/BalanceBoundsRule'
@@ -1770,6 +1784,24 @@ components:
       example:
         USD/2: '5'
         EUR/2: '10'
+    TransactionRef:
+      type: object
+      description: A ledger transaction, by ID or by reference.
+      required:
+      - ledger
+      properties:
+        ledger:
+          type: string
+          minLength: 1
+        transactionID:
+          type: integer
+          format: int64
+        reference:
+          type: string
+          minLength: 1
+      oneOf:
+      - required: [transactionID]
+      - required: [reference]
     UnsignedIntegerString:
       type: string
       pattern: ^(0|[1-9][0-9]*)$

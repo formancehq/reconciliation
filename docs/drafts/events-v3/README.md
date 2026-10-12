@@ -81,7 +81,7 @@ Example `RESOLVED_ALERT` payload, after a corrective booking:
       "kind": "fixed_by_booking",
       "by": "ops@example.com",
       "at": "2026-10-08T14:05:12Z",
-      "transactionRefs": ["fix-2026-10-08-001"]
+      "transactionRefs": [{ "ledger": "client-funds", "reference": "fix-2026-10-08-001" }]
     },
     "labels": { "team": "treasury" },
     "createdAt": "2026-10-08T09:00:00Z",
