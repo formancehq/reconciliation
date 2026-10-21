@@ -766,8 +766,8 @@ func TestCreateRule_PeriodTypeWireContract(t *testing.T) {
 
 // TestCreateRule_LegacyCadenceKeyReachesService proves the deprecated `cadence`
 // key survives decoding and is handed to the service, which is what makes
-// dual-acceptance possible. The gomock argument match is the assertion: if the
-// handler dropped the key, the expected request would not match.
+// dual-acceptance possible. The service argument is asserted as JSON so the
+// legacy wire contract is checked without using the deprecated Go field.
 //
 // The resolution itself (cadence -> periodType, and rejection when the two
 // disagree) is covered against the real service in
@@ -782,7 +782,6 @@ func TestCreateRule_LegacyCadenceKeyReachesService(t *testing.T) {
 		Name:         "legacy-cadence",
 		TemplateKind: models.TemplateLedgerInvariant,
 		TemplateSpec: json.RawMessage(`{"terms":[],"tolerance":{}}`),
-		Cadence:      models.PeriodTypeMonthly,
 	}
 	resp := &models.Rule{
 		ID: uuid.New(), Name: want.Name, TemplateKind: want.TemplateKind,
@@ -790,7 +789,15 @@ func TestCreateRule_LegacyCadenceKeyReachesService(t *testing.T) {
 		Severity: models.SeverityHigh, PeriodType: models.PeriodTypeMonthly,
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
-	mockSvc.EXPECT().CreateRule(gomock.Any(), want).Return(resp, nil)
+	mockSvc.EXPECT().CreateRule(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req *service.CreateRuleRequest) (*models.Rule, error) {
+			encoded, err := json.Marshal(req)
+			require.NoError(t, err)
+			require.JSONEq(t, `{"name":"legacy-cadence","templateKind":"ledger_invariant",`+
+				`"templateSpec":{"terms":[],"tolerance":{}},"cadence":"monthly"}`, string(encoded))
+			require.False(t, req.PeriodTypeWasProvided, "legacy cadence must not mark periodType as provided")
+			return resp, nil
+		})
 
 	r := httptest.NewRequest(http.MethodPost, "/rules", bytes.NewReader([]byte(
 		`{"name":"legacy-cadence","templateKind":"ledger_invariant",`+
