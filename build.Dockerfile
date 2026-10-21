@@ -1,4 +1,4 @@
-FROM ghcr.io/formancehq/base:22.04
+FROM ghcr.io/formancehq/base:26.04
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/reconciliation /usr/bin/reconciliation
 ENV OTEL_SERVICE_NAME reconciliation
