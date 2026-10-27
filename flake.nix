@@ -10,13 +10,15 @@
       flake = false;
     };
 
+    nixpkgs-go.url = "https://flakehub.com/f/NixOS/nixpkgs/0.2605";
+
     goreleaser = {
       url = "github:goreleaser/nur/52282e9a2d7c6882e9e0e8675d593b928c89e323";
       flake = false;
     };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, go-tooling, goreleaser }:
+  outputs = { self, nixpkgs, nixpkgs-unstable, go-tooling, nixpkgs-go, goreleaser }:
     let
       supportedSystems = [
         "x86_64-linux"
@@ -46,10 +48,9 @@
       devShells = forEachSupportedSystem ({ pkgs, pkgs-unstable, system }:
         let
           go = go127;
-          go127 = pkgs.callPackage "${go-tooling}/pkgs/development/compilers/go/1.27.nix" {
-            inherit buildGo127Module;
-          };
-          buildGo127Module = pkgs.buildGoModule.override { go = go127; };
+          compilerPackages = import nixpkgs-go { inherit system; };
+          go127 = compilerPackages.go_1_27;
+          buildGo127Module = compilerPackages.buildGo127Module;
           golangci-lint = pkgs.callPackage "${go-tooling}/pkgs/by-name/go/golangci-lint/package.nix" {
             inherit buildGo127Module;
           };
