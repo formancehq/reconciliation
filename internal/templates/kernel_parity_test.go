@@ -40,34 +40,34 @@ func TestKernelParity_Aggregate(t *testing.T) {
 		{
 			name: "drift/mixed-pass-fail",
 			tmpl: NewLedgerVsPoolDrift(),
-			spec: drift(DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: "pool"}),
+			spec: drift(DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: testPoolID}),
 			fakeL: &fakeLedger{balances: map[string]map[string]*big.Int{
 				`b|"q"`: {"USD/2": big.NewInt(350), "EUR/2": big.NewInt(100)},
 			}},
 			fakeP: &fakePayments{pools: map[string]map[string]*big.Int{
-				"pool": {"USD/2": big.NewInt(-350), "EUR/2": big.NewInt(-50)}, // EUR drifts 50
+				testPoolID: {"USD/2": big.NewInt(-350), "EUR/2": big.NewInt(-50)}, // EUR drifts 50
 			}},
 		},
 		{
 			name: "drift/ledgerSign-negative",
 			tmpl: NewLedgerVsPoolDrift(),
-			spec: drift(DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: "pool", LedgerSign: -1}),
+			spec: drift(DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: testPoolID, LedgerSign: -1}),
 			fakeL: &fakeLedger{balances: map[string]map[string]*big.Int{
 				`b|"q"`: {"USD/2": big.NewInt(350)},
 			}},
 			fakeP: &fakePayments{pools: map[string]map[string]*big.Int{
-				"pool": {"USD/2": big.NewInt(350)}, // both positive → sign -1 reconciles
+				testPoolID: {"USD/2": big.NewInt(350)}, // both positive → sign -1 reconciles
 			}},
 		},
 		{
 			name: "drift/within-tolerance",
 			tmpl: NewLedgerVsPoolDrift(),
-			spec: drift(DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: "pool", Tolerance: map[string]int64{"USD/2": 10}}),
+			spec: drift(DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: testPoolID, Tolerance: map[string]int64{"USD/2": 10}}),
 			fakeL: &fakeLedger{balances: map[string]map[string]*big.Int{
 				`b|"q"`: {"USD/2": big.NewInt(100)},
 			}},
 			fakeP: &fakePayments{pools: map[string]map[string]*big.Int{
-				"pool": {"USD/2": big.NewInt(-95)}, // drift 5 <= 10
+				testPoolID: {"USD/2": big.NewInt(-95)}, // drift 5 <= 10
 			}},
 		},
 		{
@@ -75,13 +75,13 @@ func TestKernelParity_Aggregate(t *testing.T) {
 			tmpl: NewSourceParity(),
 			spec: parity(ParitySpec{
 				Left:  SourceSpec{Kind: SourceLedger, Ledger: "main", Query: []byte(`{}`)},
-				Right: SourceSpec{Kind: SourcePaymentsPool, PoolID: "acct"},
+				Right: SourceSpec{Kind: SourcePaymentsPool, PoolID: testPoolIDAcct},
 			}),
 			fakeL: &fakeLedger{balances: map[string]map[string]*big.Int{
 				`main|{}`: {"USD/2": big.NewInt(100), "EUR/2": big.NewInt(50)},
 			}},
 			fakeP: &fakePayments{pools: map[string]map[string]*big.Int{
-				"acct": {"USD/2": big.NewInt(100)}, // EUR missing → 0, so EUR fails
+				testPoolIDAcct: {"USD/2": big.NewInt(100)}, // EUR missing → 0, so EUR fails
 			}},
 		},
 		{
@@ -192,14 +192,14 @@ func TestKernelParity_PitPerSource(t *testing.T) {
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{
 		`main|{}`: {"USD/2": big.NewInt(100)},
 	}}
-	p := &fakePayments{pools: map[string]map[string]*big.Int{"acct": {"USD/2": big.NewInt(100)}}}
+	p := &fakePayments{pools: map[string]map[string]*big.Int{testPoolIDAcct: {"USD/2": big.NewInt(100)}}}
 	eng, res := newTestEngine(t, l, p)
 
 	const margin = 30 * time.Second
 	pit := time.Now().UTC()
 	out, err := tmpl.Evaluate(context.Background(), mustJSON(t, ParitySpec{
 		Left:  SourceSpec{Kind: SourceLedger, Ledger: "main", Query: []byte(`{}`)},
-		Right: SourceSpec{Kind: SourcePaymentsPool, PoolID: "acct"},
+		Right: SourceSpec{Kind: SourcePaymentsPool, PoolID: testPoolIDAcct},
 	}), eng, res, engine.EvalInput{PIT: pit, SafetyMargin: margin})
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -212,7 +212,7 @@ func TestKernelParity_PitPerSource(t *testing.T) {
 	if got := pps["ledger:main#0"]; !got.Equal(want) {
 		t.Errorf("ledger PIT = %s, want margin-adjusted %s", got, want)
 	}
-	if got := pps["pool:acct#0"]; got.Before(pit) {
+	if got := pps["pool:"+testPoolIDAcct+"#0"]; got.Before(pit) {
 		t.Errorf("latest pool observation time = %s, want at or after evaluation start %s", got, pit)
 	}
 	if len(pps) != 2 {

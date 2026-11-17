@@ -138,12 +138,12 @@ func (t *SourceParity) Evaluate(
 
 	leftBalances, leftResolvedAt, err := spec.Left.resolve(ctx, resolvers, leftPIT, leftExplicit)
 	if err != nil {
-		return result, fmt.Errorf("scout %s: %w", spec.Left.label(), err)
+		return result, fmt.Errorf("scout left source: %w", err)
 	}
 	result.PitPerSource[leftKey] = leftResolvedAt
 	rightBalances, rightResolvedAt, err := spec.Right.resolve(ctx, resolvers, rightPIT, rightExplicit)
 	if err != nil {
-		return result, fmt.Errorf("scout %s: %w", spec.Right.label(), err)
+		return result, fmt.Errorf("scout right source: %w", err)
 	}
 	result.PitPerSource[rightKey] = rightResolvedAt
 
@@ -214,12 +214,12 @@ func (t *SourceParity) evaluatePerAccount(
 	limit := eng.MaxAccountsScanned()
 	leftAccts, err := spec.Left.resolveAccounts(ctx, resolvers, leftPIT, limit)
 	if err != nil {
-		return result, fmt.Errorf("scout %s accounts: %w", spec.Left.label(), err)
+		return result, fmt.Errorf("scout left source accounts: %w", err)
 	}
 	result.PitPerSource[leftKey] = leftPIT
 	rightAccts, err := spec.Right.resolveAccounts(ctx, resolvers, rightPIT, limit-len(leftAccts))
 	if err != nil {
-		return result, fmt.Errorf("scout %s accounts: %w", spec.Right.label(), err)
+		return result, fmt.Errorf("scout right source accounts: %w", err)
 	}
 	result.PitPerSource[rightKey] = rightPIT
 	leftByAddr := accountsByAddress(leftAccts)

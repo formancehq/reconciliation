@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
+	"github.com/formancehq/reconciliation/internal/ledgername"
 	"github.com/formancehq/reconciliation/internal/models"
 )
 
@@ -53,6 +54,9 @@ func (t *LedgerInvariant) Validate(raw json.RawMessage) error {
 	for i, term := range spec.Terms {
 		if term.Ledger == "" {
 			return fmt.Errorf("%w: terms[%d].ledger is required", ErrInvalidSpec, i)
+		}
+		if err := ledgername.Validate(term.Ledger); err != nil {
+			return fmt.Errorf("%w: terms[%d].ledger: %w", ErrInvalidSpec, i, err)
 		}
 		if !hasMeaningfulJSON(term.Query) {
 			return fmt.Errorf("%w: terms[%d].query is required", ErrInvalidSpec, i)
@@ -126,7 +130,7 @@ func (t *LedgerInvariant) Evaluate(
 		pit, _ := effectiveSourcePIT(in, key)
 		b, err := resolvers.Ledger.AggregateBalance(ctx, term.Ledger, term.Query, pit)
 		if err != nil {
-			return result, fmt.Errorf("scout terms[%d] (%s): %w", i, term.Ledger, err)
+			return result, fmt.Errorf("scout ledger source terms[%d]: %w", i, err)
 		}
 		termBalances[i] = b
 		result.PitPerSource[key] = pit

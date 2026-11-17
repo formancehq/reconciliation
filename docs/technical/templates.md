@@ -48,6 +48,28 @@ Both sides are stored raw (not one side + a residual), together with the sign an
 
 Balance reads are centralised in a shared **Source** primitive ([source.go](../../internal/templates/source.go)): a `ledger` or `payments_pool` descriptor that knows how to resolve to per-asset balances and render its `balance(ledgerSet…|pool…)` CEL term. `source_parity` and `ledger_vs_pool_drift` both compose sources through it, so there is one code path for "read a balance source".
 
+**Ledger identifiers.** Rule ledger fields and legacy policy `ledgerName` share
+`internal/ledgername.Validate`: 1–64 ASCII bytes from `[a-zA-Z0-9._:-]`, following
+`invariants.ValidateLedgerName` v0.11.0. Exact `.` and `..` are additionally
+rejected because URL normalization changes those segments. This accepts all
+names admitted by Ledger v2.3.24 and v2.4.18 (`^[0-9a-zA-Z_-]{1,63}$` in
+`internal/ledger.go`, commits `b6717d8af8111ee16a0ed188fde5524ee9ae27ef`
+and `83cd8dc7a66ba02a0418a36ec45663b19e26dcb3`). Leading/trailing
+dots, colons and other underscore-prefixed names remain valid. These v2 reads
+do not impose Ledger v3's admission reserved-name rules.
+
+Every Ledger SDK read revalidates stored identifiers and encodes the whole name
+as one path segment. Invalid stored rules or policies fail before a Ledger
+request; no automatic rewrite or migration occurs. Ledger SDK failures expose
+an operation-level message without upstream response bodies or request URLs.
+
+For SEC-101 integration, `Validate(name) error` is the shared Ledger contract;
+`PathSegment(name) (string, error)` validates and encodes once at the SDK
+boundary. Pool IDs require their own contract. SEC-100 changes no Payments
+validation, Payments errors or redirect handling. Concurrent work on
+`source.go`, `sdk_resolvers.go`, `policy.go` or `service/utils.go` must preserve
+these Ledger checks.
+
 **Scope.** A ledger source can be read in one of two scopes, a native capability of the Source primitive:
 - **aggregate** (default — the only scope available in V1): the matched account set is summed into one balance per asset. A query matching a single account is the degenerate single-account case — so "single account" and "set of accounts" are both aggregate, differing only in the query.
 - **per_account** *(parked — post-V1)*: the source fans out — each matched account is evaluated individually, producing one Outcome per (account, asset) with the account address as the fingerprint axis. **Rejected at rule-create in V1** to keep evaluation evidence bounded to the asset count — a broad query could otherwise fan out to thousands of fingerprints (and, once PASS-evidence is stored, one evidence object each). The implementation is retained and unit-tested. When live it is available only where every source involved is a ledger source (a payments pool has no per-account breakdown, so it stays aggregate-only); the account address is the alignment key when two ledger sources are compared per account, and fan-out is bounded by the engine's `MaxAccountsScanned` budget.
@@ -74,7 +96,7 @@ Port of today's legacy reconciliation. Compares a dynamic ledger account set aga
 
 **Validation**
 
-- `ledger`, `ledgerQuery`, `paymentsPoolID` required
+- `ledger`, `ledgerQuery`, `paymentsPoolID` required; `paymentsPoolID` must parse as a UUID
 - `ledgerSign` must be `+1`, `-1`, or omitted (defaults to `+1`)
 - `tolerance` values must be ≥ 0
 - `ledgerQuery` must be a non-null, non-empty JSON value
@@ -249,7 +271,7 @@ If only `min` is set: `balance(...) >= 100000`. If only `max` is set: `balance(.
 
 A `SourceSpec` is `{ "kind": "ledger" | "payments_pool", ... }`:
 - `ledger` → requires `ledger` + `query` (read point-in-time at the source's PIT)
-- `payments_pool` → requires `poolID` (read point-in-time via `/v3/pools/{id}/balances?at=` when an explicit past PIT is requested; latest for the as-of-now default, since a PIT read at ~now hits the empty balance-window tail)
+- `payments_pool` → requires a UUID `poolID` (read point-in-time via `/v3/pools/{id}/balances?at=` when an explicit past PIT is requested; latest for the as-of-now default, since a PIT read at ~now hits the empty balance-window tail)
 
 Each source resolves at its own PIT: the evaluation's default `at`, or a per-source override supplied in `sourcePITs` (keyed by the source's stable `"<label>#<idx>"` key). This is the two-independent-timestamps contract — e.g. ledger and pool read a settlement cycle apart — and it applies to every multi-source template. Residual cross-system skew is still absorbed by `tolerance`.
 
@@ -325,3 +347,45 @@ func (*MyTemplate) SourceKeys(spec json.RawMessage) ([]string, error) {
 Register it in `templates.DefaultRegistry()` ([internal/templates/template.go](../../internal/templates/template.go)) and add its `TemplateKind` constant in [internal/models/rule.go](../../internal/models/rule.go).
 
 The test pattern is well-established — see [internal/templates/templates_test.go](../../internal/templates/templates_test.go) for the round-trip shape (fake resolvers, mustJSON helper, fingerprint assertions, validation table tests).
+
+
+## Resource identifiers and upstream errors (SEC-101)
+
+Pool fields in `source_parity` (both `left.poolID` and `right.poolID`) and
+`ledger_vs_pool_drift.paymentsPoolID` use the same `uuid.Parse` contract as legacy
+policy `paymentsPoolID`. Canonical, uppercase, 32-hex, braced, URN and nil UUIDs
+are accepted according to the parser's permissive rules; this is not a stricter
+UUID syntax allowlist. The SDK resolver validates again and uses the canonical lowercase
+UUID in the request path, including when evaluating an older stored rule.
+Validation checks the JSON-decoded string directly. JSON escapes are decoded;
+URL `%xx` sequences are not decoded and fail UUID validation.
+
+### Compatibility and existing records
+
+Non-UUID pool fields previously accepted in template specs now fail rule
+validation. Existing malformed rules fail at the payments SDK resolver before a
+request is built. Operators must correct those rule specs to reference an existing
+pool UUID. This change does not rewrite stored rules or historical evidence, and
+does not add a resource-authorization mechanism. Valid UUID spelling variants
+remain accepted; source PIT keys retain the spec's original spelling.
+
+Upstream ledger and payments failures now expose a fixed operation message in
+legacy reconciliation errors, evaluation errors and error evidence. Response
+bodies, upstream error codes, request URLs and source identifiers are excluded
+from these error messages. The original cause stays available through Go error
+unwrapping. No upstream body is added to logs by this change.
+
+### Dependencies and evidence limits
+
+SEC-100 owns the shared Ledger naming validator, including policy `ledgerName`
+and template ledger fields. This patch adds separate presence/valid-flow coverage
+and ledger error-privacy coverage, but does not implement or claim rejection of
+all invalid ledger names. SEC-86 owns redirect handling and fixed-origin transport
+guards. Neither change is duplicated here; full SEC-101 acceptance depends on
+those protections and their integration tests.
+
+The report's external-fetch claim differs from the inspected SDK v3.7.2 path:
+it substitutes identifiers inside paths under the configured stack base URL.
+Local fixtures verify normal pool requests and upstream failure handling, not a
+production proxy or redirect chain. External SSRF, private-network reachability,
+resource authorization and deployed behavior are not established by these tests.

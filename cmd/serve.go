@@ -1,10 +1,7 @@
 package cmd
 
 import (
-	"context"
-	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/formancehq/go-libs/aws/iam"
 
@@ -24,11 +21,10 @@ import (
 	v5logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
 	v5connect "github.com/formancehq/go-libs/v5/pkg/storage/bun/connect"
 	"github.com/formancehq/reconciliation/internal/api"
+	"github.com/formancehq/reconciliation/internal/stackclient"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/clientcredentials"
 )
 
 func stackClientModule(cmd *cobra.Command) fx.Option {
@@ -38,25 +34,12 @@ func stackClientModule(cmd *cobra.Command) fx.Option {
 			stackClientSecret, _ := cmd.Flags().GetString(stackClientSecretFlag)
 			stackURL, _ := cmd.Flags().GetString(stackURLFlag)
 
-			oauthConfig := clientcredentials.Config{
-				ClientID:     stackClientID,
-				ClientSecret: stackClientSecret,
-				TokenURL:     fmt.Sprintf("%s/api/auth/oauth/token", stackURL),
-				Scopes:       []string{"openid", "ledger:read", "ledger:write", "payments:read", "payments:write"},
-			}
-			underlyingHTTPClient := &http.Client{
-				Transport: otlp.NewRoundTripper(http.DefaultTransport, service.IsDebug(cmd)),
-				// Upper bound for ledger/payments calls (aggregated balance
-				// queries can be slow on large ledgers) and for the oauth2
-				// token exchange, which runs outside any request context.
-				Timeout: 5 * time.Minute,
-			}
-			return sdk.New(
-				sdk.WithClient(
-					oauthConfig.Client(context.WithValue(context.Background(),
-						oauth2.HTTPClient, underlyingHTTPClient)),
-				),
-				sdk.WithServerURL(stackURL),
+			return stackclient.New(
+				stackURL,
+				stackClientID,
+				stackClientSecret,
+				otlp.NewRoundTripper(http.DefaultTransport, service.IsDebug(cmd)),
+				stackclient.DefaultTimeout,
 			)
 		}),
 	)

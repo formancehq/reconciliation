@@ -13,6 +13,14 @@ import (
 	"github.com/formancehq/reconciliation/internal/models"
 )
 
+const (
+	testPoolID     = "0eb4a31f-751e-42d4-8d5b-2129e6d4cf4c"
+	testPoolIDXYZ  = "1f2e3d4c-5b6a-7988-9a0b-1c2d3e4f5a6b"
+	testPoolID1    = "2f3e4d5c-6b7a-8899-aa0b-2c3d4e5f6a7b"
+	testPoolIDP    = "3a4b5c6d-7e8f-9900-aabb-3c4d5e6f7a8b"
+	testPoolIDAcct = "4b5c6d7e-8f9a-0011-bbcc-4d5e6f7a8b9c"
+)
+
 // --- helpers -----------------------------------------------------------------
 
 type fakeLedger struct {
@@ -152,10 +160,10 @@ func TestRegistry_UnknownKind(t *testing.T) {
 func TestDrift_Validate_RequiredFields(t *testing.T) {
 	tmpl := NewLedgerVsPoolDrift()
 	cases := map[string]DriftSpec{
-		"missing ledger":     {LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "p"},
-		"missing query":      {Ledger: "l", PaymentsPoolID: "p"},
+		"missing ledger":     {LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: testPoolIDP},
+		"missing query":      {Ledger: "l", PaymentsPoolID: testPoolIDP},
 		"missing pool":       {Ledger: "l", LedgerQuery: json.RawMessage(`{}`)},
-		"negative tolerance": {Ledger: "l", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "p", Tolerance: map[string]int64{"USD": -1}},
+		"negative tolerance": {Ledger: "l", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: testPoolIDP, Tolerance: map[string]int64{"USD": -1}},
 	}
 	for name, spec := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -178,7 +186,7 @@ func TestDrift_Evaluate_NilResolver(t *testing.T) {
 	spec := mustJSON(t, DriftSpec{
 		Ledger:         "buildr",
 		LedgerQuery:    json.RawMessage(`{}`),
-		PaymentsPoolID: "pool_xyz",
+		PaymentsPoolID: testPoolIDXYZ,
 	})
 	_, err := tmpl.Evaluate(context.Background(), spec, eng, resolvers, engine.EvalInput{PIT: time.Now()})
 	if !errors.Is(err, ErrResolverUnavailable) {
@@ -195,7 +203,7 @@ func TestDrift_Evaluate_AllZero_AllPass(t *testing.T) {
 		},
 	}}
 	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"pool_xyz": {
+		testPoolIDXYZ: {
 			"USD/2": big.NewInt(-350),
 			"EUR/2": big.NewInt(-100),
 		},
@@ -204,7 +212,7 @@ func TestDrift_Evaluate_AllZero_AllPass(t *testing.T) {
 	spec := mustJSON(t, DriftSpec{
 		Ledger:         "buildr",
 		LedgerQuery:    json.RawMessage(`{"$match":{"metadata[trust]":"true"}}`),
-		PaymentsPoolID: "pool_xyz",
+		PaymentsPoolID: testPoolIDXYZ,
 	})
 
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
@@ -227,10 +235,10 @@ func TestDrift_Evaluate_OneAssetDrifts(t *testing.T) {
 		`b|"q"`: {"USD/2": big.NewInt(350), "EUR/2": big.NewInt(100)},
 	}}
 	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"pool": {"USD/2": big.NewInt(-350), "EUR/2": big.NewInt(-50)}, // EUR drift 50
+		testPoolID: {"USD/2": big.NewInt(-350), "EUR/2": big.NewInt(-50)}, // EUR drift 50
 	}}
 	eng, res := newTestEngine(t, l, p)
-	spec := mustJSON(t, DriftSpec{Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: "pool"})
+	spec := mustJSON(t, DriftSpec{Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: testPoolID})
 
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
@@ -262,13 +270,13 @@ func TestDrift_Evaluate_LedgerSignNegative(t *testing.T) {
 		`b|"q"`: {"USD/2": big.NewInt(350)},
 	}}
 	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"pool": {"USD/2": big.NewInt(350)}, // BOTH positive
+		testPoolID: {"USD/2": big.NewInt(350)}, // BOTH positive
 	}}
 	eng, res := newTestEngine(t, l, p)
 	spec := mustJSON(t, DriftSpec{
 		Ledger:         "b",
 		LedgerQuery:    json.RawMessage(`"q"`),
-		PaymentsPoolID: "pool",
+		PaymentsPoolID: testPoolID,
 		LedgerSign:     -1,
 	})
 
@@ -302,11 +310,11 @@ func TestDrift_Evaluate_LedgerSignDefault(t *testing.T) {
 		`b|"q"`: {"USD/2": big.NewInt(350)},
 	}}
 	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"pool": {"USD/2": big.NewInt(350)},
+		testPoolID: {"USD/2": big.NewInt(350)},
 	}}
 	eng, res := newTestEngine(t, l, p)
 	// No ledgerSign set → defaults to +1 → 350 + 350 = 700 drift
-	spec := mustJSON(t, DriftSpec{Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: "pool"})
+	spec := mustJSON(t, DriftSpec{Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: testPoolID})
 
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
@@ -326,7 +334,7 @@ func TestDrift_Validate_LedgerSignBounds(t *testing.T) {
 	tmpl := NewLedgerVsPoolDrift()
 	for _, ok := range []int{0, 1, -1} {
 		spec := mustJSON(t, DriftSpec{
-			Ledger: "b", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "pool",
+			Ledger: "b", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: testPoolID,
 			LedgerSign: ok,
 		})
 		if err := tmpl.Validate(spec); err != nil {
@@ -335,7 +343,7 @@ func TestDrift_Validate_LedgerSignBounds(t *testing.T) {
 	}
 	for _, bad := range []int{2, -2, 100} {
 		spec := mustJSON(t, DriftSpec{
-			Ledger: "b", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "pool",
+			Ledger: "b", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: testPoolID,
 			LedgerSign: bad,
 		})
 		if err := tmpl.Validate(spec); err == nil {
@@ -350,13 +358,13 @@ func TestDrift_Evaluate_ToleranceAbsorbs(t *testing.T) {
 		`b|"q"`: {"USD/2": big.NewInt(100)},
 	}}
 	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"pool": {"USD/2": big.NewInt(-95)}, // drift 5
+		testPoolID: {"USD/2": big.NewInt(-95)}, // drift 5
 	}}
 	eng, res := newTestEngine(t, l, p)
 	spec := mustJSON(t, DriftSpec{
 		Ledger:         "b",
 		LedgerQuery:    json.RawMessage(`"q"`),
-		PaymentsPoolID: "pool",
+		PaymentsPoolID: testPoolID,
 		Tolerance:      map[string]int64{"USD/2": 10},
 	})
 
@@ -384,11 +392,11 @@ func TestDrift_Evaluate_AmountsBeyondInt64(t *testing.T) {
 		`b|"q"`: {"USD/18": new(big.Int).Set(huge)},
 	}}
 	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"pool": {"USD/18": new(big.Int).Neg(new(big.Int).Set(huge))},
+		testPoolID: {"USD/18": new(big.Int).Neg(new(big.Int).Set(huge))},
 	}}
 	eng, res := newTestEngine(t, l, p)
 	spec := mustJSON(t, DriftSpec{
-		Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: "pool",
+		Ledger: "b", LedgerQuery: json.RawMessage(`"q"`), PaymentsPoolID: testPoolID,
 	})
 
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
@@ -404,14 +412,14 @@ func TestDrift_Evaluate_AmountsBeyondInt64(t *testing.T) {
 func TestDrift_Explain_HasShape(t *testing.T) {
 	tmpl := NewLedgerVsPoolDrift()
 	spec := mustJSON(t, DriftSpec{
-		Ledger: "buildr", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: "p1",
+		Ledger: "buildr", LedgerQuery: json.RawMessage(`{}`), PaymentsPoolID: testPoolID1,
 		Tolerance: map[string]int64{"USD/2": 50},
 	})
 	explained, err := tmpl.Explain(spec)
 	if err != nil {
 		t.Fatalf("Explain: %v", err)
 	}
-	for _, want := range []string{"ledgerSet", "pool", "abs(", "<asset>"} {
+	for _, want := range []string{"ledgerSet", "pool", testPoolID1, "abs(", "<asset>"} {
 		if !strings.Contains(explained, want) {
 			t.Errorf("explanation missing %q: %s", want, explained)
 		}

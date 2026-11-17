@@ -108,7 +108,7 @@ func TestSDKPaymentsResolver_PoolBalance(t *testing.T) {
 
 	t.Run("nil pit reads latest", func(t *testing.T) {
 		c := &fakeSDKClient{poolData: data}
-		got, err := NewSDKPaymentsResolver(c).PoolBalance(context.Background(), "pool", nil)
+		got, err := NewSDKPaymentsResolver(c).PoolBalance(context.Background(), "0eb4a31f-751e-42d4-8d5b-2129e6d4cf4c", nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, c.latestCalls)
 		require.Equal(t, 0, c.atCalls)
@@ -118,7 +118,7 @@ func TestSDKPaymentsResolver_PoolBalance(t *testing.T) {
 	t.Run("non-nil pit reads point-in-time with at", func(t *testing.T) {
 		c := &fakeSDKClient{poolData: data}
 		at := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
-		got, err := NewSDKPaymentsResolver(c).PoolBalance(context.Background(), "pool", &at)
+		got, err := NewSDKPaymentsResolver(c).PoolBalance(context.Background(), "0eb4a31f-751e-42d4-8d5b-2129e6d4cf4c", &at)
 		require.NoError(t, err)
 		require.Equal(t, 1, c.atCalls)
 		require.Equal(t, 0, c.latestCalls)

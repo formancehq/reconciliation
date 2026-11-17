@@ -3,14 +3,19 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
+	"github.com/formancehq/reconciliation/internal/ledgername"
+	"github.com/formancehq/reconciliation/internal/upstream"
 )
 
 func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName string, ledgerAggregatedBalanceQuery map[string]interface{}, at time.Time) (map[string]*big.Int, error) {
+	segment, err := ledgername.PathSegment(ledgerName)
+	if err != nil {
+		return nil, err
+	}
 	// Note: the historical V2GetInfo version gate was removed when we bumped the
 	// SDK to v3.7.2 — the global ledger-info endpoint has been replaced by
 	// per-ledger info and the minimum-version assertion no longer applies.
@@ -18,15 +23,15 @@ func (s *Service) getAccountsAggregatedBalance(ctx context.Context, ledgerName s
 		ctx,
 		operations.V2GetBalancesAggregatedRequest{
 			RequestBody: ledgerAggregatedBalanceQuery,
-			Ledger:      ledgerName,
+			Ledger:      segment,
 			Pit:         &at,
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get aggregated balances: %w", err)
+		return nil, upstream.Wrap("failed to get aggregated balances", err)
 	}
 
-	if balances.StatusCode != 200 {
+	if balances == nil || balances.StatusCode != 200 {
 		return nil, errors.New("failed to get aggregated balances")
 	}
 
@@ -60,7 +65,7 @@ func (s *Service) getPaymentPoolBalance(ctx context.Context, paymentPoolID strin
 		operations.V3GetPoolBalancesRequest{PoolID: paymentPoolID, At: &at},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pool balances: %w", err)
+		return nil, upstream.Wrap("failed to get pool balances", err)
 	}
 
 	if balances.StatusCode != 200 {

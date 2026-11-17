@@ -15,7 +15,7 @@ func mustCreateDailyDriftRule(t *testing.T, svc *Service) *models.Rule {
 	rule, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
 		Name:         "daily-drift",
 		TemplateKind: models.TemplateLedgerVsPoolDrift,
-		TemplateSpec: driftSpec(t, "buildr", `"q"`, "pool", nil),
+		TemplateSpec: driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil),
 		Severity:     models.SeverityHigh,
 		PeriodType:   models.PeriodTypeDaily,
 	})
@@ -98,7 +98,7 @@ func TestEvaluate_PoolTOCTOU_NoSpuriousEngineError(t *testing.T) {
 		afterFirst: map[string]*big.Int{"USD/2": big.NewInt(-50)},
 	}
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 
 	ev, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
 	if err != nil {
