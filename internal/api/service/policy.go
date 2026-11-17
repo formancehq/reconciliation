@@ -6,6 +6,7 @@ import (
 
 	"github.com/formancehq/go-libs/bun/bunpaginate"
 
+	"github.com/formancehq/reconciliation/internal/ledgername"
 	"github.com/formancehq/reconciliation/internal/models"
 	"github.com/formancehq/reconciliation/internal/storage"
 	"github.com/google/uuid"
@@ -28,6 +29,10 @@ func (r *CreatePolicyRequest) Validate() error {
 		return errors.New("missing ledgerName")
 	}
 
+	if err := ledgername.Validate(r.LedgerName); err != nil {
+		return err
+	}
+
 	if r.PaymentsPoolID == "" {
 		return errors.New("missing paymentsPoolId")
 	}
@@ -36,6 +41,9 @@ func (r *CreatePolicyRequest) Validate() error {
 }
 
 func (s *Service) CreatePolicy(ctx context.Context, req *CreatePolicyRequest) (*models.Policy, error) {
+	if err := ledgername.Validate(req.LedgerName); err != nil {
+		return nil, errors.Wrap(ErrValidation, err.Error())
+	}
 	paymentPoolID, err := uuid.Parse(req.PaymentsPoolID)
 	if err != nil {
 		return nil, errors.Wrap(ErrInvalidID, err.Error())

@@ -11,6 +11,9 @@ import (
 
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/operations"
 	"github.com/formancehq/formance-sdk-go/v3/pkg/models/shared"
+	"github.com/formancehq/reconciliation/internal/ledgername"
+	"github.com/formancehq/reconciliation/internal/upstream"
+	"github.com/google/uuid"
 )
 
 // SDKClient is the minimum surface the SDK-backed resolvers need from the
@@ -37,18 +40,23 @@ func NewSDKLedgerResolver(client SDKClient) *SDKLedgerResolver {
 // metadata-query JSON. The query argument is the raw JSON value the template
 // already produced; we deserialize it into a map[string]any for the SDK.
 func (r *SDKLedgerResolver) AggregateBalance(ctx context.Context, ledger string, query json.RawMessage, pit time.Time) (map[string]*big.Int, error) {
+	segment, err := ledgername.PathSegment(ledger)
+	if err != nil {
+		return nil, err
+	}
 	queryMap, err := unmarshalQuery(query)
 	if err != nil {
 		return nil, fmt.Errorf("ledgerSet query: %w", err)
 	}
 
 	resp, err := r.client.V2GetBalancesAggregated(ctx, operations.V2GetBalancesAggregatedRequest{
-		Ledger:      ledger,
+		Ledger:      segment,
 		RequestBody: queryMap,
 		Pit:         &pit,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("aggregate balances on %q: %w", ledger, err)
+		// Keep the typed cause without reflecting upstream request or response data.
+		return nil, upstream.Wrap("aggregate ledger balances", err)
 	}
 	if resp == nil || resp.V2AggregateBalancesResponse == nil {
 		return nil, errors.New("aggregate balances: empty response")
@@ -62,6 +70,10 @@ func (r *SDKLedgerResolver) AggregateBalance(ctx context.Context, ledger string,
 // with an error (never silently truncates) once more than `limit` accounts have
 // been collected — that's the evaluation's accounts budget.
 func (r *SDKLedgerResolver) ListAccounts(ctx context.Context, ledger string, query json.RawMessage, pit time.Time, limit int) ([]Account, error) {
+	segment, err := ledgername.PathSegment(ledger)
+	if err != nil {
+		return nil, err
+	}
 	queryMap, err := unmarshalQuery(query)
 	if err != nil {
 		return nil, fmt.Errorf("listAccounts query: %w", err)
@@ -70,7 +82,7 @@ func (r *SDKLedgerResolver) ListAccounts(ctx context.Context, ledger string, que
 	out := make([]Account, 0, 256)
 	var cursor *string
 	for {
-		req := operations.V2ListAccountsRequest{Ledger: ledger}
+		req := operations.V2ListAccountsRequest{Ledger: segment}
 		if cursor == nil {
 			// First page carries the filter; cursor pages must send only the
 			// cursor token (the ledger API rejects mixing them).
@@ -82,7 +94,7 @@ func (r *SDKLedgerResolver) ListAccounts(ctx context.Context, ledger string, que
 		}
 		resp, err := r.client.V2ListAccounts(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("list accounts on %q: %w", ledger, err)
+			return nil, upstream.Wrap("list ledger accounts", err)
 		}
 		if resp == nil || resp.V2AccountsCursorResponse == nil {
 			return nil, errors.New("list accounts: empty response")
@@ -101,7 +113,7 @@ func (r *SDKLedgerResolver) ListAccounts(ctx context.Context, ledger string, que
 				Balances: balances,
 			})
 			if len(out) > limit {
-				return nil, fmt.Errorf("listAccounts: matched more than %d accounts on %q (accounts budget)", limit, ledger)
+				return nil, fmt.Errorf("listAccounts: matched more than %d accounts (accounts budget)", limit)
 			}
 		}
 		if !cur.HasMore || cur.Next == nil {
@@ -143,21 +155,45 @@ func NewSDKPaymentsResolver(client SDKClient) *SDKPaymentsResolver {
 	return &SDKPaymentsResolver{client: client}
 }
 
+// canonicalPoolID validates poolID against the supported identifier contract
+// (a UUID, exactly what uuid.Parse accepts — the same contract the legacy
+// /policies surface enforces) and returns its canonical lowercase form for SDK
+// path construction. A malformed identifier is rejected HERE, before any URL
+// is built, so a stored or replayed rule can never push an arbitrary string
+// into the {poolID} path slot of the payments request.
+func canonicalPoolID(poolID string) (string, error) {
+	id, err := uuid.Parse(poolID)
+	if err != nil {
+		return "", fmt.Errorf("%w: poolID must be a valid pool UUID", ErrInvalidResourceID)
+	}
+	return id.String(), nil
+}
+
 func (r *SDKPaymentsResolver) PoolBalance(ctx context.Context, poolID string, pit *time.Time) (map[string]*big.Int, error) {
+	// Defense in depth: validate (and canonicalize) the identifier before the
+	// SDK builds the request URL, so a malformed stored pool ID can never
+	// reach the {poolID} path slot.
+	canonical, err := canonicalPoolID(poolID)
+	if err != nil {
+		return nil, err
+	}
 	var data []shared.V3PoolBalance
 	if pit == nil {
-		resp, err := r.client.V3GetPoolBalancesLatest(ctx, operations.V3GetPoolBalancesLatestRequest{PoolID: poolID})
+		resp, err := r.client.V3GetPoolBalancesLatest(ctx, operations.V3GetPoolBalancesLatestRequest{PoolID: canonical})
 		if err != nil {
-			return nil, fmt.Errorf("pool balances latest %q: %w", poolID, err)
+			// Sanitized: never reflect the pool ID or the raw upstream body
+			// (the SDK error renders the response verbatim) into error text
+			// that the runner persists and the API returns.
+			return nil, upstream.Wrap("pool balances latest", err)
 		}
 		if resp == nil || resp.V3PoolBalancesResponse == nil {
 			return nil, errors.New("pool balances: empty response")
 		}
 		data = resp.V3PoolBalancesResponse.Data
 	} else {
-		resp, err := r.client.V3GetPoolBalances(ctx, operations.V3GetPoolBalancesRequest{PoolID: poolID, At: pit})
+		resp, err := r.client.V3GetPoolBalances(ctx, operations.V3GetPoolBalancesRequest{PoolID: canonical, At: pit})
 		if err != nil {
-			return nil, fmt.Errorf("pool balances at %s %q: %w", pit.Format(time.RFC3339), poolID, err)
+			return nil, upstream.Wrap("pool balances at point in time", err)
 		}
 		if resp == nil || resp.V3PoolBalancesResponse == nil {
 			return nil, errors.New("pool balances: empty response")

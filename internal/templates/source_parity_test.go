@@ -22,12 +22,12 @@ func poolSource(id string) SourceSpec {
 func TestSourceParity_Validate(t *testing.T) {
 	tmpl := NewSourceParity()
 	cases := map[string]ParitySpec{
-		"missing left kind":     {Left: SourceSpec{}, Right: poolSource("p")},
-		"unknown left kind":     {Left: SourceSpec{Kind: "bank"}, Right: poolSource("p")},
-		"ledger missing ledger": {Left: SourceSpec{Kind: SourceLedger, Query: json.RawMessage(`{}`)}, Right: poolSource("p")},
-		"ledger missing query":  {Left: SourceSpec{Kind: SourceLedger, Ledger: "l"}, Right: poolSource("p")},
+		"missing left kind":     {Left: SourceSpec{}, Right: poolSource(testPoolIDP)},
+		"unknown left kind":     {Left: SourceSpec{Kind: "bank"}, Right: poolSource(testPoolIDP)},
+		"ledger missing ledger": {Left: SourceSpec{Kind: SourceLedger, Query: json.RawMessage(`{}`)}, Right: poolSource(testPoolIDP)},
+		"ledger missing query":  {Left: SourceSpec{Kind: SourceLedger, Ledger: "l"}, Right: poolSource(testPoolIDP)},
 		"pool missing id":       {Left: ledgerSource("l", `{}`), Right: SourceSpec{Kind: SourcePaymentsPool}},
-		"negative tolerance":    {Left: ledgerSource("l", `{}`), Right: poolSource("p"), Tolerance: map[string]int64{"USD/2": -1}},
+		"negative tolerance":    {Left: ledgerSource("l", `{}`), Right: poolSource(testPoolIDP), Tolerance: map[string]int64{"USD/2": -1}},
 	}
 	for name, spec := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -47,12 +47,12 @@ func TestSourceParity_LedgerVsPool(t *testing.T) {
 		"main|" + q: {"USD/2": big.NewInt(100)},
 	}}
 	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"acct": {"USD/2": big.NewInt(130)}, // 30 above the ledger
+		testPoolIDAcct: {"USD/2": big.NewInt(130)}, // 30 above the ledger
 	}}
 	eng, res := newTestEngine(t, l, p)
 
 	// tolerance 0 → the 30 gap fails.
-	spec := mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: poolSource("acct")})
+	spec := mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: poolSource(testPoolIDAcct)})
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
@@ -66,7 +66,7 @@ func TestSourceParity_LedgerVsPool(t *testing.T) {
 	}
 
 	// tolerance 50 → within bound, passes.
-	spec = mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: poolSource("acct"), Tolerance: map[string]int64{"USD/2": 50}})
+	spec = mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: poolSource(testPoolIDAcct), Tolerance: map[string]int64{"USD/2": 50}})
 	out, err = tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
 		t.Fatalf("Evaluate (tol 50): %v", err)
@@ -116,10 +116,10 @@ func TestSourceParity_AssetUnion(t *testing.T) {
 		"main|" + q: {"USD/2": big.NewInt(100), "EUR/2": big.NewInt(50)},
 	}}
 	p := &fakePayments{pools: map[string]map[string]*big.Int{
-		"acct": {"USD/2": big.NewInt(100)}, // no EUR/2 → treated as 0
+		testPoolIDAcct: {"USD/2": big.NewInt(100)}, // no EUR/2 → treated as 0
 	}}
 	eng, res := newTestEngine(t, l, p)
-	spec := mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: poolSource("acct")})
+	spec := mustJSON(t, ParitySpec{Left: ledgerSource("main", q), Right: poolSource(testPoolIDAcct)})
 
 	out, err := tmpl.Evaluate(context.Background(), spec, eng, res, engine.EvalInput{PIT: time.Now()})
 	if err != nil {
@@ -140,14 +140,14 @@ func TestSourceParity_Explain(t *testing.T) {
 	tmpl := NewSourceParity()
 	spec := mustJSON(t, ParitySpec{
 		Left:      ledgerSource("main", `{"$match":{"address":"cash"}}`),
-		Right:     poolSource("acct"),
+		Right:     poolSource(testPoolIDAcct),
 		Tolerance: map[string]int64{"USD/2": 50},
 	})
 	expr, err := tmpl.Explain(spec)
 	if err != nil {
 		t.Fatalf("Explain: %v", err)
 	}
-	for _, want := range []string{"abs(", "ledgerSet(", `pool("acct")`, " - ", "<= 50"} {
+	for _, want := range []string{"abs(", "ledgerSet(", `pool("` + testPoolIDAcct + `")`, " - ", "<= 50"} {
 		if !strings.Contains(expr, want) {
 			t.Errorf("Explain output %q missing %q", expr, want)
 		}

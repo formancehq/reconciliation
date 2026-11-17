@@ -31,10 +31,10 @@ func TestSourceKeys_MatchEvaluate(t *testing.T) {
 		{
 			name:  "drift",
 			tmpl:  NewLedgerVsPoolDrift(),
-			spec:  DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: "pool"},
+			spec:  DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: testPoolID},
 			fakeL: &fakeLedger{balances: map[string]map[string]*big.Int{`b|"q"`: {"USD/2": big.NewInt(-100)}}},
-			fakeP: &fakePayments{pools: map[string]map[string]*big.Int{"pool": {"USD/2": big.NewInt(100)}}},
-			want:  []string{"ledger:b#0", "pool:pool#0"},
+			fakeP: &fakePayments{pools: map[string]map[string]*big.Int{testPoolID: {"USD/2": big.NewInt(100)}}},
+			want:  []string{"ledger:b#0", "pool:" + testPoolID + "#0"},
 		},
 		{
 			name: "parity/same-ledger-distinct-idx",

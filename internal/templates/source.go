@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 
 	"github.com/formancehq/reconciliation/internal/engine"
+	"github.com/formancehq/reconciliation/internal/ledgername"
 )
 
 // Scope selects how a template reads the accounts a source matches:
@@ -102,12 +103,18 @@ func (s SourceSpec) Validate(field string) error {
 		if s.Ledger == "" {
 			return fmt.Errorf("%w: %s.ledger is required for kind %q", ErrInvalidSpec, field, s.Kind)
 		}
+		if err := ledgername.Validate(s.Ledger); err != nil {
+			return fmt.Errorf("%w: %s.ledger: %w", ErrInvalidSpec, field, err)
+		}
 		if !hasMeaningfulJSON(s.Query) {
 			return fmt.Errorf("%w: %s.query is required for kind %q", ErrInvalidSpec, field, s.Kind)
 		}
 	case SourcePaymentsPool:
 		if s.PoolID == "" {
 			return fmt.Errorf("%w: %s.poolID is required for kind %q", ErrInvalidSpec, field, s.Kind)
+		}
+		if err := validatePoolID(field+".poolID", s.PoolID); err != nil {
+			return fmt.Errorf("%w for kind %q", err, s.Kind)
 		}
 	case "":
 		return fmt.Errorf("%w: %s.kind is required", ErrInvalidSpec, field)

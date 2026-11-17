@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
+	"github.com/google/uuid"
 )
 
 // zeroIfNil normalises a missing per-asset balance to 0. Shared by every
@@ -219,6 +220,15 @@ func unmarshalSpec(raw json.RawMessage, into any) error {
 	}
 	if err := json.Unmarshal(raw, into); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSpec, err)
+	}
+	return nil
+}
+
+// validatePoolID uses the same UUID contract as legacy policies. Validate the
+// JSON-decoded value directly: JSON does not decode URL percent escapes.
+func validatePoolID(field, poolID string) error {
+	if _, err := uuid.Parse(poolID); err != nil {
+		return fmt.Errorf("%w: %s must be a valid pool UUID", ErrInvalidSpec, field)
 	}
 	return nil
 }

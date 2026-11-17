@@ -487,6 +487,10 @@ func newOrchestrationService(t *testing.T, l *orchestrationLedger, p *orchestrat
 	return svc, store
 }
 
+// orchestrationTestPoolID is a valid pool UUID: rule specs now require the
+// pool identifier to be a UUID (SEC-101), so fixtures use a real one.
+const orchestrationTestPoolID = "0eb4a31f-751e-42d4-8d5b-2129e6d4cf4c"
+
 func driftSpec(t *testing.T, ledger, _ string, pool string, tol map[string]int64) json.RawMessage {
 	t.Helper()
 	spec := templates.DriftSpec{
@@ -520,7 +524,7 @@ func mustCreateRule(t *testing.T, svc *Service, spec json.RawMessage) *models.Ru
 
 func TestCreateRule_PersistsExplanationCEL(t *testing.T) {
 	svc, store := newOrchestrationService(t, &orchestrationLedger{current: map[string]*big.Int{}}, &orchestrationPayments{current: map[string]*big.Int{}})
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 	if rule.ExplanationCEL == "" {
 		t.Fatalf("expected explanation_cel to be populated")
 	}
@@ -591,7 +595,7 @@ func TestEvaluate_PassNoAlerts(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-100)}}
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 
 	ev, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
 	if err != nil {
@@ -609,7 +613,7 @@ func TestEvaluate_PreservesSourcePITsWhenNoOutcomes(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{}}
 	p := &orchestrationPayments{current: map[string]*big.Int{}}
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 
 	pit := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
 	ev, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: pit, SafetyMargin: 30 * time.Second})
@@ -622,7 +626,7 @@ func TestEvaluate_PreservesSourcePITsWhenNoOutcomes(t *testing.T) {
 	if got, ok := ev.PitPerSource["ledger:buildr#0"]; !ok || !got.Equal(pit.Add(-30*time.Second)) {
 		t.Fatalf("ledger PIT = %v, want %v", got, pit.Add(-30*time.Second))
 	}
-	if got, ok := ev.PitPerSource["pool:pool#0"]; !ok || !got.Equal(pit.Add(-30*time.Second)) {
+	if got, ok := ev.PitPerSource["pool:"+orchestrationTestPoolID+"#0"]; !ok || !got.Equal(pit.Add(-30*time.Second)) {
 		t.Fatalf("pool PIT = %v, want %v", got, pit.Add(-30*time.Second))
 	}
 	stored, err := store.GetEvaluation(context.Background(), ev.ID)
@@ -642,7 +646,7 @@ func TestEvaluate_DisabledRuleIsValidationError(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-100)}}
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 
 	disabled := false
 	if err := store.PatchRule(context.Background(), rule.ID, storage.RulePatch{Enabled: &disabled}); err != nil {
@@ -666,9 +670,9 @@ func TestEvaluate_UnknownSourcePITKeyRejected(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-100)}}
 	svc, _ := newOrchestrationService(t, l, p)
-	// driftSpec uses ledger "buildr" + pool "pool" → valid keys are
-	// ledger:buildr#0 and pool:pool#0.
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	// driftSpec uses ledger "buildr" + the shared test pool UUID → valid keys are
+	// ledger:buildr#0 and pool:<uuid>#0.
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 	ctx := context.Background()
 
 	// Unknown key → rejected.
@@ -700,7 +704,7 @@ func TestEvaluate_LifecycleInPlace(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-300)}} // drift 50
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 	ctx := context.Background()
 
 	// 1. First failing eval → opens alert. occurrence_count=1, first 'fail' event.
@@ -801,7 +805,7 @@ func TestEvaluate_FingerprintDisappears(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(350)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-300)}} // drift 50
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 
 	// 1. Open an alert on USD/2.
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
@@ -841,7 +845,7 @@ func TestEvaluate_FingerprintDisappears(t *testing.T) {
 func TestEvaluate_EngineError_RaisesMetaAlert(t *testing.T) {
 	l := &orchestrationLedger{failErr: errors.New("ledger upstream timeout")}
 	svc, store := newOrchestrationService(t, l, &orchestrationPayments{current: map[string]*big.Int{}})
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 
 	ev, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()})
 	if err != nil {
@@ -877,7 +881,7 @@ func TestAckResolveAccept_StateTransitions(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-50)}} // drift 50
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
@@ -923,7 +927,7 @@ func TestAccept_RequiresNote(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-50)}}
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
 	}
@@ -942,7 +946,7 @@ func TestAccept_FreezesEvidence(t *testing.T) {
 	l := &orchestrationLedger{current: map[string]*big.Int{"USD/2": big.NewInt(100)}}
 	p := &orchestrationPayments{current: map[string]*big.Int{"USD/2": big.NewInt(-50)}}
 	svc, store := newOrchestrationService(t, l, p)
-	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, "pool", nil))
+	rule := mustCreateRule(t, svc, driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil))
 	if _, err := svc.EvaluateRule(context.Background(), rule.ID, EvaluateRuleRequest{PIT: time.Now()}); err != nil {
 		t.Fatalf("EvaluateRule: %v", err)
 	}
@@ -988,7 +992,7 @@ func TestEvaluate_PeriodicOpensFreshCasePerPeriod(t *testing.T) {
 	rule, err := svc.CreateRule(context.Background(), &CreateRuleRequest{
 		Name:         "monthly-recon",
 		TemplateKind: models.TemplateLedgerVsPoolDrift,
-		TemplateSpec: driftSpec(t, "buildr", `"q"`, "pool", nil),
+		TemplateSpec: driftSpec(t, "buildr", `"q"`, orchestrationTestPoolID, nil),
 		Severity:     models.SeverityHigh,
 		PeriodType:   models.PeriodTypeMonthly,
 	})

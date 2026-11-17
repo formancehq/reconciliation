@@ -20,12 +20,12 @@ func TestDrift_PoolReadGate(t *testing.T) {
 	const margin = 30 * time.Second
 	pit := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
 
-	spec := DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: "pool"}
+	spec := DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: testPoolID}
 	newFakes := func() (*fakeLedger, *fakePayments) {
 		return &fakeLedger{balances: map[string]map[string]*big.Int{
 				`b|"q"`: {"USD/2": big.NewInt(-100)},
 			}}, &fakePayments{pools: map[string]map[string]*big.Int{
-				"pool": {"USD/2": big.NewInt(100)},
+				testPoolID: {"USD/2": big.NewInt(100)},
 			}}
 	}
 
@@ -37,7 +37,7 @@ func TestDrift_PoolReadGate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Evaluate: %v", err)
 		}
-		got, ok := p.gotPITs["pool"]
+		got, ok := p.gotPITs[testPoolID]
 		if !ok {
 			t.Fatal("pool was not read")
 		}
@@ -54,7 +54,7 @@ func TestDrift_PoolReadGate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Evaluate: %v", err)
 		}
-		got := p.gotPITs["pool"]
+		got := p.gotPITs[testPoolID]
 		if got == nil {
 			t.Fatal("pool read latest, want point-in-time for an explicit PIT")
 		}
@@ -70,9 +70,9 @@ func TestDrift_PerSourcePITOverride(t *testing.T) {
 	ledgerAt := time.Date(2026, 6, 17, 16, 0, 0, 0, time.UTC)
 	poolAt := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC) // 4h earlier — the settlement-lag case
 
-	spec := DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: "pool"}
+	spec := DriftSpec{Ledger: "b", LedgerQuery: []byte(`"q"`), PaymentsPoolID: testPoolID}
 	l := &fakeLedger{balances: map[string]map[string]*big.Int{`b|"q"`: {"USD/2": big.NewInt(-100)}}}
-	p := &fakePayments{pools: map[string]map[string]*big.Int{"pool": {"USD/2": big.NewInt(100)}}}
+	p := &fakePayments{pools: map[string]map[string]*big.Int{testPoolID: {"USD/2": big.NewInt(100)}}}
 	eng, res := newTestEngine(t, l, p)
 
 	// Override each side independently, keyed by the template's stable source key.
@@ -80,8 +80,8 @@ func TestDrift_PerSourcePITOverride(t *testing.T) {
 		PIT:          time.Now().UTC(),
 		SafetyMargin: margin,
 		SourcePITs: map[string]time.Time{
-			"ledger:b#0":  ledgerAt,
-			"pool:pool#0": poolAt,
+			"ledger:b#0":                ledgerAt,
+			"pool:" + testPoolID + "#0": poolAt,
 		},
 	})
 	if err != nil {
@@ -91,7 +91,7 @@ func TestDrift_PerSourcePITOverride(t *testing.T) {
 	if got := l.gotPITs[`b|"q"`]; !got.Equal(ledgerAt) {
 		t.Errorf("ledger PIT = %s, want replay override %s without a second margin", got, ledgerAt)
 	}
-	poolGot := p.gotPITs["pool"]
+	poolGot := p.gotPITs[testPoolID]
 	if poolGot == nil {
 		t.Fatal("pool read latest, want point-in-time (an override implies an explicit PIT)")
 	}

@@ -19,6 +19,9 @@ var ErrCompile = errors.New("rule expression failed to compile")
 // rather than a data incident — see spec §6.4 and Resolution kinds.
 var ErrEvaluate = errors.New("rule evaluation failed")
 
+// ErrInvalidResourceID signals an invalid identifier before SDK URL construction.
+var ErrInvalidResourceID = errors.New("invalid resource identifier")
+
 // translateCompileError converts the cel-go Issues object into a single error
 // that mentions every diagnostic, with line/column information. cel-go's raw
 // formatting is engineer-friendly; we pass it through largely unchanged but

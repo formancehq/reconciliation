@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
+	"github.com/formancehq/reconciliation/internal/ledgername"
 	"github.com/formancehq/reconciliation/internal/models"
 )
 
@@ -61,6 +62,9 @@ func (t *AccountThreshold) Validate(raw json.RawMessage) error {
 	}
 	if spec.Ledger == "" {
 		return fmt.Errorf("%w: ledger is required", ErrInvalidSpec)
+	}
+	if err := ledgername.Validate(spec.Ledger); err != nil {
+		return fmt.Errorf("%w: ledger: %w", ErrInvalidSpec, err)
 	}
 	if !hasMeaningfulJSON(spec.Query) {
 		return fmt.Errorf("%w: query is required", ErrInvalidSpec)
@@ -206,7 +210,7 @@ func (t *AccountThreshold) evaluatePerAccount(
 ) (*EvaluationResult, error) {
 	accounts, err := src.resolveAccounts(ctx, resolvers, pit, eng.MaxAccountsScanned())
 	if err != nil {
-		return result, fmt.Errorf("scout accounts on %s: %w", src.label(), err)
+		return result, fmt.Errorf("scout ledger source accounts: %w", err)
 	}
 	result.PitPerSource[srcKey] = pit
 	assets := sortedKeys(spec.Bounds)

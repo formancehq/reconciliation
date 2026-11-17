@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/formancehq/reconciliation/internal/engine"
+	"github.com/formancehq/reconciliation/internal/ledgername"
 	"github.com/formancehq/reconciliation/internal/models"
 )
 
@@ -70,11 +71,17 @@ func (t *LedgerVsPoolDrift) Validate(raw json.RawMessage) error {
 	if spec.Ledger == "" {
 		return fmt.Errorf("%w: ledger is required", ErrInvalidSpec)
 	}
+	if err := ledgername.Validate(spec.Ledger); err != nil {
+		return fmt.Errorf("%w: ledger: %w", ErrInvalidSpec, err)
+	}
 	if !hasMeaningfulJSON(spec.LedgerQuery) {
 		return fmt.Errorf("%w: ledgerQuery is required", ErrInvalidSpec)
 	}
 	if spec.PaymentsPoolID == "" {
 		return fmt.Errorf("%w: paymentsPoolID is required", ErrInvalidSpec)
+	}
+	if err := validatePoolID("paymentsPoolID", spec.PaymentsPoolID); err != nil {
+		return err
 	}
 	switch spec.LedgerSign {
 	case 0, 1, -1: // 0 means "unset → default +1"
