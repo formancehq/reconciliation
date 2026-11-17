@@ -366,8 +366,8 @@ github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 h1:1EYB5IzjZawrrnELUi78f9fPu57Hu
 github.com/santhosh-tekuri/jsonschema/v6 v6.0.3/go.mod h1:JXeL+ps8p7/KNMjDQk3TCwPpBy0wYklyWTfbkIzdIFU=
 github.com/shirou/gopsutil/v4 v4.26.2 h1:X8i6sicvUFih4BmYIGT1m2wwgw2VG9YgrDTi7cIRGUI=
 github.com/shirou/gopsutil/v4 v4.26.2/go.mod h1:LZ6ewCSkBqUpvSOf+LsTGnRinC6iaNUNMGBtDkJBaLQ=
-github.com/sirupsen/logrus v1.9.4 h1:TsZE7l11zFCLZnZ+teH4Umoq5BhEIfIzfRDZ1Uzql2w=
-github.com/sirupsen/logrus v1.9.4/go.mod h1:ftWc9WdOfJ0a92nsE2jF5u5ZwH8Bv2zdeOC42RjbV2g=
+github.com/sirupsen/logrus v1.10.2 h1:G2SED73/qrAu6YwbdxOD6peLkCBI3z7L+ykJFTXJBBo=
+github.com/sirupsen/logrus v1.10.2/go.mod h1:SLEg8TqYulVKKfIGHldVp2K2aYz2DKSVBq4g/H5bR7Q=
 github.com/spf13/cobra v1.10.2 h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
 github.com/spf13/cobra v1.10.2/go.mod h1:7C1pvHqHw5A4vrJfjNwvOdzYu0Gml16OCs2GRiTUUS4=
 github.com/spf13/pflag v1.0.9/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
@@ -408,10 +408,10 @@ github.com/uptrace/bun/extra/bundebug v1.2.15 h1:IY2Z/pVyVg0ApWnQ/pEnwe6BWxlDDAT
 github.com/uptrace/bun/extra/bundebug v1.2.15/go.mod h1:JuE+BT7NjTZ9UKr74eC8s9yZ9dnQCeufDwFRTC8w3Xo=
 github.com/uptrace/bun/extra/bunotel v1.2.18 h1:idfBT+IJGOLSwqkNv+Yiw4fG0tgasXatYeUZPOUuNzE=
 github.com/uptrace/bun/extra/bunotel v1.2.18/go.mod h1:IdnKewPjPXZQHyap29M9PM2l+f0u5fLONeW90bAat88=
-github.com/uptrace/opentelemetry-go-extra/otellogrus v0.3.2 h1:H8wwQwTe5sL6x30z71lUgNiwBdeCHQjrphCfLwqIHGo=
-github.com/uptrace/opentelemetry-go-extra/otellogrus v0.3.2/go.mod h1:/kR4beFhlz2g+V5ik8jW+3PMiMQAPt29y6K64NNY53c=
-github.com/uptrace/opentelemetry-go-extra/otelsql v0.3.2 h1:ZjUj9BLYf9PEqBn8W/OapxhPjVRdC6CsXTdULHsyk5c=
-github.com/uptrace/opentelemetry-go-extra/otelsql v0.3.2/go.mod h1:O8bHQfyinKwTXKkiKNGmLQS7vRsqRxIQTFZpYpHK3IQ=
+github.com/uptrace/opentelemetry-go-extra/otellogrus v0.4.0 h1:7J/8KjFhYbVFAGTLs68CCbfWLKGPRtEXPQb7pSYaRsY=
+github.com/uptrace/opentelemetry-go-extra/otellogrus v0.4.0/go.mod h1:1TZcrOZV4dQ1i4BMGWRptsgrODLuznqmgQCd6Bq9Ktk=
+github.com/uptrace/opentelemetry-go-extra/otelsql v0.4.0 h1:ogBkT6xk6ruB2rPCQvJCV48CuDkFK+zazsvsJEPKCVY=
+github.com/uptrace/opentelemetry-go-extra/otelsql v0.4.0/go.mod h1:2W+3XKCmxD/+Yxh7NZbO/jTT007ODSOo9xhIWxO75r8=
 github.com/uptrace/opentelemetry-go-extra/otelutil v0.4.0 h1:ZC08i0whcTGacAS7iDFxYL5D/bHdtdzxAjMJD8M15Pg=
 github.com/uptrace/opentelemetry-go-extra/otelutil v0.4.0/go.mod h1:j5Tnr2zA8UTDRzfIAZUaseE5/QPQCRv8JShSuGZek1A=
 github.com/vmihailenco/msgpack/v5 v5.4.1 h1:cQriyiUvjTwOHg8QZaPihLWeRAAVoCpE00IUPn0Bjt8=
