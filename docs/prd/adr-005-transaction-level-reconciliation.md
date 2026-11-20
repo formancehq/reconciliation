@@ -1000,6 +1000,38 @@ carry no account metadata, so they are not affected. Three ways out, none chosen
 mapping stops writing account metadata on holds, or deletes it in the same request as the
 transaction that letters the hold; or the purge returns with EN-2036, now planned for Ledger v3.1.
 
+**Open, waiting for the design partner's examples (no decision): fees and partial refunds.** The
+design partner's feedback (2026-11-17) says they match exactly, "but sometimes we need to
+accumulate some fees together/partial refunds/other edge cases". Today a fee booked in the same
+transaction as the final lowers the net on `psp.paymentAccount`, so the payment shows as
+`over_applied`. A refund booked on the original reference is `unclassified` (decision 7). Two
+optional extensions keep the comparison exact (decision 6 stands), and both are opt-in parameters
+of the rule:
+
+- **`psp.feeAccounts`**, an address pattern like `psp.paymentAccount`. A PSP payment's amount
+  becomes its net posting on the payment account **plus** its net posting on the fee accounts,
+  over the transactions that carry the same reference. The product then applies the gross amount,
+  and a fee charged per payment no longer opens a break. The flow read already returns these
+  postings, so the change adds no read. The cost is in the rule contract, the bridge and the
+  payment-account book (a fee keyed by `payment_ref` is no longer an `unkeyed_payment_movement`),
+  the results reference and the DuckDB queries. Size: S.
+- **A `refunded` state set on the PSP side**, with a matching product-side set. Transactions in
+  these sets count **negatively** in `pspAmount` and `productAmount` on the original reference, so
+  several partial refunds settle in net on one row, and `formancepayments`' `payin.refunded` (and
+  its siblings) leave `unclassified`. Decision 7 stays the default: a refund booked under its own
+  reference is still its own 1-to-1 pair. Open points: a `refunded` event on a reference with no
+  final in the window needs the existing key lookup; whether a refund larger than the payment is a
+  new class (`over_refunded`) or a plain `over_applied`; how the PSP hold's continuity reads a
+  refund that releases the hold (`formancepayments.yaml:462-465` @ `016dcf41`). Size: S–M.
+
+Fees charged **in bulk** (per settlement batch or per month) carry no payment reference, so they
+stay outside lettering. The payment-account book checks that each such debit carries a key
+(`psp.movementKeys`, decision 23), and the amount is an aggregate control: a `balance_equation`
+between the PSP's fee account and the product's, with a tolerance if needed. A lettering rule keyed
+on the batch or fee-invoice id is possible when both ledgers carry it, with no engine change.
+Tolerance-based or many-to-many matching is not considered (decision 6, and it would break the
+byte-identical result files of decision 15).
+
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
 
