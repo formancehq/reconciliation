@@ -383,6 +383,11 @@ rendered text:
   open breaks accepted at their current amount, read from the control state when the tick
   rebuilds the alert (ADR-005 decision 28).
 
+The alert's transition events carry, once per run, a summary of counts only: the day, the
+`runId`, the new and the open breaks by priority, the resolved and the accepted ones (ADR-005
+decision 29). They never list breaks: the API returns a run's breaks filtered on the `runId`,
+the priority and the lifecycle.
+
 The latest entry of the day list is the alert's headline: its `verdict`, its open breaks per leg
 (`counts.breaks.openByLeg`), its open P1 breaks (`counts.breaks.openByPriority["1"]`), and per
 asset its gross and its net.
