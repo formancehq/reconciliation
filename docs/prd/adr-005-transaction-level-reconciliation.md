@@ -1030,7 +1030,14 @@ stay outside lettering. The payment-account book checks that each such debit car
 between the PSP's fee account and the product's, with a tolerance if needed. A lettering rule keyed
 on the batch or fee-invoice id is possible when both ledgers carry it, with no engine change.
 Tolerance-based or many-to-many matching is not considered (decision 6, and it would break the
-byte-identical result files of decision 15).
+byte-identical result files of decision 15). The [draft on fees, reversals and
+results](../drafts/lettering-fees-reversals-and-results.md) replaces both extensions with one
+method that works for every connector. Seven mappings show why: the PSP keeps its fee before the
+merchant's balance sees the money, so every payment with a fee is `over_applied` today, and Adyen
+drains the Payable account into settlement batches under the payment's key. The draft reads the
+PSP amount as the signed net inflow into declared `funds` and `fees` accounts, over every
+transaction of the payment, linked through `formance.com/accounting.adjusts-reference` or the
+payment's own key, with the events inferred from the postings and a preset per connector.
 
 **Open, for the owner (no decision): what Fragment's 1:1 reconciliation does that this design does
 not.** Read on 2026-11-24 from [reconcile-payments](https://fragment.dev/docs/reconcile-payments),
