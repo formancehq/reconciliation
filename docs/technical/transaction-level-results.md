@@ -628,6 +628,11 @@ side in the manifest's `cuts`, with the field names from its `rule`.
 
 ## 9. Queries
 
+**One reference, without the files.** To know where one payment or invoice stands, recon's API
+answers live from the ledgers, `GET /v3/rules/{id}/lookup?ref=…` or `?businessId=…`, with the
+latest current run's row next to the live one (ADR-005 decision 30). The files answer the
+questions about a day or a period.
+
 **Internal tooling.** The team validates and analyses result files with
 [`tools/lettering-duckdb`](./lettering-duckdb.md): ready-made queries and checks, tested on §10.
 
