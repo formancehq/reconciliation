@@ -1,6 +1,6 @@
 # Lettering: fees, refunds and chargebacks, open items between runs, and a review of the result files
 
-**Status:** Draft, for the owner. **Part 1 is decided** as ADR-005 decision 27 (2026-11-24), and
+**Status:** Draft, for the owner. **R1 of part 3 is decided** as ADR-005 decision 28 (2026-11-24, EN-3404): annotations in the control state, never in the files, so that a replay keeps its bytes; acceptance lapses when the amount changes. **Part 1 is decided** as ADR-005 decision 27 (2026-11-24), and
 the ADR, the design doc and the results reference now carry it; they win where this draft differs.
 Two changes on the way: PSP holds are *recommended* rather than optional, after the Connectivity
 team's review (a per-payment EPHEMERAL account says from the data what is still open and why), and

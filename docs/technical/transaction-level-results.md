@@ -205,9 +205,11 @@ The verdict is evaluated in this order, and the first condition that holds wins:
 | `reconciled_with_pending` | No break and no warning, but unapplied payments within `product.grace` or applications within `psp.grace` | "OK for now". Each pending item comes with the day it becomes a break |
 | `reconciled` | None of the above | The only green state |
 
-**What opens the alert:** at least one open break. A break is never accepted one by one: a known
-break stays open until it is booked, and the controller acknowledges or accepts the alert itself,
-as for any rule. A resolved break does not open it, and neither does the net alone, since pending items move the net without being breaks and
+**What opens the alert:** at least one open break that is not accepted at its current amount. A
+break is accepted one by one in recon's control state, never in the files (ADR-005 decision 28):
+the files show it as an open break whatever its annotations, and the acceptance lapses when the
+break's amount changes. The controller can still acknowledge or accept the alert itself, as for
+any rule. A resolved break does not open it, and neither does the net alone, since pending items move the net without being breaks and
 offsetting breaks net to zero. An `incomplete` run opens the engine-error alert instead.
 
 **The engine-error alert** is the rule's `engine.error` meta-alert, in the continuous scope. Every
@@ -377,7 +379,9 @@ rendered text:
   recon's API lists with pre-signed URLs (§2). A day with no complete run is not listed: the next
   complete run's window covers it. With a `daily` period, the list has one entry.
 - **the latest day**: the manifest's `statement`, `books` and `fundsBook` blocks, as JSON,
-  for the **latest day of the period that has a current run**.
+  for the **latest day of the period that has a current run**, and the count and amount of its
+  open breaks accepted at their current amount, read from the control state when the tick
+  rebuilds the alert (ADR-005 decision 28).
 
 The latest entry of the day list is the alert's headline: its `verdict`, its open breaks per leg
 (`counts.breaks.openByLeg`), its open P1 breaks (`counts.breaks.openByPriority["1"]`), and per
