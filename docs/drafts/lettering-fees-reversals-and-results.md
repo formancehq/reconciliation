@@ -1,6 +1,11 @@
 # Lettering: fees, refunds and chargebacks, open items between runs, and a review of the result files
 
-**Status:** Draft, for the owner. Nothing here is decided. It develops the open questions of
+**Status:** Draft, for the owner. **Part 1 is decided** as ADR-005 decision 27 (2026-11-24), and
+the ADR, the design doc and the results reference now carry it; they win where this draft differs.
+Two changes on the way: PSP holds are *recommended* rather than optional, after the Connectivity
+team's review (a per-payment EPHEMERAL account says from the data what is still open and why), and
+each product hold kind declares `settles` (`in` or `out`), without which a refund hold's lettering
+counted the wrong way (§1.3). Parts 2 and 3 are not decided. It develops the open questions of
 [ADR-005 §10](../prd/adr-005-transaction-level-reconciliation.md#10-decisions-taken-and-what-remains-open)
 raised by the design partner's feedback (2026-11-17) and by the Fragment comparison (2026-11-24).
 **Date:** 2026-11-24
@@ -130,7 +135,7 @@ default field (`to_transitional` pending, `to_final` final, `compensate` failed 
 apart by the postings). It is needed only where the postings cannot tell, for instance a connector
 that books a pending payment straight onto `funds`.
 
-**PSP holds become optional.** The Stripe plugin of `connectivity` books only settled balance
+**PSP holds become optional** (recommended, in decision 27). The Stripe plugin of `connectivity` books only settled balance
 transactions and has no hold; ADR-005 §6 rejects an empty `holds` list on either side. Without PSP
 holds the rule still matches every final, refund and chargeback; it loses the PSP stock and the
 `in_progress` and `failed` classes, and says so in the manifest.
@@ -157,7 +162,10 @@ The product side is already generic: its amount is the movement on its business 
 signed:
 
 - a movement that brings a hold towards zero counts +, one that moves it away counts −, over every
-  product transaction that carries the payment reference;
+  product transaction that carries the payment reference, multiplied by the hold kind's `settles`:
+  `in` for an invoice or a dispute, `out` for a refund, whose lettering is money paid back. A
+  refund hold is opened with its `business_ref` alone, or its opening and lettering cancel out
+  (decision 27);
 - a refund or a chargeback is booked **with the original payment's reference**, the one the PSP's
   notification names. That is the answer to "we cannot pass the ids ourselves": a PSP-initiated
   chargeback needs no id from the customer, only the one the PSP already sent;

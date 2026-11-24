@@ -326,13 +326,13 @@ Ledger transaction-address index and expose one ordered feed.
 ```mermaid
 flowchart LR
     Cut["Cut per ledger at the business cut-off<br/>transaction id T"] --> Flow["Flow: ListTransactions (T_prev, T]<br/>∧ key present (PSP: payment_ref or a psp.movementKeys field;<br/>product: payment_ref or business_ref)<br/>K id ranges per side (default 8) · a first run seeds its open items from backfillFrom (product side psp.grace earlier)"]
-    Cut --> Stock["Stock: live ListAccounts of open holds<br/>rewound with the unfiltered ListTransactions (T, head_tx]<br/>(a first run: on to T_prev, for its starting stock and payment account)"]
-    Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, payment-account book and open-items identities"]
+    Cut --> Stock["Stock: live ListAccounts of open holds<br/>rewound with the unfiltered ListTransactions (T, head_tx]<br/>(a first run: on to T_prev, for its starting stock and funds accounts)"]
+    Flow --> Join["Join on the PSP payment reference<br/>+ carried and looked-up references<br/>+ continuity, funds book and open-items identities"]
     Stock --> Join
     Join --> Art["flow / carried / stock / breaks .ndjson.gz<br/>→ product ledger's backup storage, recon prefix, 90 days<br/>(incomplete run: no data file)"]
     Art --> Cap["Capture on _recon<br/>(verdict, T per ledger, the manifest's SHA-256) — Ed25519"]
     Cap --> Man["Manifest, written last (files' SHA-256)<br/>the run exists once it is written<br/>(incomplete run: reduced manifest)"]
-    Man --> Alert["Alert per (rule, fingerprint, period), rebuilt each tick while the period is open<br/>structured evidence: the period's day list (verdict, counts, net, gross, link), its latest entry as headline<br/>+ the latest day's statement, books and payment-account book as JSON<br/>opens on an open break (never on the net alone) · breaks paged from the API"]
+    Man --> Alert["Alert per (rule, fingerprint, period), rebuilt each tick while the period is open<br/>structured evidence: the period's day list (verdict, counts, net, gross, link), its latest entry as headline<br/>+ the latest day's statement, books and funds book as JSON<br/>opens on an open break (never on the net alone) · breaks paged from the API"]
 ```
 
 No query checkpoint is taken: the cut is a transaction id per ledger, which no later write moves,

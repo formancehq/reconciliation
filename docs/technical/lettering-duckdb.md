@@ -6,6 +6,12 @@ themselves, and every field, are specified in
 [transaction-level-results.md](./transaction-level-results.md), the source of truth. When the tool
 and that page disagree, the page wins and the tool is fixed.
 
+> **Behind the format since ADR-005 decision 27 (2026-11-24).** The tool and its test data still
+> read the manifest's `paymentAccounts` block, the rule's `psp.paymentAccount` and unsigned PSP
+> amounts. The results reference now names the block `fundsBook` (with a `role` per account), adds
+> `pspNet`, `pspFees`, `statement.{asset}.psp.fees`, the `role` of each PSP transaction and the
+> `unapplied_reversal` class. The tool is to be brought up to it.
+
 🚧 Internal tool ([EN-2353](https://formance-team.atlassian.net/browse/EN-2353)). It runs today on
 generated test data. Recon does not write these files yet: that is EN-2322.
 

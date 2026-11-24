@@ -14,8 +14,9 @@ penalty this design does not depend on, is fixed by formancehq/ledger#2165.
 `And` order, `ListLogs`) and @ `03d8792b5` (index-building error), all re-checked @ `c56aeb98`
 (2026-10-02). The EPHEMERAL purge, the account listing and the address filters are checked at the
 tags `v3.0.0-beta.7` (`23ea97c7f`) and `v3.0.0-beta.6` (`118531bc7`), 2026-10-02 (§2.2); Connectivity
-`formancehq/connectivity-plugins-poc` @ `016dcf41` and `formancehq/connectivity` @ `3119b24a`. The
-measurements' own SHAs are in the design doc.
+`formancehq/connectivity-plugins-poc` @ `016dcf41` and `formancehq/connectivity` @ `3119b24a`;
+decision 27's connector facts at `connectivity-plugins-poc` @ `34be50e91` and `connectivity` @
+`d39579f7` (2026-11-24). The measurements' own SHAs are in the design doc.
 
 ---
 
@@ -319,9 +320,10 @@ split into parallel id ranges. The membership comes first: the ledger drives an 
 term, and with the dense id range first the product `Or` read measured 2.7 to 3.4 times slower
 (design doc §7.11).
 
-- On the PSP ledger, membership is `payment_ref EXISTS`, plus one `EXISTS` term per
-  `psp.movementKeys` field when the rule declares them (decision 23): those transactions feed the
-  payment-account book only.
+- On the PSP ledger, membership is `payment_ref EXISTS`, plus one `EXISTS` term for the
+  `psp.adjusts` field when it differs from the key (decision 27), and one per `psp.movementKeys`
+  field when the rule declares them (decision 23): those last transactions feed the funds book
+  only.
 - On the product ledger it is **`Or(payment_ref EXISTS, business_ref EXISTS)`**, with one
   `business_ref` term per hold kind (each `holds` entry names its business-id field). A business
   hold's opening (an invoice issued) carries no payment reference yet, but continuity needs
@@ -338,7 +340,7 @@ Three caveats come with this choice, and each has a counter-measure:
    merchant-reference fields are write-once by convention: a correction is a new transaction (§8
    rule 3). V1 has no metadata watch to monitor it, deferred until L8 (decision 25). A change on a
    transaction of a day already read moves no balance, so the holds, continuity, the
-   payment-account book and the residual stay right, and that transaction is in no later window. A
+   funds book and the residual stay right, and that transaction is in no later window. A
    change made before the run, on a transaction of its window, is read at its latest value. What is
    lost is the monitoring of the convention and condition 4 of a byte-identical replay ([results
    reference §8](../technical/transaction-level-results.md#8-rules-a-reader-can-rely-on)).
@@ -420,33 +422,69 @@ V1 runs no periodic proof against a checkpoint.
   doc
   §7.6](../technical/transaction-level-reconciliation.md#76-where-the-key-comes-from-transaction-metadata-not-the-hold-address)).
   The hold address keys the stock only.
-- **States are parameters, not a fixed vocabulary.** How external payment states are modelled on
-  the PSP ledger is a per-deployment choice. The rule therefore declares, **for each side**, the
-  metadata field and its value sets: on the PSP side the sets that mean `pending`, `final` and
-  `failed`, and on the product side the `final` set alone, the values that mark an application.
-  Every flow class reads the PSP's states and the product's applications, so a product `pending`
-  or `failed` set would have no effect; a product transaction whose state is in no set is
-  unclassified, like any other:
+- **The PSP side declares account roles; its events are read from the postings** (decision 27).
+  Each connector names its events in its own words, and a fee, a refund or a settlement moves
+  money across different accounts from one PSP to the next. The rule therefore declares **where the
+  merchant's money sits**, not what the events are called:
+  - **`funds`**: address patterns for the merchant's money at the PSP, the balance or payable
+    account and every account the PSP moves it through before paying it out (Adyen's settlement
+    batches);
+  - **`fees`**: address patterns for what the PSP, or a platform, keeps out of the gross before it
+    reaches `funds`;
+  - **`adjusts`**: the metadata field that links an adjustment (refund, chargeback, chargeback
+    reversed, fee refund) to its payment, `formance.com/accounting.adjusts-reference` by default,
+    the Connectivity convention (source-modeling §8). A connector that puts the payment's own key on
+    its adjustments needs nothing more.
+
+  A pattern is `:`-separated segments, each a literal or `*` matching one segment. `funds` ∪
+  `fees` is the **perimeter**. What a PSP transaction does to the declared accounts says what it is:
+
+  | What the transaction does | Its role |
+  |---|---|
+  | Moves value into the perimeter, on a payment's own key | final: the payment is received |
+  | Moves value out of the perimeter, or back in, and adjusts a payment (or carries its key after its final) | reversal: refund, chargeback, chargeback reversed |
+  | Touches a PSP hold and not the perimeter | pending, or failed when it brings the hold back to zero |
+  | Touches `fees` only | fee |
+  | Touches nothing the rule declares | unclassified |
+
+  A `state` block stays possible on the PSP side as an **override**, for a connector whose postings
+  cannot tell, such as one that books a pending payment straight onto `funds`: a field
+  (`formance.com/accounting.transition` by default, Connectivity's closed set `to_transitional`,
+  `to_final`, `compensate`, `marker`) and its value sets for `pending`, `final`, `failed` and
+  `reversal`. Under a `state` block the sets decide every role, a value in no set is unclassified,
+  and the postings still give the amounts; `formancepayments`, which also books payouts and
+  transfers under the payment's key, needs one. The
+  product side declares its `final` set alone, the values that mark an application: every flow
+  class reads the product's applications only, so a product `pending` or `failed` set would have
+  no effect.
 
   ```json
-  "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
-          "state": {"field": "formance.com/observation.event-type", "final": ["payin.succeeded"], "failed": ["payin.compensate"], "pending": ["payin.pending"]},
-          "holds": [{"prefix": "fpay:stripe:payment:hold:pending:", "openSign": "positive"}], "grace": "7d",
-          "paymentAccount": "fpay:stripe:account:*:main", "merchantRef": "merchant_ref"},
+  "psp": {"ledger": "psp", "key": "adyen.com/psp-reference",
+          "adjusts": "formance.com/accounting.adjusts-reference",
+          "funds": ["adyenpayments:*:payable:main", "adyenpayments:*:settlement:hold:*"],
+          "fees":  ["adyenpayments:*:fee:*:main"],
+          "holds": [{"prefix": "adyenpayments:MyMerchant:payment:", "openSign": "positive"}],
+          "grace": "7d", "merchantRef": "merchant_ref"},
   "product": {"ledger": "main", "key": "psp_payment_ref", "grace": "1d",
           "state": {"field": "transition_kind", "final": ["to_final"]},
           "holds": [{"prefix": "main:hold:invoice:", "openSign": "negative", "businessId": "invoice_no"},
-                    {"prefix": "main:hold:refund:",  "openSign": "positive", "businessId": "refund_no"}]}
+                    {"prefix": "main:hold:dispute:", "openSign": "negative", "businessId": "dispute_no"},
+                    {"prefix": "main:hold:refund:",  "openSign": "positive", "businessId": "refund_no", "settles": "out"}]}
   ```
 
-  A transaction whose state value is in no set takes no part in matching, but it is **never dropped
-  silently**: it is counted as `unclassified` in the statement, per side and state value, with a
-  warning, and the ledger lists its transactions ([results
-  reference](../technical/transaction-level-results.md#unclassified-transactions)). `formancepayments` books refunds on the original payment id as
-  `payin.refunded` (`formancepayments.yaml:472` in `formancehq/connectivity-plugins-poc` @ `016dcf41`), so a default mapping shows
-  up there instead of vanishing; the [connector mapping
-  checklist](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation)
-  gives refunds their own reference. The rule's validation rejects overlapping sets.
+  - **The values come from a preset that ships with the connector.** `key`, `adjusts`, `funds`,
+    `fees` and `holds` follow the connector's chart of accounts (`{conn}:{conn_id}:{position}:main`
+    and `:hold:{id}`, Connectivity source-modeling §2.2), so each connector publishes them as a
+    **lettering preset** next to its profile, with `{conn}` and `{conn_id}` as parameters. A rule
+    names a preset and its connection (`"psp": {"preset": "adyenpayments", "conn": "…"}`) and may
+    override any value. Recon carries no connector knowledge: a connector becomes reconcilable when
+    its mapping meets the requirements of §8 and publishes its preset.
+
+  A transaction the rule cannot classify takes no part in matching, but it is **never dropped
+  silently**: it is counted as `unclassified` in the statement, per side (and state value, under a
+  `state` block), with a warning, and the ledger lists its transactions ([results
+  reference](../technical/transaction-level-results.md#unclassified-transactions)). The rule's
+  validation rejects overlapping sets.
 - **Hold prefixes and their signs are parameters too.** Each side lists its hold kinds in `holds`,
   one entry per prefix, each with the sign of an **open** hold under it (`openSign`, `positive` by
   default). On the product side each entry also names its `businessId` field (`invoice_no`,
@@ -459,62 +497,104 @@ V1 runs no periodic proof against a checkpoint.
   - The sign cannot be inferred: a hold may have been opened before the window, and the stock sees
     only its balance, where −500 could be an open invoice or an over-application.
   - Validation rejects overlapping prefixes on one side, so every hold has exactly one sign.
+  - **PSP holds are recommended, not required** (decision 27). One EPHEMERAL account per payment,
+    named after its reference, is the clearest signal a connector can give: at zero the payment is
+    settled, non-zero it is an open item, and its postings say why (a fee, a partial refund, a
+    chargeback), read from the data rather than reconstructed (Connectivity review, 2026-11-24).
+    Without them the rule still matches every final, refund and chargeback, through the
+    transactions; it loses the PSP stock and the `in_progress` and `failed` classes, and the
+    manifest says so. The Stripe plugin of `connectivity` books settled balance transactions only,
+    with no hold. Listing the open holds between two runs is not possible on Ledger v3.0, which
+    has no balance predicate on account queries, so the holds give the stock, and the transactions
+    keep the discovery.
 - **`psp.movementKeys`** (optional, decision 23, §8 rule 10) names the declared,
-  indexed metadata fields that key the payment account's other movements, such as payouts and
-  fees. The PSP flow read adds one `EXISTS` term per field; those transactions feed the
-  payment-account book only, never matching.
+  indexed metadata fields that key the perimeter's other movements, such as payouts, bulk fees and
+  conversions. The PSP flow read adds one `EXISTS` term per field; those transactions feed the
+  funds book only, never matching.
 - **`psp.merchantRef`** (optional) names the PSP metadata field holding the merchant's reference.
   When set, an unapplied payment whose merchant reference names an open hold is paired with it
   ("invoice X is paid: apply it"), on the flow row (`pairedHold`) and the hold's stock row
   (`pairedRef`).
 - **What the rule's validation rejects** at create time:
   - overlapping state value sets, a `pending` or `failed` set on the product side, or an empty
-    `holds` list on either side;
+    `holds` list on the product side (PSP holds are optional);
   - a hold `prefix` that is not a literal address prefix, or two prefixes of one side where one is
     a prefix of the other;
-  - an `openSign` other than `positive` or `negative`, a product `holds` entry without
-    `businessId`, or a PSP entry with one;
-  - a missing `psp.paymentAccount`, one that is not a pattern of `:`-separated segments, each a
-    literal or `*`, or one that overlaps a PSP hold prefix;
+  - an `openSign` other than `positive` or `negative`, a `settles` other than `in` or `out`, a
+    product `holds` entry without `businessId`, or a PSP entry with `businessId` or `settles`;
+  - an empty `psp.funds`, a `funds` or `fees` pattern that is not `:`-separated segments, each a
+    literal or `*`, or a `funds` pattern, a `fees` pattern and a PSP hold prefix that can match the
+    same address;
+  - a `preset` unknown to the connector catalogue, or a `conn` missing when a preset names one;
   - a negative `grace` (`0` is valid) or an unknown `periodType`;
-  - a `key`, `businessId`, `merchantRef` or `movementKeys` field that is not declared as
-    transaction metadata on its ledger, or a `key`, `businessId` or `movementKeys` field without an
-    index, and a `movementKeys` field equal to the `key` or to `state.field`;
+  - a `key`, `adjusts`, `businessId`, `merchantRef` or `movementKeys` field that is not declared
+    as transaction metadata on its ledger, or a `key`, `adjusts`, `businessId` or `movementKeys`
+    field without an index, and a `movementKeys` field equal to the `key`, to `adjusts` or to
+    `state.field`;
   - a ledger without the `inserted_at` index (§5).
 
   An index that is still building is accepted, and the first run waits for it. Contract versions
   are isolated as for the other V2 templates.
 - **An application's amount is its net posting on the accounts under the side's hold prefixes**,
-  each counted in the direction that settles it: an invoice hold that opens at −X is settled by +X.
+  signed as cash for the payment (decision 27). A movement that brings a hold towards zero counts
+  +, one that takes it away from zero counts −, both multiplied by the hold kind's `settles`:
+  `in` (the default) for a hold that money paid by the customer settles, such as an invoice, an
+  order or a dispute, and `out` for a hold that money paid back to the customer settles, such as a
+  refund. So an invoice hold that opens at −X is settled by +X; a chargeback booked with the
+  payment's reference, reopening the invoice or opening a dispute hold, counts −; and a refund hold
+  lettered with the payment's reference when the PSP executes the refund counts −. Each lowers the
+  payment's product amount as the PSP's falls. The `settles` direction cannot be inferred from
+  `openSign`: an invoice and a refund hold open with opposite signs in one integration and with the
+  same sign in another. A refund hold is opened with its `business_ref` alone: opened with the
+  payment's reference, its opening and its lettering would cancel out.
   A transaction that carries the key but moves no hold, such as a revenue recognition booked in the
   same batch as the application, therefore adds nothing to any amount. When its state is in none of
   the rule's sets it is still counted as unclassified, so the booking keeps the key off it (§8).
-- **A PSP payment's amount is its net posting on the side's `paymentAccount`**, the account a final
-  event credits with the payment. It is an address pattern where `*` matches one segment
-  (`fpay:stripe:account:*:main` for `formancepayments`), matched in memory on the postings the flow
-  read already returns, and counted in absolute value.
-  - The hold cannot give it. `formancepayments`' `payin.succeeded` takes the payment amount from the
-    hold first and from the provider mirror `account:{acct}` for any shortfall, so the net on the
-    hold is 0 for a final event that no `pending` preceded, and the `pending` amount, not the paid
-    one, when the two differ. Since `ae604968` a `payin.refunded` between the two also lowers the
-    hold, so the net on the hold is then the `pending` amount less that refund
-    (`formancepayments.yaml:462-465` @ `016dcf41`).
-  - The hold still gives the PSP stock and its continuity. A `pending` or `failed` event shows its
-    hold movement as `holdAmount` in the flow rows, never as `amount`.
-  - The postings are immutable, so this needs no connector change and no amount metadata.
-  - **The payment-account book covers every account the pattern matches**, not only the ones the
-    flow's postings name: an account that only an unkeyed movement credits appears in no flow
-    posting, and it is the case the book exists for. The ledger filters an address by prefix or
-    exact value only (`common.proto:1701-1709` at `c56aeb98`), so recon lists the pattern's literal
-    prefix (`fpay:stripe:account:`) live, with the hold prefixes, and matches the other segments in
-    memory. An account the previous run listed stays listed.
-- **No tolerance.** The comparison is exact: a fee or FX difference on a payment is a break, never
-  an accepted gap. Fees and FX must be booked explicitly on the side that bears them.
-- **Refunds and chargebacks are their own 1-to-1 pairs.** A refund is a **separate PSP payment**,
-  with its own reference, on the PSP ledger. On the product ledger it is a **refund hold**, lettered
-  by a transaction carrying that reference. It flows through the same classes as any payment.
-  Refunds are not modelled as a reversal of the original payment, because PSPs and product
-  implementations differ too much for that to be general.
+- **A PSP payment's amount is the signed net inflow into the perimeter**, per asset, summed over
+  **the payment's transactions**: those whose `adjusts` field names it, and, when the field is
+  absent, those whose `key` names it.
+  - A posting from outside the perimeter into it counts +, one from inside to outside counts −,
+    and one between two perimeter accounts counts 0. Adyen's drain of the Payable account into a
+    settlement batch cancels out, and a fee taken in the payment's transaction, or in a separate
+    one under the same key, adds back to the gross.
+  - The compared amount is the gross the payer paid less what was given back: `pspNet`, the inflow
+    that lands in `funds`, plus `pspFees`, the inflow that lands in `fees`. The product applies the
+    invoice amount, and a fee charged per payment opens no break.
+  - A refund or a chargeback leaves the perimeter and counts −; a chargeback reversed, a returned
+    fee or a refund reversed counts as its postings say. Several partial refunds sum. A pending or
+    failed event moves a hold outside the perimeter and counts 0; it shows as `holdAmount` in the
+    flow rows, never as `amount`.
+  - **The amount is a sum over the payment's transactions, never an account balance.** The
+    perimeter's accounts are aggregates of every payment; their balances, and fees charged per
+    batch or per month with no payment behind them, are balance reconciliation's job, a
+    `balance_equation` rule next to this one. The funds book below only checks that every
+    movement across the perimeter is keyed.
+  - The hold cannot give the amount. `formancepayments`' `payin.succeeded` takes the payment amount
+    from the hold first and from the provider mirror `account:{acct}` for any shortfall, so the net
+    on the hold is 0 for a final event that no `pending` preceded, and the `pending` amount, not the
+    paid one, when the two differ (`formancepayments.yaml:462-465` @ `016dcf41`). The hold still
+    gives the PSP stock and its continuity.
+  - The postings are immutable, and the flow read already returns them, so this adds no read, no
+    connector change beyond §8 and no amount metadata.
+  - **The funds book covers every account the `funds` and `fees` patterns match**, not only the
+    ones the flow's postings name: an account that only an unkeyed movement credits appears in no
+    flow posting, and it is the case the book exists for. Every posting that crosses the perimeter
+    carries the payment key, the `adjusts` field or a `movementKeys` field; a crossing with none is
+    `unkeyed_payment_movement`, P1 (decision 23). The ledger filters an address by prefix or exact
+    value only (`common.proto:1701-1709` at `c56aeb98`), so recon lists each pattern's literal
+    prefix live, with the hold prefixes, and matches the other segments in memory. An account the
+    previous run listed stays listed.
+- **No tolerance.** The comparison is exact: a difference on a payment is a break, never an
+  accepted gap. A fee the PSP keeps is counted through `fees`, as a posting the connector books; an
+  FX difference or a discount must be booked explicitly on the side that bears it.
+- **Refunds and chargebacks land on their payment's row**, signed, on both sides (decision 7). On
+  the PSP ledger they are the payment's transactions through `adjusts` or its key; on the product
+  ledger they are booked **with the original payment's reference**, the one the PSP's notification
+  names, so a PSP-initiated chargeback needs no id of the customer's own. The product reopens the
+  invoice hold or opens a refund or dispute hold (its own `holds` entry): a dispute won letters it,
+  a dispute lost is written off with its `business_ref` and no payment reference, which changes no
+  amount. A connector that gives each refund its own reference and no link to the payment keeps
+  the old behaviour: the refund is its own 1-to-1 pair.
 - **Cardinality.** The join is on transactions, per payment reference. One payment may be applied by
   several product transactions: split across invoices, or applied in parts. Their amounts are
   **summed per reference** before comparison. One invoice settled by several payments is a
@@ -522,15 +602,22 @@ V1 runs no periodic proof against a checkpoint.
 - **References missing from the window are looked up by key**, on the PSP ledger up to `T` and,
   when that finds a final state, on the product ledger too; a window reference with a `failed`
   event that is not carried is looked up on both ledgers, even when the product books on it the same
-  day. So `over_applied` and `reversed_after_application` are caught across days. The cost is
+  day. A window transaction that adjusts a reference neither matched in the window nor carried,
+  a chargeback weeks after its payment, triggers a lookup of that reference on both ledgers, by
+  `key` and by `adjusts`; the ledger keeps every transaction, so the 90-day file retention does not
+  limit it. So `over_applied`, `reversed_after_application` and `unapplied_reversal` are caught
+  across days. The cost is
   O(looked-up references), counted in the run's metrics ([design doc
   §5](../technical/transaction-level-reconciliation.md#5-matching-semantics)).
 - **Classes.** The flow classes (`matched`, `under_applied` / `over_applied`, `unapplied_payment`,
   `in_progress`, `failed`, `applied_before_final`, `orphan_application`,
-  `reversed_after_application`) and the stock classes (`open` with its age bucket, `wrong_sign`,
+  `reversed_after_application`, `unapplied_reversal`) and the stock classes (`open` with its age bucket, `wrong_sign`,
   `cleared`), with their outcomes and priorities, are defined in the [results
   reference](../technical/transaction-level-results.md#flowndjsongz). `orphan_application` and
-  `reversed_after_application` are priority 1; `wrong_sign` is priority 4. The two stock books are
+  `reversed_after_application` are priority 1; `wrong_sign` is priority 4. `unapplied_reversal`
+  (the PSP refunded or charged back a payment, the product has not booked it yet) is pending within
+  `product.grace`, then priority 2. Classes read signed lifetime amounts: `matched` means the
+  payment's net is equal on both sides after every refund and chargeback. The two stock books are
   aged, never joined to each other.
 - **Each side has its own `grace`: how long it may lag behind the other.** `product.grace` is how
   long the product has to apply a payment the PSP finalised (`unapplied_payment`); `psp.grace` is
@@ -576,14 +663,14 @@ V1 runs no periodic proof against a checkpoint.
     evidence lists each day of the period that has a current run, with its verdict, its counts,
     per asset its net and gross, and the link to its files; the latest entry is the alert's
     headline. For that latest day it also holds the manifest's `statement`, `books` and
-    `paymentAccounts` blocks as JSON (a bridge whose unexplained residual must be 0, the open
-    items, the open books, the payment-account book, the gross next to the net), so the statement
+    `fundsBook` blocks as JSON (a bridge whose unexplained residual must be 0, the open
+    items, the open books, the funds book, the gross next to the net and the fees), so the statement
     renders from the evidence alone ([results reference
     §4](../technical/transaction-level-results.md#4-the-verdict) and
     [§5](../technical/transaction-level-results.md#the-alerts-evidence)). It carries no list of
     breaks. The UI renders the statement from it and shows the breaks by paging them from the API
     (§7 item 9); the engine renders no text.
-  - An `incomplete` run is never green. The payment-account book's residual is a P1 break, not an
+  - An `incomplete` run is never green. The funds book's residual is a P1 break, not an
     `incomplete` run (decision 23); a run that fails every day is decision 26.
   - **What opens the alert:** at least one open break. A known break stays one until it is booked;
     the controller acknowledges or accepts the alert itself, as for any rule
@@ -621,7 +708,7 @@ V1 runs no periodic proof against a checkpoint.
    **An `incomplete` run writes in the same order, minus the data files.** Its capture holds the
    verdict `incomplete`, `incomplete.reason`, `T` on each ledger where it was resolved, and the
    SHA-256 of the manifest, computed before it is written, signed with Ed25519. Its manifest,
-   written last, is reduced: no counts, statement, books, payment accounts or file list, and cuts
+   written last, is reduced: no counts, statement, books, funds book or file list, and cuts
    only for the ledgers where `T` was resolved ([results reference
    §6](../technical/transaction-level-results.md#manifestjson)). It raises the engine-error alert,
    and it is not a link in the chain: the next run chains on the last complete one.
@@ -709,7 +796,7 @@ V1 runs no periodic proof against a checkpoint.
    - The period's alert, built from the period's **daily manifests** rather than from the ledgers,
      lists each day that has a current run, with its verdict, counts, net and gross, and the link
      to its files. The latest listed day is its headline, and it also carries that day's
-     statement, books and payment-account book ([results reference
+     statement, books and funds book ([results reference
      §5](../technical/transaction-level-results.md#the-alerts-evidence)). A closed period's alert is
      never rewritten.
    - A period is **closed** once the next period's first day has a current run. Until then it is
@@ -730,15 +817,15 @@ V1 runs no periodic proof against a checkpoint.
      the days' files stop working once those files expire.
 6. **First run: one day, like every run, with its open items seeded.** A first run (a new rule, a
    restart per decision 26, or a replay whose previous run has expired, item 4) has no previous
-   run: no carried items, no stored stock and no payment-account volumes at `T_prev`. Left alone,
+   run: no carried items, no stored stock and no funds-account volumes at `T_prev`. Left alone,
    a payment the PSP finalised before the rule existed, and that the product never applied, would
    never be seen: on the PSP side its hold is already lettered, and it is in no later window. And
-   started from zero, the payment-account book would show a false P1 residual and the books would
+   started from zero, the funds book would show a false P1 residual and the books would
    fail continuity.
    - **It compares one day**, like every run: its window is `(T_prev, T]`, where `T_prev` is the
      cut of the day before, resolved like `T`.
    - **Its starting values are rewound**: the stock at `T_prev` (the books' `openPrev`) and the
-     payment account's `input(T_prev)` and `output(T_prev)`. The same newest-first rewind that
+     funds accounts' `input(T_prev)` and `output(T_prev)`. The same newest-first rewind that
      gives the stock at `T` reads one day further, the unfiltered transactions `(T_prev, head_tx]`
      instead of `(T, head_tx]`: on passing `T` the fold holds the state at `T`, and continuing to
      `T_prev` gives the state at `T_prev`.
@@ -749,7 +836,7 @@ V1 runs no periodic proof against a checkpoint.
      means no seed. The references still open at `T_prev`, with a drift ≠ 0, are the seeded
      carried items: the first run's `openPrev` and `countPrev` in the open-items identity. The
      seed window's transactions count in none of the day's figures: not in the bridge, the books or
-     the payment-account book.
+     the funds book.
    - On the product ledger, the seed starts `psp.grace` earlier than on the PSP ledger (decision
      19). An application may precede its payment's final state by up to `psp.grace`, so a payment
      finalised early in the seed still finds its application, with no lookup by key. An
@@ -805,9 +892,9 @@ V1 runs no periodic proof against a checkpoint.
      doc](../technical/transaction-level-reconciliation.md#catching-up-from-a-past-day)):
      - **backward**, one newest-first rewind from the live state down to the earliest cut a day
        needs: `T_{X−1}`, the cut before X, when day X is a first run, or `T_X` when day X chains on
-       the current run of day X−1, whose stored stock and payment account give its starting
+       the current run of day X−1, whose stored stock and funds book give its starting
        values. It reads the unfiltered transactions from that cut to `head_tx`. As it crosses each
-       day's cut it records that day's open holds' balances and the payment account's volumes:
+       day's cut it records that day's open holds' balances and the funds accounts' volumes:
        one small snapshot per day, in memory or in a local temporary file, never in the bucket.
        The file is deleted when the job ends, and recon empties its temporary directory at
        startup, so a catch-up that crashed leaves nothing behind;
@@ -875,9 +962,10 @@ rule below is marked **required**, when the engine's correctness or efficiency d
 **recommended**, when it is good practice that the engine never reads (owner, 2026-10-02). The
 booking guide (EN-2335) keeps the two apart, so that onboarding asks only for what the rule needs.
 
-1. *Required.* **EPHEMERAL holds, one prefix per kind**: one hold per external payment on the PSP
-   ledger, one per **business object** (not per state) on the product ledger, each prefix declared
-   in `holds` with its sign (§6). On `v3.0.0-beta.7` a lettered hold leaves the listing only if it
+1. *Required on the product ledger, recommended on the PSP ledger* (decision 27). **EPHEMERAL
+   holds, one prefix per kind**: one hold per **business object** (not per state) on the product
+   ledger, and one per external payment, named after its reference, on the PSP ledger; each prefix
+   declared in `holds` with its sign (§6). Without PSP holds the rule has no PSP stock. On `v3.0.0-beta.7` a lettered hold leaves the listing only if it
    carries no account metadata (§2.2, §10).
 2. *Required.* **One transaction = one event of one payment reference.**
 3. *Required, except `kind`, the `merchant_ref` index and `business_ref` on applications.*
@@ -892,8 +980,11 @@ booking guide (EN-2335) keeps the two apart, so that onboarding asks only for wh
    recommended, for people reading the ledger; the engine never reads it. `merchant_ref` is read
    only when the rule names it as `psp.merchantRef`, and its index, for investigation, is
    recommended. **These fields are write-once** (§5, caveat 1).
-4. *Required.* **Strict amounts, explicit fees and FX** (decision 6): `send [$asset $amount]`, never `*`; PSP
-   fees are their own posting to `psp:{conn}:fees`.
+4. *Required.* **Strict amounts, explicit fees and FX** (decision 6): `send [$asset $amount]`,
+   never `*`. On the PSP ledger, **funds and fees on distinct accounts**, each fee its own posting,
+   in the payment's transaction or in one carrying its key, so the rule reads the gross (decision
+   27). On the product ledger, an application moves the invoice amount, and a refund or a
+   chargeback is booked with the original payment's reference.
 5. *Recommended.* **Clearing account** `main:clearing:{conn}` on the product side, as an aggregate
    control total.
 6. *Recommended.* **`reference = {payment_ref}:{state}`** on the PSP side and `{payment_ref}:{business_ref}` on the
@@ -904,19 +995,21 @@ booking guide (EN-2335) keeps the two apart, so that onboarding asks only for wh
 9. *A consequence, not a rule.* **Traffic unrelated to payments costs nothing on the flow leg.** Only the rewind window reads
    all traffic, from the cut-off to the run. A metadata-only write costs recon nothing; on the
    fields of rule 3 it breaks the write-once convention.
-10. *Required, pending the Connectivity review for its other movements (§10).* **One payment
-    account per payment kind on the PSP ledger, and a declared key on every movement of it**, named as `psp.paymentAccount` (decision 17). No other flow uses it. Every credit is a
-    payment final that carries `payment_ref`, and every debit carries a declared key (`payment_ref`
-    for a refund, the reference of its own object for a payout or a fee, `psp.movementKeys`). The
-    account stays NORMAL: an account-type change that made it EPHEMERAL would let a zero balance
-    purge its cumulative volumes. Its
-    book is then a strict check, the only one that sees a final with no `pending` and no reference; recon checks
+10. *Required.* **Every movement across the perimeter is keyed, and every adjustment names its
+    payment** (decisions 23 and 27). The `funds` and `fees` accounts receive nothing else: every
+    posting that crosses the perimeter carries the payment key, the `adjusts` field (a refund, a
+    chargeback, a fee refund) or a declared `psp.movementKeys` field (a payout, a bulk fee, a
+    conversion). The `funds` balance accounts stay NORMAL: an account-type change that made them
+    EPHEMERAL would let a zero balance purge their cumulative volumes. The funds book is then a
+    strict check, the only one that sees a final with no `pending` and no reference; recon checks
     it (decision 23, [design doc
-    §7.9](../technical/transaction-level-reconciliation.md#79-a-final-with-no-pending-and-no-key-the-payment-account-book)).
+    §7.9](../technical/transaction-level-reconciliation.md#79-a-final-with-no-pending-and-no-key-the-funds-book)).
 
-On the PSP ledger, these conventions come from the **connector mapping**, configured per customer at
-implementation time ([checklist](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation)).
-No connector change is required.
+On the PSP ledger, these conventions come from the **connector mapping**
+([checklist](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation)),
+and the rule's values from the connector's preset (§6). Each connector keeps its own chart of
+accounts: the rule adapts to it, and asks only that the payment's transactions be findable and its
+funds told from its fees. Where the mappings stand, and what is asked of Connectivity, is in §10.
 
 ## 9. Upstream asks
 
@@ -950,34 +1043,35 @@ for the Ledger team to weigh against its own users:
 | # | Question | Decision |
 |---|---|---|
 | 1 | The shared key | The **PSP payment reference**, carried by the transactions on both ledgers. Authorization/capture, where both sides share the authorization number, is the special case (§2.1, §6). |
-| 2 | The state vocabulary | **Parameterised per side** in the rule, because it depends on how external payment states are modelled on the PSP ledger (§6). The product side declares its `final` set only, since no class reads a product `pending` or `failed` state. |
+| 2 | The state vocabulary | **None on the PSP side by default**: the events are read from the postings on the declared accounts (decision 27). A `state` block stays an optional override, `formance.com/accounting.transition` by default. The product side declares its `final` set only, since no class reads a product `pending` or `failed` state (§6). |
 | 3 | Grace and ageing | `grace` is per side: `product.grace` 1 day and `psp.grace` 7 days by default (decisions 16, 20). Both graces are rule parameters, to calibrate (§6). The age buckets 0–1, 2–7, 8–30 and > 30 days are a constant of the engine, not a rule parameter (owner, 2026-10-01). |
 | 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`, kept **90 days** by default. The retention is a deployment setting (`--lettering-retention`), not a rule parameter, and one storage lifecycle rule on `{bucketID}/reconciliation/`, required at installation, deletes the files; recon deletes none. A longer legal retention raises both. No longer-kept monthly anchors (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
-| 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break (§6). |
-| 7 | Refunds and chargebacks | **Each is its own 1-to-1 pair**, never a reversal of the original payment (§6). |
-| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries structured evidence (the period's days with their verdict, counts, net, gross and link, the latest one as headline, and the latest day's statement, books and payment-account book as JSON), no list of breaks and no rendered text; the detail sits in the backup storage (§6, §7). |
-| 9 | First run | A first run **compares one day**, `(T_prev, T]`, like every run. Its starting stock and payment-account volumes are rewound to `T_prev`, one day further than the daily rewind, and the **backfill only seeds its open items**: a flow read from `backfillFrom` (default: cut-off − the longer `grace` − 1 day) up to `T_prev`, whose join gives the references still open at `T_prev`, and whose transactions count in none of the day's figures. The first statement says "open items seeded since …"; a hold opened before `backfillFrom` has a null `openedAt` and an age counted from it, a lower bound, on both ledgers (§6, §7). |
+| 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break. A fee the PSP keeps is not a difference: it is counted through `fees` (decision 27, §6). |
+| 7 | Refunds and chargebacks | **On the payment's row, signed**, on both sides, when the PSP links them to the payment (`adjusts` or its key) and the product books them with its reference (decision 27). A refund under a reference of its own, with no link, stays its own 1-to-1 pair (§6). |
+| 8 | Schedule, period and alert | A **daily schedule** by default and the existing `periodType`; no accounting-period model. The alert carries structured evidence (the period's days with their verdict, counts, net, gross and link, the latest one as headline, and the latest day's statement, books and funds book as JSON), no list of breaks and no rendered text; the detail sits in the backup storage (§6, §7). |
+| 9 | First run | A first run **compares one day**, `(T_prev, T]`, like every run. Its starting stock and funds-account volumes are rewound to `T_prev`, one day further than the daily rewind, and the **backfill only seeds its open items**: a flow read from `backfillFrom` (default: cut-off − the longer `grace` − 1 day) up to `T_prev`, whose join gives the references still open at `T_prev`, and whose transactions count in none of the day's figures. The first statement says "open items seeded since …"; a hold opened before `backfillFrom` has a null `openedAt` and an age counted from it, a lower bound, on both ledgers (§6, §7). |
 | 10 | Read path of the flow | **`ListTransactions` filtered on the key's presence** (product side: `payment_ref` or `business_ref`), membership before the id range, over parallel id ranges: O(payments). The logs stay the immutable record; a run reads none of them (§5, decision 25). |
 | 11 | Hold signs | Each side declares **`holds: [{prefix, openSign}]`**, since the sign cannot be inferred. `wrong_sign` is the sign opposite `openSign`, and continuity runs per prefix (§5, §6). |
 | 12 | The cut's indexes | The **`inserted_at` index is mandatory** on both ledgers, and bisection is dropped. The cut is one transaction id `T` per ledger: there is no log-id cut, so no log-date index. An index missing at run time is an engine error (§5). |
 | 13 | Concurrent readers | K is an **operator setting** (`--lettering-read-ranges`, default 8, capped by `--lettering-max-concurrent-reads`, default 16), absent from the rule and the API (§7). |
-| 14 | Replaying an old day, or catching up from one | A replay is the **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, extrapolated from 20M measured). Once the previous day's run has expired, or expires within a day, the replay is a first run and its carried items are seeded (decision 9). A **catch-up from day X**, an API action, writes a normal run for every day from X to its last day `to`, yesterday by default: **one backward pass**, a single rewind down to the cut before X (to X's own cut when X chains on day X−1's current run) that records each day's open book and payment account, then **the days forward**, each chained on the one before. It resumes nothing, stops on an `incomplete` day, raises no alert for a closed period and has no depth limit: about 40 min for 90 days and 2.5 h for a year at 1M transactions a day, estimated (§7 item 7). **A replay is requested as a catch-up of one day** (`to` = X): there is no separate replay action. A catch-up that stops before the latest day that has a current run, a replay of an earlier day included, writes **verification runs**, which never become current. |
+| 14 | Replaying an old day, or catching up from one | A replay is the **daily algorithm as of that day**: the live listing rewound from head, newest first, with no stored stock or anchor (26 min a year later at 1M transactions a day, extrapolated from 20M measured). Once the previous day's run has expired, or expires within a day, the replay is a first run and its carried items are seeded (decision 9). A **catch-up from day X**, an API action, writes a normal run for every day from X to its last day `to`, yesterday by default: **one backward pass**, a single rewind down to the cut before X (to X's own cut when X chains on day X−1's current run) that records each day's open book and funds accounts, then **the days forward**, each chained on the one before. It resumes nothing, stops on an `incomplete` day, raises no alert for a closed period and has no depth limit: about 40 min for 90 days and 2.5 h for a year at 1M transactions a day, estimated (§7 item 7). **A replay is requested as a catch-up of one day** (`to` = X): there is no separate replay action. A catch-up that stops before the latest day that has a current run, a replay of an earlier day included, writes **verification runs**, which never become current. |
 | 15 | Result files | For the customer first: gzipped NDJSON under `rule=/day=/run=`, a stable `breakId`, drifts carried to the next run, byte-identical files for a given cut ([results reference](../technical/transaction-level-results.md)). |
 | 16 | Application before the PSP's final state | A **legitimate booking choice**, not a break: `applied_before_final` stays pending within `psp.grace`, unknown references included, then becomes `orphan_application` (P1). Missing references are looked up by key, and the alert opens on a break, never on the net alone (§6). |
-| 17 | The PSP payment's amount | The **net posting on `psp.paymentAccount`** (an address pattern), not on the hold, which a final event with no `pending` before it moves by 0 (§6). |
+| 17 | The PSP payment's amount | The **signed net inflow into `psp.funds` ∪ `psp.fees`** over the payment's transactions (decision 27), not the net on the hold, which a final event with no `pending` before it moves by 0, and never an account balance (§6). |
 | 18 | Cases across days | A PSP `failed` never applied is `failed` (ok), and window references with a `failed` event that are not carried are looked up on both ledgers every run, so `reversed_after_application` is caught. The rest (a `businessId` per `holds` entry, `psp.merchantRef`, the previous stock read from storage) is in §5 and §6. |
 | 19 | Simplifications | Flow rows carry no `firstSide`: which side came first follows from `firstSeen` and the row's `psp` and `product` events. A first run's seed does no product-side lookup: its product side starts `psp.grace` before `backfillFrom` (§6, §7). |
 | 20 | Default `product.grace` and deferred application | `product.grace` defaults to **1 day**; a business that applies later or by hand raises it. A payment-to-apply hold is an option outside the V1 rule contract ([design doc](../technical/transaction-level-reconciliation.md#when-application-is-deferred-or-manual-a-payment-to-apply-hold)). |
 | 21 | Result files and statement | Every check in the statement ties two independent computations, and a flow class reads net amounts (an application undone counts as none). The manifest carries aggregates only: the statement's figures render from it alone, and lists of items (breaks, pending items, resolved breaks) come from the files, through the API. The rest is as the [results reference](../technical/transaction-level-results.md), the source of truth for the format, specifies. Deliberately left out: a triage in the manifest and its `topK` parameter, a write-off state, a flat transactions file, a separate alert threshold, a break's `previousClass` (the previous run's row with the same `breakId` has it), an `offsetting` flag next to `flowGross`, and a `stuck` stock class with its `maxAge` (`stale_holds` covers holds held too long). |
 | 22 | Window source of the stock rewind | The rewind reads the **unfiltered transactions `(T, head_tx]`** (`(T_prev, head_tx]` on a first run), newest first, not the logs, and so do replays and catch-ups. With no metadata watch (decision 25) and the cut resolved on `inserted_at` (decision 12), a run reads no logs (§5, §7). |
-| 23 | The PSP payment account | A booking convention (§8, rule 10), with the keys of the account's other movements in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
+| 23 | The funds book | A booking convention (§8, rule 10), with the keys of the perimeter's other movements in `psp.movementKeys`. **A residual of its book is a P1 break**, `unkeyed_payment_movement` on the leg `book`, not an `incomplete` run, so that one keyless final cannot hide the rest of the day ([results reference §5](../technical/transaction-level-results.md#5-the-statement)). |
 | 24 | Bounded date filters in the cut | `T` is resolved with an upper-bounded filter on `inserted_at`, widened while empty, because the ledger materializes a date range before paging it (§5). |
 | 25 | The metadata watch | **No metadata watch in V1, deferred until L8** ([EN-2326](https://formance-team.atlassian.net/browse/EN-2326), §9). Reading every log since the previous run for changes to a transaction's key, state, business-id or merchant-reference field was about 95 % of a run: 134–158 s for 4.1M logs at 1M payments a day, against 15–25 s for all the other steps. A change on a transaction of a day already read moves no balance, and that transaction is in no later window; a change before the run, on a transaction of its window, is read at its latest value. Lost: the monitoring of the write-once convention (§8 rule 3), the `key_metadata_mutated` warning, and the watch behind condition 4 of a byte-identical replay (§5 caveat 1). The incremental watch in slices goes with it ([design doc §3](../technical/transaction-level-reconciliation.md#the-cut-from-a-business-time-to-id-ranges)). |
-| 26 | A run that fails every day | Some `incomplete` causes repeat on every run while each window grows, until they are fixed. `incomplete.detail` names the first 20 items at fault, and the engine-error alert says whether the next run retries (`missing_index`, `short_range`) or an operator must act. When the fix cannot enter the window, the operator **restarts the rule**: its next run is a first run (decision 9), with its stock and payment account rewound and its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run default and the oldest `firstSeen` of the last complete run's carried items, so nothing stored is trusted and the open items are found again (results doc §2). The restart takes an optional `backfillFrom`, rejected when it is later than the next run's cut. When the carried file failed its signed check (`stored_file_mismatch`), the default cannot be computed from it, so a restart without `backfillFrom` is refused; a mismatch on the stock or breaks file alone keeps the default. No re-seed run type, no `diagnostic.json`, no `incomplete.kind`. |
+| 26 | A run that fails every day | Some `incomplete` causes repeat on every run while each window grows, until they are fixed. `incomplete.detail` names the first 20 items at fault, and the engine-error alert says whether the next run retries (`missing_index`, `short_range`) or an operator must act. When the fix cannot enter the window, the operator **restarts the rule**: its next run is a first run (decision 9), with its stock and funds book rewound and its open items seeded from `backfillFrom`, which defaults to the earlier of the first-run default and the oldest `firstSeen` of the last complete run's carried items, so nothing stored is trusted and the open items are found again (results doc §2). The restart takes an optional `backfillFrom`, rejected when it is later than the next run's cut. When the carried file failed its signed check (`stored_file_mismatch`), the default cannot be computed from it, so a restart without `backfillFrom` is refused; a mismatch on the stock or breaks file alone keeps the default. No re-seed run type, no `diagnostic.json`, no `incomplete.kind`. |
+| 27 | Fees, refunds and chargebacks, for every connector | **The PSP side declares account roles, and the amounts are read from the postings** (2026-11-24, after the design partner's feedback of 2026-11-17 and a review of seven connector mappings). `psp.funds` and `psp.fees` (address patterns) form the perimeter; a payment's PSP amount is the signed net inflow into it over the payment's transactions, linked through `psp.adjusts` (`formance.com/accounting.adjusts-reference` by default) or the payment's key; the events are inferred from the postings, with `state` as an optional override; PSP holds become recommended; the product side counts signed hold movements, oriented by each hold kind's `settles` (`in` or `out`), and books a refund or a chargeback with the payment's reference; one class is added, `unapplied_reversal`; late reversals are looked up by key and by `adjusts`. The values ship as a **preset per connector**. Each connector keeps its own accounts and vocabulary, with no normalisation; what it must give is G1–G4 of the [connector checklist](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation). Replaces decisions 2, 6, 7, 17 and 23 where they differ (§6, §8). Size M. The reasoning and the review of the mappings are in the [draft](../drafts/lettering-fees-reversals-and-results.md) §1. |
 
-**Open, to review with the Connectivity team (no decision):** decision 23 assumes that the payment
-account is credited only by payment finals. `formancepayments` also credits it from pending
+**Open, to review with the Connectivity team (no decision):** decision 23 assumes that the `funds`
+accounts are credited only by payment finals and their adjustments. `formancepayments` also credits it from pending
 outflows, payouts, transfers, outflow compensations, reversed refunds, refunded payouts, refunded
 transfers and their reversals (`OUTFLOW_PENDING`, `PAYOUT_SUCCEEDED`, `TRANSFER_SUCCEEDED`,
 `OUTFLOW_COMPENSATE`, `PAYIN_REFUND_REVERSED`, `PAYOUT_REFUNDED`, `TRANSFER_REFUNDED` and
@@ -1000,44 +1094,41 @@ carry no account metadata, so they are not affected. Three ways out, none chosen
 mapping stops writing account metadata on holds, or deletes it in the same request as the
 transaction that letters the hold; or the purge returns with EN-2036, now planned for Ledger v3.1.
 
-**Open, waiting for the design partner's examples (no decision): fees and partial refunds.** The
-design partner's feedback (2026-11-17) says they match exactly, "but sometimes we need to
-accumulate some fees together/partial refunds/other edge cases". Today a fee booked in the same
-transaction as the final lowers the net on `psp.paymentAccount`, so the payment shows as
-`over_applied`. A refund booked on the original reference is `unclassified` (decision 7). Two
-optional extensions keep the comparison exact (decision 6 stands), and both are opt-in parameters
-of the rule:
+**Decided (decision 27): fees, refunds and chargebacks.** The design partner's feedback
+(2026-11-17) says they match exactly, "but sometimes we need to accumulate some fees
+together/partial refunds/other edge cases", and that they cannot pass ids for PSP-initiated
+movements such as chargebacks. Under decisions 7 and 17 as first written, every payment with a fee
+was `over_applied`: all seven mappings reviewed book the payment net on the merchant's balance and
+the fee apart, and Adyen drains the Payable account into settlement batches under the payment's
+key. The two extensions first listed here (`psp.feeAccounts`, size S, and a `refunded` state set,
+size S–M) are replaced by one method that needs no event vocabulary. Fees charged **in bulk** (per
+settlement batch or per month) carry no payment reference, so they stay outside lettering: the
+funds book checks that each such movement is keyed, and a `balance_equation` between the PSP's fee
+account and the product's checks the amount, with a tolerance if needed. Tolerance-based or
+many-to-many matching is not considered (decision 6, and it would break the byte-identical result
+files of decision 15).
 
-- **`psp.feeAccounts`**, an address pattern like `psp.paymentAccount`. A PSP payment's amount
-  becomes its net posting on the payment account **plus** its net posting on the fee accounts,
-  over the transactions that carry the same reference. The product then applies the gross amount,
-  and a fee charged per payment no longer opens a break. The flow read already returns these
-  postings, so the change adds no read. The cost is in the rule contract, the bridge and the
-  payment-account book (a fee keyed by `payment_ref` is no longer an `unkeyed_payment_movement`),
-  the results reference and the DuckDB queries. Size: S.
-- **A `refunded` state set on the PSP side**, with a matching product-side set. Transactions in
-  these sets count **negatively** in `pspAmount` and `productAmount` on the original reference, so
-  several partial refunds settle in net on one row, and `formancepayments`' `payin.refunded` (and
-  its siblings) leave `unclassified`. Decision 7 stays the default: a refund booked under its own
-  reference is still its own 1-to-1 pair. Open points: a `refunded` event on a reference with no
-  final in the window needs the existing key lookup; whether a refund larger than the payment is a
-  new class (`over_refunded`) or a plain `over_applied`; how the PSP hold's continuity reads a
-  refund that releases the hold (`formancepayments.yaml:462-465` @ `016dcf41`). Size: S–M.
+**Open, with the Connectivity team: what the mappings must still give for decision 27.** Where the
+mappings stand against G1–G4 (at the SHAs of the header):
 
-Fees charged **in bulk** (per settlement batch or per month) carry no payment reference, so they
-stay outside lettering. The payment-account book checks that each such debit carries a key
-(`psp.movementKeys`, decision 23), and the amount is an aggregate control: a `balance_equation`
-between the PSP's fee account and the product's, with a tolerance if needed. A lettering rule keyed
-on the batch or fee-invoice id is possible when both ledgers carry it, with no engine change.
-Tolerance-based or many-to-many matching is not considered (decision 6, and it would break the
-byte-identical result files of decision 15). The [draft on fees, reversals and
-results](../drafts/lettering-fees-reversals-and-results.md) replaces both extensions with one
-method that works for every connector. Seven mappings show why: the PSP keeps its fee before the
-merchant's balance sees the money, so every payment with a fee is `over_applied` today, and Adyen
-drains the Payable account into settlement batches under the payment's key. The draft reads the
-PSP amount as the signed net inflow into declared `funds` and `fees` accounts, over every
-transaction of the payment, linked through `formance.com/accounting.adjusts-reference` or the
-payment's own key, with the events inferred from the postings and a preset per connector.
+| Mapping | Payment key (G1) | Adjustments linked (G2) | Funds and fees apart (G3) | Other movements keyed (G4) |
+|---|---|---|---|---|
+| Stripe, `connectivity` | the charge `ch_…`, no index declared; the product usually knows the PaymentIntent | ✗ | ✓, but a dispute's fee looks dropped (`Amount` booked, not `Net`; to confirm) | ✓ |
+| `stripecore` | ✓ `stripe-charge-id`, indexed | ✗ refunds and disputes go through `GENERIC_BALANCE_*` without the charge | ✓ | ✓ |
+| `adyenpayments` | ✓ `psp-reference`, indexed | ✓ own key, to confirm on a real report | ✓ | ✓ `batch-number` |
+| `formancepayments` | ✓ `payment-id` | ✓ own key | ✗ the fees account is declared, not posted | open (below) |
+| `paypal` | ✓ | ✓ `adjusts-reference` | ✓ | ✓ |
+| `braintree`, `worldpayexpress` | ✓ | ✓ | fees not observable on their surface | ✓ / n/a |
+
+Asked in #product-reconciliation (2026-11-24), no answer yet on the specifics: a link from Stripe
+refunds and disputes to their charge (and per-payment holds in `stripecore`), the original PSP
+reference on Adyen chargeback rows, the PaymentIntent id on Stripe charges, and posted fees in
+`formancepayments`. The Connectivity team's position (2026-11-24): no normalisation, each provider
+keeps its own accounts, the metadata of the observed object goes on every transaction that
+contributes to its balance, and per-payment ephemeral accounts keyed by the transaction's
+identifier carry the intermediate state. Decision 27 follows it: presets instead of a shared
+vocabulary, PSP holds recommended, amounts from the payment's transactions and balances left to
+balance reconciliation.
 
 **Open, for the owner (no decision): what Fragment's 1:1 reconciliation does that this design does
 not.** Read on 2026-11-24 from [reconcile-payments](https://fragment.dev/docs/reconcile-payments),
@@ -1060,8 +1151,8 @@ not.** Read on 2026-11-24 from [reconcile-payments](https://fragment.dev/docs/re
   identity, no break classes and no alerting; its unreconciled lists and counts are eventually
   consistent.
 - **What it has that this design does not**, and what we could take:
-  1. **Per-payment fees, gross and fee reconciled together.** This is the `psp.feeAccounts` option
-     above. A competitor already ships it, which argues for V1 rather than an option.
+  1. **Per-payment fees, gross and fee reconciled together.** Taken, in V1, as decision 27, for
+     every connector rather than Stripe alone.
   2. **Open items visible between two runs.** This design only answers once a day. Two ways, none
      chosen: an intraday run (the cut on `inserted_at` does not depend on the cadence, but the
      rewind's cost per run has to be measured at that cadence), or a live, unsigned API listing of
