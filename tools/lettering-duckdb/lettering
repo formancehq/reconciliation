@@ -128,7 +128,7 @@ check)
         missing="$missing, CASE WHEN (SELECT count(*) FROM glob($(quote "$run/$kind*.ndjson.gz"))) = 0 THEN '$kind' END"
     done
     required="'schemaVersion', 'engine', 'rule', 'runId', 'period', 'startedAt', 'finishedAt', 'verdict', 'incomplete.reason', 'incomplete.detail', 'expiresAt'"
-    absent="'counts', 'statement', 'books', 'paymentAccounts', 'files'"
+    absent="'counts', 'statement', 'books', 'fundsBook', 'files'"
     state=$(sql_value "SELECT concat_ws('|', coalesce(m->>'verdict', '-'), coalesce(m->'incomplete'->>'reason', '-'),
         (SELECT count(*) FROM glob($(quote "$run/*.ndjson.gz"))), concat_ws(' ' $missing),
         coalesce(array_to_string(list_concat(

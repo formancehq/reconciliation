@@ -3,7 +3,7 @@
 -- Columns: priority, class, lifecycle, asset, amount, ref, hold, opened_on,
 -- days_open, detail. `amount` is the drift (psp - product) of a flow break, and the
 -- balance in the hold's open direction for a stock break, and the residual of its
--- direction for a break of the payment-account book.
+-- direction for a break of the funds book.
 SELECT priority, class, lifecycle, asset, amount, ref, hold, openedOn AS opened_on,
        day - openedOn AS days_open,
        CASE leg WHEN 'flow' THEN nullif(array_to_string(list_sort(list_distinct(list_transform(product, p -> p.holdId))), ', '), '')

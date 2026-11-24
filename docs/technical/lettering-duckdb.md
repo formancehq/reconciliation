@@ -6,12 +6,6 @@ themselves, and every field, are specified in
 [transaction-level-results.md](./transaction-level-results.md), the source of truth. When the tool
 and that page disagree, the page wins and the tool is fixed.
 
-> **Behind the format since ADR-005 decision 27 (2026-11-24).** The tool and its test data still
-> read the manifest's `paymentAccounts` block, the rule's `psp.paymentAccount` and unsigned PSP
-> amounts. The results reference now names the block `fundsBook` (with a `role` per account), adds
-> `pspNet`, `pspFees`, `statement.{asset}.psp.fees`, the `role` of each PSP transaction and the
-> `unapplied_reversal` class. The tool is to be brought up to it.
-
 🚧 Internal tool ([EN-2353](https://formance-team.atlassian.net/browse/EN-2353)). It runs today on
 generated test data. Recon does not write these files yet: that is EN-2322.
 
@@ -123,8 +117,8 @@ direction, and the JSON shapes used to flatten the manifest's arrays.
 - **Data views.** `manifest`, `flow`, `carried`, `stock` and `breaks`. Each data view
   adds `file` (the file's name) and `pos` (the row's position).
 - **Manifest views.** The manifest, flattened: `m_run`, `m_files`, `m_cuts`, `m_statement`,
-  `m_lines`, `m_carried_outside`, `m_books`, and `m_payment_accounts` with `m_payment_directions`
-  (the payment-account book, one row per account and asset, then per direction).
+  `m_lines`, `m_carried_outside`, `m_books`, and `m_funds_book` with `m_funds_directions`
+  (the funds book, one row per funds or fees account and asset, then per direction).
 
 ### Many days (`sql/rule.sql`)
 
@@ -222,7 +216,7 @@ python3 tools/lettering-duckdb/testdata/generate.py
 
   The first run, on 1 Oct, compares that day only. Its open items are seeded from `backfillFrom`,
   29 Sep, up to the cut of 30 Sep, with the product side from 26 Sep, and its starting stock and
-  payment account are those at that cut (results doc §2):
+  funds accounts are those at that cut (results doc §2):
 
   | Story | What happens | Rows |
   |---|---|---|
@@ -232,13 +226,26 @@ python3 tools/lettering-duckdb/testdata/generate.py
   | S24 | An invoice opened on 15 Sep, before the product seed, never paid | `openedAt` null, `ageDays` a lower bound from `backfillFrom`: 2 days on 1 Oct, in `2-7d`, for an invoice 16 days old |
   | S26 | A PSP `pending` on 27 Sep, before the PSP seed, finalised and applied on 2 Oct | its hold has a null `openedAt`, open on 1 Oct, `cleared` on 2 Oct; its invoice, opened on 27 Sep, has a null `openedAt` too, and ages from `backfillFrom` like S24's: 2 days on 1 Oct, never younger than an invoice opened later |
 
-  Two more stories move the PSP payment account with no key, so that the flow read cannot return
-  them (results doc §5, the payment-account book):
+  Two more stories move the PSP funds account with no key, so that the flow read cannot return
+  them (results doc §5, the funds book):
 
   | Story | What happens | Breaks |
   |---|---|---|
   | K01 | A final with no pending and no reference credits the account 18.00 on 4 Oct | `unkeyed_payment_movement` on `credit`, P1, new on 4 Oct, resolved on 5 Oct |
   | K02 | Payouts without their movement key debit it 7.00 on 5 Oct and 3.00 on 6 Oct | `unkeyed_payment_movement` on `debit`, new on 5 Oct, persisting on 6 Oct with 3.00, resolved on 7 Oct |
+
+  Four stories cover fees, refunds and chargebacks (ADR-005 decision 27). The rule declares a
+  funds and a fees account, and its refund hold `settles: out`:
+
+  | Story | What happens | Rows |
+  |---|---|---|
+  | F01 | Paid 100.00 on 1 Oct; the PSP keeps a 3.00 fee, so 97.00 reaches the funds account; the product applies 100.00 | `matched`, `pspNet` 97.00, `pspFees` 3.00; the fees account enters the funds book |
+  | F02 | Paid and applied 80.00 on 1 Oct; refunded 30.00 on 3 Oct, and the product reopens the invoice by 30.00 the same day | `matched` at 50.00 = 50.00 on 3 Oct, a lookup by key |
+  | F03 | Paid and applied 60.00 on 1 Oct; charged back in full on 4 Oct; the product reopens the invoice on 6 Oct | `unapplied_reversal`, pending on 4 Oct, a P2 break on 5 Oct, `matched` at 0 = 0 on 6 Oct, the break resolved |
+  | F04 | Paid and applied 40.00 on 2 Oct; the product opens a refund hold on 3 Oct with its refund number alone; the PSP refunds 15.00 on 4 Oct, and the product letters the refund hold with the payment's reference | `matched` at 25.00: the refund hold settles out, so its lettering counts −15.00 |
+
+  R01 keeps the older case: a refund under its own reference, with no link to a payment, is its
+  own 1-to-1 pair, `matched` at −20.00 = −20.00.
 
 - **`rule=qa-verdicts`** is one week through every verdict, with an empty day and two incomplete
   runs: a `missing_index` one, whose `cuts` holds the PSP side only, retried the same day, and a
@@ -311,7 +318,7 @@ the fault, and `file_sha256` says whether the file was changed after the manifes
 
 - **Incomplete run.** `check` prints its reason and checks the run's shape only: no data file
   (`incomplete_files`), and a reduced manifest (`incomplete_fields`), with every field the results
-  doc §6 requires and no `counts`, `statement`, `books`, `paymentAccounts` or `files`. The data is
+  doc §6 requires and no `counts`, `statement`, `books`, `fundsBook` or `files`. The data is
   in the day's current run, which `current-runs` names.
 - **Missing file.** A data file that is absent is reported as `file_missing`: a complete run writes
   every data file, even empty.
@@ -486,16 +493,18 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `counts_flow`, `counts_flow_outcome`, `counts_stock`, `counts_breaks` | The manifest's counts match the files |
 | `counts_unclassified` | The manifest's unclassified count per side lies between the most one asset counts in the statement and the sum over the assets, since a transaction counts once per side and once in each asset it posts in (the run writes no file for them, results doc §6) |
 | `bridge_net`, `bridge_totals`, `bridge_line`, `bridge_carried_outside`, `bridge_gross` | The net is `SUM(impact)` and `psp − product`; each line matches the flow rows; the carried lines and the gross match |
-| `bridge_residual`, `bridge_product_vs_books` | The residual is 0, recomputed from the applications booked in the product window, and the product total equals the books' `lettered − letteredOther` |
+| `bridge_residual`, `bridge_product_vs_books` | The residual is 0, recomputed from the applications booked in the product window, and the product total equals the books' `lettered − letteredOther`, each prefix signed by its `settles` (`out` counts negative) |
+| `bridge_fees` | The statement's `psp.fees` is the window's change in the flow rows' `pspFees` |
 | `carried_vs_flow`, `suspense_open`, `suspense_identity` | The carried file holds exactly the flow rows whose drift is not 0; the open items equal its sum and count, and `open = openPrev + net + fromLookups` |
 | `books_continuity`, `books_vs_stock` | Each book closes, and equals its open stock rows in the open direction |
-| `book_residual` | Each payment-account residual is the account's movement since the previous cut minus the flow's (`input − inputPrev − flowCredits`, `output − outputPrev − flowDebits`), and its volumes never go down |
-| `breaks_vs_rows`, `break_vs_row` | Every open break of the flow and stock files, and every non-zero residual of the payment-account book, is in the breaks file, and back, with the same class and amount; a book break, open or resolved, carries its account's `paymentAccounts` entry as it stands |
+| `book_residual`, `book_role` | Each funds-book residual is the account's movement since the previous cut minus the flow's (`input − inputPrev − flowCredits`, `output − outputPrev − flowDebits`), and its volumes never go down; each account's role is `funds` or `fees` |
+| `breaks_vs_rows`, `break_vs_row` | Every open break of the flow and stock files, and every non-zero residual of the funds book, is in the breaks file, and back, with the same class and amount; a book break, open or resolved, carries its account's `fundsBook` entry as it stands |
 | `break_amount`, `break_outcome`, `break_priority` | What `break_vs_row` cannot see: an open book break's amount is its direction's residual and a resolved one's residual is 0 again, and a resolved stock break keeps its hold's last open balance; a break's outcome and priority follow its lifecycle and class |
-| `row_drift`, `row_break_on` | A pending or break row has a drift and a matched, in-progress or failed one has none; `breakOn` is `firstSeen` plus the lagging side's grace |
+| `row_drift`, `row_break_on` | A pending or break row has a drift and a matched, in-progress or failed one has none; `breakOn` is `firstSeen` plus the lagging side's grace, and for an `unapplied_reversal` the day of its latest refund or chargeback plus `product.grace` |
 | `stock_age`, `books_buckets` | A hold's `ageDays` is counted in the rule's timezone from its `openedAt`, or from `rule.backfillFrom` when `openedAt` is null (a lower bound), no `openedAt` precedes `rule.backfillFrom` (results doc §6), and its bucket and each book's bucket counts follow from the engine's fixed buckets (0-1d, 2-7d, 8-30d, >30d) |
-| `row_amounts`, `row_impact`, `row_outcome` | A flow row's amounts follow from its transactions, a carried row has no `impact`, and each row's outcome (and a stock row's sign) follows from its class |
-| `row_class` | A flow row's class follows from its net amounts: applications that sum to 0 count as none |
+| `row_psp_role` | Each PSP transaction of a flow row has a role (`final`, `reversal`, `fee`, `pending`, `failed`), an `amount` when it crosses the perimeter and a `holdAmount` when it moves a hold only |
+| `row_amounts`, `row_impact`, `row_outcome` | A flow row's amounts follow from its transactions (`pspAmount` sums the signed amounts of its finals and reversals, `pspFees` their fees, `pspNet` is the rest, all 0 after a failure that follows a final), a carried row has no `impact`, and each row's outcome (and a stock row's sign) follows from its class |
+| `row_class` | A flow row's class follows from its net amounts: applications that sum to 0 count as none, unless the PSP reversed the payment too (`matched` at 0 = 0); an `unapplied_reversal` has a reversal and more on the product side than the PSP kept |
 | `unique_key`, `row_order` | Each file's unique key and row order (results doc §8) |
 | `verdict_mismatch` | The verdict follows from the files and, for the warnings, the manifest's unclassified counts |
 
@@ -508,5 +517,5 @@ print(con.sql(open("tools/lettering-duckdb/queries/open-breaks.sql").read()).df(
 | `carried_in`, `carried_drift` | Every carried item shows up again, and its drift moves only by this window's impact |
 | `from_lookups` | `fromLookups` equals the drift of the rows not carried in |
 | `suspense_open_prev`, `books_open_prev` | The open items and the books pick up where the earlier run left them |
-| `book_prev` | The payment-account book picks up too: `inputPrev` and `outputPrev` are the earlier run's `input` and `output`, and an account and asset listed then are still listed |
+| `book_prev` | The funds book picks up too: `inputPrev` and `outputPrev` are the earlier run's `input` and `output`, and an account and asset listed then are still listed |
 | `break_lifecycle`, `stock_lifecycle` | Each break and hold is new, persisting, resolved or cleared as the earlier run implies, with its `openedOn` and the cleared balance; an open break is never lost, even when its class changes |

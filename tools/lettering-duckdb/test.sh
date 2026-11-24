@@ -180,7 +180,7 @@ expect_violation "a book's continuity" books_continuity "$lettering" check "$wor
 fresh "$day24"; edit "$work/run/$m" 's/"open":"245000","count":5/"open":"245000","count":6/'
 expect_violation "a book against the stock" books_vs_stock "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"flowCredits":"400000"/"flowCredits":"399000"/'
-expect_violation "a payment-account residual its volumes contradict" book_residual "$lettering" check "$work/run"
+expect_violation "a funds-book residual its volumes contradict" book_residual "$lettering" check "$work/run"
 fresh "$qa4"; edit "$work/run/breaks.ndjson.gz" '/"leg":"book"/d'
 expect_violation "a book residual missing from the breaks file" breaks_vs_rows "$lettering" check "$work/run"
 fresh "$qa4"; edit "$work/run/breaks.ndjson.gz" '/"leg":"book"/s/"amount":"1800"/"amount":"1700"/'
@@ -239,8 +239,20 @@ fresh "$day24"; edit "$work/run/$m" 's/"manifestSha256":"[0-9a-f]*"/"manifestSha
 expect_violation "a broken chain" previous_run "$lettering" check-chain "$day23" "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"120000"/"openPrev":"120001"/'
 expect_violation "open items that do not pick up" suspense_open_prev "$lettering" check-chain "$day23" "$work/run"
-fresh "$qa5"; edit "$work/run/$m" 's/"inputPrev":"94200"/"inputPrev":"94100"/; s/"flowCredits":"0","flowDebits":"2800","creditResidual":"0"/"flowCredits":"100","flowDebits":"2800","creditResidual":"0"/'
-expect_violation "a payment-account book that does not pick up" book_prev "$lettering" check-chain "$qa4" "$work/run"
+fresh "$qa5"; edit "$work/run/$m" 's/"inputPrev":"121900","input":"121900"/"inputPrev":"121800","input":"121900"/; s/"flowCredits":"0","flowDebits":"2800"/"flowCredits":"100","flowDebits":"2800"/'
+expect_violation "a funds book that does not pick up" book_prev "$lettering" check-chain "$qa4" "$work/run"
+fresh "$qa1"; edit "$work/run/$m" 's/"role":"fees"/"role":"fee"/'
+expect_violation "a funds-book account with no known role" book_role "$lettering" check "$work/run"
+fresh "$qa1"; edit "$work/run/$m" 's/"fees":"300","count":9/"fees":"200","count":9/'
+expect_violation "statement fees the flow rows do not give" bridge_fees "$lettering" check "$work/run"
+fresh "$qa1"; edit "$work/run/flow.ndjson.gz" '/"ref":"F01"/s/"role":"final","state":"payin.succeeded"/"role":"pending","state":"payin.succeeded"/'
+expect_violation "a final event with the role of a pending one" row_psp_role "$lettering" check "$work/run"
+fresh "$qa1"; edit "$work/run/flow.ndjson.gz" '/"ref":"F01"/s/"pspNet":"9700"/"pspNet":"10000"/'
+expect_violation "a PSP net that is not the amount less the fees" row_amounts "$lettering" check "$work/run"
+fresh "$qa4"; edit "$work/run/flow.ndjson.gz" '/"ref":"F03"/s/"breakOn":"2026-10-05"/"breakOn":"2026-10-06"/'
+expect_violation "an unapplied reversal's breakOn that is not its reversal day plus grace" row_break_on "$lettering" check "$work/run"
+fresh "$qa4"; edit "$work/run/flow.ndjson.gz" '/"ref":"F03"/s/"class":"unapplied_reversal"/"class":"over_applied"/'
+expect_violation "a chargeback the product has not booked, classed over-applied" row_outcome "$lettering" check "$work/run"
 fresh "$day24"; edit "$work/run/$m" 's/"openPrev":"430000"/"openPrev":"430001"/'
 expect_violation "a book that does not pick up" books_open_prev "$lettering" check-chain "$day23" "$work/run"
 rm -rf "$work/prev" && mkdir -p "$work/prev" && cp "$day23"/* "$work/prev/"

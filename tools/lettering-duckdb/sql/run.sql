@@ -52,12 +52,12 @@ SELECT asset, unnest(from_json(s->'carriedOutside', lettering_carried_outside_sh
 CREATE OR REPLACE VIEW m_books AS
 SELECT unnest(from_json(m->'books', lettering_books_shape()), recursive := true) FROM manifest;
 
--- The payment-account book (results doc §5), one row per account and asset.
-CREATE OR REPLACE VIEW m_payment_accounts AS
-SELECT unnest(from_json(m->'paymentAccounts', lettering_payment_accounts_shape()), recursive := true) FROM manifest;
+-- The funds book (results doc §5), one row per funds or fees account and asset.
+CREATE OR REPLACE VIEW m_funds_book AS
+SELECT unnest(from_json(m->'fundsBook', lettering_funds_book_shape()), recursive := true) FROM manifest;
 
 -- The same, one row per direction: the side a book break is keyed on.
-CREATE OR REPLACE VIEW m_payment_directions AS
-SELECT 'psp' AS side, account, asset, 'credit' AS direction, creditResidual AS residual FROM m_payment_accounts
+CREATE OR REPLACE VIEW m_funds_directions AS
+SELECT 'psp' AS side, account, asset, 'credit' AS direction, creditResidual AS residual FROM m_funds_book
 UNION ALL
-SELECT 'psp', account, asset, 'debit', debitResidual FROM m_payment_accounts;
+SELECT 'psp', account, asset, 'debit', debitResidual FROM m_funds_book;

@@ -254,7 +254,8 @@ Gross open flow breaks: Σ|drift| = …
   `statement.{asset}.psp.fees` shows them apart.
 - **B** comes from the **product books**, not from the flow rows. It is what the window's
   transactions taking part in matching lettered on the business holds, which is `lettered −
-  letteredOther`, summed over the product prefixes.
+  letteredOther`, summed over the product prefixes, each signed by its kind's `settles`: a refund
+  hold, which settles `out`, counts negative (ADR-005 §6).
 - **Each line** is `SUM(impact)` over the flow rows with a non-zero `impact`, grouped by `class`,
   `outcome` and `firstSeen < day`, so the lines add up to the rows' own `A − B`.
   - With `product.grace: 0`, an unapplied payment of the window is a break and gets its own line,

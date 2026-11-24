@@ -18,10 +18,10 @@ CREATE OR REPLACE MACRO open_dir(balance, open_sign) AS
 CREATE OR REPLACE MACRO flow_file(path, hive) AS TABLE
 SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip', filename = true, hive_partitioning = hive, columns = {
     ref: 'VARCHAR', asset: 'VARCHAR', class: 'VARCHAR', outcome: 'VARCHAR',
-    pspAmount: 'HUGEINT', productAmount: 'HUGEINT', drift: 'HUGEINT', impact: 'HUGEINT',
+    pspAmount: 'HUGEINT', pspNet: 'HUGEINT', pspFees: 'HUGEINT', productAmount: 'HUGEINT', drift: 'HUGEINT', impact: 'HUGEINT',
     firstSeen: 'DATE', breakOn: 'DATE',
     merchantRef: 'VARCHAR', pairedHold: 'VARCHAR',
-    psp: 'STRUCT(tx UBIGINT, state VARCHAR, amount HUGEINT, holdAmount HUGEINT, insertedAt TIMESTAMP)[]',
+    psp: 'STRUCT(tx UBIGINT, role VARCHAR, state VARCHAR, amount HUGEINT, fees HUGEINT, holdAmount HUGEINT, insertedAt TIMESTAMP)[]',
     product: 'STRUCT(tx UBIGINT, businessId VARCHAR, holdId VARCHAR, amount HUGEINT, insertedAt TIMESTAMP)[]'
 }) WITH ORDINALITY;
 
@@ -39,16 +39,16 @@ SELECT * FROM read_json(path, format = 'newline_delimited', compression = 'gzip'
     breakId: 'VARCHAR', leg: 'VARCHAR', priority: 'INTEGER', lifecycle: 'VARCHAR',
     openedOn: 'DATE', resolvedOn: 'DATE', amount: 'HUGEINT',
     class: 'VARCHAR', outcome: 'VARCHAR', asset: 'VARCHAR',
-    ref: 'VARCHAR', pspAmount: 'HUGEINT', productAmount: 'HUGEINT', drift: 'HUGEINT',
+    ref: 'VARCHAR', pspAmount: 'HUGEINT', pspNet: 'HUGEINT', pspFees: 'HUGEINT', productAmount: 'HUGEINT', drift: 'HUGEINT',
     impact: 'HUGEINT', firstSeen: 'DATE', breakOn: 'DATE',
     merchantRef: 'VARCHAR', pairedHold: 'VARCHAR',
-    psp: 'STRUCT(tx UBIGINT, state VARCHAR, amount HUGEINT, holdAmount HUGEINT, insertedAt TIMESTAMP)[]',
+    psp: 'STRUCT(tx UBIGINT, role VARCHAR, state VARCHAR, amount HUGEINT, fees HUGEINT, holdAmount HUGEINT, insertedAt TIMESTAMP)[]',
     product: 'STRUCT(tx UBIGINT, businessId VARCHAR, holdId VARCHAR, amount HUGEINT, insertedAt TIMESTAMP)[]',
     side: 'VARCHAR', hold: 'VARCHAR', prefix: 'VARCHAR', holdId: 'VARCHAR', openSign: 'VARCHAR',
     balance: 'HUGEINT', openedAt: 'TIMESTAMP', ageDays: 'INTEGER', bucket: 'VARCHAR',
     pairedRef: 'VARCHAR', previousBalance: 'HUGEINT', clearedAt: 'TIMESTAMP', clearedBy: 'VARCHAR',
-    -- book breaks (leg 'book', results doc §6): the manifest's paymentAccounts entry and a direction
-    account: 'VARCHAR', direction: 'VARCHAR', inputPrev: 'HUGEINT', input: 'HUGEINT',
+    -- book breaks (leg 'book', results doc §6): the manifest's fundsBook entry and a direction
+    account: 'VARCHAR', role: 'VARCHAR', direction: 'VARCHAR', inputPrev: 'HUGEINT', input: 'HUGEINT',
     outputPrev: 'HUGEINT', output: 'HUGEINT', flowCredits: 'HUGEINT', flowDebits: 'HUGEINT',
     creditResidual: 'HUGEINT', debitResidual: 'HUGEINT'
 }) WITH ORDINALITY;
@@ -60,7 +60,7 @@ CREATE OR REPLACE MACRO lettering_lines_shape() AS
     '[{"class":"VARCHAR","outcome":"VARCHAR","earlierDay":"BOOLEAN","amount":"HUGEINT","count":"BIGINT"}]';
 CREATE OR REPLACE MACRO lettering_carried_outside_shape() AS
     '[{"class":"VARCHAR","outcome":"VARCHAR","amount":"HUGEINT","count":"BIGINT"}]';
-CREATE OR REPLACE MACRO lettering_payment_accounts_shape() AS
-    '[{"account":"VARCHAR","asset":"VARCHAR","inputPrev":"HUGEINT","input":"HUGEINT","outputPrev":"HUGEINT","output":"HUGEINT","flowCredits":"HUGEINT","flowDebits":"HUGEINT","creditResidual":"HUGEINT","debitResidual":"HUGEINT"}]';
+CREATE OR REPLACE MACRO lettering_funds_book_shape() AS
+    '[{"account":"VARCHAR","role":"VARCHAR","asset":"VARCHAR","inputPrev":"HUGEINT","input":"HUGEINT","outputPrev":"HUGEINT","output":"HUGEINT","flowCredits":"HUGEINT","flowDebits":"HUGEINT","creditResidual":"HUGEINT","debitResidual":"HUGEINT"}]';
 CREATE OR REPLACE MACRO lettering_cuts_shape() AS
     '[{"side":"VARCHAR","ledger":"VARCHAR","txFrom":"UBIGINT","txTo":"UBIGINT","txHead":"UBIGINT"}]';

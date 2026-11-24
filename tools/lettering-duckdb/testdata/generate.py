@@ -10,8 +10,10 @@ Three rules come out:
   SHA-256 values. The run of 23 September is partial: only what check-chain reads (its manifest,
   carried, stock and breaks files).
 - rule=qa-scenarios: seven days, two assets, one scripted story per class and edge case, including
-  a first run that seeds its open items, holds opened before backfillFrom (a null openedAt), and
-  unkeyed movements of the PSP payment account (book breaks: new, persisting, resolved).
+  a first run that seeds its open items, holds opened before backfillFrom (a null openedAt),
+  unkeyed movements of the PSP funds account (book breaks: new, persisting, resolved), and the
+  fees, refunds and chargebacks of ADR-005 decision 27 (a fee kept by the PSP, a partial refund,
+  a chargeback the product books late, a refund hold that settles out).
 - rule=qa-verdicts: a week that walks through every verdict, an empty day, and two incomplete
   runs: one retried the same day, one followed by a two-day window.
 
@@ -76,8 +78,8 @@ def worked_example(out):
 
     pay39 = [l for l in blocks['carried.ndjson.gz'].strip().splitlines() if '"PAY-39"' in l][0]
     pay40 = ('{"ref":"PAY-40","asset":"EUR/2","class":"unapplied_payment","outcome":"pending",'
-             '"pspAmount":"70000","productAmount":"0","drift":"70000","firstSeen":"2026-09-23",'
-             '"breakOn":"2026-09-24","psp":[{"tx":1160874,"state":"payin.succeeded",'
+             '"pspAmount":"70000","pspNet":"70000","pspFees":"0","productAmount":"0","drift":"70000","firstSeen":"2026-09-23",'
+             '"breakOn":"2026-09-24","psp":[{"tx":1160874,"role":"final","state":"payin.succeeded",'
              '"amount":"70000","insertedAt":"2026-09-23T15:03:12Z"}],"product":[]}')
     carried23 = gz([pay39, pay40])
     write(os.path.join(day23, 'carried.ndjson.gz'), carried23)
@@ -121,8 +123,8 @@ def worked_example(out):
             {"side": "product", "prefix": "main:hold:invoice:", "asset": "EUR/2", "openSign": "negative", "open": "430000", "count": 6},
             {"side": "product", "prefix": "main:hold:refund:", "asset": "EUR/2", "openSign": "positive", "open": "0", "count": 0},
         ],
-        # the day 24 run reads its payment-account T_prev volumes here
-        "paymentAccounts": [{"account": "fpay:stripe:account:acct_eu:main", "asset": "EUR/2",
+        # the day 24 run reads its funds book's T_prev volumes here
+        "fundsBook": [{"account": "fpay:stripe:account:acct_eu:main", "role": "funds", "asset": "EUR/2",
                              "input": "9120000", "output": "310000"}],
         "files": [{"name": "carried.ndjson.gz", "rows": 2, "sha256": sha(carried23)},
                   {"name": "stock.ndjson.gz", "rows": 6, "sha256": sha(stock23_gz)},
@@ -150,16 +152,24 @@ PSP_HOLD = 'fpay:stripe:payment:hold:pending:'
 INVOICE = 'main:hold:invoice:'
 REFUND = 'main:hold:refund:'
 OPEN_SIGN = {PSP_HOLD: 1, INVOICE: -1, REFUND: 1}
+# What settling a product hold means for the payment (ADR-005 §6, decision 27): money paid by the
+# customer (+1, an invoice) or money paid back to them (-1, a refund).
+SETTLES = {INVOICE: 1, REFUND: -1}
+SETTLES_NAME = {1: 'in', -1: 'out'}
 RETENTION = dt.timedelta(days=90)  # the deployment's --lettering-retention
 LEDGER = {'psp': 'psp', 'product': 'main'}  # each side's ledger, as the rules name it
 SIGN_NAME = {1: 'positive', -1: 'negative'}
-PAYMENT_ACCOUNT = 'fpay:stripe:account:acct_1:main'  # matches the rules' psp.paymentAccount pattern
-PSP_STATES = {'pending': 'payin.pending', 'final': 'payin.succeeded', 'failed': 'payin.compensate'}
-FLOW_CLASSES = ['matched', 'under_applied', 'over_applied', 'unapplied_payment', 'applied_before_final',
-                'orphan_application', 'reversed_after_application', 'in_progress', 'failed']
+FUNDS_ACCOUNT = 'fpay:stripe:account:acct_1:main'  # matches the rules' psp.funds pattern
+FEES_ACCOUNT = 'fpay:stripe:fees:acct_1:main'      # matches the rules' psp.fees pattern
+ROLE = {FUNDS_ACCOUNT: 'funds', FEES_ACCOUNT: 'fees'}
+# The rules' state override: one value per role. A value in no set is unclassified.
+PSP_STATES = {'pending': 'payin.pending', 'final': 'payin.succeeded', 'failed': 'payin.compensate',
+              'reversal': 'payin.reversed'}
+FLOW_CLASSES = ['matched', 'under_applied', 'over_applied', 'unapplied_payment', 'unapplied_reversal',
+                'applied_before_final', 'orphan_application', 'reversed_after_application', 'in_progress', 'failed']
 STOCK_CLASSES = ['open', 'wrong_sign', 'cleared']
 PRIORITY = {'orphan_application': 1, 'reversed_after_application': 1, 'unkeyed_payment_movement': 1, 'under_applied': 2,
-            'over_applied': 2, 'unapplied_payment': 3, 'wrong_sign': 4}
+            'over_applied': 2, 'unapplied_reversal': 2, 'unapplied_payment': 3, 'wrong_sign': 4}
 
 
 def at(day, hhmm):
@@ -202,19 +212,23 @@ def day_str(d):
 
 @dataclass
 class Psp:
-    """A PSP event. `amount` is the net posting on the payment account, in absolute value;
-    `hold` the signed movement on the payment's pending hold. An `unkeyed` event carries no key,
-    so the flow read never returns it: its signed `amount` (+ credit, − debit) moves only the
-    payment account (results doc §5, the payment-account book)."""
+    """A PSP event. `amount` is its signed net inflow into the perimeter, funds and fees (ADR-005
+    §6): + for a final, − for a refund or a chargeback (a `reversal`, or a `final` with `out`, a
+    refund under its own reference). `fees` is the part of it that lands on the fees account, the
+    rest landing on the funds account. `hold` is the signed movement on the payment's pending hold.
+    An `unkeyed` event carries no key, so the flow read never returns it: its signed `amount` (+
+    credit, − debit) moves only the funds account (results doc §5, the funds book). An event of an
+    unclassified state debits the funds account by its `amount`, a refund booked under a state the
+    rule's sets omit."""
     t: dt.datetime
     ref: str
     asset: str
-    kind: str  # pending, final, failed, unkeyed, or an unclassified state value
+    kind: str  # pending, final, failed, reversal, unkeyed, or an unclassified state value
     amount: int = 0
     hold: int = 0
     merchant: str = None
     tx: int = 0
-    out: bool = False  # a final that pays money out of the payment account (a refund): a debit
+    fees: int = 0
 
 
 @dataclass
@@ -240,16 +254,20 @@ class Rule:
             "id": self.id, "version": 1, "sha256": None,
             "backfillFrom": day_str(self.backfill_from),
             "psp": {"ledger": "psp", "key": "payments.formance.com/payment-id",
+                    "adjusts": "formance.com/accounting.adjusts-reference",
                     "state": {"field": "formance.com/observation.event-type", "pending": ["payin.pending"],
-                              "final": ["payin.succeeded"], "failed": ["payin.compensate"]},
+                              "final": ["payin.succeeded"], "failed": ["payin.compensate"],
+                              "reversal": ["payin.reversed"]},
                     "grace": f"{self.psp_grace}d",
-                    "paymentAccount": "fpay:stripe:account:*:main", "merchantRef": "merchant_ref",
+                    "funds": ["fpay:stripe:account:*:main"], "fees": ["fpay:stripe:fees:*:main"],
+                    "merchantRef": "merchant_ref",
                     "holds": [{"prefix": PSP_HOLD, "openSign": "positive"}]},
             "product": {"ledger": "main", "key": "psp_payment_ref",
                         "state": {"field": "transition_kind", "final": ["to_final"]},
                         "grace": f"{self.product_grace}d",
                         "holds": [{"prefix": INVOICE, "openSign": "negative", "businessId": "invoice_no"},
-                                  {"prefix": REFUND, "openSign": "positive", "businessId": "refund_no"}]},
+                                  {"prefix": REFUND, "openSign": "positive", "businessId": "refund_no",
+                                   "settles": "out"}]},
         }
 
 
@@ -292,6 +310,12 @@ def bucket(age, bounds):
         if age <= hi:
             return f"{lo + 1}-{hi}d"
     return f">{bounds[-1]}d"
+
+
+def cash(prefix, delta):
+    """A product posting on a hold, signed as cash for the payment: + towards zero and − away from
+    it on a hold that settles in, the reverse on one that settles out (ADR-005 §6)."""
+    return -OPEN_SIGN[prefix] * delta * SETTLES[prefix]
 
 
 class Engine:
@@ -392,7 +416,7 @@ class Engine:
                 'stock': stock, 'books': books, 'pay': pay, 'breaks': breaks, 'unclassified': unclassified,
                 'cuts': {'psp': (f_psp, t_psp), 'product': (f_prod, t_prod)},
                 'win_psp': win_psp, 'win_prod': win_prod, 'prev_suspense': prev_susp,
-                'pay_totals': {p['asset']: (p['input'], p['output']) for p in pay}}
+                'pay_totals': {(p['account'], p['asset']): (p['input'], p['output']) for p in pay}}
 
     def seed(self, day, f_psp, f_prod):
         """A first run's carried items: the references still open at its window's start, with a
@@ -442,9 +466,9 @@ class Engine:
                     psp_items = [e for e in book.psp_by_ref.get(ref, []) if e.tx <= t_psp]
                     if any(e.kind == 'final' for e in psp_items):
                         app_items = [e for e in book.apply_by_ref.get(ref, []) if e.tx <= t_prod]
-                elif any(e.kind == 'failed' for e in w_psp):
-                    # a failure on a reference not carried in: its whole history, read by key on
-                    # both ledgers (design doc §5)
+                elif any(e.kind in ('failed', 'reversal') for e in w_psp):
+                    # a failure, a refund or a chargeback on a reference not carried in: its whole
+                    # history, read by key on both ledgers (design doc §5, ADR-005 §6)
                     psp_items = [e for e in book.psp_by_ref.get(ref, []) if e.tx <= t_psp]
                     app_items = [e for e in book.apply_by_ref.get(ref, []) if e.tx <= t_prod]
             rows.append(self.flow_row(day, ref, psp_items, app_items, f_psp, f_prod, t_prod, ref in carried_in))
@@ -455,32 +479,40 @@ class Engine:
         items = [(e, mv) for e in app_items for mv in e.moves]
 
         def amounts(psp_ev, app_ev):
+            """The signed net inflow into the perimeter, its fees part, and the signed applications
+            (ADR-005 §6, decision 27)."""
             finals = [e for e in psp_ev if e.kind == 'final']
             first_final = min((e.tx for e in finals), default=None)
             failed = first_final is not None and any(e.kind == 'failed' and e.tx > first_final for e in psp_ev)
-            psp_amount = 0 if failed else sum(e.amount for e in finals)
-            product_amount = sum(-OPEN_SIGN[p] * d for e in app_ev for (p, _, _, d) in e.moves)
-            return psp_amount, product_amount
+            moving = [e for e in psp_ev if e.kind in ('final', 'reversal')]
+            psp_amount = 0 if failed else sum(e.amount for e in moving)
+            psp_fees = 0 if failed else sum(e.fees for e in moving)
+            product_amount = sum(cash(p, d) for e in app_ev for (p, _, _, d) in e.moves)
+            return psp_amount, product_amount, psp_fees
 
-        psp_amount, product_amount = amounts(psp_items, app_items)
+        psp_amount, product_amount, psp_fees = amounts(psp_items, app_items)
         before = amounts([e for e in psp_items if e.tx <= f_psp], [e for e in app_items if e.tx <= f_prod])
         drift = psp_amount - product_amount
         impact = drift - (before[0] - before[1])
         finals = [e for e in psp_items if e.kind == 'final']
         fails = [e for e in psp_items if e.kind == 'failed']
+        reversals = [e for e in psp_items if e.kind == 'reversal']
         t_app = min((e.t for e in app_items), default=None)
         t_final = min((e.t for e in finals), default=None)
         t_fail = min((e.t for e in fails), default=None)
 
         # A class reads the net amounts: applications that sum to 0 count as none (results doc §6).
-        applied = product_amount != 0
+        # A payment refunded or charged back in full, and booked so, nets to 0 on both sides.
+        applied = product_amount != 0 or bool(reversals and app_items)
         if fails:
             if applied:
                 klass = 'reversed_after_application' if t_fail > t_app else 'orphan_application'
             else:
                 klass = 'failed'
         elif finals:
-            if not applied:
+            if reversals and app_items and product_amount > psp_amount:
+                klass = 'unapplied_reversal'
+            elif not applied:
                 klass = 'unapplied_payment'
             elif product_amount == psp_amount:
                 klass = 'matched'
@@ -496,6 +528,10 @@ class Engine:
         if klass == 'unapplied_payment':
             break_on = first_seen + dt.timedelta(days=self.rule.product_grace)
             outcome = 'pending' if day < break_on else 'break'
+        elif klass == 'unapplied_reversal':
+            # the product has product.grace to book the latest refund or chargeback
+            break_on = local_day(max(e.t for e in reversals)) + dt.timedelta(days=self.rule.product_grace)
+            outcome = 'pending' if day < break_on else 'break'
         elif klass == 'applied_before_final':
             break_on = local_day(t_app) + dt.timedelta(days=self.rule.psp_grace)
             if day < break_on:
@@ -506,7 +542,7 @@ class Engine:
             outcome = 'break'
         merchant = next((e.merchant for e in finals if e.merchant), None)
         return {'ref': ref, 'asset': asset, 'class': klass, 'outcome': outcome, 'pspAmount': psp_amount,
-                'productAmount': product_amount, 'drift': drift, 'impact': impact, 'firstSeen': first_seen,
+                'pspFees': psp_fees, 'fees_before': before[2], 'productAmount': product_amount, 'drift': drift, 'impact': impact, 'firstSeen': first_seen,
                 'breakOn': break_on, 'merchant': merchant, 'pairedHold': None,
                 'psp_ev': psp_items, 'app_ev': app_items, 'carried_in': carried,
                 'drift_before': before[0] - before[1], 'psp_before': before[0]}
@@ -658,7 +694,7 @@ class Engine:
 
         candidates = [('flow', r['ref'], r['asset'], r) for r in rows if r['outcome'] == 'break']
         candidates += [('stock', f"{s['side']}/{s['hold']}", s['asset'], s) for s in stock if s['outcome'] == 'break']
-        book_rows = {}  # key, asset -> the payment-account entry seen in one direction
+        book_rows = {}  # key, asset -> the funds-book entry seen in one direction
         for p in pay:
             for direction in ('credit', 'debit'):
                 r = dict(p, side='psp', direction=direction, **{'class': 'unkeyed_payment_movement'})
@@ -714,9 +750,11 @@ class Engine:
 
     @staticmethod
     def psp_item(e):
-        item = {'tx': e.tx, 'state': PSP_STATES[e.kind]}
-        if e.kind == 'final':
+        item = {'tx': e.tx, 'role': e.kind, 'state': PSP_STATES[e.kind]}
+        if e.kind in ('final', 'reversal'):
             item['amount'] = str(e.amount)
+            if e.fees:
+                item['fees'] = str(e.fees)
         else:
             item['holdAmount'] = str(abs(e.hold))
         item['insertedAt'] = iso(e.t)
@@ -737,13 +775,14 @@ class Engine:
                 bid = Engine.business_id(e, p, hid)
                 if bid:
                     item['businessId'] = bid
-                item.update({'holdId': hid, 'amount': str(-OPEN_SIGN[p] * d), 'insertedAt': iso(e.t)})
+                item.update({'holdId': hid, 'amount': str(cash(p, d)), 'insertedAt': iso(e.t)})
                 out.append(item)
         return out
 
     def flow_json(self, r, with_impact=True):
         o = {'ref': r['ref'], 'asset': r['asset'], 'class': r['class'], 'outcome': r['outcome'],
-             'pspAmount': str(r['pspAmount']), 'productAmount': str(r['productAmount']), 'drift': str(r['drift'])}
+             'pspAmount': str(r['pspAmount']), 'pspNet': str(r['pspAmount'] - r['pspFees']),
+             'pspFees': str(r['pspFees']), 'productAmount': str(r['productAmount']), 'drift': str(r['drift'])}
         if with_impact:
             o['impact'] = str(r['impact'])
         if r['firstSeen']:
@@ -795,7 +834,7 @@ class Engine:
 
     def write_incomplete(self, run_dir, day, run_id, reason, unresolved):
         """An incomplete run writes a reduced manifest and no data file (results doc §6): no
-        counts, statement, books, payment accounts or files, and cuts for the resolved sides only."""
+        counts, statement, books, funds book or files, and cuts for the resolved sides only."""
         start = run_start(run_id)
         cuts = {side: w for side, w in self.window(day).items() if side not in unresolved}
         if reason == 'missing_index':
@@ -836,60 +875,57 @@ class Engine:
         st['manifest'] = m
         st['manifest_sha'] = sha(data)
 
-    def pay_volumes(self, upto):
-        """The payment account's cumulative volumes per asset, (input, output), up to the
-        transaction id `upto`: what the rewind gives at a cut, computed from every PSP event
-        rather than from the flow."""
+    def pay_volumes(self, upto, lo=0, keyed=None):
+        """The funds and fees accounts' volumes, per (account, asset), (input, output), from the PSP
+        events with lo < tx <= upto: from 0, what the rewind gives at a cut. `keyed` keeps only the
+        events the flow read returns (True) or only the unkeyed ones (False). Computed from every PSP
+        event rather than from the flow rows."""
         vols, finalised = {}, {}
+
+        def post(account, asset, amount):
+            i, o = vols.get((account, asset), (0, 0))
+            vols[(account, asset)] = (i + max(amount, 0), o + max(-amount, 0))
+
         for e in self.book.psp:
             if e.tx > upto:
-                continue
-            credit = debit = 0
-            if e.kind == 'final':
-                credit, debit = (0, e.amount) if e.out else (e.amount, 0)
-                finalised[e.ref] = finalised.get(e.ref, 0) + e.amount
+                break
+            moves = []
+            if e.kind in ('final', 'reversal'):
+                moves = [(FUNDS_ACCOUNT, e.amount - e.fees), (FEES_ACCOUNT, e.fees)]
+                n, f = finalised.get(e.ref, (0, 0))
+                finalised[e.ref] = (n + e.amount - e.fees, f + e.fees)
             elif e.kind == 'failed':
-                debit = finalised.pop(e.ref, 0)  # a failure after final takes the payment back
+                n, f = finalised.pop(e.ref, (0, 0))  # a failure after final takes the payment back
+                moves = [(FUNDS_ACCOUNT, -n), (FEES_ACCOUNT, -f)]
             elif e.kind == 'unkeyed':
-                credit, debit = max(e.amount, 0), max(-e.amount, 0)
+                moves = [(FUNDS_ACCOUNT, e.amount)]
             elif e.kind not in PSP_STATES:
-                debit = e.amount  # in this data, a refund booked on the original payment id
-            if credit or debit:
-                i, o = vols.get(e.asset, (0, 0))
-                vols[e.asset] = (i + credit, o + debit)
+                moves = [(FUNDS_ACCOUNT, -e.amount)]  # in this data, a refund under a state in no set
+            if e.tx <= lo or (keyed is not None and keyed == (e.kind == 'unkeyed')):
+                continue
+            for account, amount in moves:
+                if amount:
+                    post(account, e.asset, amount)
         return vols
 
     def pay_book(self, rows, books, win_psp, win_prod, f_psp, t_psp):
-        """The payment-account book (results doc §5), per asset. The account is credited by the
-        window's payment finals, and debited by its refund finals, by the failures after final and
-        by the PSP transactions in no state set, which in this data are refunds booked on the
-        original payment id (ADR-005 §8 rule 10: a refund is a debit). The unkeyed movements the
-        flow read cannot return move it too; the flow's credits and debits leave them out, so the
-        residuals are exactly the unkeyed movements. A first run's previous volumes are rewound to
-        its window's start (results doc §2)."""
+        """The funds book (results doc §5), per account and asset. The flow's credits and debits are
+        the movements of the PSP transactions the flow read returns, those that carry the key; the
+        unkeyed movements, which it cannot return, are the residuals. A first run's previous
+        volumes are rewound to its window's start (results doc §2)."""
         prev = self.prev['pay_totals'] if self.prev else self.pay_volumes(f_psp)
         now = self.pay_volumes(t_psp)
-        unkeyed = [e for e in win_psp if e.kind == 'unkeyed']
-        # the account's volumes are cumulative: an asset it held at the previous cut stays listed
-        assets = sorted(set(prev) | {r['asset'] for r in rows} | {b['asset'] for b in books} | {e.asset for e in unkeyed}
-                        | {e.asset for e in win_psp if e.kind not in PSP_STATES}
-                        | {asset for e in win_prod if e.kind == 'unclassified' for (_, _, asset, _) in e.moves})
+        flow = self.pay_volumes(t_psp, f_psp, keyed=True)
+        unkeyed = self.pay_volumes(t_psp, f_psp, keyed=False)
         out = []
-        for a in assets:
-            psp_a = sum(r['pspAmount'] - r['psp_before'] for r in rows if r['asset'] == a)
-            fin_in = sum(e.amount for e in win_psp if e.kind == 'final' and not e.out and e.asset == a)
-            fin_out = sum(e.amount for e in win_psp if e.kind == 'final' and e.out and e.asset == a)
-            failed = fin_in + fin_out - psp_a  # finalised amounts lost to a failure after final
-            if failed < 0:
-                fin_in, failed = psp_a - fin_out, 0
-            unclassified = sum(e.amount for e in win_psp
-                               if e.kind not in PSP_STATES and e.kind != 'unkeyed' and e.asset == a)
-            credits, debits = fin_in, fin_out + failed + unclassified
-            u_credits = sum(e.amount for e in unkeyed if e.asset == a and e.amount > 0)
-            u_debits = -sum(e.amount for e in unkeyed if e.asset == a and e.amount < 0)
-            in_prev, out_prev = prev.get(a, (0, 0))
-            assert (in_prev + credits + u_credits, out_prev + debits + u_debits) == now.get(a, (0, 0)), ('pay', a)
-            out.append({'account': PAYMENT_ACCOUNT, 'asset': a,
+        # the volumes are cumulative: an account and asset listed at the previous cut stay listed
+        for key in sorted(set(prev) | set(now)):
+            account, a = key
+            in_prev, out_prev = prev.get(key, (0, 0))
+            credits, debits = flow.get(key, (0, 0))
+            u_credits, u_debits = unkeyed.get(key, (0, 0))
+            assert (in_prev + credits + u_credits, out_prev + debits + u_debits) == now.get(key, (0, 0)), ('pay', key)
+            out.append({'account': account, 'role': ROLE[account], 'asset': a,
                         'inputPrev': in_prev, 'input': in_prev + credits + u_credits,
                         'outputPrev': out_prev, 'output': out_prev + debits + u_debits,
                         'flowCredits': credits, 'flowDebits': debits,
@@ -910,13 +946,14 @@ class Engine:
             rows = [r for r in st['rows'] if r['asset'] == a]
             f_prod, t_prod = st['cuts']['product']
             psp_a = sum(r['pspAmount'] - r['psp_before'] for r in rows)
+            psp_fees = sum(r['pspFees'] - r['fees_before'] for r in rows)
             psp_n = sum(1 for e in st['win_psp'] if e.kind == 'final' and e.asset == a)
             prod_books = [b for b in st['books'] if b['side'] == 'product' and b['asset'] == a]
-            prod_a = sum(b['lettered'] - b['other'] for b in prod_books)
+            prod_a = sum(SETTLES[b['prefix']] * (b['lettered'] - b['other']) for b in prod_books)
             prod_n = sum(len(e.moves) for e in st['win_prod'] if e.kind == 'apply' and e.moves[0][2] == a)
             net = sum(r['impact'] for r in rows)
             assert net == psp_a - prod_a, (day, a, net, psp_a, prod_a)
-            window_b = sum(-OPEN_SIGN[p] * d for r in rows for e in r['app_ev'] if f_prod < e.tx <= t_prod
+            window_b = sum(cash(p, d) for r in rows for e in r['app_ev'] if f_prod < e.tx <= t_prod
                            for (p, _, _, d) in e.moves)
             assert window_b == prod_a, ('residual', day, a, window_b, prod_a)
             lines = {}
@@ -943,7 +980,7 @@ class Engine:
                     s, n = uncl.get(k, (0, 0))
                     uncl[k] = (s + u['amount'], n + 1)
             out[a] = {
-                "psp": {"amount": str(psp_a), "count": psp_n},
+                "psp": {"amount": str(psp_a), "fees": str(psp_fees), "count": psp_n},
                 "product": {"amount": str(prod_a), "count": prod_n},
                 "net": str(net),
                 "lines": [{"class": c, "outcome": o, "earlierDay": e, "amount": str(sum(r['impact'] for r in rs)),
@@ -992,7 +1029,7 @@ class Engine:
                        "openPrev": str(b['open_prev']), "opened": str(b['opened']), "lettered": str(b['lettered']),
                        "letteredOther": str(b['other']), "open": str(b['open']), "count": b['count'],
                        "buckets": b['buckets'], "continuityOk": True} for b in st['books']],
-            "paymentAccounts": [self.pay_json(p) for p in st['pay']],
+            "fundsBook": [self.pay_json(p) for p in st['pay']],
             "files": files,
             # for information: the storage deletes the files a retention after their creation
             "expiresAt": iso(start + RETENTION),
@@ -1031,11 +1068,17 @@ def scenarios():
     D = ['2026-09-28'] + [f'2026-10-0{i}' for i in range(1, 8)]
     psp, prod = [], []
 
-    def pay(day, t, ref, amount, asset='EUR/2', pending=True, merchant=None, t_final=None, out=False):
+    def pay(day, t, ref, amount, asset='EUR/2', pending=True, merchant=None, t_final=None, out=False, fees=0):
+        """`amount` is the gross; a refund under its own reference (`out`) moves money out."""
         if pending:
             psp.append(Psp(at(day, t), ref, asset, 'pending', 0, amount))
         if t_final is not None:
-            psp.append(Psp(at(day, t_final), ref, asset, 'final', amount, -amount if pending else 0, merchant, out=out))
+            psp.append(Psp(at(day, t_final), ref, asset, 'final', -amount if out else amount,
+                           -amount if pending else 0, merchant, fees=fees))
+
+    def reverse(day, t, ref, amount, asset='EUR/2'):
+        """A refund or a chargeback on the original payment's reference: money out of the funds."""
+        psp.append(Psp(at(day, t), ref, asset, 'reversal', -amount))
 
     def apply(day, t, ref, moves):
         prod.append(Prod(at(day, t), 'apply', moves, ref))
@@ -1153,7 +1196,7 @@ def scenarios():
     psp.append(Psp(at(D[4], '12:00'), 'S19', 'EUR/2', 'final', 3500, -3500))
     # R01: a refund, its own 1-to-1 pair: a refund hold that opens positive
     opening(D[2], '07:04', [(REFUND, 'RF-R01', 'EUR/2', 2000)])
-    pay(D[3], '13:00', 'R01', 2000, pending=False, t_final='13:05', out=True)  # the payout's amount, in absolute value
+    pay(D[3], '13:00', 'R01', 2000, pending=False, t_final='13:05', out=True)  # money out: -2000 on both sides
     apply(D[3], '13:10', 'R01', [(REFUND, 'RF-R01', 'EUR/2', -2000)])
     # S16: an invoice cleared by a credit note (no PSP reference: letteredOther)
     opening(D[2], '07:05', inv('INV-S16', 3000))
@@ -1183,7 +1226,37 @@ def scenarios():
     apply(D[5], '10:10', 'S22', [(INVOICE, 'INV-S22', 'EUR/2', 1900)])
     apply(D[6], '10:10', 'S22', [(INVOICE, 'INV-S22', 'EUR/2', -1900)])
 
-    # K01: a final with no pending and no reference credits the payment account on day 4 (a book
+    # Fees, refunds and chargebacks (ADR-005 decision 27).
+    # F01: the PSP keeps a 300 fee: 9,700 reaches the funds, 300 the fees; the product applies the
+    # gross, 10,000: matched, with pspFees 300
+    opening(D[1], '07:20', inv('INV-F01', 10000))
+    pay(D[1], '17:00', 'F01', 10000, t_final='17:05', fees=300)
+    apply(D[1], '17:10', 'F01', [(INVOICE, 'INV-F01', 'EUR/2', 10000)])
+    # F02: matched on day 1, refunded 3,000 on day 3 and reopened by 3,000 the same day: still
+    # matched, 5,000 = 5,000, a negative impact on both sides
+    opening(D[1], '07:21', inv('INV-F02', 8000))
+    pay(D[1], '17:20', 'F02', 8000, t_final='17:25')
+    apply(D[1], '17:30', 'F02', [(INVOICE, 'INV-F02', 'EUR/2', 8000)])
+    reverse(D[3], '11:00', 'F02', 3000)
+    apply(D[3], '11:30', 'F02', [(INVOICE, 'INV-F02', 'EUR/2', -3000)])
+    # F03: matched on day 1, charged back on day 4 (a lookup by key): unapplied_reversal, pending
+    # on day 4, a P2 break on day 5, resolved on day 6 when the product reopens the invoice
+    opening(D[1], '07:22', inv('INV-F03', 6000))
+    pay(D[1], '17:40', 'F03', 6000, t_final='17:45')
+    apply(D[1], '17:50', 'F03', [(INVOICE, 'INV-F03', 'EUR/2', 6000)])
+    reverse(D[4], '14:00', 'F03', 6000)
+    apply(D[6], '09:00', 'F03', [(INVOICE, 'INV-F03', 'EUR/2', -6000)])
+    # F04: matched on day 2; the product opens a refund hold on day 3 with its refund_no alone; the
+    # PSP refunds 1,500 on day 4 and the product letters the refund hold with the payment's
+    # reference: a hold that settles out, so -1,500, matched at 2,500
+    opening(D[2], '07:20', inv('INV-F04', 4000))
+    pay(D[2], '17:00', 'F04', 4000, t_final='17:05')
+    apply(D[2], '17:10', 'F04', [(INVOICE, 'INV-F04', 'EUR/2', 4000)])
+    opening(D[3], '07:20', [(REFUND, 'RF-F04', 'EUR/2', 1500)])
+    reverse(D[4], '15:00', 'F04', 1500)
+    apply(D[4], '15:10', 'F04', [(REFUND, 'RF-F04', 'EUR/2', -1500)])
+
+    # K01: a final with no pending and no reference credits the funds account on day 4 (a book
     # break, resolved on day 5). K02: payouts without their movement key debit it on days 5 and 6
     # (a book break, new then persisting with the new residual, resolved on day 7).
     psp.append(Psp(at(D[4], '11:30'), None, 'EUR/2', 'unkeyed', 1800))
@@ -1303,7 +1376,7 @@ def expected(engine, out):
                 if f_prod < e.tx <= t_prod:
                     for (p, hid, _, dlt) in e.moves:
                         apps.append([tag, x['ref'], x['class'], x['outcome'], e.tx, Engine.business_id(e, p, hid), hid,
-                                     -OPEN_SIGN[p] * dlt, ts(e.t)])
+                                     cash(p, dlt), ts(e.t)])
         res[f'applications@{tag}'] = csv_text(['day', 'ref', 'class', 'outcome', 'tx', 'business_id', 'hold_id',
                                                'amount', 'inserted_at'], apps)
     oi = []
@@ -1389,7 +1462,7 @@ def main():
 
     rule, book, days = scenarios()
     engine = Engine(rule, book, out)
-    engine.business_ids = ['INV-S06B', 'PU']
+    engine.business_ids = ['INV-S06B', 'PU', 'F03']
     engine.query_days = ['2026-10-02', '2026-10-05']
     for d in days:
         engine.run(d)

@@ -110,15 +110,15 @@ SELECT 'books_open_prev', concat_ws('/', coalesce(b.side, p.side), coalesce(b.pr
 FROM m_books b FULL JOIN prev p USING (side, prefix, asset)
 WHERE coalesce(b.openPrev, 0) <> coalesce(p.open, 0);
 
--- The payment-account book picks up where the earlier run left it: its previous volumes are
+-- The funds book picks up where the earlier run left it: its previous volumes are
 -- the earlier run's, and an account and asset listed then are still listed.
 INSERT INTO chain_violations
-WITH prev AS (SELECT unnest(from_json(m->'paymentAccounts', lettering_payment_accounts_shape()), recursive := true) FROM prev_manifest)
+WITH prev AS (SELECT unnest(from_json(m->'fundsBook', lettering_funds_book_shape()), recursive := true) FROM prev_manifest)
 SELECT 'book_prev', coalesce(p.account, c.account) || '/' || coalesce(p.asset, c.asset),
        CASE WHEN c.account IS NULL THEN 'listed by the earlier run, missing now'
             ELSE 'inputPrev ' || c.inputPrev || ' outputPrev ' || c.outputPrev
                  || ', earlier input ' || coalesce(p.input, 0) || ' output ' || coalesce(p.output, 0) END
-FROM m_payment_accounts c FULL JOIN prev p USING (account, asset)
+FROM m_funds_book c FULL JOIN prev p USING (account, asset)
 WHERE c.account IS NULL
    OR c.inputPrev <> coalesce(p.input, 0) OR c.outputPrev <> coalesce(p.output, 0);
 

@@ -21,6 +21,11 @@ SELECT v_days(m->'rule'->'psp'->>'grace') AS psp_grace,
        (m->'rule'->>'backfillFrom')::DATE AS backfill_from,
        m->'period'->>'tz' AS tz
 FROM manifest;
+-- What settling a product hold kind means for the payment (ADR-005 §6): +1 for money in, the
+-- default, -1 for money paid back (`settles: out`, a refund hold).
+CREATE OR REPLACE TEMP VIEW v_settles AS
+SELECT h.prefix, CASE h.settles WHEN 'out' THEN -1 ELSE 1 END AS sign
+FROM manifest, unnest(from_json(m->'rule'->'product'->'holds', '[{"prefix":"VARCHAR","settles":"VARCHAR"}]')) t(h);
 -- The label of an age bucket, from the bucket bounds: [1, 7, 30] gives 0-1d, 2-7d, 8-30d, >30d.
 CREATE OR REPLACE TEMP MACRO v_bucket(age, bounds) AS
     CASE WHEN age > bounds[-1] THEN '>' || bounds[-1] || 'd'
@@ -152,10 +157,28 @@ WHERE v_int(s.s->>'residual') <> 0
    OR coalesce(w.b, 0) <> v_int(s.s->'product'->>'amount');
 
 INSERT INTO violations
-WITH books AS (SELECT asset, sum(lettered - letteredOther) AS b FROM m_books WHERE side = 'product' GROUP BY asset)
-SELECT 'bridge_product_vs_books', s.asset, 'statement product ' || (s.s->'product'->>'amount') || ', books lettered - letteredOther ' || coalesce(b.b, 0)
+WITH books AS (SELECT asset, sum(coalesce(v.sign, 1) * (lettered - letteredOther)) AS b
+               FROM m_books LEFT JOIN v_settles v USING (prefix) WHERE side = 'product' GROUP BY asset)
+SELECT 'bridge_product_vs_books', s.asset, 'statement product ' || (s.s->'product'->>'amount') || ', books lettered - letteredOther, signed by settles ' || coalesce(b.b, 0)
 FROM m_statement s LEFT JOIN books b USING (asset)
 WHERE v_int(s.s->'product'->>'amount') <> coalesce(b.b, 0);
+
+-- The statement's fees are the part of the PSP amount that landed in psp.fees: the window's
+-- change in the rows' pspFees, as the PSP amount is the window's change in their pspAmount.
+INSERT INTO violations
+WITH rows AS (SELECT asset, pspFees, list_filter(psp, e -> e.tx <= c.txFrom) AS before
+              FROM flow, m_cuts c WHERE c.side = 'psp'),
+     fees_before AS (
+        SELECT asset, pspFees,
+               CASE WHEN list_bool_or(list_transform(before, e -> e.role = 'failed'
+                         AND e.tx > list_min(list_transform(list_filter(before, x -> x.role = 'final'), x -> x.tx)))) IS TRUE THEN 0
+                    ELSE coalesce(list_sum(list_transform(list_filter(before, e -> e.role IN ('final', 'reversal')), e -> coalesce(e.fees, 0))), 0)
+               END AS b
+        FROM rows),
+     found AS (SELECT asset, sum(pspFees - b) AS fees FROM fees_before GROUP BY asset)
+SELECT 'bridge_fees', s.asset, 'statement psp fees ' || coalesce(s.s->'psp'->>'fees', 'missing') || ', flow ' || coalesce(f.fees, 0)
+FROM m_statement s LEFT JOIN found f USING (asset)
+WHERE (s.s->'psp'->>'fees') IS NULL OR v_int(s.s->'psp'->>'fees') <> coalesce(f.fees, 0);
 
 INSERT INTO violations
 WITH found AS (
@@ -227,10 +250,14 @@ SELECT 'books_vs_stock', concat_ws('/', coalesce(b.side, f.side), coalesce(b.pre
 FROM m_books b FULL JOIN found f USING (side, prefix, asset)
 WHERE coalesce(b.open, 0) <> coalesce(f.open, 0) OR coalesce(b.count, 0) <> coalesce(f.n, 0);
 
--- The payment-account book (results doc §5) ---------------------------------------------------
+-- The funds book (results doc §5) ------------------------------------------------------------
 
 -- Each residual is the account's movement since the previous cut minus the flow's, and the
--- account's volumes never go down: it is NORMAL, so they are cumulative.
+-- account's volumes never go down: it is NORMAL, so they are cumulative. Its role is funds or fees.
+INSERT INTO violations
+SELECT 'book_role', account || '/' || asset, 'role ' || coalesce(role, 'missing')
+FROM m_funds_book WHERE role IS NULL OR role NOT IN ('funds', 'fees');
+
 INSERT INTO violations
 SELECT 'book_residual', account || '/' || asset,
        CASE WHEN input < inputPrev OR output < outputPrev
@@ -240,7 +267,7 @@ SELECT 'book_residual', account || '/' || asset,
                      || ' - inputPrev ' || inputPrev || ' - flowCredits ' || flowCredits
             ELSE 'debitResidual ' || coalesce(debitResidual::VARCHAR, 'missing') || ' <> output ' || output
                  || ' - outputPrev ' || outputPrev || ' - flowDebits ' || flowDebits END
-FROM m_payment_accounts
+FROM m_funds_book
 WHERE input < inputPrev OR output < outputPrev
    OR creditResidual IS DISTINCT FROM input - inputPrev - flowCredits
    OR debitResidual IS DISTINCT FROM output - outputPrev - flowDebits;
@@ -273,53 +300,67 @@ SELECT 'break_priority', breakId, class || ' has priority ' || priority
 FROM breaks
 WHERE priority IS DISTINCT FROM CASE
     WHEN class IN ('orphan_application', 'reversed_after_application', 'unkeyed_payment_movement') THEN 1
-    WHEN class IN ('under_applied', 'over_applied') THEN 2
+    WHEN class IN ('under_applied', 'over_applied', 'unapplied_reversal') THEN 2
     WHEN class = 'unapplied_payment' THEN 3
     WHEN class = 'wrong_sign' THEN 4 END;
 
 -- Every open break of the flow and stock files, and every non-zero residual of the
--- payment-account book, is in the breaks file, and back.
+-- funds book, is in the breaks file, and back.
 INSERT INTO violations
 WITH open_rows AS (
     SELECT 'flow' AS leg, ref AS key, asset FROM flow WHERE outcome = 'break'
     UNION ALL SELECT 'stock', side || '/' || hold, asset FROM stock WHERE outcome = 'break'
-    UNION ALL SELECT 'book', concat_ws('/', side, account, direction), asset FROM m_payment_directions WHERE residual <> 0),
+    UNION ALL SELECT 'book', concat_ws('/', side, account, direction), asset FROM m_funds_directions WHERE residual <> 0),
      open_breaks AS (
     SELECT leg, CASE leg WHEN 'flow' THEN ref WHEN 'book' THEN concat_ws('/', side, account, direction)
                          ELSE side || '/' || hold END AS key, asset
     FROM breaks WHERE outcome = 'break')
 SELECT 'breaks_vs_rows', coalesce(r.leg, b.leg) || ' ' || coalesce(r.key, b.key) || '/' || coalesce(r.asset, b.asset),
-       CASE WHEN b.key IS NULL AND r.leg = 'book' THEN 'a residual in the manifest''s paymentAccounts, missing from the breaks file'
+       CASE WHEN b.key IS NULL AND r.leg = 'book' THEN 'a residual in the manifest''s fundsBook, missing from the breaks file'
             WHEN b.key IS NULL THEN 'a break in its ' || r.leg || ' file, missing from the breaks file'
-            WHEN b.leg = 'book' THEN 'an open book break with no residual in the manifest''s paymentAccounts'
+            WHEN b.leg = 'book' THEN 'an open book break with no residual in the manifest''s fundsBook'
             ELSE 'an open break with no break row in its ' || b.leg || ' file' END
 FROM open_rows r FULL JOIN open_breaks b USING (leg, key, asset)
 WHERE r.key IS NULL OR b.key IS NULL;
 
 -- Rows (results doc §6) ---------------------------------------------------------------------
 
--- A flow row's amounts follow from its transactions. pspAmount sums the final events'
--- amounts, and is 0 once a failed event follows a final one; productAmount sums the applications.
+-- A flow row's amounts follow from its transactions (ADR-005 §6). pspAmount sums the signed
+-- amounts of its final and reversal events, pspFees their fees, and both are 0 once a failed event
+-- follows a final one; pspNet is the rest. productAmount sums the signed applications.
 INSERT INTO violations
-WITH failed AS (SELECT from_json(m->'rule'->'psp'->'state'->'failed', '["VARCHAR"]') AS states FROM manifest),
-     flow_rows AS (
-        SELECT 'flow' AS f, ref, asset, pspAmount, productAmount, drift, psp, product FROM flow
-        UNION ALL SELECT 'carried', ref, asset, pspAmount, productAmount, drift, psp, product FROM carried
-        UNION ALL SELECT 'breaks', ref, asset, pspAmount, productAmount, drift, psp, product
+WITH flow_rows AS (
+        SELECT 'flow' AS f, ref, asset, pspAmount, pspNet, pspFees, productAmount, drift, psp, product FROM flow
+        UNION ALL SELECT 'carried', ref, asset, pspAmount, pspNet, pspFees, productAmount, drift, psp, product FROM carried
+        UNION ALL SELECT 'breaks', ref, asset, pspAmount, pspNet, pspFees, productAmount, drift, psp, product
                   FROM breaks WHERE leg = 'flow' AND lifecycle <> 'resolved'),
      expected AS (
         SELECT r.*,
-               CASE WHEN list_bool_or(list_transform(r.psp, e -> list_contains(failed.states, e.state)
-                         AND e.tx > list_min(list_transform(list_filter(r.psp, x -> x.amount IS NOT NULL), x -> x.tx))))
-                    THEN 0
-                    ELSE coalesce(list_sum(list_transform(r.psp, e -> e.amount)), 0) END AS expected_psp,
+               list_bool_or(list_transform(r.psp, e -> e.role = 'failed'
+                   AND e.tx > list_min(list_transform(list_filter(r.psp, x -> x.role = 'final'), x -> x.tx))))
+                   IS TRUE AS failed_after_final,
+               CASE WHEN failed_after_final THEN 0
+                    ELSE coalesce(list_sum(list_transform(list_filter(r.psp, e -> e.role IN ('final', 'reversal')), e -> e.amount)), 0) END AS expected_psp,
+               CASE WHEN failed_after_final THEN 0
+                    ELSE coalesce(list_sum(list_transform(list_filter(r.psp, e -> e.role IN ('final', 'reversal')), e -> coalesce(e.fees, 0))), 0) END AS expected_fees,
                coalesce(list_sum(list_transform(r.product, p -> p.amount)), 0) AS expected_product
-        FROM flow_rows r, failed)
+        FROM flow_rows r)
 SELECT 'row_amounts', f || ' ' || ref || '/' || asset,
-       'psp ' || pspAmount || ' product ' || productAmount || ' drift ' || drift
-       || ', transactions give psp ' || expected_psp || ' product ' || expected_product
+       'psp ' || pspAmount || ' (net ' || coalesce(pspNet::VARCHAR, 'missing') || ', fees ' || coalesce(pspFees::VARCHAR, 'missing')
+       || ') product ' || productAmount || ' drift ' || drift
+       || ', transactions give psp ' || expected_psp || ' (fees ' || expected_fees || ') product ' || expected_product
 FROM expected
-WHERE pspAmount <> expected_psp OR productAmount <> expected_product OR drift <> pspAmount - productAmount;
+WHERE pspAmount <> expected_psp OR pspFees IS DISTINCT FROM expected_fees OR pspNet IS DISTINCT FROM pspAmount - pspFees
+   OR productAmount <> expected_product OR drift <> pspAmount - productAmount;
+
+-- Each PSP transaction has a role, and an amount exactly when it crosses the perimeter.
+INSERT INTO violations
+SELECT 'row_psp_role', 'flow ' || ref || '/' || asset || ' tx ' || e.tx,
+       'role ' || coalesce(e.role, 'missing') || ', amount ' || coalesce(e.amount::VARCHAR, 'none') || ', holdAmount ' || coalesce(e.holdAmount::VARCHAR, 'none')
+FROM (SELECT ref, asset, unnest(psp) AS e FROM flow)
+WHERE e.role IS NULL OR e.role NOT IN ('final', 'reversal', 'fee', 'pending', 'failed')
+   OR (e.role IN ('final', 'reversal', 'fee')) <> (e.amount IS NOT NULL)
+   OR (e.role IN ('pending', 'failed')) <> (e.holdAmount IS NOT NULL);
 
 INSERT INTO violations
 SELECT 'row_impact', 'carried ' || ref || '/' || asset, 'a carried row has no impact'
@@ -332,7 +373,7 @@ FROM flow f, m_run r
 WHERE NOT CASE
     WHEN f.class IN ('matched', 'in_progress', 'failed') THEN f.outcome = 'ok'
     WHEN f.class IN ('under_applied', 'over_applied', 'orphan_application', 'reversed_after_application') THEN f.outcome = 'break'
-    WHEN f.class = 'unapplied_payment' THEN (f.outcome = 'pending' AND f.breakOn > r.day)
+    WHEN f.class IN ('unapplied_payment', 'unapplied_reversal') THEN (f.outcome = 'pending' AND f.breakOn > r.day)
                                          OR (f.outcome = 'break' AND f.breakOn <= r.day)
     WHEN f.class = 'applied_before_final' THEN f.outcome = 'pending' AND f.breakOn > r.day
     ELSE false END
@@ -352,7 +393,11 @@ SELECT 'row_class', 'flow ' || ref || '/' || asset, class || ' with psp ' || psp
 FROM flow
 WHERE NOT CASE
     WHEN class IN ('unapplied_payment', 'in_progress', 'failed') THEN productAmount = 0
-    WHEN class = 'matched' THEN productAmount <> 0 AND productAmount = pspAmount
+    -- a payment refunded or charged back in full, and booked so, is matched at 0 = 0
+    WHEN class = 'matched' THEN productAmount = pspAmount
+         AND (productAmount <> 0 OR list_bool_or(list_transform(psp, e -> e.role = 'reversal')) IS TRUE)
+    WHEN class = 'unapplied_reversal' THEN productAmount > pspAmount
+         AND list_bool_or(list_transform(psp, e -> e.role = 'reversal')) IS TRUE
     WHEN class = 'under_applied' THEN productAmount <> 0 AND productAmount < pspAmount
     WHEN class = 'over_applied' THEN productAmount <> 0 AND productAmount > pspAmount
     ELSE productAmount <> 0 END;
@@ -368,11 +413,14 @@ WHERE (outcome IN ('pending', 'break') AND drift = 0)
 INSERT INTO violations
 SELECT 'row_break_on', 'flow ' || f.ref || '/' || f.asset,
        f.class || ': breakOn ' || coalesce(f.breakOn::VARCHAR, 'missing') || ', firstSeen ' || coalesce(f.firstSeen::VARCHAR, 'missing')
-       || ' + grace ' || coalesce(CASE WHEN f.class = 'unapplied_payment' THEN g.product_grace ELSE g.psp_grace END::VARCHAR, '?')
+       || ' + grace ' || coalesce(CASE WHEN f.class IN ('unapplied_payment', 'unapplied_reversal') THEN g.product_grace ELSE g.psp_grace END::VARCHAR, '?')
 FROM flow f, v_rule g
 WHERE (f.class = 'unapplied_payment' AND f.breakOn IS DISTINCT FROM f.firstSeen + g.product_grace)
    OR (f.class = 'applied_before_final' AND f.breakOn IS DISTINCT FROM f.firstSeen + g.psp_grace)
-   OR (f.class = 'orphan_application' AND f.breakOn IS NOT NULL AND f.breakOn <> f.firstSeen + g.psp_grace);
+   OR (f.class = 'orphan_application' AND f.breakOn IS NOT NULL AND f.breakOn <> f.firstSeen + g.psp_grace)
+   OR (f.class = 'unapplied_reversal' AND f.breakOn IS DISTINCT FROM
+       timezone(g.tz, list_max(list_transform(list_filter(f.psp, e -> e.role = 'reversal'), e -> e.insertedAt)) AT TIME ZONE 'UTC')::DATE
+       + g.product_grace);
 
 -- A hold's age is counted in the rule's timezone, and its bucket follows from its age. A hold
 -- opened before backfillFrom, on either side, has a null openedAt: its age is a lower bound,
@@ -414,18 +462,18 @@ SELECT 'break_vs_row', b.breakId, 'break ' || b.class || ' ' || b.amount || ', s
 FROM breaks b JOIN stock s USING (side, hold, asset)
 WHERE b.leg = 'stock' AND b.outcome = 'break' AND (b.class <> s.class OR b.amount <> open_dir(s.balance, s.openSign))
 UNION ALL
--- A book break, open or resolved, is its account's paymentAccounts entry as it stands now.
+-- A book break, open or resolved, is its account's fundsBook entry as it stands now.
 SELECT 'break_vs_row', b.breakId,
-       CASE WHEN p.account IS NULL THEN 'no paymentAccounts entry for ' || coalesce(b.account, 'no account') || '/' || b.asset
+       CASE WHEN p.account IS NULL THEN 'no fundsBook entry for ' || coalesce(b.account, 'no account') || '/' || b.asset
             WHEN b.class <> 'unkeyed_payment_movement' OR b.side IS DISTINCT FROM 'psp' OR b.direction NOT IN ('credit', 'debit')
                 THEN 'class ' || b.class || ', side ' || coalesce(b.side, 'missing') || ', direction ' || coalesce(b.direction, 'missing')
-            ELSE 'the break row''s volumes, flow totals or residuals differ from its paymentAccounts entry' END
-FROM breaks b LEFT JOIN m_payment_accounts p USING (account, asset)
+            ELSE 'the break row''s role, volumes, flow totals or residuals differ from its fundsBook entry' END
+FROM breaks b LEFT JOIN m_funds_book p USING (account, asset)
 WHERE b.leg = 'book'
   AND (p.account IS NULL OR b.class <> 'unkeyed_payment_movement' OR b.side IS DISTINCT FROM 'psp'
        OR b.direction IS NULL OR b.direction NOT IN ('credit', 'debit')
-       OR (b.inputPrev, b.input, b.outputPrev, b.output, b.flowCredits, b.flowDebits, b.creditResidual, b.debitResidual)
-          IS DISTINCT FROM (p.inputPrev, p.input, p.outputPrev, p.output, p.flowCredits, p.flowDebits, p.creditResidual, p.debitResidual));
+       OR (b.role, b.inputPrev, b.input, b.outputPrev, b.output, b.flowCredits, b.flowDebits, b.creditResidual, b.debitResidual)
+          IS DISTINCT FROM (p.role, p.inputPrev, p.input, p.outputPrev, p.output, p.flowCredits, p.flowDebits, p.creditResidual, p.debitResidual));
 
 -- Keys and order (results doc §8) -----------------------------------------------------------
 
@@ -434,7 +482,7 @@ SELECT 'unique_key', 'flow ' || ref || '/' || asset, count(*) || ' rows' FROM fl
 UNION ALL SELECT 'unique_key', 'carried ' || ref || '/' || asset, count(*) || ' rows' FROM carried GROUP BY ref, asset HAVING count(*) > 1
 UNION ALL SELECT 'unique_key', 'stock ' || side || '/' || hold || '/' || asset, count(*) || ' rows' FROM stock GROUP BY side, hold, asset HAVING count(*) > 1
 UNION ALL SELECT 'unique_key', 'breaks ' || breakId, count(*) || ' rows' FROM breaks GROUP BY breakId HAVING count(*) > 1
-UNION ALL SELECT 'unique_key', 'paymentAccounts ' || account || '/' || asset, count(*) || ' entries' FROM m_payment_accounts GROUP BY account, asset HAVING count(*) > 1;
+UNION ALL SELECT 'unique_key', 'fundsBook ' || account || '/' || asset, count(*) || ' entries' FROM m_funds_book GROUP BY account, asset HAVING count(*) > 1;
 
 -- Rows are read in file order; each file's key must never go backwards.
 INSERT INTO violations
