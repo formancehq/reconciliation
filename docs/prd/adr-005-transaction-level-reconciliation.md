@@ -1032,6 +1032,41 @@ on the batch or fee-invoice id is possible when both ledgers carry it, with no e
 Tolerance-based or many-to-many matching is not considered (decision 6, and it would break the
 byte-identical result files of decision 15).
 
+**Open, for the owner (no decision): what Fragment's 1:1 reconciliation does that this design does
+not.** Read on 2026-11-24 from [reconcile-payments](https://fragment.dev/docs/reconcile-payments),
+[sync-payments](https://fragment.dev/docs/sync-payments.md) and
+[query-data](https://fragment.dev/docs/query-data.md); the groups and balances pages were not read.
+
+- **How it works.** External transactions (bank, PSP) are synced into Fragment as `Tx` objects of a
+  *Link*: pulled for the native Links (Stripe, Increase, Unit), pushed with `syncCustomTxs`
+  otherwise, settled transactions only, amount and date immutable. Reconciliation happens **at
+  write time**: `reconcileTx` replaces `addLedgerEntry`, and the line on a linked account names the
+  `Tx` it reconciles, 1:1. The entry takes the `Tx`'s `posted` date and its `externalId` as
+  idempotency key, and a reconciled `Tx` cannot be deleted. The docs do not say that the amounts
+  must be equal. `unreconciledTxs` lists the synced transactions with no entry, at any time. A
+  *clearing account* (schema flag) is `pending` while non-zero and `cleared` at zero, like our
+  holds. A `reconciliationReport` counts pending clearing accounts and unreconciled transactions per
+  age bucket (hourly, daily or monthly, 1 to 7 intervals). Stripe fees: each balance transaction
+  becomes two `Tx`, `_gross` and `_fee`, reconciled in one entry.
+- **What it lacks, against this design.** No pending lifecycle (settled only), no business object
+  on the other side, no cut-off or period, counts but no amounts, no statement or continuity
+  identity, no break classes and no alerting; its unreconciled lists and counts are eventually
+  consistent.
+- **What it has that this design does not**, and what we could take:
+  1. **Per-payment fees, gross and fee reconciled together.** This is the `psp.feeAccounts` option
+     above. A competitor already ships it, which argues for V1 rather than an option.
+  2. **Open items visible between two runs.** This design only answers once a day. Two ways, none
+     chosen: an intraday run (the cut on `inserted_at` does not depend on the cadence, but the
+     rewind's cost per run has to be measured at that cadence), or a live, unsigned API listing of
+     the references seen since the last cut with no counterpart, with no statement and no alert.
+  3. **Preventing an unmatched application at write time** is the ledger's job, not
+     reconciliation's: a Numscript or product-side guard that applies only a payment the PSP
+     finalised. The booking guide (EN-2335) can recommend it; `orphan_application` stays the
+     detective check.
+
+  Not taken: configurable age buckets. Ours stay a constant of the engine (decision 3), and the
+  DuckDB queries regroup `ageDays` as a reader wants.
+
 **Nothing blocks the tickets.** An accounting-period model (fiscal calendars) can come later as a
 new `periodType` without changing this design.
 
