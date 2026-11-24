@@ -4,7 +4,7 @@
 taken so far are in §10.
 **Tracking:** epic [EN-2315](https://formance-team.atlassian.net/browse/EN-2315). Wave 1 is EN-2316
 to EN-2323 (R1–R8). Wave 2 is EN-2333 (R9, the period alert's day list), EN-2334 (R10 rewind oracle test),
-EN-2335 (R11 booking guide) and EN-2353 (R12, the DuckDB tool for the result files). EN-3402 (R13) carries decision 27, and EN-3403 holds its asks to Connectivity. EN-3404 (R14) carries decision 28, the break annotations, EN-3405 (R15) decision 29, the run's counts on the alert events, and EN-3406 (R16) decision 30, the live lookup of one reference. EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
+EN-2335 (R11 booking guide) and EN-2353 (R12, the DuckDB tool for the result files). EN-3402 (R13) carries decision 27, and EN-3403 holds its asks to Connectivity. EN-3404 (R14) carries decision 28, the break annotations, EN-3405 (R15) decision 29, the run's counts on the alert events, EN-3406 (R16) decision 30, the live lookup of one reference, EN-3407 (R17) decision 31, the preview of the day so far, and EN-3408 (R18) decision 33, a dedicated storage destination. EN-2324 reuses the result store for `stale_holds`. Ledger asks (§9):
 L2 EN-2327 (done), L6 EN-2328, L7 EN-2329, L8 EN-2326, L9 EN-2356, L10 EN-2369, L5 EN-2331 (closed). EN-2336, the checkpoint read
 penalty this design does not depend on, is fixed by formancehq/ledger#2165.
 **Date:** 2026-09-28
@@ -673,6 +673,12 @@ V1 runs no periodic proof against a checkpoint.
   annotations, and the latest current run's row when that run carried it or broke on it. It is
   provisional: unsigned, no file, no alert. It works for any reference, whatever its age, since
   the ledgers keep every transaction and the metadata reaches a purged hold's (§2.2).
+- **A preview of the day so far** (decision 31). `GET /v3/rules/{id}/preview` reads the flow from
+  the latest current run's cut to head on both ledgers, filtered on the key as a run reads it,
+  joins it with that run's carried items and the lookups by key, and returns flow rows with the
+  run's classes, mostly pending, each with the `breakId` the next run will use. No stock, no
+  rewind, no capture, no file, no alert: it is provisional, cached five minutes per rule, and
+  shares the read slots with the jobs. The daily run stays the only record.
 - **Arithmetic.** Exact integer minor units, colors summed per asset once the rewind, which folds
   per color, is done (§5), and multi-asset through `asset: "*"` as in ADR-004.
 - **Schedule and alerts reuse the existing model.**
@@ -764,9 +770,14 @@ V1 runs no periodic proof against a checkpoint.
    next period's first day has a current run, so a job that stops after its manifest and before
    the alert loses nothing, even on the period's last day: the next tick includes that day. A
    closed period's alert is never rebuilt.
-3. **Where the files go: the backup object storage, under a recon prefix.**
-   - Recon writes to the S3 or Azure destination the rule's **product ledger** backs up to, under
-     `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. Files and paths:
+3. **Where the files go: the backup object storage, under a recon prefix, or a dedicated
+   destination.**
+   - By default, recon writes to the S3 or Azure destination the rule's **product ledger** backs
+     up to, under `{bucketID}/reconciliation/rule={ruleId}/day={YYYY-MM-DD}/run={runId}/`. A
+     deployment may set a **dedicated destination** instead (decision 33), `--lettering-destination`
+     with its credentials, on the same drivers: every rule then writes under
+     `{destination}/reconciliation/rule={ruleId}/…`, the layout below the prefix unchanged, and the
+     lifecycle rule of item 4 is required and checked there. Files and paths:
      [results reference
      §2](../technical/transaction-level-results.md#2-where-the-files-are-and-which-run-counts).
    - **The customer is the first reader.** They analyse the files with their own tools (jq, DuckDB,
@@ -1074,7 +1085,7 @@ for the Ledger team to weigh against its own users:
 | 1 | The shared key | The **PSP payment reference**, carried by the transactions on both ledgers. Authorization/capture, where both sides share the authorization number, is the special case (§2.1, §6). |
 | 2 | The state vocabulary | **None on the PSP side by default**: the events are read from the postings on the declared accounts (decision 27). A `state` block stays an optional override, `formance.com/accounting.transition` by default. The product side declares its `final` set only, since no class reads a product `pending` or `failed` state (§6). |
 | 3 | Grace and ageing | `grace` is per side: `product.grace` 1 day and `psp.grace` 7 days by default (decisions 16, 20). Both graces are rule parameters, to calibrate (§6). The age buckets 0–1, 2–7, 8–30 and > 30 days are a constant of the engine, not a rule parameter (owner, 2026-10-01). |
-| 4 | Results storage | The **backup object storage**, under a recon prefix outside `backups/`, kept **90 days** by default. The retention is a deployment setting (`--lettering-retention`), not a rule parameter, and one storage lifecycle rule on `{bucketID}/reconciliation/`, required at installation, deletes the files; recon deletes none. A longer legal retention raises both. No longer-kept monthly anchors (§7). |
+| 4 | Results storage | The **backup object storage** by default, or a dedicated destination (decision 33), under a recon prefix outside `backups/`, kept **90 days** by default. The retention is a deployment setting (`--lettering-retention`), not a rule parameter, and one storage lifecycle rule on `{bucketID}/reconciliation/`, required at installation, deletes the files; recon deletes none. A longer legal retention raises both. No longer-kept monthly anchors (§7). |
 | 5 | Scope | Transaction-level reconciliation is **in the reconciliation project's scope**. The PRD is amended accordingly. |
 | 6 | Tolerance per payment (fees, FX) | **None.** The comparison is exact, and any difference is a break. A fee the PSP keeps is not a difference: it is counted through `fees` (decision 27, §6). |
 | 7 | Refunds and chargebacks | **On the payment's row, signed**, on both sides, when the PSP links them to the payment (`adjusts` or its key) and the product books them with its reference (decision 27). A refund under a reference of its own, with no link, stays its own 1-to-1 pair (§6). |
@@ -1100,6 +1111,9 @@ for the Ledger team to weigh against its own users:
 | 28 | Annotating and accepting a break | **Annotations by `breakId` in the control state, never in the files** (owner, 2026-11-24, after the review of the result files). Assign, comment, explain, accept with a reason. An accepted break stays a break in the files but leaves the alert's trigger while its amount is unchanged; a changed amount lapses the acceptance. A P1 acceptance takes two people when P8 (EN-2852) is enabled. In V1: it brings back the per-break acceptance removed on 2026-10-02 (feature inventory D9), now that its store is designed (the ControlState port, EN-1932). Size M, [EN-3404](https://formance-team.atlassian.net/browse/EN-3404) (§6). |
 | 29 | Telling automations about a run | **Counts on the existing alert events, once per run** (owner, 2026-11-24). No event per break: a daily run produces its breaks at once, so per-break events gain no time, cost a control-ledger write and a POST each (thousands on a day a mapping breaks) and would need their own rules for acceptance. No list of `breakId` either: the consumer calls the breaks API for details anyway, and the event's size stays fixed. Size S, [EN-3405](https://formance-team.atlassian.net/browse/EN-3405) (§6). |
 | 30 | "Where does this payment or invoice stand?" | **A live join of one reference, in V1** (owner, 2026-11-24). Both ledgers read by indexed equality up to head, through the run's lookup code; the official row of the latest current run shown next to it. Not a per-run index file, which needs up to 90 file reads and stops at the retention; not the open items only, which says nothing of a lettered payment. Size S–M, [EN-3406](https://formance-team.atlassian.net/browse/EN-3406) (§6). |
+| 31 | Open items between two runs | **A provisional preview of the day so far, in V1** (owner, 2026-11-24): the flow since the latest cut, joined with the carried items, cached five minutes, no record and no alert. Intraday runs rejected: each would be a signed record. Size M, [EN-3407](https://formance-team.atlassian.net/browse/EN-3407) (§6). |
+| 32 | Output format | **Gzipped NDJSON only in V1** (owner, 2026-11-24). Parquet beside it, if a customer needs it, after V1: a second format doubles the files kept byte-identical (decision 15), and DuckDB, a warehouse or a script read the NDJSON already. |
+| 33 | Where the files go | **The backup destination by default, or a dedicated destination per deployment, in V1** (owner, 2026-11-24): decouples recon from the ledger's backup operations and lets a customer receive the files in their own bucket. A deployment setting, not a rule parameter. Size S, [EN-3408](https://formance-team.atlassian.net/browse/EN-3408) (§7 item 3). |
 | 27 | Fees, refunds and chargebacks, for every connector | **The PSP side declares account roles, and the amounts are read from the postings** (2026-11-24, after the design partner's feedback of 2026-11-17 and a review of seven connector mappings). `psp.funds` and `psp.fees` (address patterns) form the perimeter; a payment's PSP amount is the signed net inflow into it over the payment's transactions, linked through `psp.adjusts` (`formance.com/accounting.adjusts-reference` by default) or the payment's key; the events are inferred from the postings, with `state` as an optional override; PSP holds become recommended; the product side counts signed hold movements, oriented by each hold kind's `settles` (`in` or `out`), and books a refund or a chargeback with the payment's reference; one class is added, `unapplied_reversal`; late reversals are looked up by key and by `adjusts`. The values ship as a **preset per connector**. Each connector keeps its own accounts and vocabulary, with no normalisation; what it must give is G1–G4 of the [connector checklist](../technical/transaction-level-reconciliation.md#mapping-a-connector-for-reconciliation). Replaces decisions 2, 6, 7, 17 and 23 where they differ (§6, §8). Size M, [EN-3402](https://formance-team.atlassian.net/browse/EN-3402); the asks to Connectivity are [EN-3403](https://formance-team.atlassian.net/browse/EN-3403). The reasoning and the review of the mappings are in the [draft](../drafts/lettering-fees-reversals-and-results.md) §1. |
 
 **Open, to review with the Connectivity team (no decision):** decision 23 assumes that the `funds`

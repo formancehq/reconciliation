@@ -51,7 +51,9 @@
 ```
 
 - **The bucket** is the backup destination of the rule's **product ledger**, under a prefix next to
-  `backups/`. `{bucketID}` is that ledger's bucket.
+  `backups/`. `{bucketID}` is that ledger's bucket. A deployment may set a dedicated destination
+  instead (ADR-005 decision 33): the files are then under `{destination}/reconciliation/`, with the
+  same layout below it.
 - **Access.** Recon's API lists a run's files with a pre-signed URL for each. A deployment that owns
   the storage can also read the prefix directly. The `key=value` path segments let DuckDB, Spark or
   Athena read `rule`, `day` and `run` as columns.
