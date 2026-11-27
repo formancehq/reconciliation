@@ -536,7 +536,9 @@ function SnapshotCard({
             : "Ledger balance"}
         </dd>
         <dt className="text-muted-foreground">Balance</dt>
-        <dd className="font-mono break-all">{source.balance}</dd>
+        <dd className="font-mono break-all" title={`${source.balance} ${source.asset} (exact, minor units)`}>
+          {formatAmount(source.balance, source.asset)}
+        </dd>
         <dt className="text-muted-foreground">Presence</dt>
         <dd>
           <Presence present={source.present && !missing} />
@@ -550,7 +552,9 @@ function SnapshotCard({
         {contribution !== undefined && (
           <>
             <dt className="text-muted-foreground">Contribution</dt>
-            <dd className="font-mono break-all">{contribution}</dd>
+            <dd className="font-mono break-all" title={`${contribution} ${source.asset} (exact, minor units)`}>
+              {formatAmount(contribution, source.asset)}
+            </dd>
           </>
         )}
       </dl>
