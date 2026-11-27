@@ -20,8 +20,10 @@ import (
 )
 
 type entity struct {
-	version controlstate.Version
-	fields  map[string]string
+	version  controlstate.Version
+	fields   map[string]string
+	balances map[string]int64
+	live     map[string]string
 }
 
 type outcome struct {
@@ -60,7 +62,7 @@ func (s *Store) Load(ctx context.Context, keys ...controlstate.Key) (controlstat
 	snap := make(controlstate.Snapshot, len(keys))
 	for _, k := range keys {
 		e := s.entities[k]
-		snap[k] = controlstate.Entry{Key: k, Version: e.version, Fields: maps.Clone(e.fields)}
+		snap[k] = controlstate.Entry{Key: k, Version: e.version, Fields: maps.Clone(e.fields), Balances: nonEmpty(e.balances), Live: maps.Clone(e.live)}
 	}
 	return snap, nil
 }
@@ -104,11 +106,47 @@ func (s *Store) apply(uow controlstate.UnitOfWork) error {
 			return fmt.Errorf("%w: %s is at version %d, expected %d", controlstate.ErrConflict, p.Key, got, p.Version)
 		}
 	}
+	// Check every move before writing anything: a unit given back must be held.
 	for _, w := range uow.Put {
-		s.entities[w.Key] = entity{
-			version: s.entities[w.Key].version + 1,
-			fields:  maps.Clone(w.Fields),
+		for asset, d := range w.Move {
+			if got := s.entities[w.Key].balances[asset]; got+d < 0 {
+				return fmt.Errorf("%w: %s holds %d %s, cannot give back %d", controlstate.ErrConflict, w.Key, got, asset, -d)
+			}
 		}
+	}
+	for _, w := range uow.Put {
+		prev := s.entities[w.Key]
+		balances := maps.Clone(prev.balances)
+		for asset, d := range w.Move {
+			if balances == nil {
+				balances = map[string]int64{}
+			}
+			balances[asset] += d
+		}
+		s.entities[w.Key] = entity{
+			version:  prev.version + 1,
+			fields:   maps.Clone(w.Fields),
+			balances: balances,
+			live:     prev.live,
+		}
+	}
+	for _, b := range uow.Bumps {
+		e := s.entities[b.Key]
+		e.balances = maps.Clone(e.balances)
+		if e.balances == nil {
+			e.balances = map[string]int64{}
+		}
+		for asset, d := range b.Add {
+			e.balances[asset] += d
+		}
+		e.live = maps.Clone(e.live)
+		for k, v := range b.Live {
+			if e.live == nil {
+				e.live = map[string]string{}
+			}
+			e.live[k] = v
+		}
+		s.entities[b.Key] = e
 	}
 	for _, r := range uow.Records {
 		r.Fields = maps.Clone(r.Fields)
@@ -141,14 +179,31 @@ func fingerprint(uow controlstate.UnitOfWork) ([sha256.Size]byte, error) {
 	}
 	expect := slices.SortedFunc(slices.Values(uow.Expect), func(a, b controlstate.Precondition) int { return byKey(a.Key, b.Key) })
 	put := slices.SortedFunc(slices.Values(uow.Put), func(a, b controlstate.Write) int { return byKey(a.Key, b.Key) })
+	bumps := slices.SortedFunc(slices.Values(uow.Bumps), func(a, b controlstate.Bump) int { return byKey(a.Key, b.Key) })
 	// encoding/json sorts map keys, so equal fields encode equally.
 	b, err := json.Marshal(struct {
 		Expect  []controlstate.Precondition
 		Put     []controlstate.Write
+		Bumps   []controlstate.Bump
 		Records []controlstate.Record
-	}{expect, put, uow.Records})
+	}{expect, put, bumps, uow.Records})
 	if err != nil {
 		return [sha256.Size]byte{}, fmt.Errorf("fingerprint: %w", err)
 	}
 	return sha256.Sum256(b), nil
+}
+
+// nonEmpty returns a copy of the positive balances, or nil when there is none.
+func nonEmpty(m map[string]int64) map[string]int64 {
+	var out map[string]int64
+	for k, v := range m {
+		if v == 0 {
+			continue
+		}
+		if out == nil {
+			out = map[string]int64{}
+		}
+		out[k] = v
+	}
+	return out
 }

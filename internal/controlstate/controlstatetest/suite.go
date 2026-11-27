@@ -60,6 +60,8 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"InvalidUnitOfWork", testInvalidUnitOfWork},
 		{"LoadReturnsCopies", testLoadReturnsCopies},
 		{"CommitReturnsNewVersions", testCommitReturnsNewVersions},
+		{"StatusMoveGuardsTheStatus", testStatusMoveGuardsTheStatus},
+		{"BumpKeepsTheVersion", testBumpKeepsTheVersion},
 	} {
 		t.Run(tc.name, func(t *testing.T) { tc.run(t, newStore(t)) })
 	}
@@ -465,4 +467,63 @@ func testCommitReturnsNewVersions(t *testing.T, s Store) {
 	got, err = s.Commit(t.Context(), replace(controlstate.Entry{Key: rule, Version: 1}, map[string]string{"name": "stale"}))
 	require.ErrorIs(t, err, controlstate.ErrConflict)
 	assert.Nil(t, got)
+}
+
+// A status transition moves the alert's status unit. Giving back a unit the
+// alert does not hold fails, even at the right version: the move proves the
+// status it leaves.
+func testStatusMoveGuardsTheStatus(t *testing.T, s Store) {
+	k := newKey("alert")
+	_, err := s.Commit(t.Context(), controlstate.UnitOfWork{
+		IdempotencyKey: newIdemKey(),
+		Expect:         []controlstate.Precondition{controlstate.ExpectAbsent(k)},
+		Put:            []controlstate.Write{{Key: k, Fields: map[string]string{"status": "open"}, Move: map[string]int64{"OPEN": 1}}},
+	})
+	require.NoError(t, err)
+	opened := load(t, s, k)
+	assert.Equal(t, map[string]int64{"OPEN": 1}, opened.Balances)
+
+	ack := controlstate.UnitOfWork{
+		IdempotencyKey: newIdemKey(),
+		Expect:         []controlstate.Precondition{controlstate.Expect(opened)},
+		Put:            []controlstate.Write{{Key: k, Fields: map[string]string{"status": "ack"}, Move: map[string]int64{"OPEN": -1, "ACK": 1}}},
+	}
+	require.NoError(t, commitErr(t.Context(), s, ack))
+	acked := load(t, s, k)
+	assert.Equal(t, controlstate.Version(2), acked.Version)
+	assert.Equal(t, map[string]int64{"ACK": 1}, acked.Balances)
+
+	err = commitErr(t.Context(), s, controlstate.UnitOfWork{
+		IdempotencyKey: newIdemKey(),
+		Expect:         []controlstate.Precondition{controlstate.Expect(acked)},
+		Put:            []controlstate.Write{{Key: k, Fields: map[string]string{"status": "ack"}, Move: map[string]int64{"OPEN": -1, "ACK": 1}}},
+	})
+	require.ErrorIs(t, err, controlstate.ErrConflict, "the alert is no longer open")
+	got := load(t, s, k)
+	assert.Equal(t, controlstate.Version(2), got.Version)
+	assert.Equal(t, map[string]int64{"ACK": 1}, got.Balances)
+}
+
+// A repeat failure bumps the alert's occurrences without changing its
+// version, so an acknowledgement planned on the version read still commits.
+func testBumpKeepsTheVersion(t *testing.T, s Store) {
+	k := newKey("alert")
+	readByOperator := create(t, s, k, map[string]string{"status": "open"})
+
+	for i := range 2 {
+		require.NoError(t, commitErr(t.Context(), s, controlstate.UnitOfWork{
+			IdempotencyKey: newIdemKey(),
+			Bumps:          []controlstate.Bump{{Key: k, Add: map[string]int64{"OCC": 1}, Live: map[string]string{"lastSeenAt": strconv.Itoa(i)}}},
+		}))
+	}
+	bumped := load(t, s, k)
+	assert.Equal(t, controlstate.Version(1), bumped.Version)
+	assert.Equal(t, map[string]int64{"OCC": 2}, bumped.Balances)
+	assert.Equal(t, "1", bumped.Live["lastSeenAt"])
+
+	require.NoError(t, commitErr(t.Context(), s, replace(readByOperator, map[string]string{"status": "ack"})))
+	got := load(t, s, k)
+	assert.Equal(t, controlstate.Version(2), got.Version)
+	assert.Equal(t, map[string]int64{"OCC": 2}, got.Balances, "a write keeps the counters")
+	assert.Equal(t, "1", got.Live["lastSeenAt"], "a write keeps the live fields")
 }

@@ -52,6 +52,12 @@ type Entry struct {
 	Key     Key
 	Version Version
 	Fields  map[string]string // nil when the entity is absent
+	// Balances holds the entity's units per asset, other than its version:
+	// a status unit (OPEN, ACK, ACCEPTED) or a counter (OCC). Nil when empty.
+	Balances map[string]int64
+	// Live holds the fields a Bump sets without changing the version, such
+	// as lastSeenAt. Nil when empty.
+	Live map[string]string
 }
 
 // Exists reports whether the entity exists.
@@ -84,9 +90,24 @@ func ExpectAbsent(k Key) Precondition { return Precondition{Key: k, Version: Abs
 
 // Write replaces the fields of an entity. Its key must carry a precondition
 // in the same unit of work, so every write proves the state it replaces.
+//
+// Move changes the entity's balance of each asset in the same write: +1 takes
+// a unit, -1 gives one back. A unit the entity does not hold cannot be given
+// back: the unit of work then fails with ErrConflict. A status transition is
+// a move, so it also proves the status it leaves.
 type Write struct {
 	Key    Key
 	Fields map[string]string
+	Move   map[string]int64
+}
+
+// Bump adds to a counter of an entity and sets live fields, without changing
+// its version, so a concurrent write on the same entity does not conflict.
+// An evaluation uses it for an alert's occurrences and lastSeenAt.
+type Bump struct {
+	Key  Key
+	Add  map[string]int64  // asset -> positive amount
+	Live map[string]string // fields set as they are
 }
 
 // Record is an immutable fact committed with the unit of work, such as a
@@ -113,6 +134,7 @@ type UnitOfWork struct {
 	IdempotencyKey string
 	Expect         []Precondition
 	Put            []Write
+	Bumps          []Bump
 	Records        []Record
 }
 
@@ -122,7 +144,7 @@ func (u UnitOfWork) Validate() error {
 	if u.IdempotencyKey == "" {
 		return fmt.Errorf("%w: empty idempotency key", ErrInvalid)
 	}
-	if len(u.Put) == 0 && len(u.Records) == 0 {
+	if len(u.Put) == 0 && len(u.Records) == 0 && len(u.Bumps) == 0 {
 		return fmt.Errorf("%w: nothing to commit", ErrInvalid)
 	}
 	expected := make(map[Key]Version, len(u.Expect))
@@ -146,6 +168,30 @@ func (u UnitOfWork) Validate() error {
 		written[w.Key] = true
 		if _, ok := expected[w.Key]; !ok {
 			return fmt.Errorf("%w: write to %s without a precondition", ErrInvalid, w.Key)
+		}
+		for asset, d := range w.Move {
+			if err := validAsset(asset); err != nil {
+				return err
+			}
+			if d == 0 {
+				return fmt.Errorf("%w: zero move of %s on %s", ErrInvalid, asset, w.Key)
+			}
+		}
+	}
+	for _, b := range u.Bumps {
+		if err := validKey(b.Key); err != nil {
+			return err
+		}
+		if len(b.Add) == 0 {
+			return fmt.Errorf("%w: bump of %s adds nothing", ErrInvalid, b.Key)
+		}
+		for asset, d := range b.Add {
+			if err := validAsset(asset); err != nil {
+				return err
+			}
+			if d <= 0 {
+				return fmt.Errorf("%w: bump of %s by %d on %s", ErrInvalid, asset, d, b.Key)
+			}
 		}
 	}
 	// An absent precondition only guards a create. A ledger can prove that an
@@ -180,6 +226,24 @@ func (u UnitOfWork) Versions() Versions {
 		out[w.Key] = expected[w.Key] + 1
 	}
 	return out
+}
+
+// VersionAsset is the asset a Ledger adapter counts versions in. It cannot
+// be moved or bumped directly.
+const VersionAsset = "V"
+
+// validAsset accepts a Ledger asset name without precision, other than the
+// version asset: [A-Z][A-Z0-9]{0,16}.
+func validAsset(a string) error {
+	if a == VersionAsset || len(a) == 0 || len(a) > 17 || a[0] < 'A' || a[0] > 'Z' {
+		return fmt.Errorf("%w: asset %q", ErrInvalid, a)
+	}
+	for _, c := range a[1:] {
+		if (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+			return fmt.Errorf("%w: asset %q", ErrInvalid, a)
+		}
+	}
+	return nil
 }
 
 func validKey(k Key) error {
