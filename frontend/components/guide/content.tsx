@@ -66,7 +66,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					caption="Reconcile tabs"
 					columns={['Tab', 'Purpose']}
 					rows={[
-						[<strong key="overview">Overview</strong>, 'Clickable shortcuts to open alerts, handled alerts, rules, and the most recent break activity'],
+						[<strong key="overview">Overview</strong>, 'What needs you now: alerts to handle (open), alerts in progress (acknowledged but still failing), rule health (failing, never evaluated, running on demand only), and the active alerts with their gap'],
 						[<strong key="rules">Rules</strong>, <span key="rules-purpose">The checks you define, with an enable toggle and one-click evaluation (see <AppLink href="/guide?section=rules">Rules & templates</AppLink>)</span>],
 						[<strong key="alerts">Alerts</strong>, <span key="alerts-purpose">The inbox of breaks to triage and resolve (see <AppLink href="/guide?section=alerts">Alerts & resolution</AppLink>)</span>],
 						[<strong key="audit">Audit</strong>, <span key="audit-purpose">The signed, independently verifiable record of what Reconcile did, and who did it (see <AppLink href="/guide?section=audit">Audit & verification</AppLink>)</span>],
@@ -76,15 +76,15 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 				<SubHeading id="v3-rec-first-run">A practical first reconciliation</SubHeading>
 				<ol className="list-decimal space-y-1 pl-7 text-sm">
 					<li>Open <strong>Rules</strong>, select <strong>New rule</strong>, and choose the template card that describes the control you need.</li>
-					<li>Use <strong>Load example</strong>{' '}to see a complete configuration, then replace the sample ledgers, account selectors, assets, and amounts.</li>
-					<li>Choose the <strong>alert grouping period</strong>{' '}and <strong>run mode</strong>. These answer different questions: how failures share an alert, and what triggers an evaluation.</li>
+					<li>Use <strong>Reset example</strong>{' '}to see a complete configuration, then replace the sample ledgers, account selectors, assets, and amounts.</li>
+					<li>Choose the <strong>alert grouping period</strong>{' '}and <strong>run mode</strong>. These answer different questions: how failures share an alert, and what triggers an evaluation. A new rule runs every 15 minutes by default; keep a schedule unless the rule is only meant to be run by hand.</li>
 					<li>Confirm each account set or source matches exactly what you expect before creating the rule.</li>
-					<li>Turn monitoring <strong>On</strong>{' '}and select <strong>Run now</strong>. The latest result appears in the rule header.</li>
+					<li>Turn monitoring <strong>On</strong>{' '}and select <strong>Run now</strong>. The rule row shows the latest result and how far off it is, for example <em>Off by 50.00 USD · tolerance 10.00 USD</em>.</li>
 					<li>If it fails, select the result to open the alert, inspect the evidence, and record the operational decision.</li>
 				</ol>
 
 				<Callout kind="tip" title="Navigation behaves like the rest of the app">
-					Rule names and alert fingerprints open their detail screens. The in-page back arrow returns to the
+					Rule names and alert titles open their detail screens. The in-page back arrow returns to the
 					list, and the browser Back button also restores the previous Reconcile tab, filter, or detail view.
 				</Callout>
 
@@ -106,7 +106,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 				id="rules"
 				eyebrow="Reconciliation"
 				title="Rules & templates"
-				intro="A rule is an operational control you want to keep true. The Rules tab shows each control as a distinct card: its human-readable comparison, latest result, monitoring state, and Run now action. Select the card header to open its current configuration and combined activity timeline."
+				intro="A rule is an operational control you want to keep true. The Rules tab lists each control with its schedule, its latest result and gap, its live alerts, its monitoring switch and Run now; rules that need attention come first. Select a rule to open its configuration and combined activity timeline."
 			>
 				<SubHeading id="v3-rec-templates">Templates</SubHeading>
 				<GuideTable
@@ -114,26 +114,28 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					columns={['Template', 'Use it to…', 'Typical setup']}
 					rows={[
 						[<strong key="equation">Balance equation</strong>, 'prove that a signed set of balances nets to zero', 'Two to thirty-two named sources, each with a sign, and a tolerance per asset'],
-						[<strong key="rate">Exchange-rate bounds</strong>, 'prove a derived rate stays inside a band', 'A base source and a quote source, with inclusive rate bounds'],
 						[<strong key="consensus">Source consensus</strong>, 'prove independently sourced balances agree', 'Every named source must report, and the widest spread must stay within tolerance'],
-						[<strong key="coverage">Coverage-ratio bounds</strong>, 'prove one portfolio covers another', 'A numerator and a denominator portfolio, with inclusive ratio bounds'],
 						[<strong key="bounds">Balance bounds</strong>, 'detect when one account set leaves an allowed range', 'A minimum reserve, a maximum exposure, or both, per asset'],
-						[<strong key="stale">Stale holds</strong>, 'catch held funds that outstay their deadline', 'A set of hold accounts plus the metadata key carrying each deadline, with a fallback maximum age'],
 					]}
 				/>
+				<Callout kind="info" title="Three templates in this release">
+					Balance equation, source consensus and balance bounds ship first. Exchange-rate bounds, coverage-ratio
+					bounds and stale holds come in later releases; a rule already built on one of them keeps working and
+					can still be edited or duplicated.
+				</Callout>
 
 				<SubHeading id="v3-rec-create">Creating a rule</SubHeading>
 				<P>
 					Click <strong>New rule</strong>. The template cards explain the control before you select it, and
-					the form then adapts to it: signed named sources for an equation, one account set with limits for
-					bounds, a base and a quote for a rate, a hold set and a deadline key for stale holds.{' '}
-					<strong>Load example</strong>{' '}fills in a complete configuration you can inspect and replace.
+					the form then adapts to it: signed named sources for an equation, several sources that must agree
+					for a consensus, one account set with limits for bounds.{' '}
+					<strong>Reset example</strong>{' '}fills in a complete configuration you can inspect and replace.
 					Give the rule an operational name and choose a severity that reflects the response it should
 					trigger.
 				</P>
 				<ul className="list-disc space-y-1 pl-5 text-sm">
-					<li><strong>Amounts are integers in the asset&apos;s minor units</strong> (for example, cents). A tolerance of <Code>0</Code> means an exact match.</li>
-					<li><strong>Accounts are chosen by an address selector.</strong>{' '}A trailing <Code>*</Code> matches by prefix (<Code>assets:cash:*</Code>); without it the address matches exactly.</li>
+					<li><strong>You enter amounts as integers in the asset&apos;s minor units</strong> (for example, cents: <Code>1000</Code> for <Code>USD/2</Code> is 10.00 USD). Everywhere else the UI shows them in major units, such as <em>12,000.00 USD</em>; hover a balance to see the exact integer. A tolerance of <Code>0</Code> means an exact match.</li>
+					<li><strong>Accounts are chosen by an address selector.</strong>{' '}A trailing <Code>*</Code> matches by prefix (<Code>assets:cash:*</Code>); without it the address matches exactly. The selector cannot be empty or a bare <Code>*</Code>, which would read every account of the ledger.</li>
 					<li><strong>Metadata conditions</strong>{' '}narrow a source further: pick an indexed account-metadata key and an operator suited to its type. Use <em>equals</em> / <em>exists</em> for text and booleans, plus <em>&lt;</em> <em>≤</em> <em>&gt;</em> <em>≥</em> <em>between</em> for numbers and datetimes. Indexed keys are offered live, read through the reconciliation service&apos;s ledger connection.</li>
 				</ul>
 
@@ -161,7 +163,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 						[<strong key="exact">= Exact match</strong>, 'Every configured tolerance is zero; any difference opens a break'],
 						[<strong key="tolerated">≈ Within tolerance</strong>, 'At least one non-zero tolerance is allowed; a difference opens a break only outside that band'],
 						[<strong key="asset">Asset badge</strong>, 'The single asset this source declares — or every asset the set holds, which fans the rule out to one result per asset'],
-						[<strong key="tolerance">Tolerance badge</strong>, 'The allowed deviation for each asset, expressed in that asset’s minor units'],
+						[<strong key="tolerance">Tolerance</strong>, 'The allowed deviation for each asset, shown in major units (10.00 USD)'],
+						[<strong key="show-accounts">Show accounts</strong>, 'In rule details, lists the ledger accounts the source selects right now, with their live balances: the quickest way to check a selector, or to see which accounts are behind a break'],
 						[<strong key="mapping-warning">Asset mapping warning</strong>, 'A metadata key represents a different asset from the configured tolerance; review the mapping before relying on the rule'],
 					]}
 				/>
@@ -171,15 +174,6 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					<Code>account.metadata[&quot;value_known.toto&quot;]</Code> → <Code>USD/2</Code>. The key may
 					contain the asset name, as in <Code>reported.USD</Code>, but it does not have to. Other assets may
 					exist on the selected account; the source reads only the declared one. The account-selection
-					metadata filters above remain separate: they choose accounts, while this key supplies the value
-					being reconciled.
-				</P>
-				<P>
-					Choose <strong>one metadata key</strong>{' '}and independently state the <strong>one asset</strong>{' '}
-					represented by its integer value, such as <Code>account.metadata[&quot;value_known.toto&quot;]</Code> →{' '}
-					<Code>USD/2</Code>. The key may contain the asset name, as in <Code>reported.USD</Code>, but it does
-					not have to. Other assets may exist on the selected account; this rule checks only the declared
-					asset. Configure another rule for each additional metadata-key/asset pair. The account-selection
 					metadata filters above remain separate: they choose accounts, while this key supplies the value
 					being reconciled.
 				</P>
@@ -198,7 +192,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					Adding an asset to the bounds table is what starts checking it.
 				</Callout>
 
-				<SubHeading id="v3-rec-stale-holds">Watch for holds that overstay</SubHeading>
+				<SubHeading id="v3-rec-stale-holds">Watch for holds that overstay (later release)</SubHeading>
 				<P>
 					A hold ties up money that isn’t spent yet — money in escrow, a reserve against a pending settlement,
 					a deposit awaiting release. The <strong>stale holds</strong>{' '}template watches the clock on
@@ -246,8 +240,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					rows={[
 						[<strong key="continuous">Continuous</strong>, 'Matching failed observations keep returning to one ongoing alert thread; there is no period rollover'],
 						[<strong key="periodic">Daily / weekly / monthly</strong>, 'Within the active period, matching observations share one alert that can be resolved and reopened. After rollover, the next matching failure creates a new alert'],
-						[<strong key="on-demand">On demand</strong>, 'The rule evaluates only when someone selects Run now'],
-						[<strong key="automatic">Automatic schedule</strong>, 'A preset or custom cron expression triggers evaluations in the configured time zone'],
+						[<strong key="on-demand">On demand</strong>, 'The rule evaluates only when someone selects Run now. The list flags it as “On demand only”: an enabled rule without a schedule looks active but checks nothing by itself'],
+						[<strong key="automatic">Automatic schedule</strong>, 'A preset or custom cron expression triggers evaluations in the configured time zone. The default for a new rule is every 15 minutes; the list shows the next run, for example “Runs every 15 minutes (UTC) · next 15:15”'],
 					]}
 				/>
 				<Callout kind="info" title="Period does not mean evaluation frequency">
@@ -265,13 +259,17 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					evaluation, so views refresh themselves briefly rather than assuming an instant update.
 				</P>
 				<P>
-					A failed latest-result badge is a shortcut to the alert raised by that run. Select the rule name
-					or the rest of its header to open rule details instead.
+				A failed latest-result badge is a shortcut to the alert raised by that run. Select the rule name
+				or the rest of its header to open rule details instead. Under the name, each rule shows its
+				schedule and its latest gap; a rule that never ran says <em>Never evaluated</em>. The list is
+				sorted by <strong>Needs attention</strong>: failing rules first, then those that never ran, then
+				passing ones. Delete sits in the <strong>…</strong>{' '}menu of each rule, away from Run now.
 				</P>
 
 				<SubHeading id="v3-rec-manage">Editing, duplicating & finding rules</SubHeading>
 				<ul className="list-disc space-y-1 pl-5 text-sm">
-					<li>Open a rule, then use <strong>Edit</strong>{' '}to change its name, configuration, or severity. The alert period is fixed after creation.</li>
+					<li>Open a rule, then use <strong>Edit</strong>{' '}to change its name, configuration, severity or schedule. The alert period is fixed after creation.</li>
+					<li><strong>If someone else changed the rule</strong>{' '}since you opened it, your change is refused rather than written over theirs. The page says so and loads the latest version; apply your change again on top of it.</li>
 					<li><strong>Duplicate</strong>{' '}is beside Edit in rule details and starts a new rule prefilled from the existing one.</li>
 					<li>Use search, template, severity, monitoring-status, and sort controls to narrow the list. Pagination appears when more than one page of matching rules exists.</li>
 				</ul>
@@ -312,10 +310,12 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 				<SubHeading id="v3-rec-timeline">Reading the timeline</SubHeading>
 				<P>
 					Activity is listed newest first. Each evaluation shows its result (<em>pass</em>, <em>fail</em>, or
-					<em> error</em>), whether it was triggered manually or on schedule, its period, duration, and the
-					rule revision it used. A failing evaluation receipt carries the{' '}
-					<strong>evidence</strong>{' '}behind the verdict: for a parity check, the balance on each side, their
-					difference, and the tolerance; for a threshold, the balance and the bound it crossed.
+					<em> error</em>) and its gap, whether it was triggered manually or on schedule, its period,
+					duration, and the rule revision it used. A failing evaluation receipt carries the{' '}
+					<strong>evidence</strong>{' '}behind the verdict, in major units: for an equation, each source&apos;s
+					balance and contribution, how far off it is, and the tolerance; for bounds, the balance and the
+					limit it crossed. Start and end times, the instant the balances were read, and the sequence number
+					are folded under <strong>Technical details</strong>.
 				</P>
 				<P>
 					Alert consequences carrying the same <strong>evaluation id</strong> are grouped with that evaluation
@@ -326,7 +326,9 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 				<SubHeading id="v3-rec-captures-vs">Revisions and history coverage</SubHeading>
 				<P>
 					Every saved configuration has a revision. Past evaluations stay tied to the revision actually used,
-					and a warning appears when it differs from the current revision. Creation, update, and deletion
+					and a warning appears when it differs from the current revision. A configuration change takes its
+					place in the rule&apos;s sequence, between two evaluations: every evaluation after it uses the new
+					revision. The sequence is the rule&apos;s ordered audit trail. Creation, update, and deletion
 					entries can expose their complete snapshots; field differences are shown only when both adjacent
 					snapshots have been loaded.
 				</P>
@@ -353,16 +355,19 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 			>
 				<SubHeading id="v3-rec-inbox">The inbox</SubHeading>
 				<P>
-					The inbox opens on <strong>All</strong>{' '}alerts and can be narrowed to <strong>Open</strong>,{' '}
-					<strong>Acknowledged</strong>, or <strong>Resolved</strong>; each status filter includes a count.
-					The Overview shows only recent open alerts, while its <strong>All alerts</strong>{' '}link returns here
-					without narrowing the inbox. The catalogue filters follow the Rules list: search by fingerprint or
+					The inbox opens on <strong>Active</strong>{' '}alerts: open ones and acknowledged ones, because an
+					acknowledged alert is still failing. It can be narrowed to <strong>Open</strong>,{' '}
+					<strong>Acknowledged</strong>, or <strong>Resolved</strong>, or widened to <strong>All</strong>; each
+					status filter includes a count. The Overview lists the active alerts, and its{' '}
+					<strong>All alerts</strong>{' '}link returns here. The catalogue filters follow the Rules list: search by fingerprint or
 					rule name, narrow by rule, severity, or status, then sort by latest, oldest, severity, or observation
 					count. Selection, grouping, refresh, and bulk actions sit on a separate operations row so they are
 					not confused with filters. Each compact card has a header for severity, status, rule, and recurrence,
-					followed by a human-readable comparison from the latest observation. Select the fingerprint
-					or open header space to view alert details; select the <strong>rule name</strong>{' '}to open that
-					rule&apos;s <AppLink href="/guide?section=activity">combined activity timeline</AppLink>.
+					followed by a human-readable comparison from the latest observation. Each alert is titled by its
+					rule and its gap, for example <em>GL cash matches Stripe balance — Off by 50.00 USD</em>; the
+					fingerprint (what failed, such as <Code>asset:USD/2</Code>) and the alert period follow. Select the
+					title or open header space to view alert details; select <strong>Open the rule</strong>{' '}to open
+					that rule&apos;s <AppLink href="/guide?section=activity">combined activity timeline</AppLink>.
 				</P>
 				<ul className="list-disc space-y-1 pl-5 text-sm">
 					<li><strong>Selection-based triage:</strong>{' '}tick one or more actionable cards and the labelled acknowledge, resolve, accept, and snooze controls appear in the operations row. This is also the bulk workflow.</li>
@@ -420,16 +425,16 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					caption="Resolution actions"
 					columns={['Action', 'Use it when', 'Effect']}
 					rows={[
-						[<strong key="acknowledge">Acknowledge</strong>, 'You are investigating', 'Marks the break as being worked; notifications keep flowing'],
-						[<strong key="resolve">Resolve</strong>, 'The break is fixed', 'Closes it; adding booking transaction references records it as fixed by booking'],
-						[<strong key="accept">Accept</strong>, 'It is a known, tolerated difference', 'Closes it as accepted by the business (a note is required)'],
-						[<strong key="snooze">Snooze / Unsnooze</strong>, 'You are waiting on something (e.g. a bank file)', 'Mutes notifications until a future time you set, then lifts the mute'],
+						[<strong key="acknowledge">Acknowledge</strong>, 'You are investigating', 'Marks the break as being worked. It stays active, and counted as in progress, while the rule keeps failing; notifications keep flowing'],
+						[<strong key="resolve">Resolve</strong>, 'The break is fixed', 'Closes it. If the next evaluation still fails, the alert reopens. Adding booking transaction references records it as fixed by booking'],
+						[<strong key="accept">Accept</strong>, 'It is a known, tolerated difference', 'Closes it as accepted by the business until an end date you choose (30 days by default, 90 at most). It stays closed while the gap keeps the same amount and sign; a different gap reopens it. A note is required'],
+						[<strong key="snooze">Snooze / Unsnooze</strong>, 'You are waiting on something (e.g. a bank file)', 'Mutes notifications until a future time you set, then lifts the mute. The alert itself stays active'],
 					]}
 				/>
 				<P>
 					You can act from alert details or select one or more alerts in the inbox to reveal the same labelled
 					actions. The action form shows how many alerts will be changed. Every action records the
-					actor and an optional note; acceptance requires a reason, resolve can include comma-separated
+					actor and an optional note; acceptance requires a reason and an end date, resolve can include comma-separated
 					booking transaction references, and snooze requires a future time. Alert details show these
 					decisions together under <strong>Lifecycle</strong>.
 				</P>
