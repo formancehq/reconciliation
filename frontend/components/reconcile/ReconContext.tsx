@@ -63,11 +63,9 @@ interface ReconContextValue {
 const Ctx = createContext<ReconContextValue | null>(null)
 
 export function ReconProvider({ children }: { children: ReactNode }) {
-  const [nav, setNav] = useState<ReconNav>(() =>
-    typeof window === "undefined"
-      ? { tab: "overview" }
-      : (parseReconHash(window.location.hash) ?? { tab: "overview" })
-  )
+  // Server and first client render agree on the overview; the hash is read
+  // after mount (below), so a deep link no longer breaks hydration.
+  const [nav, setNav] = useState<ReconNav>({ tab: "overview" })
   const navRef = useRef(nav)
   const [health, setHealth] = useState<HealthStatus>("checking")
   const [dataVersion, setDataVersion] = useState(0)
@@ -98,6 +96,11 @@ export function ReconProvider({ children }: { children: ReactNode }) {
   // restore internal navigation whenever browser history is traversed. Both
   // events are observed because pushState entries are browser-dependent here.
   useEffect(() => {
+    const initial = parseReconHash(window.location.hash)
+    if (initial && !sameReconNav(navRef.current, initial)) {
+      navRef.current = initial
+      setNav(initial)
+    }
     const desired = buildReconHash(navRef.current)
     if (
       window.location.hash.startsWith("#reconcile") &&

@@ -36,7 +36,7 @@ function ReconcileInner() {
     <div className="flex h-full flex-col">
       {/* Tab bar + health pill (Explore-Ledger tab style). */}
       <div className={`${TABBAR_ROW} flex flex-wrap items-center gap-2`}>
-        <Tabs value={nav.tab} onValueChange={(v) => setTab(v as ReconTab)} className="min-w-0 flex-1">
+        <Tabs value={nav.tab} onValueChange={(v) => setTab(v as ReconTab)} className="min-w-[22rem] flex-1">
           <TabsList className={TABBAR_LIST}>
             {TABS.map((t) => (
               <TabsTrigger key={t.id} value={t.id} className={TABBAR_TRIGGER}>

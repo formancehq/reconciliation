@@ -275,7 +275,9 @@ export function RuleDetail({
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {rule && <span>{templateLabel(rule.templateKind)}</span>}
             {rule && <span>·</span>}
-            {rule && <span>{PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType}</span>}
+            {rule && <span>{periodLabel(rule.periodType)}</span>}
+            {rule && <span>·</span>}
+            {rule && <span>{scheduleLabel(rule.schedule)}</span>}
             {rule && !isZeroTime(rule.updatedAt) && (
               <>
                 <span>·</span>

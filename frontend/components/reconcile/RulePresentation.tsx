@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/card"
 import { evidenceLabel, summarizeQuery, type NamedSource, type Rule } from "@/lib/recon"
 import { describeRule, effectiveSourceKind, sourceName } from "@/lib/recon/templates"
+import { SourceAccounts } from "./SourceAccounts"
 
 export function RulePresentation({
   rule,
@@ -121,6 +122,9 @@ export function NamedSourceCard({
           </>
         )}
       </dl>
+      {!compact && effectiveSourceKind(source) === "ledger" && source.ledger && (
+        <SourceAccounts ledger={source.ledger} query={source.query} asset={source.asset} />
+      )}
     </Card>
   )
 }

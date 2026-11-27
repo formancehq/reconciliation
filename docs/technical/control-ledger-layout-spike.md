@@ -120,9 +120,16 @@ Limits on the prototype store:
 | Alert actions | Each action says what it does. Accept asks for an end date (30 days by default, 90 at most), sent as `expiresAt`. |
 | Technical details | The timeline folds start, end, read instant ("Balances read at", no longer "PIT") and sequence under "Technical details". Account queries read `gl:cash` instead of raw JSON. |
 
-Not done:
-- "Test on current balances" in the form needs a preview endpoint (ADR-005 decision 31).
-- The P3 items: header overlap, delete placement, links to the ledger.
+P3, done next:
+- **Header.** The brand stacks in the sidebar instead of spilling over the tab bar. The tab bar keeps its four tabs whole, and the endpoint and health controls wrap below them.
+- **Delete.** In the rules list, Delete moved behind a "…" menu, away from Run now.
+- **Back to the ledger.** Each source card in the rule detail has "Show accounts", which lists the accounts the source selects in its ledger, with live balances in major units.
+- **Rule detail header.** It reads "One alert per day · On demand only".
+- **Alert history.** It says "audit record #…", "evaluation …" and "not notified", no longer "tx", "eval" and "suppressed".
+- **Deep links.** A link such as `#reconcile?view=rules&rule=…` no longer breaks hydration: the hash is read after mount.
+- **Rule names.** At narrow widths they keep at least 16rem; the controls wrap below.
+
+Still open: "Test on current balances" in the form needs a preview endpoint (ADR-005 decision 31), and the overview's period status comes in phase 4.
 
 ## Review fixes
 

@@ -189,17 +189,17 @@ function AlertEventRow({
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-muted-foreground">
         {event.transactionId && (
           <span title="Control-ledger transaction id of this write (in the signed audit chain)">
-            tx {event.transactionId}
+            audit record #{event.transactionId}
           </span>
         )}
         {event.evaluationID && (
           <span title={event.evaluationID}>
-            eval {event.evaluationID.slice(0, 8)}
+            evaluation {event.evaluationID.slice(0, 8)}
           </span>
         )}
         {!event.notify && (
           <span className="rounded-full border px-1.5 py-px" title="Recorded for audit but not published to the message bus">
-            suppressed
+            not notified
           </span>
         )}
       </div>

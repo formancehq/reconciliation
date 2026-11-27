@@ -99,8 +99,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 	return (
 		<div className="flex h-screen">
 			<aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
-				<div className="flex h-16 items-center border-b px-4">
-					<Brand />
+				<div className="flex min-h-16 items-center border-b px-4 py-2">
+					<Brand stacked />
 				</div>
 				<nav className="flex-1 space-y-1 p-3">
 					<p className="px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Ledger Clarity</p>

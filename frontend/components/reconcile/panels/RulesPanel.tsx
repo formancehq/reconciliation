@@ -14,7 +14,15 @@ import {
   Search,
   ChevronRight,
   Trash2,
+  MoreHorizontal,
 } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -598,7 +606,7 @@ export function RuleListItem({
         }}
         className="flex-wrap items-center border-b bg-muted/20 px-3 py-3 transition-colors hover:cursor-pointer hover:bg-muted/40 sm:px-4"
       >
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[16rem] flex-1">
           <button
             type="button"
             onClick={onOpen}
@@ -685,19 +693,26 @@ export function RuleListItem({
                   : "Turn monitoring on before running this rule"}
               </TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  onClick={onDelete}
+            {/* Delete sits behind a menu, away from Run now: one stray click
+                must not open a destructive action. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="icon-sm" variant="ghost" aria-label={`More actions for ${rule.name}`}>
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={onOpen}>Open rule</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={onDelete}
+                  className="whitespace-nowrap text-destructive-foreground focus:text-destructive-foreground"
                   aria-label={`Delete ${rule.name}`}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Delete this rule</TooltipContent>
-            </Tooltip>
+                  <Trash2 className="h-3.5 w-3.5" /> Delete rule…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </ItemHeader>
