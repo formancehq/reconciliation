@@ -31,6 +31,7 @@ func contractVersionMiddleware(version models.ContractVersion) func(http.Handler
 
 func mountRuleAndAlertRoutes(r chi.Router, b backend.Backend) {
 	r.Post("/rules", createRuleHandler(b))
+	r.Post("/rules/preview", previewRuleHandler(b))
 	r.Get("/rules", listRulesHandler(b))
 	r.Get("/rules/{ruleID}", getRuleHandler(b))
 	r.Patch("/rules/{ruleID}", patchRuleHandler(b))

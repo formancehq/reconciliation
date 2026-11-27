@@ -253,6 +253,21 @@ func (mr *MockServiceMockRecorder) PatchRule(ctx, id, patch any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PatchRule", reflect.TypeOf((*MockService)(nil).PatchRule), ctx, id, patch)
 }
 
+// PreviewRule mocks base method.
+func (m *MockService) PreviewRule(ctx context.Context, req *service.PreviewRuleRequest) (*service.RulePreview, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PreviewRule", ctx, req)
+	ret0, _ := ret[0].(*service.RulePreview)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PreviewRule indicates an expected call of PreviewRule.
+func (mr *MockServiceMockRecorder) PreviewRule(ctx, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PreviewRule", reflect.TypeOf((*MockService)(nil).PreviewRule), ctx, req)
+}
+
 // ResolveAlert mocks base method.
 func (m *MockService) ResolveAlert(ctx context.Context, id uuid.UUID, req *service.ResolveAlertRequest) (*models.Alert, error) {
 	m.ctrl.T.Helper()

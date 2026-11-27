@@ -78,7 +78,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					<li>Open <strong>Rules</strong>, select <strong>New rule</strong>, and choose the template card that describes the control you need.</li>
 					<li>Use <strong>Reset example</strong>{' '}to see a complete configuration, then replace the sample ledgers, account selectors, assets, and amounts.</li>
 					<li>Choose the <strong>alert grouping period</strong>{' '}and <strong>run mode</strong>. These answer different questions: how failures share an alert, and what triggers an evaluation. A new rule runs every 15 minutes by default; keep a schedule unless the rule is only meant to be run by hand.</li>
-					<li>Confirm each account set or source matches exactly what you expect before creating the rule.</li>
+					<li>Confirm each account set or source matches exactly what you expect, then select <strong>Test on current balances</strong>: it evaluates the configuration now and shows the verdict and the gap, without saving the rule or opening an alert.</li>
 					<li>Turn monitoring <strong>On</strong>{' '}and select <strong>Run now</strong>. The rule row shows the latest result and how far off it is, for example <em>Off by 50.00 USD · tolerance 10.00 USD</em>.</li>
 					<li>If it fails, select the result to open the alert, inspect the evidence, and record the operational decision.</li>
 				</ol>
@@ -131,7 +131,9 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					for a consensus, one account set with limits for bounds.{' '}
 					<strong>Reset example</strong>{' '}fills in a complete configuration you can inspect and replace.
 					Give the rule an operational name and choose a severity that reflects the response it should
-					trigger.
+					trigger. Before saving, <strong>Test on current balances</strong>{' '}runs the configuration once
+					on today&apos;s balances: the result shows under the form, marked as not saved, and turns stale
+					as soon as you edit the configuration again.
 				</P>
 				<ul className="list-disc space-y-1 pl-5 text-sm">
 					<li><strong>You enter amounts as integers in the asset&apos;s minor units</strong> (for example, cents: <Code>1000</Code> for <Code>USD/2</Code> is 10.00 USD). Everywhere else the UI shows them in major units, such as <em>12,000.00 USD</em>; hover a balance to see the exact integer. A tolerance of <Code>0</Code> means an exact match.</li>

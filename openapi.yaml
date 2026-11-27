@@ -58,6 +58,32 @@ paths:
       security:
         - Authorization: [reconciliation:read]
 
+  /rules/preview:
+    post:
+      summary: Test a rule configuration on the current balances
+      description: >-
+        Evaluates a rule configuration on the current balances without saving
+        anything: no rule, evaluation, capture or alert is written. The
+        configuration is validated as on create (400 VALIDATION). A failure
+        while reading the sources is not a request error: it is a preview with
+        result ERROR, as the same failure on a saved rule would be an ERROR
+        evaluation.
+      operationId: previewRule
+      tags: [reconciliation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RulePreviewRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RulePreviewResponse' }
+        default: { $ref: '#/components/responses/ErrorResponse' }
+      security:
+        - Authorization: [reconciliation:write]
   /rules/{ruleID}:
     parameters: [{ $ref: '#/components/parameters/RuleID' }]
     get:
@@ -1686,6 +1712,41 @@ components:
         error: { type: string }
         costUnits: { type: integer, format: int64 }
         createdAt: { type: string, format: date-time }
+    RulePreviewRequest:
+      type: object
+      description: The template and its spec, as a create or an edit sends them. Other rule fields are ignored.
+      required: [templateKind, templateSpec]
+      properties:
+        templateKind: { $ref: '#/components/schemas/TemplateKind' }
+        templateSpec:
+          oneOf:
+            - $ref: '#/components/schemas/BalanceEquationSpec'
+            - $ref: '#/components/schemas/ExchangeRateBoundsSpec'
+            - $ref: '#/components/schemas/SourceConsensusSpec'
+            - $ref: '#/components/schemas/CoverageRatioBoundsSpec'
+            - $ref: '#/components/schemas/StaleHoldsSpec'
+            - $ref: '#/components/schemas/BalanceBoundsSpec'
+    RulePreview:
+      type: object
+      required: [result, pit, startedAt, endedAt]
+      properties:
+        result: { type: string, enum: [PASS, FAIL, ERROR] }
+        evidence:
+          description: Same format as an evaluation's evidence.
+          oneOf:
+            - type: array
+              items: { $ref: '#/components/schemas/Outcome' }
+            - type: object
+              additionalProperties: true
+        error: { type: string }
+        pit: { type: string, format: date-time, description: The instant the preview evaluated at. }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+    RulePreviewResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/RulePreview' }
     EvaluationResponse:
       type: object
       required: [data]

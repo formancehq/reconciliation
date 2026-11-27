@@ -36,6 +36,8 @@ import type {
   EvaluationResponse,
   RuleActivitiesResponse,
   RulePatchRequest,
+  RulePreviewRequest,
+  RulePreviewResponse,
   RuleRequest,
   RuleResponse,
   RulesResponse,
@@ -261,6 +263,15 @@ export const reconClient = {
   },
   async deleteRule(id: string) {
     await reconRequest<void>("DELETE", `/rules/${encodeURIComponent(id)}`)
+  },
+  /** Dry run of a configuration on the current balances; nothing is saved. */
+  async previewRule(body: RulePreviewRequest) {
+    const response = await reconRequest<RulePreviewResponse>(
+      "POST",
+      "/rules/preview",
+      { body }
+    )
+    return response.data
   },
   async evaluateRule(id: string, body?: EvaluateRuleRequest) {
     const response = await reconRequest<EvaluationResponse>(

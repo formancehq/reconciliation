@@ -155,6 +155,47 @@ func TestEvaluateRule_Nominal(t *testing.T) {
 	require.Equal(t, string(models.EvaluationPass), got.Data.Result)
 }
 
+func TestPreviewRule_Nominal(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
+
+	req := &service.PreviewRuleRequest{TemplateKind: models.TemplateBalanceBounds, TemplateSpec: json.RawMessage(`{"x":1}`)}
+	mockSvc.EXPECT().PreviewRule(gomock.Any(), req).Return(&service.RulePreview{
+		Result:   models.EvaluationFail,
+		Evidence: json.RawMessage(`[{"fingerprint":"asset:USD/2","passed":false}]`),
+		PIT:      time.Now().UTC(),
+	}, nil)
+
+	body, _ := json.Marshal(req)
+	r := httptest.NewRequest(http.MethodPost, "/rules/preview", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code, "a preview stores nothing, so it is not a 201")
+	var got sharedapi.BaseResponse[rulePreviewResponse]
+	sharedapi.Decode(t, rec.Body, &got)
+	require.Equal(t, string(models.EvaluationFail), got.Data.Result)
+	require.JSONEq(t, `[{"fingerprint":"asset:USD/2","passed":false}]`, string(got.Data.Evidence))
+}
+
+func TestPreviewRule_RejectsInvalidSpec(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
+
+	mockSvc.EXPECT().PreviewRule(gomock.Any(), gomock.Any()).Return(nil, templates.ErrInvalidSpec)
+
+	r := httptest.NewRequest(http.MethodPost, "/rules/preview", bytes.NewReader([]byte(`{"templateKind":"balance_bounds","templateSpec":{}}`)))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var e sharedapi.ErrorResponse
+	sharedapi.Decode(t, rec.Body, &e)
+	require.EqualValues(t, ErrValidation, e.ErrorCode)
+}
+
 // --- Alert handler tests -----------------------------------------------------
 
 func TestAckAlert_Nominal(t *testing.T) {

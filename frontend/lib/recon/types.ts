@@ -410,6 +410,26 @@ export interface Evaluation {
   createdAt: string
 }
 
+/** POST /rules/preview: the template and spec to test, as a create sends them. */
+export interface RulePreviewRequest {
+  templateKind: TemplateKind
+  templateSpec: unknown
+}
+
+/** A dry run of a configuration on the current balances. Nothing is stored. */
+export interface RulePreview {
+  result: EvaluationResult
+  evidence?: Outcome[] | Record<string, unknown>
+  error?: string
+  pit: string
+  startedAt: string
+  endedAt: string
+}
+
+export interface RulePreviewResponse {
+  data: RulePreview
+}
+
 export interface Capture {
   transactionID: number
   contractVersion: 2

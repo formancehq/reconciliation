@@ -23,6 +23,9 @@ type Service interface {
 	PatchRule(ctx context.Context, id uuid.UUID, patch store.RulePatch) error
 	DeleteRule(ctx context.Context, id uuid.UUID) error
 	EvaluateRule(ctx context.Context, id uuid.UUID, req service.EvaluateRuleRequest) (*models.Evaluation, error)
+	// PreviewRule evaluates a rule configuration on the current balances
+	// without writing anything.
+	PreviewRule(ctx context.Context, req *service.PreviewRuleRequest) (*service.RulePreview, error)
 	ListCaptures(ctx context.Context, ruleID uuid.UUID, q store.GetCapturesQuery) (*bunpaginate.Cursor[models.Capture], error)
 	ListRuleActivities(ctx context.Context, ruleID uuid.UUID, q store.GetRuleActivitiesQuery) (*bunpaginate.Cursor[models.RuleActivity], error)
 

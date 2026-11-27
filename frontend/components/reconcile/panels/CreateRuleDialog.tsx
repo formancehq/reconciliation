@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { AlertTriangle, Loader2, Wand2 } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { AlertTriangle, FlaskConical, Loader2, Wand2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
@@ -28,6 +28,7 @@ import createLogger from "@/lib/logger"
 import {
   allAssets,
   backendValidationText,
+  captureEvidenceOutcomes,
   changeRuleTemplate,
   createRuleFormDraft,
   ReconError,
@@ -44,6 +45,8 @@ import {
   TEMPLATE_META,
   validateRuleForm,
   type RuleFormDraft,
+  type RulePreview,
+  evidenceGap,
   type Rule,
   type Severity,
   type TemplateKind,
@@ -59,6 +62,7 @@ import {
   StaleHoldsEditor,
 } from "../templates/TemplateEditors"
 import { RunTimingFields } from "../RunTimingFields"
+import { EvidenceView, isEvidence } from "../EvidenceView"
 
 const log = createLogger("Recon")
 
@@ -137,6 +141,39 @@ function CreateRuleDialogOpen({
 
   const issues = useMemo(() => validateRuleForm(draft), [draft])
   const backendError = backendValidationText(serverError)
+
+  // A preview belongs to the configuration it tested: any edit makes it stale.
+  const [preview, setPreview] = useState<{ key: string; result: RulePreview } | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+  const configKey = useMemo(() => {
+    try {
+      const request = serializeRuleForm(draft)
+      return JSON.stringify([request.templateKind, request.templateSpec])
+    } catch {
+      return ""
+    }
+  }, [draft])
+  const previewStale = !!preview && preview.key !== configKey
+
+  const runPreview = async () => {
+    setPreviewing(true)
+    setServerError(null)
+    try {
+      const request = serializeRuleForm(draft)
+      const result = await reconClient.previewRule({
+        templateKind: request.templateKind,
+        templateSpec: request.templateSpec,
+      })
+      setPreview({ key: configKey, result })
+    } catch (error) {
+      log.error("Rule preview failed", { error })
+      setPreview(null)
+      if (error instanceof ReconError) setServerError(error)
+      else toast.error("Failed to test the rule")
+    } finally {
+      setPreviewing(false)
+    }
+  }
 
   const changeKind = (kind: TemplateKind) => {
     setDraft((current) => changeRuleTemplate(current, kind, activeLedger))
@@ -388,8 +425,25 @@ function CreateRuleDialogOpen({
               </ul>
             </div>
           )}
+          {preview && (
+            <PreviewResult preview={preview.result} stale={previewStale} />
+          )}
         </div>
-        <DialogFooter className="border-t px-5 py-4">
+        <DialogFooter className="flex-row flex-wrap items-center gap-2 border-t px-5 py-4">
+          <Button
+            variant="outline"
+            className="mr-auto"
+            onClick={runPreview}
+            disabled={issues.length > 0 || previewing || submitting}
+            title="Evaluate this configuration on the current balances. Nothing is saved and no alert is opened."
+          >
+            {previewing ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <FlaskConical className="mr-1.5 h-4 w-4" />
+            )}
+            Test on current balances
+          </Button>
           <Button
             variant="ghost"
             onClick={() => onOpenChange(false)}
@@ -480,5 +534,68 @@ function Field({
       <Label className="text-xs">{label}</Label>
       {children}
     </div>
+  )
+}
+
+const PREVIEW_TONE: Record<RulePreview["result"], string> = {
+  PASS: "border-green-foreground/25 bg-green-background/50",
+  FAIL: "border-destructive/40 bg-destructive/5",
+  ERROR: "border-warning/40 bg-warning/5",
+}
+
+const PREVIEW_TITLE: Record<RulePreview["result"], string> = {
+  PASS: "Passes on the current balances",
+  FAIL: "Fails on the current balances",
+  ERROR: "Could not be evaluated",
+}
+
+/** The verdict of a dry run, with its evidence. Nothing of it was saved. */
+function PreviewResult({ preview, stale }: { preview: RulePreview; stale: boolean }) {
+  const ref = useRef<HTMLElement>(null)
+  // The form is long: bring each new result into view.
+  useEffect(() => {
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+  }, [preview])
+  const outcomes = captureEvidenceOutcomes(preview.evidence)
+  const gap = evidenceGap(preview.evidence)
+  const at = new Date(preview.pit).toLocaleTimeString()
+  return (
+    <section
+      ref={ref}
+      aria-live="polite"
+      className={`space-y-3 rounded-md border p-3 ${PREVIEW_TONE[preview.result]} ${stale ? "opacity-60" : ""}`}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold">{PREVIEW_TITLE[preview.result]}</h3>
+        <span className="text-xs text-muted-foreground">
+          Test at {at} · not saved, no alert opened
+        </span>
+      </div>
+      {stale && (
+        <p className="text-xs text-warning-foreground">
+          The configuration changed since this test. Test again to see the new result.
+        </p>
+      )}
+      {gap && <p className="text-sm">{gap}</p>}
+      {preview.result === "ERROR" && preview.error && (
+        <p className="break-words font-mono text-xs text-muted-foreground">{preview.error}</p>
+      )}
+      {outcomes.length > 0 && (
+        <div className="grid gap-2">
+          {outcomes.map((outcome) => (
+            <div key={outcome.fingerprint} className="min-w-0 rounded-md bg-background/70 p-2">
+              <div className="mb-1 font-mono text-[11px] text-muted-foreground">
+                {outcome.fingerprint}
+              </div>
+              {isEvidence(outcome.evidence) ? (
+                <EvidenceView evidence={outcome.evidence} passed={outcome.passed} compact />
+              ) : (
+                <span className="text-xs">{outcome.passed ? "passes" : "fails"}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }

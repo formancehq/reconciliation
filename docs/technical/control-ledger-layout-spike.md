@@ -131,7 +131,15 @@ P3, done next:
 - **Deep links.** A link such as `#reconcile?view=rules&rule=…` no longer breaks hydration: the hash is read after mount.
 - **Rule names.** At narrow widths they keep at least 16rem; the controls wrap below.
 
-Still open: "Test on current balances" in the form needs a preview endpoint (ADR-005 decision 31), and the overview's period status comes in phase 4.
+Still open: the overview's period status comes in phase 4.
+
+## Test a rule before saving it
+
+`POST /rules/preview` evaluates a rule configuration on the current balances and writes nothing: no rule, evaluation, capture or alert. It takes the `templateKind` and `templateSpec` a create or an edit would send, validates them as a create does (`400 VALIDATION`), and answers `200` with the verdict (`PASS`, `FAIL` or `ERROR`), the evidence in the capture format, and the instant it read. A failure while reading the sources is a preview with result `ERROR`, as it would be an `ERROR` evaluation on a saved rule. `openapi.yaml` documents it; service and handler tests check that the store stays empty.
+
+This is not the lettering preview of ADR-005 decision 31 (`GET /v3/rules/{id}/preview`, the open items of the day so far on a saved rule). It only tests a configuration.
+
+In the create and edit dialog, **Test on current balances** runs it. The result shows under the form, with the gap and each outcome's evidence, marked "not saved, no alert opened". An edit after the test marks the result as stale. Checked in the browser on Ledger `main`: the GL/Stripe rule fails at a 10.00 USD tolerance (off by 50.00 USD), passes at 60.00 USD, and closing the dialog leaves the rule and its timeline unchanged. The dialog footer now keeps its buttons on one row, so none is clipped on a narrow screen.
 
 ## Review fixes
 
