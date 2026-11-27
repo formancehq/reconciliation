@@ -21,7 +21,6 @@ type ruleResponse struct {
 	Name            string            `json:"name"`
 	TemplateKind    string            `json:"templateKind"`
 	TemplateSpec    json.RawMessage   `json:"templateSpec"`
-	CompiledCEL     string            `json:"compiledCEL,omitempty"`
 	Enabled         bool              `json:"enabled"`
 	Severity        string            `json:"severity"`
 	PeriodType      string            `json:"periodType"`
@@ -48,7 +47,6 @@ func renderRule(r *models.Rule) *ruleResponse {
 		Name:            r.Name,
 		TemplateKind:    string(r.TemplateKind),
 		TemplateSpec:    r.TemplateSpec,
-		CompiledCEL:     r.CompiledCEL,
 		Enabled:         r.Enabled,
 		Severity:        string(r.Severity),
 		PeriodType:      string(r.PeriodType),
@@ -83,6 +81,23 @@ func createRuleHandler(b backend.Backend) http.HandlerFunc {
 	}
 }
 
+// ruleETag is the rule's entity tag: its revision, the content hash of its
+// configuration. RFC 0022 makes it the integer version of the control ledger
+// account; the prototype store has no such version, so the spike serves the
+// revision, which changes exactly when the configuration does.
+func ruleETag(rule *models.Rule) string {
+	if rule.Revision == "" {
+		return ""
+	}
+	return `"` + rule.Revision + `"`
+}
+
+func setRuleETag(w http.ResponseWriter, rule *models.Rule) {
+	if tag := ruleETag(rule); tag != "" {
+		w.Header().Set("ETag", tag)
+	}
+}
+
 func getRuleHandler(b backend.Backend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "ruleID"))
@@ -95,6 +110,7 @@ func getRuleHandler(b backend.Backend) http.HandlerFunc {
 			handleServiceErrors(w, r, err)
 			return
 		}
+		setRuleETag(w, rule)
 		api.Ok(w, renderRule(rule))
 	}
 }
@@ -150,6 +166,22 @@ func patchRuleHandler(b backend.Backend) http.HandlerFunc {
 			Notifications: req.Notifications,
 			Labels:        req.Labels,
 		}
+		// If-Match: the caller's view of the rule must still be current. The
+		// prototype checks then writes (not atomic); the control ledger design
+		// makes the check part of the write (reference v{n+1}).
+		if want := r.Header.Get("If-Match"); want != "" && want != "*" {
+			current, err := b.GetService().GetRule(r.Context(), id)
+			if err != nil {
+				handleServiceErrors(w, r, err)
+				return
+			}
+			if tag := ruleETag(current); tag != want {
+				setRuleETag(w, current)
+				api.WriteErrorResponse(w, http.StatusConflict, ErrConflict,
+					fmt.Errorf("rule %s changed since it was read: If-Match %s, current %s", id, want, tag))
+				return
+			}
+		}
 		if err := b.GetService().PatchRule(r.Context(), id, patch); err != nil {
 			handleServiceErrors(w, r, err)
 			return
@@ -161,6 +193,7 @@ func patchRuleHandler(b backend.Backend) http.HandlerFunc {
 			handleServiceErrors(w, r, err)
 			return
 		}
+		setRuleETag(w, rule)
 		api.Ok(w, renderRule(rule))
 	}
 }

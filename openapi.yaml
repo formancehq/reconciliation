@@ -74,9 +74,18 @@ paths:
       description: Changing the operation requires both `templateKind` and its matching typed `templateSpec`.
       operationId: patchRule
       tags: [reconciliation]
+      parameters: [{ $ref: '#/components/parameters/IfMatch' }]
       requestBody: { $ref: '#/components/requestBodies/RulePatch' }
       responses:
         '200': { $ref: '#/components/responses/Rule' }
+        '409':
+          description: The rule changed since the caller read it (`If-Match` no longer matches). The response carries the current `ETag`.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
@@ -519,6 +528,12 @@ components:
       schema:
         type: string
         example: aHR0cHM6Ly9nLnBhZ2UvTmVrby1SYW1lbj9zaGFyZQ==
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: The rule's `ETag` as last read. A stale value answers `409 CONFLICT`.
+      schema: { type: string }
     RuleID:
       name: ruleID
       in: path
@@ -564,6 +579,10 @@ components:
           schema: { $ref: '#/components/schemas/RuleActivitiesCursorResponse' }
     Rule:
       description: OK
+      headers:
+        ETag:
+          description: The rule's entity tag. Send it back in `If-Match` on a PATCH.
+          schema: { type: string }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/RuleResponse' }
@@ -1400,7 +1419,6 @@ components:
         revision: { type: string, description: Content-derived identifier of the effective rule configuration. }
         contractVersion: { $ref: '#/components/schemas/ContractVersion' }
         name: { type: string }
-        compiledCEL: { type: string, readOnly: true }
         enabled: { type: boolean }
         severity: { $ref: '#/components/schemas/Severity' }
         periodType: { $ref: '#/components/schemas/PeriodType' }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,10 +58,11 @@ func TestCreateRule_Nominal(t *testing.T) {
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
+	raw := rec.Body.String()
+	require.NotContains(t, raw, "compiledCEL", "CEL leaves the v3 API (ADR-006)")
 	var got sharedapi.BaseResponse[ruleResponse]
-	sharedapi.Decode(t, rec.Body, &got)
+	sharedapi.Decode(t, strings.NewReader(raw), &got)
 	require.Equal(t, resp.ID.String(), got.Data.ID)
-	require.Equal(t, resp.CompiledCEL, got.Data.CompiledCEL)
 	require.Equal(t, "monthly", got.Data.PeriodType, "rule response must expose periodType")
 }
 
@@ -560,6 +562,48 @@ func TestPatchRule_InvalidBody(t *testing.T) {
 	router.ServeHTTP(rec, r)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// The rule's ETag is its revision. A PATCH whose If-Match is stale answers
+// 409 CONFLICT with the current ETag and writes nothing.
+func TestPatchRule_IfMatchStale(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	mockSvc.EXPECT().GetRule(gomock.Any(), id).Return(&models.Rule{ID: id, Name: "r", Revision: "rev-2"}, nil)
+	// No PatchRule call: the stale write is refused before it reaches the store.
+
+	r := httptest.NewRequest(http.MethodPatch, "/rules/"+id.String(), bytes.NewReader([]byte(`{"name":"mine"}`)))
+	r.Header.Set("If-Match", `"rev-1"`)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Equal(t, `"rev-2"`, rec.Header().Get("ETag"))
+	require.Contains(t, rec.Body.String(), ErrConflict)
+}
+
+func TestPatchRule_IfMatchCurrent(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	gomock.InOrder(
+		mockSvc.EXPECT().GetRule(gomock.Any(), id).Return(&models.Rule{ID: id, Name: "r", Revision: "rev-1"}, nil),
+		mockSvc.EXPECT().PatchRule(gomock.Any(), id, gomock.Any()).Return(nil),
+		mockSvc.EXPECT().GetRule(gomock.Any(), id).Return(&models.Rule{ID: id, Name: "mine", Revision: "rev-2"}, nil),
+	)
+
+	r := httptest.NewRequest(http.MethodPatch, "/rules/"+id.String(), bytes.NewReader([]byte(`{"name":"mine"}`)))
+	r.Header.Set("If-Match", `"rev-1"`)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, `"rev-2"`, rec.Header().Get("ETag"), "the response carries the new ETag")
 }
 
 // --- helpers ---------------------------------------------------------------

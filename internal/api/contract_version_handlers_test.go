@@ -97,11 +97,10 @@ func TestV2CreateRouteScopesRequestAndRendersVersion(t *testing.T) {
 	require.Equal(t, http.StatusCreated, res.Code)
 	var payload struct {
 		Data struct {
-			ContractVersion int    `json:"contractVersion"`
-			CompiledCEL     string `json:"compiledCEL"`
+			ContractVersion int `json:"contractVersion"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &payload))
 	require.Equal(t, 2, payload.Data.ContractVersion)
-	require.Equal(t, "balanceEquation(...) ", payload.Data.CompiledCEL)
+	require.NotContains(t, res.Body.String(), "compiledCEL", "CEL leaves the v3 API (ADR-006)")
 }

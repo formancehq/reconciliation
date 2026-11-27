@@ -26,6 +26,9 @@ const (
 	ErrInvalidID            = "INVALID_ID"
 	ErrMissingOrInvalidBody = "MISSING_OR_INVALID_BODY"
 	ErrValidation           = "VALIDATION"
+	// ErrConflict answers a write whose If-Match no longer matches the entity
+	// (RFC 0022, optimistic concurrency; RFC-0016 maps conflict to 409).
+	ErrConflict = "CONFLICT"
 )
 
 func healthCheckModule() fx.Option {
