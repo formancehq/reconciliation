@@ -63,6 +63,7 @@ import {
   contractVersionOf,
   resourceKey,
   ruleResourceKey,
+  outcomeGap,
   acknowledgeAlert,
   resolveAlert,
   acceptAlert,
@@ -119,8 +120,10 @@ export function AlertsPanel() {
 }
 
 // ── Inbox ────────────────────────────────────────────────────────────────────
-type StatusFilter = "ALL" | AlertStatus
-export const DEFAULT_ALERT_FILTER: StatusFilter = "OPEN"
+// "ACTIVE" is open + acknowledged: an acknowledged alert still fails, so the
+// default view keeps it in sight until it is resolved or accepted.
+type StatusFilter = "ALL" | "ACTIVE" | AlertStatus
+export const DEFAULT_ALERT_FILTER: StatusFilter = "ACTIVE"
 export type AlertSortKey = "latest" | "oldest" | "severity" | "occurrences"
 
 interface InboxData {
@@ -145,7 +148,9 @@ export function filterAndSortAlerts(
   const query = options.query.trim().toLowerCase()
   const filtered = alerts.filter(
     (alert) =>
-      (options.status === "ALL" || alert.status === options.status) &&
+      (options.status === "ALL" ||
+        alert.status === options.status ||
+        (options.status === "ACTIVE" && alert.status !== "RESOLVED")) &&
       (options.ruleID === "all" ||
         alert.ruleID === options.ruleID ||
         ruleResourceKey(alert) === options.ruleID) &&
@@ -227,6 +232,7 @@ function AlertsInbox() {
   const ruleNames = res.data?.ruleNames ?? {}
   const counts = {
     ALL: all.length,
+    ACTIVE: all.filter((a) => a.status !== "RESOLVED").length,
     OPEN: all.filter((a) => a.status === "OPEN").length,
     ACKNOWLEDGED: all.filter((a) => a.status === "ACKNOWLEDGED").length,
     RESOLVED: all.filter((a) => a.status === "RESOLVED").length,
@@ -395,6 +401,7 @@ function AlertsInbox() {
               allValue="ALL"
               width="w-full sm:w-44"
               options={[
+                ["ACTIVE", `Active (${counts.ACTIVE})`],
                 ["OPEN", `Open (${counts.OPEN})`],
                 ["ACKNOWLEDGED", `Acknowledged (${counts.ACKNOWLEDGED})`],
                 ["RESOLVED", `Resolved (${counts.RESOLVED})`],
@@ -493,14 +500,14 @@ function AlertsInbox() {
               title={
                 query
                   ? "No alerts match"
-                  : filter === "OPEN"
-                    ? "No open alerts"
+                  : filter === "OPEN" || filter === "ACTIVE"
+                    ? "No active alerts"
                     : "Nothing here"
               }
             >
               {query
                 ? "Adjust the search or status filter."
-                : filter === "OPEN"
+                : filter === "OPEN" || filter === "ACTIVE"
                   ? "All clear — no open breaks right now."
                   : "No alerts match this filter."}
             </EmptyState>
@@ -641,11 +648,14 @@ export function AlertListItem({
               <button
                 type="button"
                 onClick={onOpen}
-                aria-label={`Open alert ${a.fingerprint}`}
+                aria-label={`Open alert ${ruleName} ${a.fingerprint}`}
                 className="group/alert flex min-w-0 cursor-pointer items-center gap-1.5 text-left"
               >
-                <span className="truncate font-mono text-sm font-medium transition-colors group-hover/alert:text-primary">
-                  {a.fingerprint}
+                <span className="truncate text-sm font-medium transition-colors group-hover/alert:text-primary">
+                  {ruleName}
+                  {alertGap(a) && (
+                    <span className="font-normal text-destructive-foreground"> — {alertGap(a)}</span>
+                  )}
                 </span>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-hover/alert:translate-x-0.5 group-hover/alert:text-primary" />
               </button>
@@ -664,8 +674,16 @@ export function AlertListItem({
                 onClick={onOpenRule}
                 className="cursor-pointer truncate hover:text-primary hover:underline"
               >
-                {ruleName}
+                Open the rule
               </button>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono" title="What failed: the alert's fingerprint">{a.fingerprint}</span>
+              {a.periodID && a.periodID !== "continuous" && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span title="The alert period this alert belongs to">Period {a.periodID}</span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1029,8 +1047,11 @@ function AlertDetail({
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <span className="min-w-0 font-mono text-sm break-all">
-            {alert.fingerprint}
+          <span className="min-w-0 text-sm font-medium break-words">
+            {ruleName ?? alert.ruleID}
+            {alertGap(alert) && (
+              <span className="font-normal text-destructive-foreground"> — {alertGap(alert)}</span>
+            )}
           </span>
           <SeverityBadge severity={alert.severity} />
           <StatusBadge status={alert.status} />
@@ -1050,8 +1071,14 @@ function AlertDetail({
             onClick={() => openRule(alert.ruleID, contractVersion)}
             className="cursor-pointer hover:text-primary hover:underline"
           >
-            Rule: {ruleName ?? alert.ruleID}
+            Open the rule
           </button>
+          <span>·</span>
+          <span className="font-mono" title="What failed: the alert's fingerprint">{alert.fingerprint}</span>
+          <span>·</span>
+          <span>
+            {alert.periodID && alert.periodID !== "continuous" ? `Period ${alert.periodID}` : "Ongoing alert (continuous)"}
+          </span>
           <span>·</span>
           <span>
             {alert.occurrenceCount}× occurrence
@@ -1464,22 +1491,22 @@ const ACTION_META: Record<
 > = {
   ack: {
     title: "Acknowledge alert",
-    desc: "Mark as being investigated. Notifications keep flowing.",
+    desc: "Say you are on it. The alert stays active while the rule keeps failing, and notifications keep flowing.",
     cta: "Acknowledge",
   },
   resolve: {
     title: "Resolve alert",
-    desc: "The break is fixed. Add booking transaction refs to record a fix-by-booking.",
+    desc: "The break is fixed. If the next evaluation still fails, the alert reopens. Add the transactions that fixed it to record a fix by booking.",
     cta: "Resolve",
   },
   accept: {
     title: "Accept alert",
-    desc: "Business acceptance of a known break. A note is required.",
+    desc: "The break is known and acceptable for now. The alert stays closed while the gap keeps the same amount and sign, until the date below; a different gap reopens it. A note is required.",
     cta: "Accept",
   },
   snooze: {
     title: "Snooze alert",
-    desc: "Mute notifications until a future time.",
+    desc: "Mute notifications until a future time. The alert itself stays active.",
     cta: "Snooze",
   },
   unsnooze: {
@@ -1508,10 +1535,16 @@ export function AlertActionDialog({
   const [note, setNote] = useState("")
   const [refs, setRefs] = useState("")
   const [until, setUntil] = useState(defaultSnoozeUntil())
+  // Acceptance window: 30 days by default, 90 at most (RFC 0022).
+  const [acceptUntil, setAcceptUntil] = useState(() => defaultLocalDateTime(30))
   const [busy, setBusy] = useState(false)
 
   const noteRequired = kind === "accept"
-  const untilFuture = kind !== "snooze" || isFuture(until)
+  const acceptWithinWindow =
+    kind !== "accept" ||
+    (isFuture(acceptUntil) &&
+      new Date(acceptUntil).getTime() <= Date.now() + 90 * 24 * 3600 * 1000)
+  const untilFuture = (kind !== "snooze" || isFuture(until)) && acceptWithinWindow
   const valid = !!by.trim() && (!noteRequired || !!note.trim()) && untilFuture
   const verb =
     kind === "ack"
@@ -1545,6 +1578,7 @@ export function AlertActionDialog({
       return acceptAlert(id, {
         by: by.trim(),
         note: note.trim(),
+        expiresAt: new Date(acceptUntil).toISOString(),
       })
     if (kind === "unsnooze")
       return unsnoozeAlert(id, {
@@ -1634,6 +1668,25 @@ export function AlertActionDialog({
               />
             </div>
           )}
+          {kind === "accept" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="recon-alert-accept-until" className="text-sm">
+                Accepted until{" "}
+                <span className="font-normal text-muted-foreground">— 90 days at most</span>
+              </Label>
+              <Input
+                id="recon-alert-accept-until"
+                type="datetime-local"
+                value={acceptUntil}
+                onChange={(e) => setAcceptUntil(e.target.value)}
+              />
+              {!acceptWithinWindow && (
+                <p className="text-xs text-destructive-foreground">
+                  Pick a date in the future, within 90 days.
+                </p>
+              )}
+            </div>
+          )}
           {kind === "snooze" && (
             <div className="space-y-1.5">
               <Label htmlFor="recon-alert-snooze-until" className="text-sm">Snooze until</Label>
@@ -1695,8 +1748,22 @@ function isFuture(ts: string): boolean {
 }
 
 /** datetime-local value for now + 1 day (local time, no seconds). */
+function defaultLocalDateTime(daysAhead: number): string {
+  const d = new Date(Date.now() + daysAhead * 24 * 3600 * 1000)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 function defaultSnoozeUntil(): string {
   const d = new Date(Date.now() + 24 * 3600 * 1000)
   const pad = (n: number) => String(n).padStart(2, "0")
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** How far the alert's latest failing evidence is from what the rule allows. */
+function alertGap(alert: Alert): string | undefined {
+  const evidence = alert.evidence
+  return evidence && typeof evidence === "object" && !Array.isArray(evidence)
+    ? outcomeGap(evidence as unknown as Record<string, unknown>)
+    : undefined
 }

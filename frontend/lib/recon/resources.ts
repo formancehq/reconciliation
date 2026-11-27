@@ -103,7 +103,7 @@ export async function patchRuleEnabled(
   rule: Rule,
   enabled: boolean
 ): Promise<Rule> {
-  return reconClient.patchRule(rule.id, { enabled })
+  return reconClient.patchRule(rule.id, { enabled }, rule.revision)
 }
 
 export async function deleteRule(

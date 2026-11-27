@@ -37,6 +37,7 @@ import {
   describeAlertPayload,
   diffConfigurationSnapshots,
   evaluationActivityDetails,
+  evidenceGap,
   evidenceGroups,
   evidenceLabel,
   formatDateTime,
@@ -357,16 +358,28 @@ function EvaluationActivityBody({
               ? "Evaluation failed"
               : "Evaluation error"}
         </span>
-        <span className="ml-auto font-mono text-[10px] text-muted-foreground">
-          sequence {activity.sequence}
-        </span>
+        {evidenceGap(details.evidence) && (
+          <span
+            className={`text-xs ${details.result === "PASS" ? "text-muted-foreground" : "font-medium text-destructive-foreground"}`}
+          >
+            {evidenceGap(details.evidence)}
+          </span>
+        )}
       </div>
       {details.startedAt && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>Started <ActivityTime value={details.startedAt} relative={false} /></span>
-          <span>Ended <ActivityTime value={details.capturedAt} relative={false} /></span>
-          {details.pit && <span>PIT <ActivityTime value={details.pit} relative={false} /></span>}
-        </div>
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none hover:text-foreground">Technical details</summary>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+            <span>Started <ActivityTime value={details.startedAt} relative={false} /></span>
+            <span>Ended <ActivityTime value={details.capturedAt} relative={false} /></span>
+            {details.pit && (
+              <span title="The instant the ledger balances were read">
+                Balances read at <ActivityTime value={details.pit} relative={false} />
+              </span>
+            )}
+            <span className="font-mono">sequence {activity.sequence}</span>
+          </div>
+        </details>
       )}
       {details.result === "ERROR" && (
         <div role="alert" className="flex items-start gap-2 rounded-md border border-amber-foreground/30 bg-warning px-3 py-2 text-sm text-warning-foreground">
@@ -460,6 +473,15 @@ function StandaloneActivityCard({
         {ruleEvent && snapshot && (
           <div className="mt-3 space-y-2">
             <RevisionValue revision={activity.ruleRevision} />
+            {activity.kind !== "rule.deleted" && (
+              <p
+                data-testid="rule-change-boundary"
+                className="text-xs text-muted-foreground"
+              >
+                Evaluations after this point in the rule&apos;s sequence use this
+                revision.
+              </p>
+            )}
             <details className="rounded-md border bg-muted/20 text-xs">
               <summary className="cursor-pointer px-3 py-2 font-medium select-none">
                 Revision snapshot

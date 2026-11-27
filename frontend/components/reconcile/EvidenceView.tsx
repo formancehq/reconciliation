@@ -8,6 +8,7 @@ import type {
   Rational,
 } from "@/lib/recon"
 import { sourceName } from "@/lib/recon/templates"
+import { formatAmount } from "@/lib/recon/display"
 import { StoredQueryAccounts } from "./StoredQueryAccounts"
 
 export function isEvidence(value: unknown): value is Evidence {
@@ -25,8 +26,7 @@ export function isEvidence(value: unknown): value is Evidence {
         "asset",
         "residual",
         "absoluteResidual",
-        "tolerance",
-        "compiledCEL",
+        "tolerance"
       ])
     )
   }
@@ -36,7 +36,7 @@ export function isEvidence(value: unknown): value is Evidence {
       isEvidenceSource(value.quote) &&
       isBounds(value.effectiveBounds) &&
       optionalRational(value.observedRate) &&
-      strings(value, ["compiledCEL"])
+      true
     )
   }
   if (value.operation === "source_consensus") {
@@ -52,8 +52,7 @@ export function isEvidence(value: unknown): value is Evidence {
         "maximumSource",
         "maximumBalance",
         "spread",
-        "tolerance",
-        "compiledCEL",
+        "tolerance"
       ])
     )
   }
@@ -63,19 +62,19 @@ export function isEvidence(value: unknown): value is Evidence {
       isPortfolio(value.denominator) &&
       isBounds(value.effectiveBounds) &&
       optionalRational(value.observedRatio) &&
-      strings(value, ["asset", "compiledCEL"])
+      strings(value, ["asset"])
     )
   }
   if (value.operation === "balance_bounds") {
     return (
       isEvidenceSource(value.source) &&
       isRecord(value.effectiveBounds) &&
-      strings(value, ["asset", "excursion", "compiledCEL"])
+      strings(value, ["asset", "excursion"])
     )
   }
   if (value.operation === "stale_holds") {
     if (
-      !strings(value, ["mode", "asset", "sourceId", "evaluatedAt", "compiledCEL"])
+      !strings(value, ["mode", "asset", "sourceId", "evaluatedAt"])
     )
       return false
     return (
@@ -170,18 +169,17 @@ export function BalanceEquationEvidence({
   return (
     <EvidenceShell
       title="Balance equation"
-      summary={`|${evidence.residual}| = ${evidence.absoluteResidual}; tolerance ${evidence.tolerance} ${evidence.asset}`}
+      summary={`Off by ${formatAmount(evidence.absoluteResidual, evidence.asset)} · tolerance ${formatAmount(evidence.tolerance, evidence.asset)}`}
       passed={passed}
       verdict={`The signed equation ${passed ? "balances" : "does not balance"} within tolerance.`}
-      compiledCEL={evidence.compiledCEL}
       compact={compact}
     >
       <SourceTable sources={evidence.sources} equation compact={compact} />
       <MetricGrid
         metrics={[
-          ["Residual", evidence.residual],
-          ["Absolute residual", evidence.absoluteResidual],
-          ["Tolerance", evidence.tolerance],
+          ["Residual (signed)", formatAmount(evidence.residual, evidence.asset)],
+          ["Off by", formatAmount(evidence.absoluteResidual, evidence.asset)],
+          ["Tolerance", formatAmount(evidence.tolerance, evidence.asset)],
         ]}
       />
     </EvidenceShell>
@@ -203,7 +201,6 @@ export function ExchangeRateEvidence({
           ? "Failed control: the quote-per-base rate is undefined."
           : `${passed ? "Pass" : "Fail"}: the exact quote-per-base rate ${passed ? "is" : "is not"} inside the inclusive bounds.`
       }
-      compiledCEL={evidence.compiledCEL}
       compact={compact}
     >
       <div className="grid gap-2 sm:grid-cols-2">
@@ -236,10 +233,9 @@ export function SourceConsensusEvidence({
   return (
     <EvidenceShell
       title="Source consensus"
-      summary={`maximum − minimum = ${evidence.spread} ≤ ${evidence.tolerance}`}
+      summary={`Sources apart by ${formatAmount(evidence.spread, evidence.asset)} · tolerance ${formatAmount(evidence.tolerance, evidence.asset)}`}
       passed={passed}
       verdict={`${passed ? "Pass" : "Fail"}: ${passed ? "every source is present and the widest spread is within tolerance" : "the all-sources consensus control is not satisfied"}.`}
-      compiledCEL={evidence.compiledCEL}
       compact={compact}
     >
       {evidence.missingSources.length > 0 && (
@@ -265,14 +261,14 @@ export function SourceConsensusEvidence({
             "Minimum source",
             displaySourceId(evidence.sources, evidence.minimumSource),
           ],
-          ["Minimum balance", evidence.minimumBalance],
+          ["Minimum balance", formatAmount(evidence.minimumBalance, evidence.asset)],
           [
             "Maximum source",
             displaySourceId(evidence.sources, evidence.maximumSource),
           ],
-          ["Maximum balance", evidence.maximumBalance],
-          ["Spread", evidence.spread],
-          ["Tolerance", evidence.tolerance],
+          ["Maximum balance", formatAmount(evidence.maximumBalance, evidence.asset)],
+          ["Apart by", formatAmount(evidence.spread, evidence.asset)],
+          ["Tolerance", formatAmount(evidence.tolerance, evidence.asset)],
         ]}
       />
     </EvidenceShell>
@@ -294,7 +290,6 @@ export function CoverageRatioEvidence({
           ? "Failed control: the coverage ratio is undefined."
           : `${passed ? "Pass" : "Fail"}: the exact portfolio ratio ${passed ? "is" : "is not"} inside the inclusive bounds.`
       }
-      compiledCEL={evidence.compiledCEL}
       compact={compact}
     >
       <div className="grid gap-3 lg:grid-cols-2">
@@ -332,7 +327,6 @@ function EvidenceShell({
   summary,
   passed,
   verdict,
-  compiledCEL,
   compact,
   children,
 }: {
@@ -340,7 +334,6 @@ function EvidenceShell({
   summary: string
   passed: boolean
   verdict: string
-  compiledCEL: string
   compact: boolean
   children: React.ReactNode
 }) {
@@ -369,17 +362,9 @@ function EvidenceShell({
       {!compact && (
         <>
           <p className="text-[10px] text-muted-foreground">
-            All balances, contributions, and exact rational parts are displayed
-            as received; no JavaScript floating-point conversion is used.
+            Amounts are shown in major units. Hover a balance to see the exact
+            integer the ledger returned.
           </p>
-          <details className="rounded-md border bg-muted/20 text-xs">
-            <summary className="cursor-pointer px-3 py-2 font-medium text-muted-foreground select-none hover:text-foreground">
-              Technical details (compiled CEL)
-            </summary>
-            <pre className="max-h-40 overflow-auto border-t px-3 py-2 font-mono text-[11px] break-all whitespace-pre-wrap text-muted-foreground">
-              {compiledCEL}
-            </pre>
-          </details>
         </>
       )}
     </div>
@@ -468,18 +453,18 @@ function SourceTable({
                       </div>
                     )}
                   </td>
-                  <td className="px-3 py-2 font-mono break-all">
-                    {source.balance}
-                    <span className="ml-1 text-[10px] text-muted-foreground">
-                      {source.asset}
-                    </span>
+                  <td
+                    className="px-3 py-2 font-mono break-all"
+                    title={`${source.balance} ${source.asset} (exact, minor units)`}
+                  >
+                    {formatAmount(source.balance, source.asset)}
                   </td>
                   {equation && (
                     <td className="px-3 py-2 font-mono">{coefficient}</td>
                   )}
                   {equation && (
-                    <td className="px-3 py-2 font-mono break-all">
-                      {contribution}
+                    <td className="px-3 py-2 font-mono break-all" title={contribution}>
+                      {contribution !== undefined ? formatAmount(contribution, source.asset) : null}
                     </td>
                   )}
                   <td className="px-3 py-2">
@@ -615,25 +600,25 @@ export function BalanceBoundsEvidence({
   compact,
 }: OperationEvidenceProps<"balance_bounds">) {
   const { min, max } = evidence.effectiveBounds
+  const fmt = (v: string) => formatAmount(v, evidence.asset)
   const range =
     min !== undefined && max !== undefined
-      ? `${min} ≤ balance ≤ ${max}`
+      ? `${fmt(min)} ≤ balance ≤ ${fmt(max)}`
       : min !== undefined
-        ? `balance ≥ ${min}`
-        : `balance ≤ ${max}`
+        ? `balance ≥ ${fmt(min)}`
+        : `balance ≤ ${fmt(max!)}`
   const breached = evidence.breachedBound
 
   return (
     <EvidenceShell
       title="Balance bounds"
-      summary={`${evidence.source.balance} ${evidence.asset} · ${range}`}
+      summary={`${fmt(evidence.source.balance)} · ${range}`}
       passed={passed}
       verdict={
         passed
           ? `Pass: the balance sits inside its ${min !== undefined && max !== undefined ? "range" : "limit"}.`
-          : `Fail: ${breached === "min" ? "below the minimum" : "above the maximum"} by ${absolute(evidence.excursion)} ${evidence.asset}.`
+          : `Fail: ${breached === "min" ? "below the minimum" : "above the maximum"} by ${fmt(absolute(evidence.excursion))}.`
       }
-      compiledCEL={evidence.compiledCEL}
       compact={compact}
     >
       {!evidence.source.present && (
@@ -645,10 +630,10 @@ export function BalanceBoundsEvidence({
       )}
       <MetricGrid
         metrics={[
-          ["Balance", `${evidence.source.balance} ${evidence.asset}`],
-          ["Minimum", min ?? "unbounded"],
-          ["Maximum", max ?? "unbounded"],
-          ["Outside by", passed ? "—" : `${absolute(evidence.excursion)} ${evidence.asset}`],
+          ["Balance", fmt(evidence.source.balance)],
+          ["Minimum", min !== undefined ? fmt(min) : "unbounded"],
+          ["Maximum", max !== undefined ? fmt(max) : "unbounded"],
+          ["Outside by", passed ? "—" : fmt(absolute(evidence.excursion))],
           ["Source", displaySourceId([evidence.source], evidence.source.id)],
           ["Holds this asset", evidence.source.present ? "yes" : "no"],
         ]}
@@ -701,7 +686,6 @@ export function StaleHoldsEvidence({
           ? `Pass: no hold matched ${window}.`
           : `Fail: ${evidence.holdsFlagged} hold${evidence.holdsFlagged === 1 ? "" : "s"} held ${evidence.amountFlagged} ${evidence.asset} past ${approaching ? "the warning window" : "the deadline"}.`
       }
-      compiledCEL={evidence.compiledCEL}
       compact={compact}
     >
       {evidence.holdsMatched >= evidence.holdsBudget && (

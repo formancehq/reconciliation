@@ -40,6 +40,7 @@ import {
   setAllAssets,
   supportsAllAssets,
   TEMPLATE_KINDS,
+  V3_TEMPLATES,
   TEMPLATE_META,
   validateRuleForm,
   type RuleFormDraft,
@@ -156,22 +157,22 @@ function CreateRuleDialogOpen({
               severity: request.severity,
               schedule: request.schedule,
               enabled: request.enabled,
-            })
+            }, editRule.revision)
           : await reconClient.createRule(request)
       toast.success(
         isEdit
-          ? "V2 rule updated"
+          ? "Rule updated"
           : isDuplicate
-            ? "V2 rule duplicated"
-            : "V2 rule created",
+            ? "Rule duplicated"
+            : "Rule created",
         { description: rule.name }
       )
       onSaved(rule)
       onOpenChange(false)
     } catch (error) {
-      log.error("V2 rule save failed", { error })
+      log.error("Rule save failed", { error })
       if (error instanceof ReconError) setServerError(error)
-      else toast.error("Failed to save V2 rule")
+      else toast.error("Failed to save the rule")
     } finally {
       setSubmitting(false)
     }
@@ -183,10 +184,10 @@ function CreateRuleDialogOpen({
         <DialogHeader className="border-b px-5 py-4">
           <DialogTitle>
             {isEdit
-              ? "Edit advanced rule"
+              ? "Edit rule"
               : isDuplicate
-                ? "Duplicate advanced rule"
-                : "New advanced rule"}
+                ? "Duplicate rule"
+                : "New rule"}
           </DialogTitle>
           <DialogDescription>
             {TEMPLATE_META[draft.kind].blurb}
@@ -231,7 +232,12 @@ function CreateRuleDialogOpen({
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {TEMPLATE_KINDS.map((kind) => (
+            {TEMPLATE_KINDS.filter(
+              // Reconciliation v3.0.0 ships three templates (RFC 0022); the
+              // others come in later phases. A rule already on one of them
+              // keeps its card when edited or duplicated.
+              (kind) => (V3_TEMPLATES as readonly string[]).includes(kind) || kind === draft.kind
+            ).map((kind) => (
               <button
                 key={kind}
                 type="button"
@@ -346,7 +352,7 @@ function CreateRuleDialogOpen({
             <div>
               <Label>Enabled</Label>
               <p className="text-xs text-muted-foreground">
-                Start monitoring this V2 contract after save.
+                Start monitoring this rule as soon as it is saved.
               </p>
             </div>
             <Switch
@@ -374,7 +380,9 @@ function CreateRuleDialogOpen({
                     <span className="font-medium">
                       {serverError.errorCode}:
                     </span>{" "}
-                    {backendError}
+                    {serverError.isConflict
+                      ? "Someone changed this rule since you opened it. Close this dialog, reopen the rule to load its latest version, then apply your edit again."
+                      : backendError}
                   </li>
                 )}
               </ul>
@@ -391,7 +399,7 @@ function CreateRuleDialogOpen({
           </Button>
           <Button onClick={submit} disabled={issues.length > 0 || submitting}>
             {submitting && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-            {isEdit ? "Save changes" : "Create V2 rule"}
+            {isEdit ? "Save changes" : "Create rule"}
           </Button>
         </DialogFooter>
       </DialogContent>

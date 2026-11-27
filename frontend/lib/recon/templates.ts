@@ -6,6 +6,7 @@ import type {
   Rule,
   TemplateKind,
 } from "./types"
+import { formatAmount } from "./display"
 
 export const SOURCE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 export const UNSIGNED_INTEGER_PATTERN = /^(0|[1-9][0-9]{0,77})$/
@@ -131,7 +132,7 @@ export function describeRule(rule: Rule): string {
   switch (rule.templateKind) {
     case "balance_equation": {
       const spec = rule.templateSpec
-      return `${readableTerms(spec.sources, spec.terms)} = 0 · tolerance ${spec.tolerance} ${spec.sources[0]?.asset ?? ""}`
+      return `${readableTerms(spec.sources, spec.terms)} = 0 · tolerance ${formatAmount(spec.tolerance, spec.sources[0]?.asset)}`
     }
     case "exchange_rate_bounds": {
       const spec = rule.templateSpec
@@ -149,7 +150,7 @@ export function describeRule(rule: Rule): string {
     }
     case "source_consensus": {
       const spec = rule.templateSpec
-      return `maximum observed balance − minimum observed balance ≤ ${spec.tolerance}`
+      return `highest − lowest balance ≤ ${formatAmount(spec.tolerance, spec.sources[0]?.asset)}`
     }
     case "coverage_ratio_bounds": {
       const spec = rule.templateSpec
@@ -168,11 +169,11 @@ export function describeRule(rule: Rule): string {
         const { min, max } = spec.bounds[asset] ?? {}
         const body =
           min !== undefined && max !== undefined
-            ? `${min}…${max}`
+            ? `${formatAmount(min, asset)} … ${formatAmount(max, asset)}`
             : min !== undefined
-              ? `≥ ${min}`
-              : `≤ ${max}`
-        return `${asset} ${body}`
+              ? `≥ ${formatAmount(min, asset)}`
+              : `≤ ${formatAmount(max, asset)}`
+        return `balance ${body}`
       })
       const more = assets.length - shown.length
       return `${sourceName(spec.source)} within ${ranges.join(" · ")}${more > 0 ? ` · +${more} more` : ""}`

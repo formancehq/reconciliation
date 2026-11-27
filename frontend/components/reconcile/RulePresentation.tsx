@@ -1,5 +1,5 @@
 import { Card } from "@/components/ui/card"
-import { evidenceLabel, type NamedSource, type Rule } from "@/lib/recon"
+import { evidenceLabel, summarizeQuery, type NamedSource, type Rule } from "@/lib/recon"
 import { describeRule, effectiveSourceKind, sourceName } from "@/lib/recon/templates"
 
 export function RulePresentation({
@@ -108,9 +108,9 @@ export function NamedSourceCard({
         <dd className="truncate font-mono" title={source.ledger}>
           {source.ledger}
         </dd>
-        <dt className="text-muted-foreground">Query</dt>
+        <dt className="text-muted-foreground">Accounts</dt>
         <dd className="font-mono text-[11px] break-all" title={query}>
-          {query}
+          {summarizeQuery(source.query)}
         </dd>
         {effectiveSourceKind(source) === "account_metadata" && (
           <>

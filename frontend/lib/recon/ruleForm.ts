@@ -141,7 +141,7 @@ export function emptyNamedSource(index: number, ledger = ""): NamedSource {
     label: "",
     kind: "ledger",
     ledger,
-    query: { $match: { address: "*" } },
+    query: { $match: { address: "" } },
     asset: "",
   }
 }
@@ -274,7 +274,9 @@ export function createRuleFormDraft({
     kind: selectedKind,
     severity: rule?.severity ?? "medium",
     periodType: rule?.periodType ?? "continuous",
-    schedule: rule?.schedule ?? { kind: "on_demand" },
+    // A new rule runs on a schedule by default: an enabled rule that only runs
+    // on demand looks active but never checks anything by itself.
+    schedule: rule?.schedule ?? { kind: "cron", expr: "*/15 * * * *", tz: "UTC" },
     enabled: rule?.enabled ?? true,
     sources,
     coefficients,
@@ -541,6 +543,13 @@ export function validateRuleForm(draft: RuleFormDraft): RuleFormIssue[] {
     if (!source.asset.trim()) add(`${prefix}.asset`, "Asset is required.")
     if (!source.query || Object.keys(source.query).length === 0)
       add(`${prefix}.query`, "Account query is required.")
+    else {
+      const address = (source.query as { $match?: { address?: unknown } }).$match?.address
+      if (address !== undefined && String(address).trim() === "")
+        add(`${prefix}.query`, "Choose the accounts this source reads, for example bank:main or customers:*.")
+      else if (address === "*")
+        add(`${prefix}.query`, '"*" matches every account of the ledger. Narrow it to the accounts this source reconciles.')
+    }
     if (source.kind === "account_metadata" && !source.metadataKey.trim())
       add(`${prefix}.metadataKey`, "Metadata key is required.")
   }

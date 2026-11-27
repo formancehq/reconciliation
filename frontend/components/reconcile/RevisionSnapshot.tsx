@@ -1,4 +1,4 @@
-import { Braces, CalendarClock, Code2, Settings2 } from "lucide-react"
+import { Braces, CalendarClock, Settings2 } from "lucide-react"
 import {
   PERIOD_TYPE_META,
   formatDateTime,
@@ -67,18 +67,6 @@ export function RevisionSnapshot({
         <SnapshotTime label="Created" value={rule.createdAt} />
         <SnapshotTime label="Updated" value={rule.updatedAt} />
       </div>
-
-      {rule.compiledCEL && (
-        <details className="rounded-md border text-xs">
-          <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 font-medium select-none">
-            <Code2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-            Implementation details
-          </summary>
-          <pre className="max-h-72 overflow-auto border-t bg-muted/20 px-3 py-2 font-mono text-[11px] break-all whitespace-pre-wrap text-muted-foreground">
-            {rule.compiledCEL}
-          </pre>
-        </details>
-      )}
 
       <RawSnapshot snapshot={snapshot} />
     </div>

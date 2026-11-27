@@ -78,6 +78,52 @@ Reading the numbers:
 
 A rule change writes the rule and also claims the next version of the rule's sequence (`eval:rule:{id}`), in one transaction. Evaluations need no guard on the rule, so the hot path keeps one transaction per evaluation. The sequence becomes the rule's ordered, gapless audit trail: every capture sits after the configuration it used, and every change sits between two evaluations, with its actor and diff. The alternative, a TRANSIENT guard on the rule in every evaluation, would have added one transaction to each evaluation. The guard stays available for rare cases. RFC 0022 records the choice.
 
+## API and UI
+
+The spike also brings the API contract and the UI in line with the design. They still run on the prototype store.
+
+| Change | API | UI |
+|---|---|---|
+| Optimistic concurrency on rules | `GET` and `PATCH /rules/{id}` return an `ETag` header. `PATCH` accepts `If-Match`; a stale value answers `409 CONFLICT` with the current `ETag` and writes nothing. `openapi.yaml` documents it. | Every rule patch sends the revision it read as `If-Match`: from the list toggle, the detail page and the edit dialog. On `409`, the UI explains that the rule changed, reloads its latest version, and the next action succeeds. The Next proxy forwards `If-Match` and `ETag`. |
+| Live alert counts on the rules list | Already served (`alerts.open`, `alerts.acknowledged`). | Shown on each rule: "1 open", "2 acknowledged". |
+| Rule sequence (option B) | Already served: activity `sequence` and `ruleRevision`. | Each configuration change in the timeline states that evaluations after it, in the rule's sequence, use its revision. |
+
+**CEL removed from the API and the UI (ADR-006).**
+- The rule response and `openapi.yaml` no longer carry `compiledCEL`, and the handler tests assert its absence.
+- The UI no longer shows "Implementation details" (rule detail and revision snapshot) or "Technical details (compiled CEL)" (evidence), and the guide no longer mentions generated CEL.
+- The CEL engine (`cel-go`, `engine.Compile` at rule create and patch) and the `compiledCEL` formula that templates still write into evidence leave with S5 (EN-2755). The UI already ignores that formula.
+
+Checked end to end on Ledger `main` with the spike server (`:18081`) and the UI (`:13003`):
+- create two rules and evaluate them, so one fails;
+- see "1 open" on the failing rule;
+- change that rule through the API behind the UI's back;
+- toggle it in the UI and get the conflict message, with the new name reloaded;
+- toggle again, which succeeds;
+- see the boundary note on every configuration change.
+
+Limits on the prototype store:
+- The ETag is the rule's revision (content hash), not the `V` balance of the new layout.
+- The `If-Match` check happens before the write, not in the write.
+- The server-side retry of option B and an `accepted` count need the new storage behind the service.
+- Alert actions (`ack`, `resolve`, `accept`) do not take `If-Match` yet.
+
+## UX pass (P1 and P2 of the UI review)
+
+| Area | Change |
+|---|---|
+| Schedule | Each rule shows "Runs every 15 minutes (UTC) · next 15:15", or "On demand only" flagged in amber, with a note in the detail page. A new rule gets a 15-minute schedule by default. The alert period reads "One alert per day", no longer only "Daily". |
+| Active alerts | The alerts list defaults to Active (open and acknowledged). The overview splits "To handle" (open) from "In progress" (acknowledged and still failing), and adds rule health: failing, never evaluated, on demand only. |
+| Amounts | Exact major units everywhere ("8,000.00 USD", "tolerance 10.00 USD"), computed with string arithmetic. Hovering shows the exact ledger integer. |
+| Titles and gaps | Alerts are titled by rule and gap ("GL cash matches Stripe balance — Off by 50.00 USD"), with the fingerprint and the period as secondary text. The rules list, the rule detail and the timeline show the latest gap. |
+| Compact list | The rules list sorts by "Needs attention" (failing, then never run, then passing), folds the configuration, and shows "Never evaluated". |
+| Form | "New rule" and "Create rule", without "advanced" or "V2". Only the three v3.0.0 templates are offered. An empty or `*` account selector is refused. |
+| Alert actions | Each action says what it does. Accept asks for an end date (30 days by default, 90 at most), sent as `expiresAt`. |
+| Technical details | The timeline folds start, end, read instant ("Balances read at", no longer "PIT") and sequence under "Technical details". Account queries read `gl:cash` instead of raw JSON. |
+
+Not done:
+- "Test on current balances" in the form needs a preview endpoint (ADR-005 decision 31).
+- The P3 items: header overlap, delete placement, links to the ledger.
+
 ## Review fixes
 
 An independent review of the spike commit found the following. The fixes are in the adapter and the port.

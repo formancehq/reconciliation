@@ -149,8 +149,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 				<P>
 					The name is what the rule refers to — an equation&apos;s signs, a rate&apos;s base and quote, a
 					ratio&apos;s numerator and denominator all point at names, so reordering the list changes nothing
-					and adding a third source is not a different template. Generated CEL stays available under{' '}
-					<strong>Technical expression</strong>, but it is a secondary implementation detail.
+					and adding a third source is not a different template. Each template evaluates directly in Go:
+					there is no generated expression to read.
 				</P>
 				<GuideTable
 					caption="Reading a rule's sources"
@@ -181,8 +181,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					not have to. Other assets may exist on the selected account; this rule checks only the declared
 					asset. Configure another rule for each additional metadata-key/asset pair. The account-selection
 					metadata filters above remain separate: they choose accounts, while this key supplies the value
-					being reconciled. Generated CEL remains available under <strong>Technical expression</strong>, but
-					it is a secondary implementation detail.
+					being reconciled.
 				</P>
 
 				<SubHeading id="v3-rec-balance-bounds">Configure balance bounds</SubHeading>
@@ -272,7 +271,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 
 				<SubHeading id="v3-rec-manage">Editing, duplicating & finding rules</SubHeading>
 				<ul className="list-disc space-y-1 pl-5 text-sm">
-					<li>Open a rule, then use <strong>Edit</strong>{' '}to change its name, configuration, or severity. The compiled CEL is regenerated from the human-readable form, and the alert period is fixed after creation.</li>
+					<li>Open a rule, then use <strong>Edit</strong>{' '}to change its name, configuration, or severity. The alert period is fixed after creation.</li>
 					<li><strong>Duplicate</strong>{' '}is beside Edit in rule details and starts a new rule prefilled from the existing one.</li>
 					<li>Use search, template, severity, monitoring-status, and sort controls to narrow the list. Pagination appears when more than one page of matching rules exists.</li>
 				</ul>
@@ -302,8 +301,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					Select a rule&apos;s header to open it. The top of the page restates the configured control in the
 					same human-readable format used in the Rules list: the named sources, and either{' '}
 					<strong>= Exact match</strong>{' '}or <strong>≈ Within tolerance</strong>. Edit, Duplicate, and
-					Evaluate live together in the detail header. Sources are shown before the invariant they feed, and
-					generated CEL is collapsed under <strong>Implementation details</strong>.
+					Evaluate live together in the detail header. Sources are shown before the invariant they feed.
 				</P>
 				<P>
 					One <strong>Combined history</strong>{' '}then follows in the exact order recorded by the backend

@@ -61,6 +61,11 @@ import {
   deleteRule,
   contractVersionOf,
   resourceKey,
+  captureGap,
+  isOnDemand,
+  nextRun,
+  periodLabel,
+  scheduleLabel,
   type Rule,
   type Capture,
   type Alert,
@@ -80,7 +85,7 @@ import createLogger from "@/lib/logger"
 import { FILTER_TOOLBAR } from "@/lib/uiClasses"
 import { ReconFilterMenu } from "../ReconFilterMenu"
 
-type SortKey = "name" | "severity" | "template"
+type SortKey = "attention" | "name" | "severity" | "template"
 type RuleRunSummary = { capture: Capture | null; alertID?: string }
 const PAGE_SIZE = 10
 
@@ -133,7 +138,7 @@ function RulesList({
   const [fKind, setFKind] = useState<string>("all")
   const [fSeverity, setFSeverity] = useState<string>("all")
   const [fEnabled, setFEnabled] = useState<string>("all")
-  const [sort, setSort] = useState<SortKey>("name")
+  const [sort, setSort] = useState<SortKey>("attention")
   const [page, setPage] = useState(1)
 
   // Latest capture (verdict) per rule plus the alert associated with that
@@ -190,15 +195,19 @@ function RulesList({
         await patchRuleEnabled(rule, enabled)
         toast.success(`Rule ${enabled ? "enabled" : "disabled"}`)
       } catch (err) {
-        log.error("patchRule failed", { ruleId: rule.id, enabled, err })
+        const conflict = err instanceof ReconError && err.isConflict
+        if (conflict) log.warn("patchRule conflict: rule changed since read", { ruleId: rule.id })
+        else log.error("patchRule failed", { ruleId: rule.id, enabled, err })
         rules.setData((prev) =>
           (prev ?? []).map((r) =>
             resourceKey(r) === key ? { ...r, enabled: !enabled } : r
           )
         )
         toast.error(
-          err instanceof ReconError ? err.message : "Failed to update rule"
+          err instanceof ReconError ? (err.isConflict ? "This rule changed since you opened it. Its latest version is now loaded: try again." : err.message) : "Failed to update rule"
         )
+        // Load the rule's latest version, so the next action carries its ETag.
+        if (conflict) rules.refetch()
       } finally {
         setBusy(setBusyToggle, key, false)
       }
@@ -282,8 +291,21 @@ function RulesList({
         (fSeverity === "all" || r.severity === fSeverity) &&
         (fEnabled === "all" || (fEnabled === "on") === r.enabled)
     )
+    // Attention first: failing or erroring rules with live alerts, then the
+    // ones that never ran, then the passing ones; severity breaks ties.
+    const attention = (r: Rule) =>
+      r.lastVerdict === "fail" || r.lastVerdict === "error"
+        ? 0
+        : !r.lastVerdict
+          ? 1
+          : 2
     const cmp = (a: Rule, b: Rule) =>
-      sort === "severity"
+      sort === "attention"
+        ? attention(a) - attention(b) ||
+          (b.alerts?.open ?? 0) - (a.alerts?.open ?? 0) ||
+          SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) ||
+          a.name.localeCompare(b.name)
+        : sort === "severity"
         ? SEVERITY_ORDER.indexOf(a.severity) -
           SEVERITY_ORDER.indexOf(b.severity)
         : sort === "template"
@@ -378,10 +400,11 @@ function RulesList({
               setSort(v as SortKey)
               setPage(1)
             }}
-            allLabel="Sort: Name"
-            allValue="name"
-            width="w-full sm:w-40"
+            allLabel="Sort: Needs attention"
+            allValue="attention"
+            width="w-full sm:w-48"
             options={[
+              ["name", "Sort: Name"],
               ["severity", "Sort: Severity"],
               ["template", "Sort: Template"],
             ]}
@@ -591,7 +614,24 @@ export function RuleListItem({
             <SeverityBadge severity={rule.severity} />
             <span>{templateLabel(rule.templateKind)}</span>
             <span aria-hidden="true">·</span>
-            <span>{PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType}</span>
+            <span title={`Alert period: ${PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType}`}>
+              {periodLabel(rule.periodType)}
+            </span>
+            <AlertCountsBadge counts={rule.alerts} />
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+            <ScheduleBadge schedule={rule.schedule} enabled={rule.enabled} />
+            {captureGap(capture) && (
+              <>
+                <span aria-hidden="true" className="text-muted-foreground">·</span>
+                <span
+                  data-testid="rule-gap"
+                  className={capture?.verdict === "pass" ? "text-muted-foreground" : "font-medium text-destructive-foreground"}
+                >
+                  {captureGap(capture)}
+                </span>
+              </>
+            )}
           </div>
         </div>
 
@@ -662,8 +702,15 @@ export function RuleListItem({
         </div>
       </ItemHeader>
 
-      <ItemContent className="min-w-0 gap-3 p-3 sm:p-4">
-        <RulePresentation rule={rule} compact />
+      <ItemContent className="min-w-0 gap-0 p-0">
+        <details className="group/config">
+          <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground select-none hover:text-foreground sm:px-4">
+            Configuration
+          </summary>
+          <div className="border-t p-3 sm:p-4">
+            <RulePresentation rule={rule} compact />
+          </div>
+        </details>
       </ItemContent>
     </Item>
   )
@@ -684,7 +731,7 @@ function LastResult({
       <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
     )
   if (!capture)
-    return <span className="px-2 text-xs text-muted-foreground">—</span>
+    return <span className="px-2 text-xs text-muted-foreground">Never evaluated</span>
 
   const summary = (
     <>
@@ -748,4 +795,54 @@ function describeEvalError(error: string | undefined): string | undefined {
   if (!error) return undefined
   // Errors can be verbose scout traces — keep the tail (the actual cause).
   return error.length > 160 ? `…${error.slice(-160)}` : error
+}
+
+/**
+ * A rule's live alerts on the list: open and acknowledged counts, served by
+ * the rules endpoint in one read (RFC 0022: the rule's gauge account). Nothing
+ * is shown when the rule has no live alert or the count was not served.
+ */
+function AlertCountsBadge({ counts }: { counts?: Rule["alerts"] }) {
+  if (!counts || counts.open + counts.acknowledged === 0) return null
+  const parts = [
+    counts.open > 0 ? `${counts.open} open` : null,
+    counts.acknowledged > 0 ? `${counts.acknowledged} acknowledged` : null,
+  ].filter(Boolean)
+  return (
+    <>
+      <span aria-hidden="true">·</span>
+      <span
+        data-testid="rule-alert-counts"
+        className={counts.open > 0 ? "font-medium text-destructive-foreground" : "font-medium text-warning-foreground"}
+        title="Live alerts of this rule"
+      >
+        {parts.join(" · ")}
+      </span>
+    </>
+  )
+}
+
+/**
+ * When the rule runs by itself. An enabled rule on demand only is flagged: it
+ * looks active but checks nothing until someone presses Run now.
+ */
+function ScheduleBadge({ schedule, enabled }: { schedule: Rule["schedule"]; enabled: boolean }) {
+  if (isOnDemand(schedule))
+    return (
+      <span
+        data-testid="rule-schedule"
+        className={enabled ? "font-medium text-warning-foreground" : "text-muted-foreground"}
+        title="This rule has no schedule: it runs only when someone presses Run now."
+      >
+        On demand only
+      </span>
+    )
+  const next = enabled ? nextRun(schedule) : undefined
+  return (
+    <span data-testid="rule-schedule" className="text-muted-foreground">
+      {scheduleLabel(schedule)}
+      {next && ` · next ${next.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+      {!enabled && " · paused"}
+    </span>
+  )
 }

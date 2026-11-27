@@ -32,6 +32,9 @@ async function proxy(req: Request): Promise<Response> {
   if (ct) headers['Content-Type'] = ct;
   const auth = req.headers.get('authorization');
   if (auth) headers['Authorization'] = auth;
+  // Optimistic concurrency (RFC 0022): forward the caller's If-Match.
+  const ifMatch = req.headers.get('if-match');
+  if (ifMatch) headers['If-Match'] = ifMatch;
 
   const init: RequestInit = {
     method: req.method,
@@ -70,10 +73,10 @@ async function proxy(req: Request): Promise<Response> {
   // (the recon API is JSON-only, and 204s carry no body).
   if (upstream.status === 204) return new Response(null, { status: 204 });
   const text = await upstream.text();
-  return new Response(text, {
-    status: upstream.status,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  const out: Record<string, string> = { 'Content-Type': 'application/json' };
+  const etag = upstream.headers.get('etag');
+  if (etag) out['ETag'] = etag;
+  return new Response(text, { status: upstream.status, headers: out });
 }
 
 export const GET = proxy;

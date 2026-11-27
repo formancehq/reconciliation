@@ -28,6 +28,11 @@ import {
   poll,
   templateLabel,
   PERIOD_TYPE_META,
+  evidenceGap,
+  isOnDemand,
+  nextRun,
+  periodLabel,
+  scheduleLabel,
   formatRelative,
   isZeroTime,
   ReconError,
@@ -167,7 +172,14 @@ export function RuleDetail({
       toast.success(rule.enabled ? "Rule disabled" : "Rule enabled")
       invalidate()
     } catch (error) {
-      toast.error(error instanceof ReconError ? error.message : "Update failed")
+      toast.error(
+        error instanceof ReconError
+          ? error.isConflict
+            ? "This rule changed since you opened it. Reload it and try again."
+            : error.message
+          : "Update failed"
+      )
+      if (error instanceof ReconError && error.isConflict) invalidate()
     } finally {
       setToggling(false)
     }
@@ -365,11 +377,11 @@ export function CurrentRuleConfiguration({
   const latest = latestEvaluation
     ? evaluationActivityDetails(latestEvaluation)
     : undefined
-  const schedule = rule.schedule
-    ? rule.schedule.kind === "cron"
-      ? `${rule.schedule.expr ?? "Cron schedule"} (${rule.schedule.tz ?? "UTC"})`
-      : "On demand"
-    : "Not configured"
+  const next = rule.enabled && !deleted ? nextRun(rule.schedule) : undefined
+  const schedule = `${scheduleLabel(rule.schedule)}${
+    next ? ` · next ${next.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}` : ""
+  }`
+  const gap = latest ? evidenceGap(latest.evidence) : undefined
 
   return (
     <section
@@ -404,19 +416,43 @@ export function CurrentRuleConfiguration({
         />
         <ConfigurationFact label="Severity" value={rule.severity} />
         <ConfigurationFact
-          label="Period type"
-          value={PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType}
+          label="Alert period"
+          value={`${periodLabel(rule.periodType)} (${PERIOD_TYPE_META[rule.periodType]?.label ?? rule.periodType})`}
         />
-        <ConfigurationFact label="Schedule" value={schedule} />
+        <div className="min-w-0">
+          <dt className="text-[10px] tracking-wide text-muted-foreground uppercase">Runs</dt>
+          <dd
+            data-testid="rule-detail-schedule"
+            className={`mt-1 ${isOnDemand(rule.schedule) && rule.enabled ? "font-medium text-warning-foreground" : ""}`}
+          >
+            {schedule}
+            {isOnDemand(rule.schedule) && rule.enabled && !deleted && (
+              <span className="mt-0.5 block font-normal text-muted-foreground">
+                Nothing checks this rule until someone presses Evaluate now. Edit it to add a schedule.
+              </span>
+            )}
+          </dd>
+        </div>
         <div className="min-w-0">
           <dt className="text-[10px] tracking-wide text-muted-foreground uppercase">
             Latest result
           </dt>
           <dd className="mt-1">
             {latest ? (
-              <ResultBadge result={latest.result} />
+              <span className="flex flex-wrap items-center gap-2">
+                <ResultBadge result={latest.result} />
+                <span className="text-muted-foreground">{formatRelative(latest.capturedAt)}</span>
+                {gap && (
+                  <span
+                    data-testid="rule-detail-gap"
+                    className={latest.result === "PASS" ? "text-muted-foreground" : "font-medium text-destructive-foreground"}
+                  >
+                    {gap}
+                  </span>
+                )}
+              </span>
             ) : (
-              <span className="text-muted-foreground">No evaluation recorded</span>
+              <span className="text-muted-foreground">Never evaluated</span>
             )}
           </dd>
         </div>
@@ -432,17 +468,6 @@ export function CurrentRuleConfiguration({
 
       <div className="min-w-0 space-y-4 p-4">
         <RulePresentation rule={rule} sourcesFirst />
-
-        {rule.compiledCEL && (
-          <details className="rounded-md border text-xs">
-            <summary className="cursor-pointer px-3 py-2 font-medium select-none">
-              Implementation details
-            </summary>
-            <pre className="overflow-x-auto border-t px-3 py-2 font-mono text-[11px] whitespace-pre-wrap text-muted-foreground">
-              {rule.compiledCEL}
-            </pre>
-          </details>
-        )}
       </div>
     </section>
   )

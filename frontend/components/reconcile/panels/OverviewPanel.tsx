@@ -20,6 +20,8 @@ import {
   resourceKey,
   SEVERITY_ORDER,
   formatRelative,
+  isOnDemand,
+  outcomeGap,
   type Alert,
   type Rule,
 } from "@/lib/recon"
@@ -58,6 +60,9 @@ export function OverviewPanel() {
   const ack = alerts.filter((a) => a.status === "ACKNOWLEDGED")
   const resolved = alerts.filter((a) => a.status === "RESOLVED")
   const enabledRules = rules.filter((r) => r.enabled)
+  const failingRules = rules.filter((r) => r.lastVerdict === "fail" || r.lastVerdict === "error")
+  const neverRun = rules.filter((r) => !r.lastVerdict)
+  const onDemandOnly = enabledRules.filter((r) => isOnDemand(r.schedule))
 
   const openBySeverity = SEVERITY_ORDER.map((s) => ({
     severity: s,
@@ -73,7 +78,7 @@ export function OverviewPanel() {
         <Tile
           onClick={() => goAlerts("OPEN")}
           icon={<Bell className="h-4 w-4" />}
-          label="Open alerts"
+          label="To handle"
           value={open.length}
           accent={
             open.length > 0
@@ -94,13 +99,14 @@ export function OverviewPanel() {
         </Tile>
 
         <Tile
-          onClick={() => goAlerts("RESOLVED")}
+          onClick={() => goAlerts("ACKNOWLEDGED")}
           icon={<ShieldCheck className="h-4 w-4" />}
-          label="Handled"
-          value={ack.length + resolved.length}
+          label="In progress"
+          value={ack.length}
+          accent={ack.length > 0 ? "text-warning-foreground" : undefined}
         >
           <span className="text-xs text-muted-foreground">
-            {ack.length} acknowledged · {resolved.length} resolved
+            Acknowledged and still failing · {resolved.length} closed
           </span>
         </Tile>
 
@@ -111,8 +117,14 @@ export function OverviewPanel() {
           value={rules.length}
         >
           <span className="text-xs text-muted-foreground">
-            {enabledRules.length} enabled · {rules.length - enabledRules.length}{" "}
-            off
+            {failingRules.length > 0 && (
+              <span className="font-medium text-destructive-foreground">{failingRules.length} failing · </span>
+            )}
+            {neverRun.length > 0 && <>{neverRun.length} never evaluated · </>}
+            {onDemandOnly.length > 0 && (
+              <span className="font-medium text-warning-foreground">{onDemandOnly.length} on demand only · </span>
+            )}
+            {enabledRules.length} enabled · {rules.length - enabledRules.length} off
           </span>
         </Tile>
       </div>
@@ -131,7 +143,7 @@ export function OverviewPanel() {
       <div>
         <section>
           <SectionHead
-            title="Recent open alerts"
+            title="Active alerts"
             action={
               alerts.length > 0
                 ? { label: "All alerts", onClick: () => goAlerts("ALL") }
@@ -140,7 +152,7 @@ export function OverviewPanel() {
           />
           {recent.length === 0 ? (
             <p className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-              No open alerts. All clear right now.
+              No active alerts. All clear right now.
             </p>
           ) : (
             <ul className="divide-y rounded-md border">
@@ -153,11 +165,11 @@ export function OverviewPanel() {
                   >
                     <SeverityBadge severity={a.severity} />
                     <div className="min-w-40 flex-1 basis-40">
-                      <div className="truncate font-mono text-sm">
-                        {a.fingerprint}
+                      <div className="truncate text-sm font-medium">
+                        {ruleName(a)}
                       </div>
                       <div className="truncate text-xs text-muted-foreground">
-                        {ruleName(a)}
+                        {alertGap(a) ?? a.fingerprint}
                       </div>
                     </div>
                     <StatusBadge status={a.status} />
@@ -180,7 +192,7 @@ export function OverviewPanel() {
 
 export function recentOpenAlerts(alerts: Alert[]) {
   return alerts
-    .filter((alert) => alert.status === "OPEN")
+    .filter((alert) => alert.status !== "RESOLVED")
     .sort(
       (a, b) =>
         new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime()
@@ -257,4 +269,11 @@ function SectionHead({
       )}
     </div>
   )
+}
+
+function alertGap(alert: Alert): string | undefined {
+  const evidence = alert.evidence
+  return evidence && typeof evidence === "object" && !Array.isArray(evidence)
+    ? outcomeGap(evidence as unknown as Record<string, unknown>)
+    : undefined
 }

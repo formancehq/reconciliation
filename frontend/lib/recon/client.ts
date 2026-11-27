@@ -62,6 +62,11 @@ export class ReconError extends Error {
     this.details = details
   }
 
+  /** True when the entity changed since the caller read it (If-Match stale). */
+  get isConflict(): boolean {
+    return this.status === 409
+  }
+
   /** True when the recon server (or its proxy) could not be reached at all. */
   get isUnreachable(): boolean {
     return this.status === 502 || this.status === 0
@@ -86,7 +91,12 @@ function buildPath(path: string, query?: ReconQuery): string {
 export async function reconRequest<T>(
   method: string,
   path: string,
-  opts?: { body?: unknown; query?: ReconQuery; signal?: AbortSignal }
+  opts?: {
+    body?: unknown
+    query?: ReconQuery
+    signal?: AbortSignal
+    ifMatch?: string
+  }
 ): Promise<T> {
   // Per-request headers, incl. the optional recon endpoint override + token
   // (see lib/recon/endpoint.ts; the proxy validates X-Recon-Url via its SSRF guard).
@@ -95,6 +105,7 @@ export async function reconRequest<T>(
   const ep = getReconEndpoint()
   if (ep.url) headers["X-Recon-Url"] = ep.url
   if (ep.token) headers["Authorization"] = `Bearer ${ep.token}`
+  if (opts?.ifMatch) headers["If-Match"] = opts.ifMatch
 
   let res: Response
   try {
@@ -236,11 +247,15 @@ export const reconClient = {
     )
     return response.data
   },
-  async patchRule(id: string, body: RulePatchRequest) {
+  /**
+   * Patch a rule. Pass the revision the caller last read: the server answers
+   * 409 (ReconError.isConflict) when the rule changed since.
+   */
+  async patchRule(id: string, body: RulePatchRequest, revision?: string) {
     const response = await reconRequest<RuleResponse>(
       "PATCH",
       `/rules/${encodeURIComponent(id)}`,
-      { body }
+      { body, ifMatch: revision ? `"${revision}"` : undefined }
     )
     return response.data
   },

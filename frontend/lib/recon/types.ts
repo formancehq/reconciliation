@@ -152,7 +152,6 @@ interface RuleCommon {
   revision: string
   contractVersion: 2
   name: string
-  compiledCEL?: string
   enabled: boolean
   severity: Severity
   periodType: PeriodType
@@ -161,6 +160,17 @@ interface RuleCommon {
   labels?: Record<string, string>
   createdAt: string
   updatedAt: string
+  /** Liveness stamped by each evaluation; absent means the rule never ran. */
+  lastEvaluatedAt?: string
+  lastVerdict?: "pass" | "fail" | "error"
+  /** Live alert tally, served on the rules list only. Absent means "not asked for". */
+  alerts?: AlertCounts
+}
+
+/** A rule's live alerts by status. RFC 0022 reads them from the rule's gauge account. */
+export interface AlertCounts {
+  open: number
+  acknowledged: number
 }
 
 export type Rule =
@@ -258,7 +268,8 @@ export interface BalanceEquationEvidence {
   residual: string
   absoluteResidual: string
   tolerance: string
-  compiledCEL: string
+  /** Legacy: CEL leaves v3 (ADR-006). Ignored by the UI. */
+  compiledCEL?: string
 }
 
 export interface Rational {
@@ -279,7 +290,8 @@ export interface ExchangeRateBoundsEvidence {
   observedRate?: Rational
   effectiveBounds: EffectiveRateBounds
   undefinedReason?: "base_balance_zero"
-  compiledCEL: string
+  /** Legacy: CEL leaves v3 (ADR-006). Ignored by the UI. */
+  compiledCEL?: string
 }
 
 export interface SourceConsensusEvidence {
@@ -294,7 +306,8 @@ export interface SourceConsensusEvidence {
   spread: string
   tolerance: string
   missingSources: string[]
-  compiledCEL: string
+  /** Legacy: CEL leaves v3 (ADR-006). Ignored by the UI. */
+  compiledCEL?: string
 }
 
 export interface CoveragePortfolio {
@@ -311,7 +324,8 @@ export interface CoverageRatioBoundsEvidence {
   observedRatio?: Rational
   effectiveBounds: EffectiveRateBounds
   undefinedReason?: "denominator_total_zero"
-  compiledCEL: string
+  /** Legacy: CEL leaves v3 (ADR-006). Ignored by the UI. */
+  compiledCEL?: string
 }
 
 /**
@@ -350,7 +364,8 @@ export interface StaleHoldsEvidence {
    * live.
    */
   effectiveQuery: string
-  compiledCEL: string
+  /** Legacy: CEL leaves v3 (ADR-006). Ignored by the UI. */
+  compiledCEL?: string
 }
 
 export interface BalanceBoundsEvidence {
@@ -364,7 +379,8 @@ export interface BalanceBoundsEvidence {
   excursion: string
   /** Present only on a failing outcome. */
   breachedBound?: "min" | "max"
-  compiledCEL: string
+  /** Legacy: CEL leaves v3 (ADR-006). Ignored by the UI. */
+  compiledCEL?: string
 }
 
 export type Evidence =

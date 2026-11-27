@@ -1,5 +1,5 @@
 export type ReconTab = "overview" | "rules" | "alerts" | "audit"
-export type ReconAlertFilter = "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "ALL"
+export type ReconAlertFilter = "ACTIVE" | "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "ALL"
 
 export interface ReconNav {
   tab: ReconTab
@@ -16,6 +16,7 @@ const TABS = new Set<ReconTab>([
   "audit",
 ])
 const ALERT_FILTERS = new Set<ReconAlertFilter>([
+  "ACTIVE",
   "OPEN",
   "ACKNOWLEDGED",
   "RESOLVED",
