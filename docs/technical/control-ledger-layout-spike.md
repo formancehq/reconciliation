@@ -28,7 +28,9 @@ Fact checked against this Ledger: an index needs its field declared in the metad
 - `TestIntegration_ControlStateContract`: 19 of 19 scenarios pass on Ledger `main`. They include the three reproduced races, the guard without a write, the status move and the bump. They also include the two rule-change scenarios of option B. In the first, a rule change claims the rule's sequence, so an evaluation planned on the old rule conflicts and re-plans. In the second, a rule change that loses the sequence to an evaluation retries with the same rule version, without a `409`.
 - `TestIntegration_ReconChart`: one alert's life on the reconciliation chart in STRICT mode. The test checks the gauge balances at each step (`V -4, OPEN -1, OCC -1`, then `V -5, ACK -1, OCC -2`) and the projected `status` metadata. It also checks that an address outside the chart is refused, and that the refusal is not a conflict.
 
-Run them with `RECON_LEDGER_ADDR=<ledger> go test -tags it -run 'TestIntegration_(ControlStateContract|ReconChart)' ./internal/controlstate/ledgerstate/`.
+- `TestIntegration_RejectedBatchFreesItsReferences`: a batch the ledger rejects takes none of its transaction references. The batch writes a new rule A, then a stale write on rule B, in that order. B's reference conflict rejects the batch, and A's reference `rule:{a}:v1` stays free: no transaction holds it, and the same write re-planned under a new idempotency key commits at version 1. Replaying the rejected idempotency key returns the first outcome, the same conflict. So re-planning after a conflict never needs a new reference, only a new idempotency key.
+
+Run them with `RECON_LEDGER_ADDR=<ledger> go test -tags it -run 'TestIntegration_(ControlStateContract|ReconChart|RejectedBatchFreesItsReferences)' ./internal/controlstate/ledgerstate/`.
 
 ## Benchmark
 

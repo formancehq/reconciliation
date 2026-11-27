@@ -134,3 +134,67 @@ func TestIntegration_ReconChart(t *testing.T) {
 	require.ErrorContains(t, err, "account not matching type")
 	t.Logf("refused: %v", err)
 }
+
+// TestIntegration_RejectedBatchFreesItsReferences checks that a batch the
+// ledger rejects leaves none of its transaction references taken: the write
+// on A sits before the stale write on B in the same batch, and A's reference
+// is free again once the batch is rejected.
+func TestIntegration_RejectedBatchFreesItsReferences(t *testing.T) {
+	store, client, name := newStore(t, ledgerstate.Recon{}, commonpb.ChartEnforcementMode_CHART_ENFORCEMENT_STRICT)
+	ctx := t.Context()
+
+	// The adapter orders the batch by key, so A's transaction comes first.
+	ids := []string{uuid.NewString(), uuid.NewString()}
+	if ids[0] > ids[1] {
+		ids[0], ids[1] = ids[1], ids[0]
+	}
+	a := controlstate.Key{Kind: ledgerstate.KindRule, ID: ids[0]}
+	b := controlstate.Key{Kind: ledgerstate.KindRule, ID: ids[1]}
+	fields := map[string]string{"template": "balance_bounds", "enabled": "true"}
+
+	_, err := store.Commit(ctx, controlstate.UnitOfWork{
+		IdempotencyKey: uuid.NewString(),
+		Expect:         []controlstate.Precondition{controlstate.ExpectAbsent(b)},
+		Put:            []controlstate.Write{{Key: b, Fields: fields}},
+	})
+	require.NoError(t, err)
+
+	// A is new, B is stale: B's reference rule:{b}:v1 is already taken.
+	rejectedKey := uuid.NewString()
+	_, err = store.Commit(ctx, controlstate.UnitOfWork{
+		IdempotencyKey: rejectedKey,
+		Expect:         []controlstate.Precondition{controlstate.ExpectAbsent(a), controlstate.ExpectAbsent(b)},
+		Put:            []controlstate.Write{{Key: a, Fields: fields}, {Key: b, Fields: fields}},
+	})
+	require.ErrorIs(t, err, controlstate.ErrConflict)
+	t.Logf("rejected: %v", err)
+
+	snap, err := store.Load(ctx, a)
+	require.NoError(t, err)
+	assert.False(t, snap.Get(a).Exists(), "nothing of the rejected batch was applied")
+	var refs []string
+	require.NoError(t, client.ListTransactionsFunc(ctx, name, nil, func(tx *commonpb.Transaction) error {
+		refs = append(refs, tx.GetReference())
+		return nil
+	}))
+	assert.NotContains(t, refs, "rule:"+ids[0]+":v1", "no transaction holds A's reference")
+	assert.Contains(t, refs, "rule:"+ids[1]+":v1", "the listing sees committed references")
+
+	// A's reference is free: the same write, re-planned under a new key, commits.
+	versions, err := store.Commit(ctx, controlstate.UnitOfWork{
+		IdempotencyKey: uuid.NewString(),
+		Expect:         []controlstate.Precondition{controlstate.ExpectAbsent(a)},
+		Put:            []controlstate.Write{{Key: a, Fields: fields}},
+	})
+	require.NoError(t, err, "a rejected batch must leave its references free")
+	assert.Equal(t, controlstate.Version(1), versions[a])
+
+	// The rejected batch's idempotency key stays consumed.
+	_, err = store.Commit(ctx, controlstate.UnitOfWork{
+		IdempotencyKey: rejectedKey,
+		Expect:         []controlstate.Precondition{controlstate.ExpectAbsent(a), controlstate.ExpectAbsent(b)},
+		Put:            []controlstate.Write{{Key: a, Fields: fields}, {Key: b, Fields: fields}},
+	})
+	require.Error(t, err, "replaying the rejected key returns its first outcome")
+	t.Logf("replay of the rejected key: %v", err)
+}
