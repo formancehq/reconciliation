@@ -650,8 +650,8 @@ func auditEntryInfoFrom(entry *auditpb.AuditEntry) AuditEntryInfo {
 	}
 	if failure := entry.GetFailure(); failure != nil {
 		info.Outcome = "failure"
-		info.FailureReason = failure.GetReason().String()
-		info.FailureMessage = failure.GetMessage()
+		info.FailureReason = strings.TrimPrefix(fmt.Sprintf("%T", failure.GetDetails().GetKind()), "*commonpb.FailureDetails_")
+		info.FailureMessage = failure.GetDetails().String()
 	}
 	if ts := entry.GetTimestamp(); ts != nil {
 		info.Timestamp = time.UnixMicro(int64(ts.GetData())).UTC()
@@ -1398,7 +1398,7 @@ func (c *Client) AggregateVolumes(ctx context.Context, ledgerName string, filter
 			continue
 		}
 
-		balance := new(big.Int).Sub(v.GetInput().ToBigInt(), v.GetOutput().ToBigInt())
+		balance := new(big.Int).Sub(bigOrZero(v.GetInput()), bigOrZero(v.GetOutput()))
 		if out[v.GetAsset()] == nil {
 			out[v.GetAsset()] = new(big.Int)
 		}
@@ -1450,7 +1450,7 @@ func (c *Client) AggregateVolumesGrouped(
 				continue
 			}
 
-			balance := new(big.Int).Sub(v.GetInput().ToBigInt(), v.GetOutput().ToBigInt())
+			balance := new(big.Int).Sub(bigOrZero(v.GetInput()), bigOrZero(v.GetOutput()))
 			if byAsset[v.GetAsset()] == nil {
 				byAsset[v.GetAsset()] = new(big.Int)
 			}
@@ -1475,4 +1475,16 @@ func (c *Client) GetAccount(ctx context.Context, ledgerName, address string) (*c
 	}
 
 	return acct, nil
+}
+
+// bigOrZero converts a Ledger big integer, reading a missing or malformed
+// value as zero.
+func bigOrZero(v interface{ ToBigInt() (*big.Int, error) }) *big.Int {
+	if v == nil {
+		return new(big.Int)
+	}
+	if b, err := v.ToBigInt(); err == nil && b != nil {
+		return b
+	}
+	return new(big.Int)
 }

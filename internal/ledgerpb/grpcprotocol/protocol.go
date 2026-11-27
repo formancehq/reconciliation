@@ -27,7 +27,7 @@ const (
 	// tracks pkg/grpcprotocol.Version in the ledger repo — currently "16" at
 	// v3.0.0-beta.7 23ea97c7f — and is independent of the ledger's release
 	// SemVer, its git SHA and reconciliation's own version.
-	Version = "16"
+	Version = "40"
 
 	// MetadataKey carries the revision. It is public metadata, not a credential.
 	MetadataKey = "ledger-protocol-version"

@@ -27,6 +27,7 @@ enum AuthScope {
   AUTH_SCOPE_QUERY_WRITE = 12;
   AUTH_SCOPE_CLUSTER_READ = 13;
   AUTH_SCOPE_CLUSTER_WRITE = 14;
+  AUTH_SCOPE_EXECUTE_NUMSCRIPT = 15;
 }
 
 // DynamicAuthResolver names request-dependent policies that cannot be reduced
@@ -54,6 +55,23 @@ extend google.protobuf.MethodOptions {
   MethodAuthPolicy auth_policy = 71002;
 }
 
+// ledger_json marks a public protobuf message for generation of a standard
+// library MarshalJSON projection by protoc-gen-ledger-json.
+extend google.protobuf.MessageOptions {
+  bool ledger_json = 71003;
+}
+
+// ledger_json_default enables projections for every message in a proto file.
+// Individual messages can opt out with ledger_json_manual when they have a
+// handwritten MarshalJSON implementation or intentionally use another shape.
+extend google.protobuf.FileOptions {
+  bool ledger_json_default = 71004;
+}
+
+extend google.protobuf.MessageOptions {
+  bool ledger_json_manual = 71005;
+}
+
 // ============================================================================
 // Core Data Types
 // ============================================================================
@@ -66,10 +84,12 @@ message Timestamp {
 // declared type. It preserves the original raw value for debugging, but
 // signals to consumers that the value is unusable in its expected type.
 message NullValue {
+	option (ledger_json) = true;
   string original = 1;
 }
 
 message MetadataValue {
+	option (ledger_json) = true;
   oneof type {
     string string_value = 1;
     int64 int_value = 2;
@@ -146,17 +166,32 @@ message Script {
 // Volumes
 // ============================================================================
 
-// Volumes represents input and output volumes
-message Volumes {
-  string input = 1;   // big.Int as string
-  string output = 2;  // big.Int as string
+// BigUint represents an arbitrary-precision non-negative integer as a minimal
+// unsigned big-endian magnitude. Zero is the empty magnitude. Leading zero
+// octets are invalid.
+message BigUint {
+  bytes magnitude = 1;
 }
 
-// VolumesWithBalance represents volumes with balance
+// SignedBigInt represents an arbitrary-precision signed integer. Negative zero is
+// invalid; producers and consumers must reject it.
+message SignedBigInt {
+  bool negative = 1;
+  BigUint magnitude = 2;
+}
+
+// Volumes represents non-negative input and output volumes.
+message Volumes {
+  BigUint input = 1;
+  BigUint output = 2;
+}
+
+// VolumesWithBalance represents non-negative cumulative volumes and their
+// signed difference (input - output).
 message VolumesWithBalance {
-  string input = 1;    // big.Int as string
-  string output = 2;   // big.Int as string
-  string balance = 3;  // big.Int as string
+  BigUint input = 1;
+  BigUint output = 2;
+  SignedBigInt balance = 3;
 }
 
 // VolumesByAssets is a sorted list of post-commit (asset, color) volume
@@ -295,6 +330,7 @@ enum LogBuiltinIndex {
 
 // MetadataIndexID identifies a metadata-key index by its target entity and key.
 message MetadataIndexID {
+	option (ledger_json) = true;
   TargetType target = 1;
   string key = 2;
 }
@@ -303,6 +339,7 @@ message MetadataIndexID {
 // (transaction builtins, log builtins, account builtins, metadata keys, ...).
 // Future kinds (e.g. account_type) extend the oneof without touching other code.
 message IndexID {
+	option (ledger_json) = true;
   oneof kind {
     TransactionBuiltinIndex tx_builtin = 1;
     LogBuiltinIndex log_builtin = 2;
@@ -322,6 +359,7 @@ message IndexID {
 //
 // Entries live in the SubAttrIndex attribute zone, not in LedgerInfo.
 message Index {
+	option (ledger_json) = true;
   IndexID id = 1;
   Timestamp created_at = 2;
   string ledger = 3;  // empty for bucket-scoped indexes
@@ -343,6 +381,7 @@ message Index {
 // ============================================================================
 
 message Idempotency {
+	option (ledger_json) = true;
   string key = 1;
   // HLC microseconds when this frozen outcome expires; 0 = never. Server-derived
   // (created_at + the policy TTL committed for that apply) and chain-bound in the
@@ -359,7 +398,7 @@ message Log {
   LogPayload payload = 2;
   // Batch identity (idempotency key + signature) lives on AppliedProposal
   // (proposal.proto), not on the log.
-  signature.SignedLog response_signature = 3;
+  signature.SignedLog response_signature = 3; // public verification envelope, not a secret
 }
 
 message LogPayload {
@@ -389,6 +428,7 @@ message LogPayload {
 }
 
 message PromotedLedgerLog {
+	option (ledger_json) = true;
   string name = 1;
 }
 
@@ -398,6 +438,7 @@ message PromotedLedgerLog {
 
 // RegisteredSigningKeyLog records a signing key registration.
 message RegisteredSigningKeyLog {
+	option (ledger_json) = true;
   string key_id = 1;
   bytes public_key = 2;
   string parent_key_id = 3;
@@ -405,12 +446,14 @@ message RegisteredSigningKeyLog {
 
 // RevokedSigningKeyLog records a signing key revocation.
 message RevokedSigningKeyLog {
+	option (ledger_json) = true;
   string key_id = 1;
   repeated string cascaded_key_ids = 2;
 }
 
 // SigningKey represents a registered signing key with its parent relationship.
 message SigningKey {
+	option (ledger_json) = true;
   string key_id = 1;
   bytes public_key = 2;
   string parent_key_id = 3;
@@ -418,31 +461,37 @@ message SigningKey {
 
 // SetSigningConfigLog records a signing configuration change.
 message SetSigningConfigLog {
+	option (ledger_json) = true;
   bool require_signatures = 1;
 }
 
 // AddedEventsSinkLog records the addition of a named sink config.
 message AddedEventsSinkLog {
+	option (ledger_json) = true;
   SinkConfig config = 1;
 }
 
 // RemovedEventsSinkLog records the removal of a named sink config.
 message RemovedEventsSinkLog {
+	option (ledger_json) = true;
   string name = 1;
 }
 
 // SetMaintenanceModeLog records a maintenance mode change.
 message SetMaintenanceModeLog {
+	option (ledger_json) = true;
   bool enabled = 1;
 }
 
 // SetClusterPolicyLog records a cluster policy change.
 message SetClusterPolicyLog {
+	option (ledger_json) = true;
   ClusterPolicy policy = 1;
 }
 
 // BloomTypeConfig holds the configuration for a single bloom filter type.
 message BloomTypeConfig {
+	option (ledger_json) = true;
   uint64 expected_keys = 1;
   double fp_rate = 2;
 }
@@ -456,6 +505,7 @@ enum HashAlgorithm {
 // ClusterConfig holds mutable cluster-wide configuration parameters.
 // These are updated via Raft to ensure deterministic application across all nodes.
 message ClusterConfig {
+	option (ledger_json) = true;
   uint64 rotation_threshold = 1;
   BloomTypeConfig bloom_volumes = 2;
   BloomTypeConfig bloom_metadata = 3;
@@ -490,6 +540,7 @@ message PersistedClusterState {
 // Numscript program produces against them: a node-local limit would make one
 // committed entry apply differently per node.
 message ClusterPolicy {
+	option (ledger_json) = true;
   fixed64 revision = 1;
   fixed64 idempotency_ttl_micros = 2;  // 0 means never expires
   fixed64 query_checkpoint_limit = 3;  // must be >= 1
@@ -502,24 +553,33 @@ message ClusterPolicy {
   fixed64 metadata_max_value_bytes = 6;
   fixed64 metadata_max_entity_bytes = 7;
   fixed64 metadata_max_command_bytes = 8;
+  // Capability activation is replicated policy, never a node-local flag.
+  repeated CapabilityActivation capability_activations = 13;
 }
 
 // CreatedPreparedQueryLog records the creation of a prepared query.
 message CreatedPreparedQueryLog {
+	option (ledger_json) = true;
   string ledger = 1;
   PreparedQuery query = 2;
 }
 
 // UpdatedPreparedQueryLog records the update of a prepared query filter.
 message UpdatedPreparedQueryLog {
+	option (ledger_json) = true;
   string ledger = 1;
   string name = 2;
   QueryFilter previous_filter = 3;
   QueryFilter new_filter = 4;
+  // Present for updates that explicitly set a target. Historical filter-only
+  // updates omit both fields so their existing audit bytes remain unchanged.
+  optional QueryTarget previous_target = 5;
+  optional QueryTarget new_target = 6;
 }
 
 // DeletedPreparedQueryLog records the deletion of a prepared query.
 message DeletedPreparedQueryLog {
+	option (ledger_json) = true;
   string ledger = 1;
   string name = 2;
 }
@@ -530,12 +590,14 @@ message DeletedPreparedQueryLog {
 
 // SavedLedgerMetadataLog records metadata being set on a ledger.
 message SavedLedgerMetadataLog {
+	option (ledger_json) = true;
   string ledger = 1;
   map<string, MetadataValue> metadata = 2;
 }
 
 // DeletedLedgerMetadataLog records a metadata key being removed from a ledger.
 message DeletedLedgerMetadataLog {
+	option (ledger_json) = true;
   string ledger = 1;
   string key = 2;
 }
@@ -556,6 +618,9 @@ enum EventType {
   // failure (skippable_reasons) and was skipped instead of failing the whole
   // proposal. The OrderSkippedLog carries the reason + context. See EN-1356.
   SKIPPED_ORDER = 7;
+  // Emitted for a Numscript execution that updates account metadata without
+  // creating a transaction. The payload contains metadata keyed by account.
+  ACCOUNT_METADATA_UPDATED = 8;
 }
 
 // ============================================================================
@@ -569,17 +634,21 @@ message NumscriptInfo {
   string version = 3;
   Timestamp created_at = 4;
   string ledger = 5;
+  string description = 6;
 }
 
 // SavedNumscriptLog records a numscript version being saved to the library.
 message SavedNumscriptLog {
+	option (ledger_json) = true;
   NumscriptInfo info = 1;
 }
 
 // NumscriptVersionEntry describes one stored, immutable version of a numscript.
 message NumscriptVersionEntry {
+	option (ledger_json) = true;
   string version = 1;
   Timestamp created_at = 2;
+  string description = 3;
 }
 
 // TemplateUsage tracks per-template invocation usage. Persisted as a
@@ -592,14 +661,18 @@ message TemplateUsage {
 
 // SetQueryCheckpointScheduleLog records a query checkpoint schedule change.
 message SetQueryCheckpointScheduleLog {
+	option (ledger_json) = true;
   string cron = 1;
 }
 
 // DeletedQueryCheckpointScheduleLog records the removal of the query checkpoint schedule.
-message DeletedQueryCheckpointScheduleLog {}
+message DeletedQueryCheckpointScheduleLog {
+	option (ledger_json) = true;
+}
 
 // CreatedQueryCheckpointLog records a query checkpoint being created.
 message CreatedQueryCheckpointLog {
+	option (ledger_json) = true;
   fixed64 checkpoint_id = 1;
   fixed64 max_sequence = 2;
   Timestamp created_at = 3;
@@ -608,11 +681,13 @@ message CreatedQueryCheckpointLog {
 
 // DeletedQueryCheckpointLog records a query checkpoint being deleted.
 message DeletedQueryCheckpointLog {
+	option (ledger_json) = true;
   fixed64 checkpoint_id = 1;
 }
 
 // SinkConfig wraps a single sink configuration with per-sink settings.
 message SinkConfig {
+	option (ledger_json) = true;
   string name = 1;  // Stable identifier for per-sink cursor and status keys
   oneof type {
     NatsSinkConfig nats = 2;
@@ -630,48 +705,55 @@ message SinkConfig {
 
 // SinkStatus tracks per-sink operational state (replicated via Raft).
 message SinkStatus {
+	option (ledger_json) = true;
   string sink_name = 1;
   fixed64 cursor = 2;         // Last published sequence
   SinkError error = 3;       // Most recent error (nil = healthy)
 }
 
-// SinkError records a sink failure.
+// SinkError records a sink failure. Drivers must remove credentials before returning errors.
 message SinkError {
+	option (ledger_json) = true;
   string message = 1;
   Timestamp occurred_at = 2;
 }
 
 // NatsSinkConfig holds NATS JetStream sink configuration.
 message NatsSinkConfig {
-  string url = 1;
+	option (ledger_json) = true;
+  string url = 1 [(sensitive_url) = true];  // may embed a token in the userinfo position
   string topic = 2;
 }
 
 // ClickHouseSinkConfig holds ClickHouse sink configuration.
 message ClickHouseSinkConfig {
-  string dsn = 1;    // e.g. "clickhouse://user:pass@host:9000/db"
+	option (ledger_json) = true;
+  string dsn = 1 [(sensitive_url) = true];    // e.g. "clickhouse://user:pass@host:9000/db"
   string table = 2;  // Table name (default: "ledger_events")
 }
 
 // KafkaSinkConfig holds Apache Kafka sink configuration.
 message KafkaSinkConfig {
+	option (ledger_json) = true;
   repeated string brokers = 1;  // e.g. ["localhost:9092"]
   string topic = 2;             // Kafka topic name
   bool tls = 3;                 // Enable TLS
   string sasl_mechanism = 4;    // SASL mechanism: "", "PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"
   string sasl_username = 5;
-  string sasl_password = 6;
+  string sasl_password = 6 [(sensitive) = true];
 }
 
 // HttpSinkConfig holds HTTP webhook sink configuration.
 message HttpSinkConfig {
-  string endpoint = 1;          // Target URL (e.g. "https://example.com/webhooks/ledger")
-  string secret = 2;            // Optional HMAC-SHA256 secret for X-Webhook-Signature header
+	option (ledger_json) = true;
+  string endpoint = 1 [(sensitive_url) = true];  // Target URL (e.g. "https://example.com/webhooks/ledger")
+  string secret = 2 [(sensitive) = true];            // Optional HMAC-SHA256 secret for X-Webhook-Signature header
 }
 
 // DatabricksSinkConfig holds Databricks SQL Warehouse sink configuration.
 // Exactly one of the auth oneof fields must be set.
 message DatabricksSinkConfig {
+	option (ledger_json) = true;
   string server_hostname = 1;  // e.g. "adb-123456.azuredatabricks.net"
   string http_path = 2;        // SQL Warehouse HTTP path (e.g. "/sql/1.0/warehouses/abc123")
   string catalog = 3;          // Unity Catalog name (e.g. "main")
@@ -679,15 +761,16 @@ message DatabricksSinkConfig {
   string table = 5;            // Table name (default: "ledger_events")
   int32 port = 6;              // Port number (default: 443)
   oneof auth {
-    string token = 7;                  // Personal Access Token (PAT)
+    string token = 7 [(sensitive) = true];                  // Personal Access Token (PAT)
     DatabricksOAuthM2M oauth_m2m = 8;  // OAuth M2M / service principal
   }
 }
 
 // DatabricksOAuthM2M holds OAuth M2M (client credentials) for a Databricks service principal.
 message DatabricksOAuthM2M {
+	option (ledger_json) = true;
   string client_id = 1;
-  string client_secret = 2;
+  string client_secret = 2 [(sensitive) = true];
 }
 
 // CreatedLedgerLog captures the creation-time parameters of a ledger.
@@ -702,6 +785,7 @@ message CreatedLedgerLog {
   map<string, AccountType> account_types = 6;
   ChartEnforcementMode default_enforcement_mode = 7;
   uint32 id = 8;                              // Numeric ledger ID assigned by FSM
+  map<string, MetadataValue> metadata = 9; // Initial ledger metadata
 }
 
 message DeletedLedgerLog {
@@ -722,8 +806,9 @@ message LedgerLog {
   // pre-existing non-zero balance in Pebble and this log brought it back to
   // zero, causing the volume to be evicted from the attribute store at
   // commit. Purged is DISJOINT from ephemeral_volumes and new_kept_volumes.
-  // The index builder skips account->transaction mappings for
-  // purged ∪ ephemeral (both are evicted from Pebble). The usagebuilder
+  // The index builder excludes purged and ephemeral cells from current
+  // has-asset memberships, but preserves their historical transaction
+  // address mappings. Only TRANSIENT cells are excluded from history. The usagebuilder
   // subtracts len(purged_volumes) from VolumeCount — a draining eviction
   // decreases the live cardinality by one.
   repeated TouchedVolume purged_volumes = 4;
@@ -737,8 +822,8 @@ message LedgerLog {
   // THIS log — pure ephemeral. Written to Pebble briefly then evicted at
   // commit. Contributes +0 to VolumeCount (was zero, is zero after commit)
   // and is tracked separately so:
-  //   - the index builder can skip acct->tx mappings for them (via
-  //     purged_volumes ∪ ephemeral_volumes);
+  //   - the index builder can skip current has-asset memberships for them
+  //     (via purged_volumes ∪ ephemeral_volumes), while retaining history;
   //   - the log payload does not duplicate ephemeral tuples in two lists
   //     (previous encoding carried them in both purged_volumes AND
   //     new_volumes, doubling bytes on ephemeral-heavy workloads).
@@ -771,30 +856,827 @@ message LedgerLogPayload {
     RemovedAccountTypeLog removed_account_type = 11 [(ledger_log_is_history) = false];
     UpdatedDefaultEnforcementModeLog updated_default_enforcement_mode = 12 [(ledger_log_is_history) = false];
     OrderSkippedLog order_skipped = 13 [(ledger_log_is_history) = true];
+    AccountMetadataUpdated account_metadata_updated = 14 [(ledger_log_is_history) = true];
   }
 }
 
 // OrderSkippedLog records an order that the FSM rejected with a business
 // error whose reason was listed in the order's `skippable_reasons` whitelist.
+// FailureDetails is the typed business context of an audited failure.
+// Each arm identifies one concrete stable failure code and its sole reason.
+// Every scalar fact in a selected variant must be present. Proto3 optional
+// tracks presence so absence differs from an explicit zero or empty value.
+message FailureDetails {
+  oneof kind {
+    AccountAddressEmptyDetails account_address_empty = 1 [(failure_reason) = ERROR_REASON_VALIDATION];
+    AccountAddressEmptySegmentDetails account_address_empty_segment = 2 [(failure_reason) = ERROR_REASON_VALIDATION];
+    AccountAddressInvalidCharDetails account_address_invalid_char = 3 [(failure_reason) = ERROR_REASON_VALIDATION];
+    AccountAddressTooLongDetails account_address_too_long = 4 [(failure_reason) = ERROR_REASON_VALIDATION];
+    AccountNotMatchingTypeDetails account_not_matching_type = 5 [(failure_reason) = ERROR_REASON_ACCOUNT_NOT_MATCHING_TYPE];
+    AccountTypeAlreadyExistsDetails account_type_already_exists = 6 [(failure_reason) = ERROR_REASON_ACCOUNT_TYPE_ALREADY_EXISTS];
+    AccountTypeConflictDetails account_type_conflict = 7 [(failure_reason) = ERROR_REASON_ACCOUNT_TYPE_CONFLICT];
+    AccountTypeHasAccountsDetails account_type_has_accounts = 8 [(failure_reason) = ERROR_REASON_ACCOUNT_TYPE_HAS_ACCOUNTS];
+    AccountTypeNameTooLongDetails account_type_name_too_long = 9 [(failure_reason) = ERROR_REASON_VALIDATION];
+    AccountTypeNotFoundDetails account_type_not_found = 10 [(failure_reason) = ERROR_REASON_ACCOUNT_TYPE_NOT_FOUND];
+    AccountTypePatternTooLongDetails account_type_pattern_too_long = 11 [(failure_reason) = ERROR_REASON_VALIDATION];
+    AssetInvalidDetails asset_invalid = 12 [(failure_reason) = ERROR_REASON_VALIDATION];
+    BalanceNotFoundDetails balance_not_found = 13 [(failure_reason) = ERROR_REASON_BALANCE_NOT_FOUND];
+    CheckpointIdRequiredDetails checkpoint_id_required = 14 [(failure_reason) = ERROR_REASON_CHECKPOINT_ID_REQUIRED];
+    CheckpointLimitReachedDetails checkpoint_limit_reached = 15 [(failure_reason) = ERROR_REASON_CHECKPOINT_LIMIT_REACHED];
+    CheckpointNotFoundDetails checkpoint_not_found = 16 [(failure_reason) = ERROR_REASON_CHECKPOINT_NOT_FOUND];
+    ColorInvalidDetails color_invalid = 17 [(failure_reason) = ERROR_REASON_VALIDATION];
+    ColorTooLongDetails color_too_long = 18 [(failure_reason) = ERROR_REASON_VALIDATION];
+    EmptyTransactionDetails empty_transaction = 19 [(failure_reason) = ERROR_REASON_VALIDATION];
+    IdempotencyKeyConflictDetails idempotency_key_conflict = 20 [(failure_reason) = ERROR_REASON_IDEMPOTENCY_KEY_CONFLICT];
+    IdRequiredDetails id_required = 21 [(failure_reason) = ERROR_REASON_VALIDATION];
+    IndexAlreadyExistsDetails index_already_exists = 22 [(failure_reason) = ERROR_REASON_INDEX_ALREADY_EXISTS];
+    IndexNotFoundDetails index_not_found = 23 [(failure_reason) = ERROR_REASON_INDEX_NOT_FOUND];
+    IndexTargetUnsupportedDetails index_target_unsupported = 24 [(failure_reason) = ERROR_REASON_VALIDATION];
+    InsufficientFundsDetails insufficient_funds = 25 [(failure_reason) = ERROR_REASON_INSUFFICIENT_FUNDS];
+    InvalidCronExpressionDetails invalid_cron_expression = 26 [(failure_reason) = ERROR_REASON_INVALID_CRON_EXPRESSION];
+    InvalidPatternDetails invalid_pattern = 27 [(failure_reason) = ERROR_REASON_INVALID_PATTERN];
+    InvalidSkippableReasonDetails invalid_skippable_reason = 28 [(failure_reason) = ERROR_REASON_VALIDATION];
+    LedgerAlreadyExistsDetails ledger_already_exists = 29 [(failure_reason) = ERROR_REASON_LEDGER_ALREADY_EXISTS];
+    LedgerDeletedDetails ledger_deleted = 30 [(failure_reason) = ERROR_REASON_LEDGER_DELETED];
+    LedgerInMirrorModeDetails ledger_in_mirror_mode = 31 [(failure_reason) = ERROR_REASON_LEDGER_IN_MIRROR_MODE];
+    LedgerNameInvalidCharDetails ledger_name_invalid_char = 32 [(failure_reason) = ERROR_REASON_VALIDATION];
+    LedgerNameRequiredDetails ledger_name_required = 33 [(failure_reason) = ERROR_REASON_VALIDATION];
+    LedgerNameReservedPrefixDetails ledger_name_reserved_prefix = 34 [(failure_reason) = ERROR_REASON_VALIDATION];
+    LedgerNameTooLongDetails ledger_name_too_long = 35 [(failure_reason) = ERROR_REASON_VALIDATION];
+    LedgerNotFoundDetails ledger_not_found = 36 [(failure_reason) = ERROR_REASON_LEDGER_NOT_FOUND];
+    LedgerNotInMirrorModeDetails ledger_not_in_mirror_mode = 37 [(failure_reason) = ERROR_REASON_LEDGER_NOT_IN_MIRROR_MODE];
+    MetadataFieldNotInSchemaDetails metadata_field_not_in_schema = 38 [(failure_reason) = ERROR_REASON_METADATA_FIELD_NOT_IN_SCHEMA];
+    MetadataKeyEmptyDetails metadata_key_empty = 39 [(failure_reason) = ERROR_REASON_VALIDATION];
+    MetadataKeyInvalidCharDetails metadata_key_invalid_char = 40 [(failure_reason) = ERROR_REASON_VALIDATION];
+    MetadataKeyRequiredDetails metadata_key_required = 41 [(failure_reason) = ERROR_REASON_VALIDATION];
+    MetadataLimitExceededDetails metadata_limit_exceeded = 42 [(failure_reason) = ERROR_REASON_METADATA_LIMIT_EXCEEDED];
+    MetadataNotFoundDetails metadata_not_found = 43 [(failure_reason) = ERROR_REASON_METADATA_NOT_FOUND];
+    MetadataValueContainsNullByteDetails metadata_value_contains_null_byte = 44 [(failure_reason) = ERROR_REASON_VALIDATION];
+    MirrorHttpUrlInvalidDetails mirror_http_url_invalid = 45 [(failure_reason) = ERROR_REASON_VALIDATION];
+    MirrorIamRegionRequiredDetails mirror_iam_region_required = 46 [(failure_reason) = ERROR_REASON_VALIDATION];
+    MirrorIamRequiresTlsDetails mirror_iam_requires_tls = 47 [(failure_reason) = ERROR_REASON_VALIDATION];
+    MirrorRewriteRuleInvalidDetails mirror_rewrite_rule_invalid = 48 [(failure_reason) = ERROR_REASON_VALIDATION];
+    NumscriptAssetMismatchDetails numscript_asset_mismatch = 49 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptBadArityDetails numscript_bad_arity = 50 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptBadMetaValueDetails numscript_bad_meta_value = 51 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptBadPortionDetails numscript_bad_portion = 52 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptCannotCastScopedAccountDetails numscript_cannot_cast_scoped_account = 53 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptCannotCastToStringDetails numscript_cannot_cast_to_string = 54 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptCannotStoreScopedAccountDetails numscript_cannot_store_scoped_account = 55 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptCompileBadArityDetails numscript_compile_bad_arity = 56 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileCannotCastToStringDetails numscript_compile_cannot_cast_to_string = 57 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileCannotStoreScopedAccountDetails numscript_compile_cannot_store_scoped_account = 58 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileDuplicateRemainingDetails numscript_compile_duplicate_remaining = 59 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileDuplicateVariableDetails numscript_compile_duplicate_variable = 60 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileExperimentalFeatureDetails numscript_compile_experimental_feature = 61 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileInvalidFeatureDetails numscript_compile_invalid_feature = 62 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileInvalidMetaPositionDetails numscript_compile_invalid_meta_position = 63 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileInvalidTypeDetails numscript_compile_invalid_type = 64 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileInvalidUncappedSourceDetails numscript_compile_invalid_uncapped_source = 65 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileInvalidVariableValueDetails numscript_compile_invalid_variable_value = 66 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileMissingVariableDetails numscript_compile_missing_variable = 67 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileTypeMismatchDetails numscript_compile_type_mismatch = 68 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileUnboundVariableDetails numscript_compile_unbound_variable = 69 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptCompileUnknownFunctionDetails numscript_compile_unknown_function = 70 [(failure_reason) = ERROR_REASON_NUMSCRIPT_COMPILE_ERROR];
+    NumscriptContentRequiredDetails numscript_content_required = 71 [(failure_reason) = ERROR_REASON_VALIDATION];
+    NumscriptCurrencyMismatchDetails numscript_currency_mismatch = 72 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptDivideByZeroDetails numscript_divide_by_zero = 73 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptExperimentalFeatureDetails numscript_experimental_feature = 74 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidAccountNameDetails numscript_invalid_account_name = 75 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidAllotmentInSendAllDetails numscript_invalid_allotment_in_send_all = 76 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidAllotmentSumDetails numscript_invalid_allotment_sum = 77 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidAssetDetails numscript_invalid_asset = 78 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidColorDetails numscript_invalid_color = 79 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidFeatureDetails numscript_invalid_feature = 80 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidMonetaryLiteralDetails numscript_invalid_monetary_literal = 81 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidNestedMetaDetails numscript_invalid_nested_meta = 82 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidNumberLiteralDetails numscript_invalid_number_literal = 83 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidRemainingAllotmentDetails numscript_invalid_remaining_allotment = 84 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidScopeDetails numscript_invalid_scope = 85 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidTypeDetails numscript_invalid_type = 86 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidUnboundedScalingAddressDetails numscript_invalid_unbounded_scaling_address = 87 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidUnboundedSendAllDetails numscript_invalid_unbounded_send_all = 88 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidUncappedSourceDetails numscript_invalid_uncapped_source = 89 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptInvalidVersionDetails numscript_invalid_version = 90 [(failure_reason) = ERROR_REASON_NUMSCRIPT_INVALID_VERSION];
+    NumscriptMetadataNotFoundDetails numscript_metadata_not_found = 91 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptMissingFundsDetails numscript_missing_funds = 92 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptMissingVariableDetails numscript_missing_variable = 93 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptNameInvalidCharDetails numscript_name_invalid_char = 94 [(failure_reason) = ERROR_REASON_VALIDATION];
+    NumscriptNameRequiredDetails numscript_name_required = 95 [(failure_reason) = ERROR_REASON_VALIDATION];
+    NumscriptNameTooLongDetails numscript_name_too_long = 96 [(failure_reason) = ERROR_REASON_VALIDATION];
+    NumscriptNegativeAmountDetails numscript_negative_amount = 97 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptNegativeBalanceDetails numscript_negative_balance = 98 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptNegativePortionDetails numscript_negative_portion = 99 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptNotFoundDetails numscript_not_found = 100 [(failure_reason) = ERROR_REASON_NUMSCRIPT_NOT_FOUND];
+    NumscriptParseErrorDetails numscript_parse_error = 101 [(failure_reason) = ERROR_REASON_NUMSCRIPT_PARSE_ERROR];
+    NumscriptPostingAmountOverflowDetails numscript_posting_amount_overflow = 102 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptPostingNegativeAmountDetails numscript_posting_negative_amount = 103 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptScalingUnsupportedDetails numscript_scaling_unsupported = 104 [(failure_reason) = ERROR_REASON_VALIDATION];
+    NumscriptTypeErrorDetails numscript_type_error = 105 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptUnboundFunctionDetails numscript_unbound_function = 106 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptUnboundVariableDetails numscript_unbound_variable = 107 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptVersionAlreadyExistsDetails numscript_version_already_exists = 108 [(failure_reason) = ERROR_REASON_NUMSCRIPT_VERSION_ALREADY_EXISTS];
+    PostingsAndScriptConflictDetails postings_and_script_conflict = 109 [(failure_reason) = ERROR_REASON_VALIDATION];
+    PreparedQueryAlreadyExistsDetails prepared_query_already_exists = 110 [(failure_reason) = ERROR_REASON_PREPARED_QUERY_ALREADY_EXISTS];
+    PreparedQueryNameInvalidCharDetails prepared_query_name_invalid_char = 111 [(failure_reason) = ERROR_REASON_VALIDATION];
+    PreparedQueryNameRequiredDetails prepared_query_name_required = 112 [(failure_reason) = ERROR_REASON_VALIDATION];
+    PreparedQueryNameTooLongDetails prepared_query_name_too_long = 113 [(failure_reason) = ERROR_REASON_VALIDATION];
+    PreparedQueryNotFoundDetails prepared_query_not_found = 114 [(failure_reason) = ERROR_REASON_PREPARED_QUERY_NOT_FOUND];
+    PreparedQueryRequiredDetails prepared_query_required = 115 [(failure_reason) = ERROR_REASON_VALIDATION];
+    PreparedQueryTargetUnsupportedDetails prepared_query_target_unsupported = 116 [(failure_reason) = ERROR_REASON_VALIDATION];
+    RevertTargetCreatedInBatchDetails revert_target_created_in_batch = 117 [(failure_reason) = ERROR_REASON_REVERT_TARGET_CREATED_IN_BATCH];
+    ScopedBalanceUnsupportedDetails scoped_balance_unsupported = 118 [(failure_reason) = ERROR_REASON_VALIDATION];
+    ScriptAndReferenceConflictDetails script_and_reference_conflict = 119 [(failure_reason) = ERROR_REASON_VALIDATION];
+    ScriptRequiredDetails script_required = 120 [(failure_reason) = ERROR_REASON_VALIDATION];
+    SigningKeyIdInvalidCharDetails signing_key_id_invalid_char = 121 [(failure_reason) = ERROR_REASON_VALIDATION];
+    SigningKeyIdRequiredDetails signing_key_id_required = 122 [(failure_reason) = ERROR_REASON_VALIDATION];
+    SigningKeyIdTooLongDetails signing_key_id_too_long = 123 [(failure_reason) = ERROR_REASON_VALIDATION];
+    SigningKeyInvalidLengthDetails signing_key_invalid_length = 124 [(failure_reason) = ERROR_REASON_VALIDATION];
+    SinkAlreadyExistsDetails sink_already_exists = 125 [(failure_reason) = ERROR_REASON_SINK_ALREADY_EXISTS];
+    SinkBatchSizeTooLargeDetails sink_batch_size_too_large = 126 [(failure_reason) = ERROR_REASON_SINK_BATCH_SIZE_TOO_LARGE];
+    SinkControllerMismatchDetails sink_controller_mismatch = 127 [(failure_reason) = ERROR_REASON_SINK_CONTROLLER_MISMATCH];
+    SinkNotFoundDetails sink_not_found = 128 [(failure_reason) = ERROR_REASON_SINK_NOT_FOUND];
+    TargetRequiredDetails target_required = 129 [(failure_reason) = ERROR_REASON_VALIDATION];
+    TransactionAlreadyRevertedDetails transaction_already_reverted = 130 [(failure_reason) = ERROR_REASON_TRANSACTION_ALREADY_REVERTED];
+    TransactionNotFoundDetails transaction_not_found = 131 [(failure_reason) = ERROR_REASON_TRANSACTION_NOT_FOUND];
+    TransactionReferenceConflictDetails transaction_reference_conflict = 132 [(failure_reason) = ERROR_REASON_TRANSACTION_REFERENCE_CONFLICT];
+    TransactionReferenceNotFoundDetails transaction_reference_not_found = 133 [(failure_reason) = ERROR_REASON_TRANSACTION_REFERENCE_NOT_FOUND];
+    TransactionReferenceTooLongDetails transaction_reference_too_long = 134 [(failure_reason) = ERROR_REASON_VALIDATION];
+    TransactionTargetMissingDetails transaction_target_missing = 135 [(failure_reason) = ERROR_REASON_VALIDATION];
+    TransientAccountNonZeroDetails transient_account_non_zero = 136 [(failure_reason) = ERROR_REASON_TRANSIENT_ACCOUNT_NON_ZERO];
+    VolumeOverflowDetails volume_overflow = 137 [(failure_reason) = ERROR_REASON_VOLUME_OVERFLOW];
+    AccountMetadataKeyEmptyDetails account_metadata_key_empty = 138 [(failure_reason) = ERROR_REASON_VALIDATION];
+    AccountMetadataKeyInvalidCharDetails account_metadata_key_invalid_char = 139 [(failure_reason) = ERROR_REASON_VALIDATION];
+    AccountMetadataValueContainsNullByteDetails account_metadata_value_contains_null_byte = 140 [(failure_reason) = ERROR_REASON_VALIDATION];
+    AccountMetadataLimitExceededDetails account_metadata_limit_exceeded = 141 [(failure_reason) = ERROR_REASON_METADATA_LIMIT_EXCEEDED];
+    MetadataKeyLimitExceededDetails metadata_key_limit_exceeded = 142 [(failure_reason) = ERROR_REASON_METADATA_LIMIT_EXCEEDED];
+    AccountMetadataKeyLimitExceededDetails account_metadata_key_limit_exceeded = 143 [(failure_reason) = ERROR_REASON_METADATA_LIMIT_EXCEEDED];
+    NumscriptInsufficientFundsDetails numscript_insufficient_funds = 144 [(failure_reason) = ERROR_REASON_INSUFFICIENT_FUNDS];
+    NumscriptDivideByZeroWithNumeratorDetails numscript_divide_by_zero_with_numerator = 145 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptScopedMetadataNotFoundDetails numscript_scoped_metadata_not_found = 146 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptScopedNegativeBalanceDetails numscript_scoped_negative_balance = 147 [(failure_reason) = ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR];
+    NumscriptVersionNotFoundDetails numscript_version_not_found = 148 [(failure_reason) = ERROR_REASON_NUMSCRIPT_NOT_FOUND];
+    MirrorAssetMappingInvalidDetails mirror_asset_mapping_invalid = 149 [(failure_reason) = ERROR_REASON_VALIDATION];
+    MetadataOnlyTransactionMetadataDetails metadata_only_transaction_metadata = 150 [(failure_reason) = ERROR_REASON_VALIDATION];
+    MetadataOnlyReferenceDetails metadata_only_reference = 151 [(failure_reason) = ERROR_REASON_VALIDATION];
+    NumscriptDescriptionTooLongDetails numscript_description_too_long = 152 [(failure_reason) = ERROR_REASON_VALIDATION];
+    NumscriptDescriptionInvalidCharDetails numscript_description_invalid_char = 153 [(failure_reason) = ERROR_REASON_VALIDATION];
+  }
+}
+
+message AccountAddressEmptyDetails {
+}
+
+message AccountAddressEmptySegmentDetails {
+}
+
+message AccountAddressInvalidCharDetails {
+}
+
+message AccountAddressTooLongDetails {
+}
+
+message AccountNotMatchingTypeDetails {
+  optional string address = 1;
+}
+
+message AccountTypeAlreadyExistsDetails {
+  optional string name = 1;
+}
+
+message AccountTypeConflictDetails {
+  optional string pattern = 1;
+  optional string existing_name = 2;
+  optional string existing_pattern = 3;
+}
+
+message AccountTypeHasAccountsDetails {
+  optional string name = 1;
+}
+
+message AccountTypeNameTooLongDetails {
+}
+
+message AccountTypeNotFoundDetails {
+  optional string name = 1;
+}
+
+message AccountTypePatternTooLongDetails {
+}
+
+message AssetInvalidDetails {
+}
+
+message BalanceNotFoundDetails {
+  optional string account = 1;
+  optional string asset = 2;
+}
+
+
+message CheckpointIdRequiredDetails {
+}
+
+message CheckpointLimitReachedDetails {
+  optional uint64 limit = 1;
+}
+
+message CheckpointNotFoundDetails {
+  optional uint64 checkpoint_id = 1;
+}
+
+
+message ColorInvalidDetails {
+}
+
+message ColorTooLongDetails {
+}
+
+message EmptyTransactionDetails {
+}
+
+message MetadataOnlyTransactionMetadataDetails {
+}
+
+message MetadataOnlyReferenceDetails {
+}
+
+
+message IdempotencyKeyConflictDetails {
+  optional string key = 1;
+}
+
+message IdRequiredDetails {
+}
+
+message IndexAlreadyExistsDetails {
+  optional string index = 1;
+}
+
+
+
+message IndexNotFoundDetails {
+  optional string index = 1;
+}
+
+message IndexTargetUnsupportedDetails {
+}
+
+message InsufficientFundsDetails {
+  optional string account = 1;
+  optional string asset = 2;
+  optional string amount = 3;
+  optional string balance = 4;
+  optional string color = 5;
+}
+
+message NumscriptInsufficientFundsDetails {
+  optional string asset = 1;
+  optional string amount = 2;
+  optional string balance = 3;
+}
+
+
+message InvalidCronExpressionDetails {
+  optional string expression = 1;
+}
+
+
+
+message InvalidPatternDetails {
+  optional string pattern = 1;
+}
+
+message InvalidSkippableReasonDetails {
+  optional string provided_reason = 1;
+}
+
+message LedgerAlreadyExistsDetails {
+  optional string name = 1;
+}
+
+message LedgerDeletedDetails {
+  optional string name = 1;
+}
+
+message LedgerInMirrorModeDetails {
+  optional string name = 1;
+}
+
+message LedgerNameInvalidCharDetails {
+}
+
+message LedgerNameRequiredDetails {
+}
+
+message LedgerNameReservedPrefixDetails {
+}
+
+message LedgerNameTooLongDetails {
+}
+
+message LedgerNotFoundDetails {
+  optional string name = 1;
+}
+
+message LedgerNotInMirrorModeDetails {
+  optional string name = 1;
+}
+
+message MetadataFieldNotInSchemaDetails {
+  optional string target = 1;
+  optional string key = 2;
+}
+
+message MetadataKeyEmptyDetails {
+}
+
+message AccountMetadataKeyEmptyDetails {
+  optional string account = 1;
+}
+
+message MetadataKeyInvalidCharDetails {
+  optional string key = 1;
+}
+
+message AccountMetadataKeyInvalidCharDetails {
+  optional string key = 1;
+  optional string account = 2;
+}
+
+message MetadataKeyRequiredDetails {
+}
+
+
+
+message MetadataLimitExceededDetails {
+  optional string dimension = 1;
+  optional uint64 limit = 2;
+  optional uint64 actual = 3;
+}
+
+message AccountMetadataLimitExceededDetails {
+  optional string dimension = 1;
+  optional uint64 limit = 2;
+  optional uint64 actual = 3;
+  optional string account = 4;
+}
+
+message MetadataKeyLimitExceededDetails {
+  optional string dimension = 1;
+  optional uint64 limit = 2;
+  optional uint64 actual = 3;
+  optional string key = 4;
+}
+
+message AccountMetadataKeyLimitExceededDetails {
+  optional string dimension = 1;
+  optional uint64 limit = 2;
+  optional uint64 actual = 3;
+  optional string key = 4;
+  optional string account = 5;
+}
+
+message MetadataNotFoundDetails {
+  optional string target = 1;
+  optional string key = 2;
+
+}
+
+message MetadataValueContainsNullByteDetails {
+  optional string key = 1;
+}
+
+message AccountMetadataValueContainsNullByteDetails {
+  optional string key = 1;
+  optional string account = 2;
+}
+
+message MirrorHttpUrlInvalidDetails {
+}
+
+message MirrorIamRegionRequiredDetails {
+}
+
+message MirrorIamRequiresTlsDetails {
+}
+
+message MirrorRewriteRuleInvalidDetails {
+}
+
+message MirrorAssetMappingInvalidDetails {
+}
+
+
+
+message NumscriptAssetMismatchDetails {
+  optional string expected = 1;
+  optional string got = 2;
+}
+
+message NumscriptBadArityDetails {
+  optional string expected_arity = 1;
+  optional string given_arguments = 2;
+}
+
+message NumscriptBadMetaValueDetails {
+  optional string account = 1;
+  optional string key = 2;
+}
+
+message NumscriptBadPortionDetails {
+  optional string source = 1;
+}
+
+message NumscriptCannotCastScopedAccountDetails {
+  optional string account = 1;
+  optional string scope = 2;
+}
+
+message NumscriptCannotCastToStringDetails {
+}
+
+message NumscriptCannotStoreScopedAccountDetails {
+  optional string account = 1;
+  optional string scope = 2;
+}
+
+message NumscriptCompileBadArityDetails {
+  optional uint64 expected = 1;
+  optional uint64 actual = 2;
+}
+
+message NumscriptCompileCannotCastToStringDetails {
+  optional string type = 1;
+}
+
+message NumscriptCompileCannotStoreScopedAccountDetails {
+}
+
+message NumscriptCompileDuplicateRemainingDetails {
+}
+
+message NumscriptCompileDuplicateVariableDetails {
+  optional string name = 1;
+}
+
+
+message NumscriptCompileExperimentalFeatureDetails {
+  optional string flag_name = 1;
+}
+
+message NumscriptCompileInvalidFeatureDetails {
+  optional string feature = 1;
+}
+
+message NumscriptCompileInvalidMetaPositionDetails {
+}
+
+message NumscriptCompileInvalidTypeDetails {
+  optional string name = 1;
+}
+
+message NumscriptCompileInvalidUncappedSourceDetails {
+}
+
+message NumscriptCompileInvalidVariableValueDetails {
+  optional string name = 1;
+  optional string type = 2;
+}
+
+message NumscriptCompileMissingVariableDetails {
+  optional string name = 1;
+}
+
+message NumscriptCompileTypeMismatchDetails {
+  optional string expected = 1;
+  optional string got = 2;
+}
+
+message NumscriptCompileUnboundVariableDetails {
+  optional string name = 1;
+  optional string type = 2;
+}
+
+message NumscriptCompileUnknownFunctionDetails {
+  optional string name = 1;
+  optional string wrong_context = 2;
+}
+
+message NumscriptContentRequiredDetails {
+}
+
+message NumscriptCurrencyMismatchDetails {
+  optional string expected = 1;
+  optional string got = 2;
+}
+
+message NumscriptDescriptionInvalidCharDetails {
+}
+
+message NumscriptDescriptionTooLongDetails {
+}
+
+message NumscriptDivideByZeroDetails {
+}
+
+message NumscriptDivideByZeroWithNumeratorDetails {
+  optional string numerator = 1;
+}
+
+
+message NumscriptExperimentalFeatureDetails {
+  optional string flag_name = 1;
+}
+
+message NumscriptInvalidAccountNameDetails {
+  optional string name = 1;
+}
+
+message NumscriptInvalidAllotmentInSendAllDetails {
+}
+
+message NumscriptInvalidAllotmentSumDetails {
+  optional string actual_sum = 1;
+}
+
+message NumscriptInvalidAssetDetails {
+  optional string name = 1;
+}
+
+message NumscriptInvalidColorDetails {
+  optional string color = 1;
+}
+
+message NumscriptInvalidFeatureDetails {
+  optional string feature = 1;
+}
+
+message NumscriptInvalidMonetaryLiteralDetails {
+  optional string source = 1;
+}
+
+message NumscriptInvalidNestedMetaDetails {
+}
+
+message NumscriptInvalidNumberLiteralDetails {
+  optional string source = 1;
+}
+
+message NumscriptInvalidRemainingAllotmentDetails {
+}
+
+message NumscriptInvalidScopeDetails {
+  optional string scope = 1;
+}
+
+message NumscriptInvalidTypeDetails {
+  optional string name = 1;
+}
+
+message NumscriptInvalidUnboundedScalingAddressDetails {
+}
+
+message NumscriptInvalidUnboundedSendAllDetails {
+  optional string name = 1;
+  optional string scope = 2;
+}
+
+message NumscriptInvalidUncappedSourceDetails {
+  optional string account = 1;
+}
+
+message NumscriptInvalidVersionDetails {
+  optional string version = 1;
+}
+
+message NumscriptMetadataNotFoundDetails {
+  optional string account = 1;
+  optional string key = 2;
+}
+
+message NumscriptScopedMetadataNotFoundDetails {
+  optional string account = 1;
+  optional string scope = 2;
+  optional string key = 3;
+}
+
+message NumscriptMissingFundsDetails {
+  optional string asset = 1;
+  optional string needed = 2;
+  optional string available = 3;
+}
+
+message NumscriptMissingVariableDetails {
+  optional string name = 1;
+}
+
+message NumscriptNameInvalidCharDetails {
+}
+
+message NumscriptNameRequiredDetails {
+}
+
+message NumscriptNameTooLongDetails {
+}
+
+message NumscriptNegativeAmountDetails {
+  optional string amount = 1;
+}
+
+message NumscriptNegativeBalanceDetails {
+  optional string account = 1;
+  optional string amount = 2;
+}
+
+message NumscriptScopedNegativeBalanceDetails {
+  optional string account = 1;
+  optional string scope = 2;
+  optional string asset = 3;
+  optional string amount = 4;
+}
+
+message NumscriptNegativePortionDetails {
+  optional string portion = 1;
+}
+
+message NumscriptNotFoundDetails {
+  optional string name = 1;
+}
+
+message NumscriptVersionNotFoundDetails {
+  optional string name = 1;
+  optional string version = 2;
+}
+
+message NumscriptParseErrorDetails {
+}
+
+message NumscriptPostingAmountOverflowDetails {
+  optional uint64 posting_index = 1;
+  optional string amount = 2;
+}
+
+message NumscriptPostingNegativeAmountDetails {
+  optional uint64 posting_index = 1;
+  optional string amount = 2;
+}
+
+
+message NumscriptScalingUnsupportedDetails {
+}
+
+message NumscriptTypeErrorDetails {
+  optional string expected = 1;
+}
+
+message NumscriptUnboundFunctionDetails {
+  optional string name = 1;
+}
+
+message NumscriptUnboundVariableDetails {
+  optional string name = 1;
+}
+
+message NumscriptVersionAlreadyExistsDetails {
+  optional string name = 1;
+  optional string version = 2;
+}
+
+message PostingsAndScriptConflictDetails {
+}
+
+message PreparedQueryAlreadyExistsDetails {
+  optional string ledger = 1;
+  optional string name = 2;
+}
+
+message PreparedQueryNameInvalidCharDetails {
+}
+
+message PreparedQueryNameRequiredDetails {
+}
+
+message PreparedQueryNameTooLongDetails {
+}
+
+message PreparedQueryNotFoundDetails {
+  optional string ledger = 1;
+  optional string name = 2;
+}
+
+message PreparedQueryRequiredDetails {
+}
+
+message PreparedQueryTargetUnsupportedDetails {
+}
+
+message RevertTargetCreatedInBatchDetails {
+  optional uint64 transaction_id = 1;
+}
+
+message ScopedBalanceUnsupportedDetails {
+}
+
+message ScriptAndReferenceConflictDetails {
+}
+
+message ScriptRequiredDetails {
+}
+
+
+message SigningKeyIdInvalidCharDetails {
+}
+
+message SigningKeyIdRequiredDetails {
+}
+
+message SigningKeyIdTooLongDetails {
+}
+
+message SigningKeyInvalidLengthDetails {
+}
+
+message SinkAlreadyExistsDetails {
+  optional string name = 1;
+}
+
+message SinkBatchSizeTooLargeDetails {
+  optional string name = 1;
+  optional uint64 batch_size = 2;
+  optional uint64 max = 3;
+}
+
+message SinkControllerMismatchDetails {
+  optional string name = 1;
+  optional string controller_id = 2;
+}
+
+message SinkNotFoundDetails {
+  optional string name = 1;
+}
+
+
+
+
+
+message TargetRequiredDetails {
+}
+
+message TransactionAlreadyRevertedDetails {
+  optional uint64 transaction_id = 1;
+}
+
+message TransactionNotFoundDetails {
+  optional uint64 transaction_id = 1;
+}
+
+message TransactionReferenceConflictDetails {
+  optional string ledger = 1;
+  optional string reference = 2;
+  optional uint64 existing_transaction_id = 3;
+}
+
+message TransactionReferenceNotFoundDetails {
+  optional string reference = 1;
+}
+
+message TransactionReferenceTooLongDetails {
+}
+
+
+message TransactionTargetMissingDetails {
+}
+
+message TransientAccountNonZeroDetails {
+  optional string accounts = 1;
+}
+
+
+message VolumeOverflowDetails {
+  optional string account = 1;
+  optional string asset = 2;
+  optional string color = 3;
+  optional string side = 4;
+  optional string amount = 5;
+  optional string current = 6;
+}
+
 // No state mutation occurred for the skipped order, but the rest of the
-// proposal applied normally. The `reason` here is a PROJECTION and is NOT
+// proposal applied normally. The skipped details are a PROJECTION and are NOT
 // hash-chain-bound — only the AuditItem.serialized_order (the submitted
 // order, including its allowed skippable_reasons whitelist) is bound. Because
-// the projected reason can be tampered with, the checker does not trust it:
+// the projected details can be tampered with, the checker does not trust them:
 // it replays the serialized order against the audit-derived state at the
 // applied index, re-derives the failure the FSM must have produced, and
-// confirms that reason both matches the projection and was whitelisted
+// confirms that the derived reason matches the projection and was whitelisted
 // (defense against forged skip entries).
 message OrderSkippedLog {
-  ErrorReason reason = 1;
-  // Free-form context populated by the producing branch. Conventional keys
-  // are documented case-by-case (e.g. reference / existingTransactionId for
-  // TRANSACTION_REFERENCE_CONFLICT). Treat as opaque if the reason is unknown.
-  map<string, string> context = 2;
+  FailureDetails details = 1; // arm determines the reason, subcode, and facts
 }
 
 // CreatedIndexLog records the creation of an index.
 message CreatedIndexLog {
+	option (ledger_json) = true;
   IndexID id = 1;
   // bound_type is the declared type of the indexed metadata field at this
   // log's sequence, stamped by the FSM when the log is minted. The index's
@@ -813,10 +1695,12 @@ message CreatedIndexLog {
 
 // DroppedIndexLog records the removal of an index.
 message DroppedIndexLog {
+	option (ledger_json) = true;
   IndexID id = 1;
 }
 
 message FilledGapLog {
+	option (ledger_json) = true;
   fixed64 original_id = 1;  // v2 log ID that this gap fills
 }
 
@@ -843,6 +1727,7 @@ message DeletedMetadata {
 
 // SetMetadataFieldTypeLog records a metadata field type declaration.
 message SetMetadataFieldTypeLog {
+	option (ledger_json) = true;
   TargetType target_type = 1;
   string key = 2;
   MetadataType type = 3;
@@ -852,6 +1737,7 @@ message SetMetadataFieldTypeLog {
 // When the removed field had an index, dropped_index identifies it so the
 // indexbuilder can purge the read-store entries in the same handler pass.
 message RemovedMetadataFieldTypeLog {
+	option (ledger_json) = true;
   TargetType target_type = 1;
   string key = 2;
   IndexID dropped_index = 3;  // nil when no index was attached to the field
@@ -867,6 +1753,7 @@ enum LedgerMode {
 }
 
 message MirrorSourceConfig {
+	option (ledger_json) = true;
   string ledger_name = 1;  // Source ledger name (common to all source types)
   oneof type {
     HttpMirrorSourceConfig http = 2;
@@ -877,6 +1764,27 @@ message MirrorSourceConfig {
   // translated into v3 orders. Each rule can rename address segments, transform
   // metadata, or drop transactions. See MirrorRewriteRule.
   repeated MirrorRewriteRule rewrite_rules = 5;
+  // Exact-match translation of v2 posting assets that v3 cannot represent
+  // (underscore "colour" suffixes, non-canonical precisions). Applied after
+  // rewrite_rules to created and reverted postings. A posting whose asset has
+  // no mapping passes through unchanged and must already be a valid v3 asset.
+  // Fixed at ledger creation. See MirrorAssetMapping.
+  repeated MirrorAssetMapping asset_mappings = 6;
+}
+
+// MirrorAssetMapping rewrites one v2 posting asset into a v3 asset bucket.
+//
+// source_asset is matched byte-for-byte against the v2 posting asset. The
+// target asset must satisfy the v3 asset grammar and color the v3 color
+// grammar; an empty color is the uncoloured bucket. Target (asset, color)
+// pairs are unique across a mirror's mappings, and a pass-through asset may
+// not equal a target with an empty color, so two source assets never merge
+// into one v3 balance.
+message MirrorAssetMapping {
+	option (ledger_json) = true;
+  string source_asset = 1;
+  string asset = 2;
+  string color = 3;
 }
 
 // MirrorRewriteRule transforms a mirror log entry during v2->v3 translation.
@@ -894,6 +1802,7 @@ message MirrorSourceConfig {
 // evaluated. Rewriting is a pure, deterministic translation-time projection
 // performed on the mirror leader; the source v2 ledger is never modified.
 message MirrorRewriteRule {
+	option (ledger_json) = true;
   // Exactly one must be set.
   oneof scope {
     CreatedTransactionRule created_transaction = 1;
@@ -912,21 +1821,25 @@ message MirrorRewriteRule {
 // forbids reading fields of other variants by construction.
 
 message CreatedTransactionRule {
+	option (ledger_json) = true;
   string match = 1;
   repeated CreatedTransactionAction actions = 2;
 }
 
 message RevertedTransactionRule {
+	option (ledger_json) = true;
   string match = 1;
   repeated RevertedTransactionAction actions = 2;
 }
 
 message SavedMetadataRule {
+	option (ledger_json) = true;
   string match = 1;
   repeated SavedMetadataAction actions = 2;
 }
 
 message DeletedMetadataRule {
+	option (ledger_json) = true;
   string match = 1;
   repeated DeletedMetadataAction actions = 2;
 }
@@ -936,6 +1849,7 @@ message DeletedMetadataRule {
 // fields. Its action set is restricted to operations that are meaningful on
 // every variant.
 message AnyVariantRule {
+	option (ledger_json) = true;
   string match = 1;
   repeated AnyVariantAction actions = 2;
 }
@@ -945,6 +1859,7 @@ message AnyVariantRule {
 // because MirrorDeletedMetadata carries only a key, not a metadata map.
 
 message CreatedTransactionAction {
+	option (ledger_json) = true;
   oneof action {
     RewriteAddressAction rewrite_address = 1;
     SetMetadataAction set_metadata = 2;
@@ -957,6 +1872,7 @@ message CreatedTransactionAction {
 }
 
 message RevertedTransactionAction {
+	option (ledger_json) = true;
   oneof action {
     RewriteAddressAction rewrite_address = 1;
     SetMetadataAction set_metadata = 2;
@@ -966,6 +1882,7 @@ message RevertedTransactionAction {
 }
 
 message SavedMetadataAction {
+	option (ledger_json) = true;
   oneof action {
     RewriteAddressAction rewrite_address = 1;  // acts on Target only
     SetMetadataAction set_metadata = 2;
@@ -975,6 +1892,7 @@ message SavedMetadataAction {
 }
 
 message DeletedMetadataAction {
+	option (ledger_json) = true;
   oneof action {
     RewriteAddressAction rewrite_address = 1;  // acts on Target only
     DropAction drop = 2;
@@ -982,6 +1900,7 @@ message DeletedMetadataAction {
 }
 
 message AnyVariantAction {
+	option (ledger_json) = true;
   oneof action {
     RewriteAddressAction rewrite_address = 1;
     DropAction drop = 2;
@@ -993,11 +1912,13 @@ message AnyVariantAction {
 // consumed by a typed Go executor.
 
 message RewriteAddressAction {
+	option (ledger_json) = true;
   string pattern = 1;      // RE2 pattern, validated at admission
   string replacement = 2;  // may reference groups from `pattern`
 }
 
 message SetMetadataAction {
+	option (ledger_json) = true;
   string key = 1;
   // Source of the metadata value. `value` is a literal string; `value_expr` is
   // a CEL expression evaluated at commit time against the current variant
@@ -1017,10 +1938,12 @@ message SetMetadataAction {
 }
 
 message DeleteMetadataAction {
+	option (ledger_json) = true;
   string key = 1;
 }
 
 message SetAccountMetadataAction {
+	option (ledger_json) = true;
   string account = 1;
   string key = 2;
   // See SetMetadataAction.source for the literal-vs-CEL semantics.
@@ -1033,6 +1956,7 @@ message SetAccountMetadataAction {
 }
 
 message DeleteAccountMetadataAction {
+	option (ledger_json) = true;
   string account = 1;
   string key = 2;
 }
@@ -1044,32 +1968,39 @@ message DeleteAccountMetadataAction {
 // so an operator can extract several fields from a single address in one pass
 // (e.g. worker id + acquirer name from `acquirer:acme:worker:001:bank`).
 message SetAccountMetadataFromAddressAction {
+	option (ledger_json) = true;
   string pattern = 1;  // RE2 pattern, should anchor with ^…$ for exact match
   repeated SetAccountMetadataFromAddressReplacement replacements = 2;
 }
 
 message SetAccountMetadataFromAddressReplacement {
+	option (ledger_json) = true;
   string key = 1;
   string replacement = 2;  // RE2 replacement (uses groups from the parent pattern)
   string type = 3;         // optional metadata type token — see SetMetadataAction.type
 }
 
-message DropAction {}
+message DropAction {
+	option (ledger_json) = true;
+}
 
 message HttpMirrorSourceConfig {
-  string base_url = 1;
+	option (ledger_json) = true;
+  string base_url = 1 [(sensitive_url) = true];
   OAuth2ClientCredentials oauth2_client_credentials = 2;
 }
 
 message OAuth2ClientCredentials {
+	option (ledger_json) = true;
   string client_id = 1;
-  string client_secret = 2;
-  string token_endpoint = 3;
+  string client_secret = 2 [(sensitive) = true];
+  string token_endpoint = 3 [(sensitive_url) = true];
   repeated string scopes = 4;
 }
 
 message PostgresMirrorSourceConfig {
-  string dsn = 1;  // e.g. "postgres://user:pass@host:5432/ledger?sslmode=disable"
+	option (ledger_json) = true;
+  string dsn = 1 [(sensitive_url) = true];  // e.g. "postgres://user:pass@host:5432/ledger?sslmode=disable"
   // When set, the DSN password is overridden by a freshly minted AWS RDS IAM
   // authentication token on every new pool connection. Ambient AWS credentials
   // (IRSA, instance profile, env vars, profile) are loaded via the default
@@ -1079,6 +2010,7 @@ message PostgresMirrorSourceConfig {
 }
 
 message PostgresAwsIamAuth {
+	option (ledger_json) = true;
   string region = 1;  // AWS region of the RDS instance (e.g. "eu-west-1"); required for SigV4 signing
   // Optional STS role ARN to assume before minting the RDS IAM token. When
   // set, the mirror calls sts:AssumeRole on this ARN and signs the RDS token
@@ -1090,7 +2022,7 @@ message PostgresAwsIamAuth {
 }
 
 message MirrorSyncError {
-  string message = 1;
+  string message = 1 [(sensitive) = true];
   Timestamp occurred_at = 2;
 }
 
@@ -1192,13 +2124,11 @@ message IdempotencyKeyValue {
 // identifier. Each value mirrors a domain.ErrReason* constant: the enum name is
 // "ERROR_REASON_" + that constant's string, so the two map mechanically
 // (domain.ReasonCode / domain.ReasonString) with no hand-maintained table.
-// AuditFailure and IdempotencyFailure store this instead of a free string so
-// the error kind is re-derivable from the reason (domain.KindForReason) at
-// replay and check time, and a typo cannot silently decode into a known reason.
-// While v3 remains unreleased and its state is wiped between revisions,
-// removing a value also realigns the remaining numbers sequentially, per the
-// repository protobuf policy. After release these persisted values become
-// append-only and must never be renumbered or removed. Completeness against
+// FailureDetails declares this on each variant so the error kind can be
+// re-derived from the reason (domain.KindForReason) at replay and check time.
+// Since v3.0.0-rc.1, these persisted values are append-only. Never renumber or
+// reuse a published number; reserve removed values and migrate stored data when
+// required. Completeness against
 // domain errors is enforced by TestEveryDomainErrorImplementsDescribable.
 enum ErrorReason {
   ERROR_REASON_UNSPECIFIED = 0;
@@ -1274,7 +2204,9 @@ enum ErrorReason {
   // exists the FSM emits THIS reason: retryable (Kind=Unavailable), NOT frozen —
   // a preparation gap, never an authoritative business verdict. See EN-1406.
   ERROR_REASON_PRELOAD_UNAVAILABLE = 59;
-  ERROR_REASON_AGGREGATE_OVERFLOW = 60;
+  // 60 was AGGREGATE_OVERFLOW; aggregate totals are exact.
+  reserved 60;
+  reserved "ERROR_REASON_AGGREGATE_OVERFLOW";
   ERROR_REASON_BALANCE_NOT_FOUND = 61;
   // ERROR_REASON_STALE_CLUSTER_POLICY: a cluster-policy update carried a
   // revision lower than the applied one. Deterministic rejection — a newer
@@ -1295,10 +2227,6 @@ enum ErrorReason {
   // Creation never evicts; an existing checkpoint must be deleted first. See
   // EN-1501.
   ERROR_REASON_CHECKPOINT_LIMIT_REACHED = 65;
-  // ERROR_REASON_INVALID_CALLER_ATTRIBUTION: a proposal reached admission or
-  // the FSM without a complete canonical caller principal. This is an internal
-  // trust-boundary violation and is never client-correctable.
-  ERROR_REASON_INVALID_CALLER_ATTRIBUTION = 72;
   // ERROR_REASON_CHECKPOINT_NOT_FOUND: a DeleteQueryCheckpoint targeted an id
   // that is not live (never created, or already deleted). See EN-1501.
   ERROR_REASON_CHECKPOINT_NOT_FOUND = 66;
@@ -1326,17 +2254,33 @@ enum ErrorReason {
   // Submit the revert in a later batch.
   ERROR_REASON_REVERT_TARGET_CREATED_IN_BATCH = 70;
   ERROR_REASON_SINK_CONTROLLER_MISMATCH = 71;
+  // 72 was briefly assigned to INVALID_CALLER_ATTRIBUTION, but that trust
+  // boundary violation is internal-only and never a public ErrorReason.
+  reserved 72;
+  reserved "ERROR_REASON_INVALID_CALLER_ATTRIBUTION";
+  // ERROR_REASON_NUMSCRIPT_COMPILE_ERROR: a script that parsed and resolved
+  // cannot run on the Numscript VM — a static-semantics error the compiler's
+  // typechecker catches, a feature used without its flag, an unsupported
+  // construct, exceeded VM capacity, or a var value that does not bind.
+  // Deterministic for a given script and vars (Kind=Validation); rejected at
+  // admission, never proposed.
+  ERROR_REASON_NUMSCRIPT_COMPILE_ERROR = 73;
+  // ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR: the script failed on its own
+  // terms, during dependency resolution or execution — an invalid account
+  // name, a missing or mistyped var, a negative amount, an allotment that does
+  // not sum to 1, a division by zero, a missing metadata value, a posting
+  // amount wider than 256 bits, and the like. Values can come from balance() or
+  // meta(), so the same script may succeed against other state
+  // (Kind=Precondition).
+  ERROR_REASON_NUMSCRIPT_EXECUTION_ERROR = 74;
 }
 
 // IdempotencyFailure captures a definitive business rejection so a retried key
 // replays the original error instead of re-executing. The error kind is NOT
-// stored: it is re-derived from reason at replay time (domain.KindForReason),
-// so a reclassified error replays under its current kind and the checker can
-// verify this projection against the hash-chained AuditFailure.
+// stored: it is re-derived from the details arm at replay time, and the checker
+// verifies this projection against the hash-chained AuditFailure.
 message IdempotencyFailure {
-  ErrorReason reason = 1;             // typed reason; kind derived via domain.KindForReason
-  string message = 2;                 // client-facing error message
-  map<string, string> metadata = 3;   // ErrorInfo metadata
+  FailureDetails details = 1; // variant determines reason, subcode, and facts
 }
 
 // TransactionReferenceValue stores the transaction ID associated with a unique reference within a ledger.
@@ -1352,7 +2296,7 @@ message NumscriptVersionValue {
 // ChartEnforcementMode controls how chart violations are handled.
 enum ChartEnforcementMode {
   CHART_ENFORCEMENT_STRICT = 0;  // Reject transactions with invalid addresses (default)
-  CHART_ENFORCEMENT_AUDIT = 1;   // Log warning but allow the transaction
+  CHART_ENFORCEMENT_AUDIT = 1;   // Allow unmatched accounts without reporting them
 }
 
 // ============================================================================
@@ -1369,6 +2313,7 @@ enum AccountTypePersistence {
 // SegmentType defines the constraint for a variable segment in an account type pattern.
 // When no constraint is set, the segment accepts any non-empty string.
 message SegmentType {
+	option (ledger_json) = true;
   oneof constraint {
     string regex = 1;         // Custom regex pattern (e.g. "[a-z]+")
     UUIDConstraint uuid = 2;  // RFC 4122 UUID format
@@ -1377,12 +2322,19 @@ message SegmentType {
   }
 }
 
-message UUIDConstraint {}
-message Uint64Constraint {}
-message BytesConstraint {}
+message UUIDConstraint {
+	option (ledger_json) = true;
+}
+message Uint64Constraint {
+	option (ledger_json) = true;
+}
+message BytesConstraint {
+	option (ledger_json) = true;
+}
 
 // AccountType defines a single account address pattern for a ledger.
 message AccountType {
+	option (ledger_json) = true;
   string name = 1;                           // Unique identifier: "user-checking"
   string pattern = 2;                        // Address pattern: "users:{id}:checking"
   AccountTypePersistence persistence = 3;    // How volumes are stored (replaces bool ephemeral)
@@ -1391,16 +2343,19 @@ message AccountType {
 
 // AddedAccountTypeLog records the addition of an account type.
 message AddedAccountTypeLog {
+	option (ledger_json) = true;
   AccountType account_type = 1;
 }
 
 // RemovedAccountTypeLog records the removal of an account type.
 message RemovedAccountTypeLog {
+	option (ledger_json) = true;
   string name = 1;
 }
 
 // UpdatedDefaultEnforcementModeLog records a change to the ledger's default enforcement mode.
 message UpdatedDefaultEnforcementModeLog {
+	option (ledger_json) = true;
   ChartEnforcementMode enforcement_mode = 1;
 }
 
@@ -1427,7 +2382,7 @@ message UpdatedDefaultEnforcementModeLog {
 // "valid nowhere" intent needs its own boolean marker rather than being inferred
 // from absence.
 //
-// Extension numbers 50123-50125 are in the private, non-reserved range for
+// Extension numbers 50123-50126 are in the private, non-reserved range for
 // FieldOptions extensions (50000-99999, per descriptor.proto guidance).
 extend google.protobuf.FieldOptions {
   repeated QueryTarget allowed_query_targets = 50123;
@@ -1440,6 +2395,13 @@ extend google.protobuf.FieldOptions {
   // rejects a missing annotation, so proto's false default cannot classify by
   // accident.
   bool ledger_log_is_history = 50125;
+  // Sensitive projections reuse the detached public-view contract from EN-1632.
+  // Strings are masked; other field kinds are cleared. Never use for persistence.
+  bool sensitive = 50126;
+  // Mask credentials in URL or PostgreSQL keyword/value connection strings.
+  bool sensitive_url = 50127;
+  // Allowed coarse reasons for each typed audited failure variant.
+  ErrorReason failure_reason = 50128;
 }
 
 message QueryFilter {
@@ -1740,11 +2702,11 @@ message PreparedQuery {
 // AggregatedVolume represents aggregated input/output volumes for a single
 // (asset, color) bucket. When collapse_colors is requested on the aggregate
 // query, all entries are produced with color = "" and amounts summed across
-// colors.
+// colors. Totals are exact: a sum of buckets may exceed 2^256.
 message AggregatedVolume {
   string asset = 1;
-  Uint256 input = 2;
-  Uint256 output = 3;
+  BigUint input = 2;
+  BigUint output = 3;
   string color = 4;
 }
 
@@ -1760,12 +2722,14 @@ message GroupedAggregateResult {
   repeated AggregatedVolume volumes = 2;
 }
 
-// PreparedQueryCursor follows the cursor-based pagination pattern.
+// PreparedQueryCursor is one page of a prepared query's LIST results. next
+// and previous are page tokens (see ListOptions.cursor); has_more is set iff
+// next is.
 message PreparedQueryCursor {
   uint32 page_size = 1;
   bool has_more = 2;
-  string previous = 3;
-  string next = 4;
+  string next = 3;
+  string previous = 4;
   repeated Account account_data = 5;
   repeated Transaction transaction_data = 6;
   repeated Log log_data = 7;
@@ -1773,6 +2737,7 @@ message PreparedQueryCursor {
 
 // LedgerStats contains aggregate statistics for a ledger.
 message LedgerStats {
+	option (ledger_json) = true;
   fixed64 transaction_count = 1;
   fixed64 volume_count = 2;
   fixed64 reference_count = 3;
@@ -1806,8 +2771,9 @@ message PersistedConfig {
 // source records the credential mechanism. An absent source means the
 // authenticated identity is a bare subject with no known origin.
 message CallerIdentity {
+	option (ledger_json) = true;
   string subject = 1;
-  // scopes and god live on AuthenticatedCaller, not here: CallerIdentity is
+  // scopes and superuser live on AuthenticatedCaller, not here: CallerIdentity is
   // identification only and carries no authorization decision.
   oneof source {
     string issuer = 2;  // OIDC token issuer URL
@@ -1816,20 +2782,25 @@ message CallerIdentity {
 }
 
 message AuthenticatedCaller {
+	option (ledger_json) = true;
   CallerIdentity identity = 1;
   repeated string scopes = 2;
-  bool god = 3;
+  bool superuser = 3;
 }
 
 message AnonymousCaller {
+	option (ledger_json) = true;
   repeated string scopes = 1;
 }
 
 message SystemCaller {
+	option (ledger_json) = true;
   string component = 1;
 }
 
-message AuthDisabledCaller {}
+message AuthDisabledCaller {
+	option (ledger_json) = true;
+}
 
 // CallerSnapshot is the *admission-time* record of who initiated an action.
 // Its required principal union keeps authenticated users, authorized anonymous
@@ -1840,6 +2811,7 @@ message AuthDisabledCaller {}
 // Carried on Proposals through Raft, then copied to AuditEntry by the FSM.
 // Application code must always set exactly one principal variant.
 message CallerSnapshot {
+	option (ledger_json) = true;
   oneof principal {
     AuthenticatedCaller authenticated = 1;
     AnonymousCaller anonymous = 2;
@@ -1893,11 +2865,14 @@ message ReadOptions {
 // parameters every streaming read endpoint understands. Embed it as a field
 // on the Request so the contract stays DRY across resources.
 //
-// cursor is OPAQUE from the client's POV: the server encodes the next-page
-// resume token internally (entity address, sequence number, …) and the client
-// round-trips whatever value it received as the "x-next-cursor" trailer of
-// the previous response. This lets the server evolve its on-wire cursor
-// format without breaking deployed clients.
+// cursor is a page token: base64url (unpadded) of the JSON object
+// {"key": <string>, "back": <bool>}, built by pkg/pagecursor. Paged responses
+// return the tokens of the adjacent pages in the "x-next-cursor" and
+// "x-previous-cursor" trailers. key is the position, in the endpoint's
+// textual form (decimal id, address, name); a forward token serves the rows
+// strictly after key, a back token the page ending strictly before key, both
+// in the requested order. A back token with an empty key serves the last
+// page.
 //
 // Not every endpoint honors every option: a reverse-uncapable or filter-less
 // endpoint MUST reject a non-default value with InvalidArgument rather than
@@ -1907,8 +2882,8 @@ message ListOptions {
   // page_size is the maximum number of items per page. 0 lets the server
   // pick a sane default (currently 100); the server clamps to MaxPageSize.
   uint32 page_size = 2;
-  // cursor is the opaque resume token from the previous page's
-  // x-next-cursor trailer. Empty starts at the iteration head.
+  // cursor is a page token, normally copied from a previous response's
+  // x-next-cursor or x-previous-cursor trailer. Empty starts at the head.
   string cursor = 3;
   // reverse inverts the default iteration order for endpoints that support it.
   bool reverse = 4;
@@ -1917,4 +2892,22 @@ message ListOptions {
   // valid conditions depends on the endpoint's QueryTarget; the server
   // rejects unsupported variants with InvalidArgument.
   QueryFilter filter = 5;
+}
+
+// CapabilityActivation is intentionally small and wire-stable. IDs are fixed
+// integers owned by the producer, not hashes of implementation names.
+message CapabilityState {
+  repeated CapabilityActivation activations = 1;
+}
+
+message CapabilityActivation {
+  fixed32 id = 1;
+  bool active = 2;
+}
+
+// AccountMetadataUpdated records account metadata written by a metadata-only
+// Numscript execution. It is a history log entry, but it is not a transaction:
+// no transaction ID, postings, or TransactionState are created.
+message AccountMetadataUpdated {
+  map<string, MetadataMap> account_metadata = 1;
 }

@@ -122,7 +122,7 @@ message SystemScopedOrder {
     DeleteQueryCheckpointOrder delete_query_checkpoint = 8;
     SetQueryCheckpointScheduleOrder set_query_checkpoint_schedule = 9;
     DeleteQueryCheckpointScheduleOrder delete_query_checkpoint_schedule = 10;
-    SetClusterPolicyOrder set_cluster_policy = 11;
+    SetClusterPolicyOrder set_cluster_policy = 11 [deprecated = true];
   }
 }
 
@@ -133,6 +133,9 @@ message CreatePreparedQueryOrder {
 message UpdatePreparedQueryOrder {
   string name = 1;
   common.QueryFilter filter = 2;
+  // Omitted by historical orders and existing clients, in which case the
+  // stored target is retained. New updates may replace the target atomically.
+  optional common.QueryTarget target = 4;
 }
 
 message DeletePreparedQueryOrder {
@@ -180,6 +183,7 @@ message SaveNumscriptOrder {
   string name = 1;
   string content = 2;
   string version = 3;
+  string description = 4;
 }
 
 // CreateQueryCheckpointOrder triggers a physical Pebble checkpoint via Raft.
@@ -216,6 +220,7 @@ message CreateLedgerOrder {
   common.MirrorSourceConfig mirror_source = 3;
   map<string, common.AccountType> account_types = 4;  // Initial account types
   common.ChartEnforcementMode default_enforcement_mode = 5;  // Default enforcement for unmatched accounts
+  map<string, common.MetadataValue> metadata = 6; // Initial ledger metadata
 }
 
 message MirrorIngestOrder {
@@ -282,6 +287,7 @@ message LedgerApplyOrder {
     AddAccountTypeOrder add_account_type = 9;
     RemoveAccountTypeOrder remove_account_type = 10;
     UpdateDefaultEnforcementModeOrder update_default_enforcement_mode = 11;
+    ExecuteNumscriptOrder execute_numscript = 13;
   }
   // skippable_reasons opts the apply order into a "continue-on-failure"
   // mode: when the FSM produces a business error whose `Reason()`
@@ -360,6 +366,16 @@ message CreateTransactionOrder {
   // an admission-derived technical hint, not part of the transaction's identity.
 }
 
+// ExecuteNumscriptOrder carries script execution with an optional transaction reference.
+message ExecuteNumscriptOrder {
+  common.Script script = 1;
+  NumscriptReference numscript_reference = 2;
+  common.Timestamp timestamp = 3;
+  map<string, common.MetadataValue> metadata = 4;
+  map<string, common.MetadataMap> account_metadata = 5;
+  string reference = 6;
+}
+
 // NumscriptReference identifies a numscript from the library to use for a
 // transaction. The version selector is required and accepts the literal
 // "latest" or an exact full semver (omitted and partial selectors are
@@ -403,11 +419,28 @@ message DeleteLedgerMetadataOrder {
 // Raft Command Wrapper
 // ============================================================================
 
-// Proposal represents a batch of orders to be executed in the FSM (protobuf serialization format)
-// A proposal can contain multiple orders that will be executed atomically
+// ExecutionBatch groups atomic orders and their technical updates. Mixed
+// batches are restricted to mirror ingestion and its corresponding status.
+message ExecutionBatch {
+  repeated Order orders = 1;
+  repeated TechnicalUpdate technical_updates = 2;
+}
+
+// SetClusterPolicyProposal updates operational state without business audit or logs.
+// Historical SetClusterPolicyOrder remains readable.
+message SetClusterPolicyProposal {
+  common.ClusterPolicy policy = 1;
+  // Current producers change flag-derived policy only. Omitted by released
+  // entries, whose embedded capabilities retain their historical replay meaning.
+  bool configuration_only = 2;
+}
+
+// Proposal separates execution batches from operational cluster-policy controls.
+// Producers write payloads directly after a full-stop upgrade. Legacy fields
+// remain readable for historical WAL replay; old binaries cannot read new writes.
 message Proposal {
   fixed64 id = 1;                    // Random proposal ID
-  repeated Order orders = 2;        // List of orders to execute atomically
+  repeated Order orders = 2 [deprecated = true]; // Legacy persisted encoding.
   common.Timestamp date = 3;        // Creation date in UTC
   ExecutionPlan execution_plan = 4;
   // predicted_index is the Raft log index predicted by the IndexTracker at
@@ -431,7 +464,19 @@ message Proposal {
   // mirror sync, cluster configuration, backup lifecycle, …) with its own
   // coverage_bits so the FSM applies per-update isolation, exactly like
   // Order.coverage_bits.
-  repeated TechnicalUpdate technical_updates = 9;
+  repeated TechnicalUpdate technical_updates = 9 [deprecated = true];
+
+  // Stable capability IDs required by the final serialized proposal. This is
+  // checked after any plan rebuild and before the bytes enter Raft.
+  repeated fixed32 required_capabilities = 10;
+
+  // Exclusive with legacy fields 2 and 9. Reading this envelope is supported;
+  // emitting it on Raft requires a separately validated cluster-wide cutover.
+  oneof payload {
+    ExecutionBatch batch = 11;
+    SetClusterPolicyProposal set_cluster_policy = 12;
+    common.CapabilityActivation capability_activation = 13;
+  }
 }
 
 // TechnicalUpdate is the per-update envelope that carries the coverage
@@ -451,7 +496,34 @@ message TechnicalUpdate {
     BackupOrder backup_order = 6;                          // Full-backup lifecycle
     IncrementalBackupOrder incremental_backup_order = 7;  // Incremental-backup lifecycle
     bytes audit_key = 8;  // One-time replicated audit key initialization.
+    DrainMarker drain_marker = 9; // Operator-initiated write-admission cutoff.
+    DrainRelease drain_release = 10; // Operator-initiated, Raft-ordered return to admission.
   }
+}
+
+// DrainMarker is an idempotent, Raft-ordered shutdown barrier. The first
+// applied marker fixes both its epoch and the entry's Raft index; a replay of
+// the same epoch keeps that original index.
+message DrainMarker {
+  string epoch = 1;
+  repeated uint64 members = 2; // Membership captured before marker proposal.
+}
+
+// DrainRelease lifts only the active marker with the same epoch.
+message DrainRelease {
+  string epoch = 1;
+}
+
+// DrainState is the persisted decision for the active or most recently
+// released epoch. It survives snapshots and node restarts. A new epoch may
+// replace a released decision, but never an active one. prior_epochs keeps
+// released epoch IDs from being reused after later drains.
+message DrainState {
+  string epoch = 1;
+  fixed64 index = 2;
+  repeated uint64 members = 3;
+  fixed64 released_index = 4; // Zero while admission is closed.
+  repeated string prior_epochs = 5;
 }
 
 // ============================================================================
@@ -730,7 +802,7 @@ message ExecutionPlan {
 // `attr_code`. When `value` is set, the FSM's MirrorPreload seeds the
 // cache with it (CacheMiss + Pebble-load-hit at admission); when unset,
 // the entry is coverage-only and Preload skips it — AttributeCache.Get's
-// gen0→gen1 fallback and AttributeCache.Del's lazy Gen0-tombstone
+// gen0→gen1 fallback and KeyStore.Tombstone's lazy Gen0-tombstone
 // fabrication handle reads and deletes without a preemptive promote pass.
 // attr_code (dal.SubAttrXxx) lives on the envelope so coverage indexing,
 // dispatch, and unmarshal routing all read the same field.
@@ -783,6 +855,10 @@ message PeerAddress {
   string raft_address = 2;
   string service_address = 3;
   bytes instance_id = 4;
+  // Capability evidence is bound to this concrete (node_id, instance_id)
+  // incarnation. It is persisted with the peer row so a restart cannot
+  // accidentally reuse evidence from an older WAL/PVC incarnation.
+  repeated fixed32 capabilities = 5;
 }
 
 // RemovedMemberEntry is the persisted blacklist row keyed by

@@ -132,7 +132,7 @@ func TestListLedgerAccountsHandler(t *testing.T) {
 		return &commonpb.Account{
 			Address: addr,
 			Volumes: []*commonpb.AccountVolume{
-				{Asset: asset, Volumes: &commonpb.VolumesWithBalance{Balance: balance}},
+				{Asset: asset, Volumes: &commonpb.VolumesWithBalance{Balance: commonpb.MustSignedBigIntFromDecimal(balance)}},
 			},
 		}
 	}

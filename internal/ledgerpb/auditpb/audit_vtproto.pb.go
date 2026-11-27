@@ -55,6 +55,11 @@ func (m *AuditEntry) CloneVT() *AuditEntry {
 		copy(tmpBytes, rhs)
 		r.Hash = tmpBytes
 	}
+	if rhs := m.RequiredCapabilities; rhs != nil {
+		tmpContainer := make([]uint32, len(rhs))
+		copy(tmpContainer, rhs)
+		r.RequiredCapabilities = tmpContainer
+	}
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -130,15 +135,7 @@ func (m *AuditFailure) CloneVT() *AuditFailure {
 		return (*AuditFailure)(nil)
 	}
 	r := new(AuditFailure)
-	r.Reason = m.Reason
-	r.Message = m.Message
-	if rhs := m.Context; rhs != nil {
-		tmpContainer := make(map[string]string, len(rhs))
-		for k, v := range rhs {
-			tmpContainer[k] = v
-		}
-		r.Context = tmpContainer
-	}
+	r.Details = m.Details.CloneVT()
 	if len(m.unknownFields) > 0 {
 		r.unknownFields = make([]byte, len(m.unknownFields))
 		copy(r.unknownFields, m.unknownFields)
@@ -220,6 +217,15 @@ func (this *AuditEntry) EqualVT(that *AuditEntry) bool {
 	}
 	if !this.Signature.EqualVT(that.Signature) {
 		return false
+	}
+	if len(this.RequiredCapabilities) != len(that.RequiredCapabilities) {
+		return false
+	}
+	for i, vx := range this.RequiredCapabilities {
+		vy := that.RequiredCapabilities[i]
+		if vx != vy {
+			return false
+		}
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -334,23 +340,8 @@ func (this *AuditFailure) EqualVT(that *AuditFailure) bool {
 	} else if this == nil || that == nil {
 		return false
 	}
-	if this.Reason != that.Reason {
+	if !this.Details.EqualVT(that.Details) {
 		return false
-	}
-	if this.Message != that.Message {
-		return false
-	}
-	if len(this.Context) != len(that.Context) {
-		return false
-	}
-	for i, vx := range this.Context {
-		vy, ok := that.Context[i]
-		if !ok {
-			return false
-		}
-		if vx != vy {
-			return false
-		}
 	}
 	return string(this.unknownFields) == string(that.unknownFields)
 }
@@ -400,6 +391,15 @@ func (m *AuditEntry) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 			return 0, err
 		}
 		i -= size
+	}
+	if len(m.RequiredCapabilities) > 0 {
+		for iNdEx := len(m.RequiredCapabilities) - 1; iNdEx >= 0; iNdEx-- {
+			i -= 4
+			binary.LittleEndian.PutUint32(dAtA[i:], uint32(m.RequiredCapabilities[iNdEx]))
+		}
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.RequiredCapabilities)*4))
+		i--
+		dAtA[i] = 0x72
 	}
 	if m.Signature != nil {
 		size, err := m.Signature.MarshalToSizedBufferVT(dAtA[:i])
@@ -658,36 +658,15 @@ func (m *AuditFailure) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
-	if len(m.Context) > 0 {
-		for k := range m.Context {
-			v := m.Context[k]
-			baseI := i
-			i -= len(v)
-			copy(dAtA[i:], v)
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(v)))
-			i--
-			dAtA[i] = 0x12
-			i -= len(k)
-			copy(dAtA[i:], k)
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(len(k)))
-			i--
-			dAtA[i] = 0xa
-			i = protohelpers.EncodeVarint(dAtA, i, uint64(baseI-i))
-			i--
-			dAtA[i] = 0x1a
+	if m.Details != nil {
+		size, err := m.Details.MarshalToSizedBufferVT(dAtA[:i])
+		if err != nil {
+			return 0, err
 		}
-	}
-	if len(m.Message) > 0 {
-		i -= len(m.Message)
-		copy(dAtA[i:], m.Message)
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Message)))
+		i -= size
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(size))
 		i--
-		dAtA[i] = 0x12
-	}
-	if m.Reason != 0 {
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.Reason))
-		i--
-		dAtA[i] = 0x8
+		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
 }
@@ -744,6 +723,9 @@ func (m *AuditEntry) SizeVT() (n int) {
 	if m.Signature != nil {
 		l = m.Signature.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	if len(m.RequiredCapabilities) > 0 {
+		n += 1 + protohelpers.SizeOfVarint(uint64(len(m.RequiredCapabilities)*4)) + len(m.RequiredCapabilities)*4
 	}
 	n += len(m.unknownFields)
 	return n
@@ -815,20 +797,9 @@ func (m *AuditFailure) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	if m.Reason != 0 {
-		n += 1 + protohelpers.SizeOfVarint(uint64(m.Reason))
-	}
-	l = len(m.Message)
-	if l > 0 {
+	if m.Details != nil {
+		l = m.Details.SizeVT()
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
-	}
-	if len(m.Context) > 0 {
-		for k, v := range m.Context {
-			_ = k
-			_ = v
-			mapEntrySize := 1 + len(k) + protohelpers.SizeOfVarint(uint64(len(k))) + 1 + len(v) + protohelpers.SizeOfVarint(uint64(len(v)))
-			n += mapEntrySize + 1 + protohelpers.SizeOfVarint(uint64(mapEntrySize))
-		}
 	}
 	n += len(m.unknownFields)
 	return n
@@ -1247,6 +1218,58 @@ func (m *AuditEntry) UnmarshalVT(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 14:
+			if wireType == 5 {
+				var v uint32
+				if (iNdEx + 4) > l {
+					return io.ErrUnexpectedEOF
+				}
+				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
+				iNdEx += 4
+				m.RequiredCapabilities = append(m.RequiredCapabilities, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protohelpers.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex < 0 {
+					return protohelpers.ErrInvalidLength
+				}
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				var elementCount int
+				elementCount = packedLen / 4
+				if elementCount != 0 && len(m.RequiredCapabilities) == 0 {
+					m.RequiredCapabilities = make([]uint32, 0, elementCount)
+				}
+				for iNdEx < postIndex {
+					var v uint32
+					if (iNdEx + 4) > l {
+						return io.ErrUnexpectedEOF
+					}
+					v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
+					iNdEx += 4
+					m.RequiredCapabilities = append(m.RequiredCapabilities, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field RequiredCapabilities", wireType)
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -1484,59 +1507,8 @@ func (m *AuditFailure) UnmarshalVT(dAtA []byte) error {
 		}
 		switch fieldNum {
 		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Reason", wireType)
-			}
-			m.Reason = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Reason |= commonpb.ErrorReason(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Message", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Message = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Context", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Details", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -1563,103 +1535,12 @@ func (m *AuditFailure) UnmarshalVT(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.Context == nil {
-				m.Context = make(map[string]string)
+			if m.Details == nil {
+				m.Details = &commonpb.FailureDetails{}
 			}
-			var mapkey string
-			var mapvalue string
-			for iNdEx < postIndex {
-				entryPreIndex := iNdEx
-				var wire uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protohelpers.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					wire |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				fieldNum := int32(wire >> 3)
-				if fieldNum == 1 {
-					var stringLenmapkey uint64
-					for shift := uint(0); ; shift += 7 {
-						if shift >= 64 {
-							return protohelpers.ErrIntOverflow
-						}
-						if iNdEx >= l {
-							return io.ErrUnexpectedEOF
-						}
-						b := dAtA[iNdEx]
-						iNdEx++
-						stringLenmapkey |= uint64(b&0x7F) << shift
-						if b < 0x80 {
-							break
-						}
-					}
-					intStringLenmapkey := int(stringLenmapkey)
-					if intStringLenmapkey < 0 {
-						return protohelpers.ErrInvalidLength
-					}
-					postStringIndexmapkey := iNdEx + intStringLenmapkey
-					if postStringIndexmapkey < 0 {
-						return protohelpers.ErrInvalidLength
-					}
-					if postStringIndexmapkey > l {
-						return io.ErrUnexpectedEOF
-					}
-					mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
-					iNdEx = postStringIndexmapkey
-				} else if fieldNum == 2 {
-					var stringLenmapvalue uint64
-					for shift := uint(0); ; shift += 7 {
-						if shift >= 64 {
-							return protohelpers.ErrIntOverflow
-						}
-						if iNdEx >= l {
-							return io.ErrUnexpectedEOF
-						}
-						b := dAtA[iNdEx]
-						iNdEx++
-						stringLenmapvalue |= uint64(b&0x7F) << shift
-						if b < 0x80 {
-							break
-						}
-					}
-					intStringLenmapvalue := int(stringLenmapvalue)
-					if intStringLenmapvalue < 0 {
-						return protohelpers.ErrInvalidLength
-					}
-					postStringIndexmapvalue := iNdEx + intStringLenmapvalue
-					if postStringIndexmapvalue < 0 {
-						return protohelpers.ErrInvalidLength
-					}
-					if postStringIndexmapvalue > l {
-						return io.ErrUnexpectedEOF
-					}
-					mapvalue = string(dAtA[iNdEx:postStringIndexmapvalue])
-					iNdEx = postStringIndexmapvalue
-				} else {
-					iNdEx = entryPreIndex
-					skippy, err := protohelpers.Skip(dAtA[iNdEx:])
-					if err != nil {
-						return err
-					}
-					if (skippy < 0) || (iNdEx+skippy) < 0 {
-						return protohelpers.ErrInvalidLength
-					}
-					if (iNdEx + skippy) > postIndex {
-						return io.ErrUnexpectedEOF
-					}
-					iNdEx += skippy
-				}
+			if err := m.Details.UnmarshalVT(dAtA[iNdEx:postIndex]); err != nil {
+				return err
 			}
-			m.Context[mapkey] = mapvalue
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

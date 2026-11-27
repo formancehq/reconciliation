@@ -80,10 +80,10 @@ func pcvPair(vba *commonpb.VolumesByAssets) pair {
 		if v.GetAsset() != "USD/2" {
 			continue
 		}
-		if in, ok := new(big.Int).SetString(v.GetVolumes().GetInput(), 10); ok {
+		if in, ok := bigv(v.GetVolumes().GetInput()); ok {
 			p.in.Add(p.in, in)
 		}
-		if out, ok := new(big.Int).SetString(v.GetVolumes().GetOutput(), 10); ok {
+		if out, ok := bigv(v.GetVolumes().GetOutput()); ok {
 			p.out.Add(p.out, out)
 		}
 	}
@@ -721,8 +721,8 @@ func silentHole(ctx context.Context, args []string) {
 	oracleMain := newPair()
 	for _, v := range oa.GetVolumes() {
 		if v.GetAsset() == "USD/2" {
-			i, _ := new(big.Int).SetString(v.GetVolumes().GetInput(), 10)
-			o, _ := new(big.Int).SetString(v.GetVolumes().GetOutput(), 10)
+			i, _ := bigv(v.GetVolumes().GetInput())
+			o, _ := bigv(v.GetVolumes().GetOutput())
 			oracleMain.in.Add(oracleMain.in, i)
 			oracleMain.out.Add(oracleMain.out, o)
 		}
@@ -845,10 +845,10 @@ func accountPair(ctx context.Context, ledger, addr string) pair {
 		if v.GetAsset() != "USD/2" {
 			continue
 		}
-		if in, ok := new(big.Int).SetString(v.GetVolumes().GetInput(), 10); ok {
+		if in, ok := bigv(v.GetVolumes().GetInput()); ok {
 			p.in.Add(p.in, in)
 		}
-		if out, ok := new(big.Int).SetString(v.GetVolumes().GetOutput(), 10); ok {
+		if out, ok := bigv(v.GetVolumes().GetOutput()); ok {
 			p.out.Add(p.out, out)
 		}
 	}

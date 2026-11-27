@@ -281,7 +281,7 @@ func agg(ctx context.Context, args []string) {
 		log.Fatalf("aggregate: %v", err)
 	}
 	for _, v := range resp.GetVolumes() {
-		b := new(big.Int).Sub(v.GetInput().ToBigInt(), v.GetOutput().ToBigInt())
+		b := new(big.Int).Sub(bigz(v.GetInput()), bigz(v.GetOutput()))
 		fmt.Printf("agg %s %s cp=%d: %s %s in %s\n", *ledger, *prefix, *cp, v.GetAsset(), b, time.Since(t0).Round(time.Millisecond))
 	}
 }
@@ -320,7 +320,7 @@ func scan(ctx context.Context, ledger, prefix string, cp uint64, page uint32, fn
 			bal := new(big.Int)
 			for _, v := range a.GetVolumes() {
 				if v.GetAsset() == "USD/2" {
-					b, _ := new(big.Int).SetString(v.GetVolumes().GetBalance(), 10)
+					b, _ := bigv(v.GetVolumes().GetBalance())
 					if b != nil {
 						bal.Add(bal, b)
 					}
@@ -521,8 +521,8 @@ func logsCmd(ctx context.Context, args []string) {
 				bal := new(big.Int)
 				for _, v := range vba.GetVolumes() {
 					if v.GetAsset() == "USD/2" {
-						in, _ := new(big.Int).SetString(v.GetVolumes().GetInput(), 10)
-						out, _ := new(big.Int).SetString(v.GetVolumes().GetOutput(), 10)
+						in, _ := bigv(v.GetVolumes().GetInput())
+						out, _ := bigv(v.GetVolumes().GetOutput())
 						if in != nil && out != nil {
 							bal.Add(bal, new(big.Int).Sub(in, out))
 						}
@@ -639,8 +639,8 @@ func lastLogID(ctx context.Context, ledger string) uint64 {
 }
 
 func bal(v *commonpb.Volumes) *big.Int {
-	in, _ := new(big.Int).SetString(v.GetInput(), 10)
-	out, _ := new(big.Int).SetString(v.GetOutput(), 10)
+	in, _ := bigv(v.GetInput())
+	out, _ := bigv(v.GetOutput())
 	if in == nil {
 		in = new(big.Int)
 	}

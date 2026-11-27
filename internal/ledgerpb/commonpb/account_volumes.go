@@ -43,25 +43,26 @@ func BalanceByAsset(account *Account, asset string) *big.Int {
 }
 
 // VolumeBalance derives a balance from the Ledger-provided value when present,
-// falling back to input minus output. Ledger encodes these integers as decimal
-// strings; an empty or malformed value is treated as zero.
+// falling back to input minus output. A malformed value is treated as zero.
 func VolumeBalance(volume *VolumesWithBalance) *big.Int {
 	if volume == nil {
 		return new(big.Int)
 	}
-	if volume.GetBalance() != "" {
-		return decimalBig(volume.GetBalance())
+	if volume.GetBalance() != nil {
+		if b, err := volume.GetBalance().ToBigInt(); err == nil {
+			return b
+		}
 	}
 
-	return new(big.Int).Sub(decimalBig(volume.GetInput()), decimalBig(volume.GetOutput()))
+	return new(big.Int).Sub(bigOrZero(volume.GetInput()), bigOrZero(volume.GetOutput()))
 }
 
-func decimalBig(value string) *big.Int {
-	if value == "" {
+func bigOrZero(v *BigUint) *big.Int {
+	if v == nil {
 		return new(big.Int)
 	}
-	if number, ok := new(big.Int).SetString(value, 10); ok {
-		return number
+	if b, err := v.ToBigInt(); err == nil {
+		return b
 	}
 
 	return new(big.Int)

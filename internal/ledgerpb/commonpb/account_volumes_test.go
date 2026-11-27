@@ -8,9 +8,9 @@ import (
 
 func TestBalancesByAssetCollapsesColors(t *testing.T) {
 	account := &Account{Volumes: []*AccountVolume{
-		{Asset: "USD/2", Volumes: &VolumesWithBalance{Balance: "100"}},
-		{Asset: "USD/2", Color: "RESERVED", Volumes: &VolumesWithBalance{Balance: "25"}},
-		{Asset: "EUR/2", Color: "SETTLED", Volumes: &VolumesWithBalance{Input: "70", Output: "20"}},
+		{Asset: "USD/2", Volumes: &VolumesWithBalance{Balance: MustSignedBigIntFromDecimal("100")}},
+		{Asset: "USD/2", Color: "RESERVED", Volumes: &VolumesWithBalance{Balance: MustSignedBigIntFromDecimal("25")}},
+		{Asset: "EUR/2", Color: "SETTLED", Volumes: &VolumesWithBalance{Input: MustBigUintFromDecimal("70"), Output: MustBigUintFromDecimal("20")}},
 		nil,
 	}}
 
@@ -23,11 +23,10 @@ func TestBalancesByAssetCollapsesColors(t *testing.T) {
 }
 
 func TestVolumeBalance(t *testing.T) {
-	require.Equal(t, "150", VolumeBalance(&VolumesWithBalance{Input: "200", Output: "40", Balance: "150"}).String())
-	require.Equal(t, "160", VolumeBalance(&VolumesWithBalance{Input: "200", Output: "40"}).String())
+	require.Equal(t, "150", VolumeBalance(&VolumesWithBalance{Input: MustBigUintFromDecimal("200"), Output: MustBigUintFromDecimal("40"), Balance: MustSignedBigIntFromDecimal("150")}).String())
+	require.Equal(t, "160", VolumeBalance(&VolumesWithBalance{Input: MustBigUintFromDecimal("200"), Output: MustBigUintFromDecimal("40")}).String())
 	require.Equal(t, "0", VolumeBalance(&VolumesWithBalance{}).String())
-	require.Equal(t, "-40", VolumeBalance(&VolumesWithBalance{Output: "40"}).String())
-	require.Equal(t, "-5", VolumeBalance(&VolumesWithBalance{Balance: "-5"}).String())
+	require.Equal(t, "-40", VolumeBalance(&VolumesWithBalance{Output: MustBigUintFromDecimal("40")}).String())
+	require.Equal(t, "-5", VolumeBalance(&VolumesWithBalance{Balance: MustSignedBigIntFromDecimal("-5")}).String())
 	require.Equal(t, "0", VolumeBalance(nil).String())
-	require.Equal(t, "0", VolumeBalance(&VolumesWithBalance{Balance: "invalid"}).String())
 }

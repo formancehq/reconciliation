@@ -22,7 +22,7 @@ func (c *groupingBucketClient) AggregateVolumes(_ context.Context, request *serv
 	// this method exists to absorb.
 	return &commonpb.AggregateResult{Groups: []*commonpb.GroupedAggregateResult{
 		{Prefix: "alert:st:open:rule:a:", Volumes: []*commonpb.AggregatedVolume{
-			{Asset: "ALERT", Input: commonpb.NewUint256FromUint64(4), Output: commonpb.NewUint256FromUint64(1)},
+			{Asset: "ALERT", Input: commonpb.NewBigUintFromUint64(4), Output: commonpb.NewBigUintFromUint64(1)},
 		}},
 		{Prefix: "alert:st:ack:rule:a:", Volumes: nil},
 	}}, nil

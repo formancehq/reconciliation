@@ -20,8 +20,8 @@ func (c *colorAwareBucketClient) AggregateVolumes(_ context.Context, request *se
 	c.aggregateRequest = request
 
 	return &commonpb.AggregateResult{Volumes: []*commonpb.AggregatedVolume{
-		{Asset: "USD/2", Input: commonpb.NewUint256FromUint64(100), Output: commonpb.NewUint256FromUint64(20)},
-		{Asset: "USD/2", Color: "RESERVED", Input: commonpb.NewUint256FromUint64(30), Output: commonpb.NewUint256FromUint64(5)},
+		{Asset: "USD/2", Input: commonpb.NewBigUintFromUint64(100), Output: commonpb.NewBigUintFromUint64(20)},
+		{Asset: "USD/2", Color: "RESERVED", Input: commonpb.NewBigUintFromUint64(30), Output: commonpb.NewBigUintFromUint64(5)},
 	}}, nil
 }
 
