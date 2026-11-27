@@ -447,7 +447,7 @@ paths:
       summary: Acknowledge an alert
       operationId: ackAlert
       tags: [reconciliation]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }, { $ref: '#/components/parameters/IfMatch' }]
       requestBody:
         required: true
         content:
@@ -455,6 +455,7 @@ paths:
             schema: { $ref: '#/components/schemas/AckAlertRequest' }
       responses:
         '200': { $ref: '#/components/responses/Alert' }
+        '409': { $ref: '#/components/responses/AlertConflict' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
@@ -464,7 +465,7 @@ paths:
       summary: Resolve an alert (fixed_by_booking)
       operationId: resolveAlert
       tags: [reconciliation]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }, { $ref: '#/components/parameters/IfMatch' }]
       requestBody:
         required: true
         content:
@@ -472,6 +473,7 @@ paths:
             schema: { $ref: '#/components/schemas/ResolveAlertRequest' }
       responses:
         '200': { $ref: '#/components/responses/Alert' }
+        '409': { $ref: '#/components/responses/AlertConflict' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
@@ -481,7 +483,7 @@ paths:
       summary: Accept an alert (accepted_by_business)
       operationId: acceptAlert
       tags: [reconciliation]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }, { $ref: '#/components/parameters/IfMatch' }]
       requestBody:
         required: true
         content:
@@ -489,6 +491,7 @@ paths:
             schema: { $ref: '#/components/schemas/AcceptAlertRequest' }
       responses:
         '200': { $ref: '#/components/responses/Alert' }
+        '409': { $ref: '#/components/responses/AlertConflict' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
@@ -498,7 +501,7 @@ paths:
       summary: Snooze an alert's notifications until a future instant
       operationId: snoozeAlert
       tags: [reconciliation]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }, { $ref: '#/components/parameters/IfMatch' }]
       requestBody:
         required: true
         content:
@@ -506,6 +509,7 @@ paths:
             schema: { $ref: '#/components/schemas/SnoozeAlertRequest' }
       responses:
         '200': { $ref: '#/components/responses/Alert' }
+        '409': { $ref: '#/components/responses/AlertConflict' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
@@ -515,7 +519,7 @@ paths:
       summary: Lift an alert snooze early
       operationId: unsnoozeAlert
       tags: [reconciliation]
-      parameters: [{ $ref: '#/components/parameters/AlertID' }]
+      parameters: [{ $ref: '#/components/parameters/AlertID' }, { $ref: '#/components/parameters/IfMatch' }]
       requestBody:
         required: true
         content:
@@ -523,6 +527,7 @@ paths:
             schema: { $ref: '#/components/schemas/UnsnoozeAlertRequest' }
       responses:
         '200': { $ref: '#/components/responses/Alert' }
+        '409': { $ref: '#/components/responses/AlertConflict' }
         default: { $ref: '#/components/responses/ErrorResponse' }
       security:
         - Authorization: [reconciliation:write]
@@ -558,7 +563,7 @@ components:
       name: If-Match
       in: header
       required: false
-      description: The rule's `ETag` as last read. A stale value answers `409 CONFLICT`.
+      description: The rule's or alert's `ETag` as last read. A stale value answers `409 CONFLICT` and the change is not applied.
       schema: { type: string }
     RuleID:
       name: ruleID
@@ -623,10 +628,21 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/EvaluationResponse' }
     Alert:
-      description: OK
+      description: OK. The `ETag` header carries the alert's version.
+      headers:
+        ETag:
+          schema: { type: string }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/AlertResponse' }
+    AlertConflict:
+      description: The alert changed since the caller read it (`If-Match` no longer matches). The response carries the current `ETag`; the action is not applied.
+      headers:
+        ETag:
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
     Alerts:
       description: OK
       content:
@@ -1783,8 +1799,11 @@ components:
         note: { type: string }
     Alert:
       type: object
-      required: [id, contractVersion, ruleID, fingerprint, periodID, status, severity, firstSeenAt, lastSeenAt, occurrenceCount, lastEvaluationID, createdAt, updatedAt]
+      required: [id, contractVersion, ruleID, fingerprint, periodID, status, severity, firstSeenAt, lastSeenAt, occurrenceCount, lastEvaluationID, createdAt, updatedAt, version]
       properties:
+        version:
+          type: string
+          description: The alert's version, also its `ETag` (quoted). It changes with the lifecycle only (status, acknowledgement, resolution, snooze); another occurrence of the same failure keeps it. Send it quoted in `If-Match` on an alert action.
         id: { type: string, format: uuid }
         contractVersion: { $ref: '#/components/schemas/ContractVersion' }
         ruleID: { type: string, format: uuid }

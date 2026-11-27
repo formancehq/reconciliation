@@ -467,6 +467,8 @@ export interface Alert {
   labels?: Record<string, string>
   createdAt: string
   updatedAt: string
+  /** Lifecycle version, also the ETag: send it back as If-Match on an action. */
+  version?: string
 }
 
 export type RuleResponse = Data<Rule>

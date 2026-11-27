@@ -343,43 +343,43 @@ export const reconClient = {
     )
     return response.data
   },
-  async ackAlert(id: string, body: AckAlertRequest) {
+  async ackAlert(id: string, body: AckAlertRequest, version?: string) {
     const response = await reconRequest<AlertResponse>(
       "POST",
       `/alerts/${encodeURIComponent(id)}/ack`,
-      { body }
+      { body, ifMatch: version ? `"${version}"` : undefined }
     )
     return response.data
   },
-  async resolveAlert(id: string, body: ResolveAlertRequest) {
+  async resolveAlert(id: string, body: ResolveAlertRequest, version?: string) {
     const response = await reconRequest<AlertResponse>(
       "POST",
       `/alerts/${encodeURIComponent(id)}/resolve`,
-      { body }
+      { body, ifMatch: version ? `"${version}"` : undefined }
     )
     return response.data
   },
-  async acceptAlert(id: string, body: AcceptAlertRequest) {
+  async acceptAlert(id: string, body: AcceptAlertRequest, version?: string) {
     const response = await reconRequest<AlertResponse>(
       "POST",
       `/alerts/${encodeURIComponent(id)}/accept`,
-      { body }
+      { body, ifMatch: version ? `"${version}"` : undefined }
     )
     return response.data
   },
-  async snoozeAlert(id: string, body: SnoozeAlertRequest) {
+  async snoozeAlert(id: string, body: SnoozeAlertRequest, version?: string) {
     const response = await reconRequest<AlertResponse>(
       "POST",
       `/alerts/${encodeURIComponent(id)}/snooze`,
-      { body }
+      { body, ifMatch: version ? `"${version}"` : undefined }
     )
     return response.data
   },
-  async unsnoozeAlert(id: string, body: UnsnoozeAlertRequest) {
+  async unsnoozeAlert(id: string, body: UnsnoozeAlertRequest, version?: string) {
     const response = await reconRequest<AlertResponse>(
       "POST",
       `/alerts/${encodeURIComponent(id)}/unsnooze`,
-      { body }
+      { body, ifMatch: version ? `"${version}"` : undefined }
     )
     return response.data
   },

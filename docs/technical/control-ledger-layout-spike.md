@@ -88,6 +88,7 @@ The spike also brings the API contract and the UI in line with the design. They 
 |---|---|---|
 | Optimistic concurrency on rules | `GET` and `PATCH /rules/{id}` return an `ETag` header. `PATCH` accepts `If-Match`; a stale value answers `409 CONFLICT` with the current `ETag` and writes nothing. `openapi.yaml` documents it. | Every rule patch sends the revision it read as `If-Match`: from the list toggle, the detail page and the edit dialog. On `409`, the UI explains that the rule changed, reloads its latest version, and the next action succeeds. The Next proxy forwards `If-Match` and `ETag`. |
 | Live alert counts on the rules list | Already served (`alerts.open`, `alerts.acknowledged`). | Shown on each rule: "1 open", "2 acknowledged". |
+| Optimistic concurrency on alert actions | Every alert carries `version`, also its `ETag` on `GET /alerts/{id}` and on each action. It hashes the lifecycle state (status, acknowledgement, resolution, snooze), so another occurrence of the same failure keeps it, as `OCC` keeps `V` on the control ledger. `ack`, `resolve`, `accept`, `snooze` and `unsnooze` accept `If-Match`; a stale value answers `409 CONFLICT` with the current `ETag` and applies nothing. | Every action sends the version it read, from the list (bulk) and from the alert page. On `409`, the console says the alert changed (someone acted, or a run changed its status), reloads it and logs a warning. Checked live: a new run took the occurrences from 3 to 4 and kept the version; a snooze behind the console's back made its resolve answer `409`, and the reloaded page showed the snooze. |
 | Rule sequence (option B) | Already served: activity `sequence` and `ruleRevision`. | Each configuration change in the timeline states that evaluations after it, in the rule's sequence, use its revision. |
 
 **CEL removed from the API and the UI (ADR-006).**
@@ -107,7 +108,6 @@ Limits on the prototype store:
 - The ETag is the rule's revision (content hash), not the `V` balance of the new layout.
 - The `If-Match` check happens before the write, not in the write.
 - The server-side retry of option B and an `accepted` count need the new storage behind the service.
-- Alert actions (`ack`, `resolve`, `accept`) do not take `If-Match` yet.
 
 ## UX pass (P1 and P2 of the UI review)
 

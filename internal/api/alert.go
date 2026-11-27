@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -36,6 +38,52 @@ type alertResponse struct {
 	CreatedAt        time.Time          `json:"createdAt"`
 	UpdatedAt        time.Time          `json:"updatedAt"`
 	ContractVersion  int                `json:"contractVersion,omitempty"`
+	// Version changes with the alert's lifecycle only: status, acknowledgement,
+	// resolution, snooze. A failing run that only adds an occurrence keeps it,
+	// so a concurrent evaluation does not invalidate an operator's action. It is
+	// the alert's ETag; send it back quoted in If-Match.
+	Version string `json:"version"`
+}
+
+// alertVersion stands in for the control ledger's V balance on the prototype
+// store: a hash of the lifecycle state. RFC 0022 makes it the integer version
+// of the alert account, which an occurrence bump (OCC) does not change either.
+func alertVersion(a *models.Alert) string {
+	state, _ := json.Marshal(struct {
+		Status     models.AlertStatus `json:"status"`
+		Ack        *models.Ack        `json:"ack,omitempty"`
+		Resolution *models.Resolution `json:"resolution,omitempty"`
+		Snooze     *models.Snooze     `json:"snooze,omitempty"`
+	}{a.Status, a.Ack, a.Resolution, a.Snooze})
+	sum := sha256.Sum256(state)
+	return hex.EncodeToString(sum[:8])
+}
+
+func setAlertETag(w http.ResponseWriter, a *models.Alert) {
+	w.Header().Set("ETag", `"`+alertVersion(a)+`"`)
+}
+
+// checkAlertIfMatch answers 409 CONFLICT, with the current ETag, when the
+// caller's If-Match no longer matches the alert, and reports whether the action
+// may go on. Like the rule's, the prototype checks before writing (not
+// atomic); on the control ledger the check is part of the write.
+func checkAlertIfMatch(w http.ResponseWriter, r *http.Request, b backend.Backend, id uuid.UUID) bool {
+	want := r.Header.Get("If-Match")
+	if want == "" || want == "*" {
+		return true
+	}
+	current, err := b.GetService().GetAlert(r.Context(), id)
+	if err != nil {
+		handleServiceErrors(w, r, err)
+		return false
+	}
+	if tag := `"` + alertVersion(current) + `"`; tag != want {
+		setAlertETag(w, current)
+		api.WriteErrorResponse(w, http.StatusConflict, ErrConflict,
+			fmt.Errorf("alert %s changed since it was read: If-Match %s, current %s", id, want, tag))
+		return false
+	}
+	return true
 }
 
 func renderAlert(a *models.Alert) *alertResponse {
@@ -56,6 +104,7 @@ func renderAlert(a *models.Alert) *alertResponse {
 		Labels:           a.Labels,
 		CreatedAt:        a.CreatedAt,
 		UpdatedAt:        a.UpdatedAt,
+		Version:          alertVersion(a),
 	}
 	if a.ContractVersion.Effective() == models.ContractVersionV2 {
 		response.ContractVersion = int(models.ContractVersionV2)
@@ -119,6 +168,7 @@ func getAlertHandler(b backend.Backend) http.HandlerFunc {
 			handleServiceErrors(w, r, err)
 			return
 		}
+		setAlertETag(w, alert)
 		api.Ok(w, renderAlert(alert))
 	}
 }
@@ -221,11 +271,15 @@ func ackAlertHandler(b backend.Backend) http.HandlerFunc {
 			api.BadRequest(w, ErrMissingOrInvalidBody, err)
 			return
 		}
+		if !checkAlertIfMatch(w, r, b, id) {
+			return
+		}
 		alert, err := b.GetService().AckAlert(r.Context(), id, &req)
 		if err != nil {
 			handleServiceErrors(w, r, err)
 			return
 		}
+		setAlertETag(w, alert)
 		api.Ok(w, renderAlert(alert))
 	}
 }
@@ -242,11 +296,15 @@ func resolveAlertHandler(b backend.Backend) http.HandlerFunc {
 			api.BadRequest(w, ErrMissingOrInvalidBody, err)
 			return
 		}
+		if !checkAlertIfMatch(w, r, b, id) {
+			return
+		}
 		alert, err := b.GetService().ResolveAlert(r.Context(), id, &req)
 		if err != nil {
 			handleServiceErrors(w, r, err)
 			return
 		}
+		setAlertETag(w, alert)
 		api.Ok(w, renderAlert(alert))
 	}
 }
@@ -263,11 +321,15 @@ func acceptAlertHandler(b backend.Backend) http.HandlerFunc {
 			api.BadRequest(w, ErrMissingOrInvalidBody, err)
 			return
 		}
+		if !checkAlertIfMatch(w, r, b, id) {
+			return
+		}
 		alert, err := b.GetService().AcceptAlert(r.Context(), id, &req)
 		if err != nil {
 			handleServiceErrors(w, r, err)
 			return
 		}
+		setAlertETag(w, alert)
 		api.Ok(w, renderAlert(alert))
 	}
 }
@@ -284,11 +346,15 @@ func snoozeAlertHandler(b backend.Backend) http.HandlerFunc {
 			api.BadRequest(w, ErrMissingOrInvalidBody, err)
 			return
 		}
+		if !checkAlertIfMatch(w, r, b, id) {
+			return
+		}
 		alert, err := b.GetService().SnoozeAlert(r.Context(), id, &req)
 		if err != nil {
 			handleServiceErrors(w, r, err)
 			return
 		}
+		setAlertETag(w, alert)
 		api.Ok(w, renderAlert(alert))
 	}
 }
@@ -305,11 +371,15 @@ func unsnoozeAlertHandler(b backend.Backend) http.HandlerFunc {
 			api.BadRequest(w, ErrMissingOrInvalidBody, err)
 			return
 		}
+		if !checkAlertIfMatch(w, r, b, id) {
+			return
+		}
 		alert, err := b.GetService().UnsnoozeAlert(r.Context(), id, &req)
 		if err != nil {
 			handleServiceErrors(w, r, err)
 			return
 		}
+		setAlertETag(w, alert)
 		api.Ok(w, renderAlert(alert))
 	}
 }

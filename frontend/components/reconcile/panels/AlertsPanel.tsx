@@ -188,7 +188,7 @@ function AlertsInbox() {
   const filter: StatusFilter = nav.alertFilter ?? DEFAULT_ALERT_FILTER
   const [dialog, setDialog] = useState<{
     kind: ActionKind
-    targets: Array<{ id: string; contractVersion: 1 | 2 }>
+    targets: Array<{ id: string; contractVersion: 1 | 2; version?: string }>
   } | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [grouped, setGrouped] = useState(false)
@@ -467,6 +467,7 @@ function AlertsInbox() {
                         targets: selectedAlerts.map((alert) => ({
                           id: alert.id,
                           contractVersion: contractVersionOf(alert),
+                          version: alert.version,
                         })),
                       })
                     }
@@ -1188,7 +1189,7 @@ function AlertDetail({
       {action && (
         <AlertActionDialog
           kind={action}
-          targets={[{ id: alertId, contractVersion }]}
+          targets={[{ id: alertId, contractVersion, version: alert?.version }]}
           onClose={() => setAction(null)}
           onDone={async () => {
             setAction(null)
@@ -1523,7 +1524,7 @@ export function AlertActionDialog({
   onDone,
 }: {
   kind: ActionKind
-  targets: Array<{ id: string; contractVersion: 1 | 2 }>
+  targets: Array<{ id: string; contractVersion: 1 | 2; version?: string }>
   onClose: () => void
   onDone: () => Promise<void> | void
 }) {
@@ -1557,12 +1558,12 @@ export function AlertActionDialog({
             ? "snoozed"
             : "unsnoozed"
 
-  const applyOne = ({ id }: { id: string; contractVersion: 1 | 2 }) => {
+  const applyOne = ({ id, version }: { id: string; contractVersion: 1 | 2; version?: string }) => {
     if (kind === "ack")
       return acknowledgeAlert(id, {
         by: by.trim(),
         note: note.trim() || undefined,
-      })
+      }, version)
     if (kind === "resolve") {
       const transactionRefs = refs
         .split(",")
@@ -1572,23 +1573,23 @@ export function AlertActionDialog({
         by: by.trim(),
         note: note.trim() || undefined,
         transactionRefs: transactionRefs.length ? transactionRefs : undefined,
-      })
+      }, version)
     }
     if (kind === "accept")
       return acceptAlert(id, {
         by: by.trim(),
         note: note.trim(),
         expiresAt: new Date(acceptUntil).toISOString(),
-      })
+      }, version)
     if (kind === "unsnooze")
       return unsnoozeAlert(id, {
         by: by.trim(),
-      })
+      }, version)
     return snoozeAlert(id, {
       by: by.trim(),
       until: new Date(until).toISOString(),
       note: note.trim() || undefined,
-    })
+    }, version)
   }
 
   const submit = async () => {
@@ -1597,10 +1598,18 @@ export function AlertActionDialog({
     const results = await Promise.allSettled(targets.map(applyOne))
     const ok = results.filter((r) => r.status === "fulfilled").length
     const fail = results.length - ok
+    // A stale version means someone else acted on the alert, or a run changed
+    // its status, since the list was loaded: say so and reload instead of
+    // applying the action on top.
+    const conflicts = results.filter(
+      (r) => r.status === "rejected" && r.reason instanceof ReconError && r.reason.isConflict
+    ).length
     results.forEach((r) => {
       if (r.status === "rejected") {
         const e = r.reason
-        log.error("alert action failed", {
+        // A conflict is expected under concurrency, not a fault.
+        const report = e instanceof ReconError && e.isConflict ? log.warn : log.error
+        report("alert action failed", {
           kind,
           error:
             e instanceof ReconError
@@ -1611,6 +1620,16 @@ export function AlertActionDialog({
         })
       }
     })
+    if (conflicts > 0) {
+      const what = conflicts === 1 ? "1 alert" : `${conflicts} alerts`
+      toast.warning(`${what} changed since you opened ${conflicts === 1 ? "it" : "them"}`, {
+        description:
+          "Someone else acted on it, or a run changed its status. The latest state is loaded; check it and apply your action again.",
+      })
+      if (ok > 0) toast.success(`${ok} alert${ok === 1 ? "" : "s"} ${verb}`)
+      await onDone()
+      return
+    }
     if (ok === 0) {
       const first = results.find((r) => r.status === "rejected") as
         PromiseRejectedResult | undefined

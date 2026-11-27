@@ -680,3 +680,72 @@ func TestRenderRule_Liveness(t *testing.T) {
 	require.NotContains(t, string(body), "lastEvaluatedAt", "never evaluated must read as unknown, not as a run at the zero instant")
 	require.NotContains(t, string(body), "lastVerdict")
 }
+
+// An alert's version follows its lifecycle only: another occurrence of the same
+// failure keeps it, an acknowledgement changes it.
+func TestAlertVersion_FollowsTheLifecycleOnly(t *testing.T) {
+	t.Parallel()
+	open := &models.Alert{ID: uuid.New(), Status: models.AlertOpen, OccurrenceCount: 1, LastSeenAt: time.Now()}
+	again := *open
+	again.OccurrenceCount = 2
+	again.LastSeenAt = open.LastSeenAt.Add(time.Minute)
+	again.Evidence = json.RawMessage(`{"residual":"60"}`)
+	require.Equal(t, alertVersion(open), alertVersion(&again), "an occurrence bump keeps the version")
+
+	acked := *open
+	acked.Status = models.AlertAcknowledged
+	acked.Ack = &models.Ack{By: "ops", At: time.Now()}
+	require.NotEqual(t, alertVersion(open), alertVersion(&acked), "a transition changes the version")
+}
+
+// An alert action whose If-Match is stale answers 409 CONFLICT with the
+// current ETag, and the action is not applied.
+func TestAckAlert_StaleIfMatchConflicts(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	current := &models.Alert{ID: id, RuleID: uuid.New(), Status: models.AlertAcknowledged,
+		Ack: &models.Ack{By: "someone-else", At: time.Now()}, LastEvaluationID: uuid.New()}
+	mockSvc.EXPECT().GetAlert(gomock.Any(), id).Return(current, nil)
+	// No AckAlert expectation: gomock fails the test if the action runs.
+
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/ack", strings.NewReader(`{"by":"ops"}`))
+	r.Header.Set("If-Match", `"0000000000000000"`)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Equal(t, `"`+alertVersion(current)+`"`, rec.Header().Get("ETag"))
+	var e sharedapi.ErrorResponse
+	sharedapi.Decode(t, rec.Body, &e)
+	require.EqualValues(t, ErrConflict, e.ErrorCode)
+}
+
+// A current If-Match lets the action through, and the response carries the
+// alert's new version as body field and ETag.
+func TestAckAlert_CurrentIfMatchApplies(t *testing.T) {
+	t.Parallel()
+	b, mockSvc := newTestingBackend(t)
+	router := newRouter(b, sharedapi.ServiceInfo{}, ModuleInfo{}, nil, ControlLedger(""), auth.NewNoAuth(), AuthConfig{}, nil, publish.InMemory(), audit.Config{})
+
+	id := uuid.New()
+	before := &models.Alert{ID: id, RuleID: uuid.New(), Status: models.AlertOpen, LastEvaluationID: uuid.New()}
+	after := *before
+	after.Status = models.AlertAcknowledged
+	after.Ack = &models.Ack{By: "ops", At: time.Now()}
+	mockSvc.EXPECT().GetAlert(gomock.Any(), id).Return(before, nil)
+	mockSvc.EXPECT().AckAlert(gomock.Any(), id, gomock.Any()).Return(&after, nil)
+
+	r := httptest.NewRequest(http.MethodPost, "/alerts/"+id.String()+"/ack", strings.NewReader(`{"by":"ops"}`))
+	r.Header.Set("If-Match", `"`+alertVersion(before)+`"`)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, `"`+alertVersion(&after)+`"`, rec.Header().Get("ETag"))
+	var got sharedapi.BaseResponse[alertResponse]
+	sharedapi.Decode(t, rec.Body, &got)
+	require.Equal(t, alertVersion(&after), got.Data.Version)
+}

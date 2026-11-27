@@ -113,35 +113,40 @@ export async function deleteRule(
 
 export function acknowledgeAlert(
   alertId: string,
-  body: AckAlertRequest
+  body: AckAlertRequest,
+  version?: string
 ): Promise<Alert> {
-  return reconClient.ackAlert(alertId, body)
+  return reconClient.ackAlert(alertId, body, version)
 }
 
 export function resolveAlert(
   alertId: string,
-  body: ResolveAlertRequest
+  body: ResolveAlertRequest,
+  version?: string
 ): Promise<Alert> {
-  return reconClient.resolveAlert(alertId, body)
+  return reconClient.resolveAlert(alertId, body, version)
 }
 
 export function acceptAlert(
   alertId: string,
-  body: AcceptAlertRequest
+  body: AcceptAlertRequest,
+  version?: string
 ): Promise<Alert> {
-  return reconClient.acceptAlert(alertId, body)
+  return reconClient.acceptAlert(alertId, body, version)
 }
 
 export function snoozeAlert(
   alertId: string,
-  body: SnoozeAlertRequest
+  body: SnoozeAlertRequest,
+  version?: string
 ): Promise<Alert> {
-  return reconClient.snoozeAlert(alertId, body)
+  return reconClient.snoozeAlert(alertId, body, version)
 }
 
 export function unsnoozeAlert(
   alertId: string,
-  body: UnsnoozeAlertRequest
+  body: UnsnoozeAlertRequest,
+  version?: string
 ): Promise<Alert> {
-  return reconClient.unsnoozeAlert(alertId, body)
+  return reconClient.unsnoozeAlert(alertId, body, version)
 }

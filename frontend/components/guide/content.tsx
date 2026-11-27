@@ -438,7 +438,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 					actions. The action form shows how many alerts will be changed. Every action records the
 					actor and an optional note; acceptance requires a reason and an end date, resolve can include comma-separated
 					booking transaction references, and snooze requires a future time. Alert details show these
-					decisions together under <strong>Lifecycle</strong>.
+					decisions together under <strong>Lifecycle</strong>. If the alert changed after you opened it,
+					because someone else acted on it or a run changed its status, the action is refused rather than
+					applied on top: the page says so and loads the latest state, and you apply your action again.
+					Another failing run that only adds an occurrence does not count as a change.
 				</P>
 
 				<Callout kind="tip" title="Resolve vs. accept">
