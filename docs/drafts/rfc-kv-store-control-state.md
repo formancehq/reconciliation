@@ -1,6 +1,6 @@
 # RFC: A generic K/V store for reconciliation's control state (Ledger 3.1)
 
-Status: ⏳ **Draft, forward-looking.** Tracked in [EN-1932](https://formance-team.atlassian.net/browse/EN-1932), blocked by the ledger story [EN-1426](https://formance-team.atlassian.net/browse/EN-1426). Reviewed on 2026-10-07 against `feat/reconciliation-ledger-v3` and the ledger `release/v3.0` branch at `e2d0f4713`. Companion to [rfc-ledger-native-storage.md](../archive/rfc-ledger-native-storage.md) and [audit-chain-v3.md](../technical/audit-chain-v3.md).
+Status: ⏳ **Draft, forward-looking.** Tracked in [EN-1932](https://formance-team.atlassian.net/browse/EN-1932), blocked by the ledger story [EN-1426](https://formance-team.atlassian.net/browse/EN-1426). Reviewed on 2026-10-07 against `feat/reconciliation-ledger-v3` and the ledger `release/v3.0` branch at `e2d0f4713`. **Updated 2026-11-27** against Ledger `main` at `60ea68347` and the draft K/V pull request formancehq/ledger#2487 (`17c45525b`): see sections 3, 5, 6 and 8. Companion to [rfc-ledger-native-storage.md](../archive/rfc-ledger-native-storage.md) and [audit-chain-v3.md](../technical/audit-chain-v3.md).
 
 ---
 
@@ -32,6 +32,7 @@ The K/V store does not exist yet, and nobody has specified its properties.
 - [EN-1426](https://formance-team.atlassian.net/browse/EN-1426) ("Add a generic KV Store to the ledger") is a Backlog story with no assignee and no fix version. Its description is two sentences: store ad hoc data, for example ledger-connect plugin cursors. It sits under [EN-1336](https://formance-team.atlassian.net/browse/EN-1336) (Ledger v3.1, Backlog, priority Low).
 - The ledger has no K/V store code or branch on `release/v3.0` (`e2d0f4713`) or `main`. Its only key-value code is internal: Pebble and `internal/pkg/kv/sharded_map.go`.
 - "Compare-and-swap" and "atomic batches" come from this RFC, not from a ledger specification. Section 8 lists what the ledger team must confirm.
+- **2026-11-27:** a draft store exists, formancehq/ledger#2487 (open, draft, not on `main` at `60ea68347`). It offers `Get`, `Put` and `Delete` only: UTF-8 keys of 1 to 256 bytes, opaque values up to 1 MiB, no compare-and-swap, no listing or prefix scan, no expiration. `Put` and `Delete` run inside `Apply`, atomically with transactions, and are audited; their values are visible in ledger logs and audit records. Reads need `ledger:ReadKV`, writes `ledger:WriteKV`. Deploying it needs a stopped-cluster upgrade.
 
 ## 4. What Ledger v3 already provides
 
@@ -67,7 +68,9 @@ The 2026-10-07 review reproduced three defects against the same ledger.
 | Overlapping evaluations of one rule | Partly, with a lease | A per-rule evaluation token that each evaluation batch moves, as in the [EN-1941](https://formance-team.atlassian.net/browse/EN-1941) counter spike |
 | List endpoints read the full history | Unknown until the K/V query surface is known | Ledger cursors, newest first |
 
-The K/V store would remove mechanism: the marker accounts, the EPHEMERAL purge, the status mirror and one Numscript program per transition. It fixes none of the three defects on its own, and nobody has scheduled it.
+A K/V store with compare-and-swap would remove mechanism: the marker accounts, the EPHEMERAL purge, the status mirror and one Numscript program per transition. It fixes none of the three defects on its own, and nobody has scheduled it.
+
+**2026-11-27:** the draft store (#2487) has no compare-and-swap, so it removes none of the guards: a write still needs a ledger transaction that proves the version. The v3 design (RFC 0022 at `536fd9a`) already drops the markers and every `EPHEMERAL` account with today's primitives: one account per entity, whose next version is claimed by a transaction `reference`. With #2487, the K/V store would only hold values above the metadata limit of 16 KiB, such as full capture evidence or a large rule definition.
 
 ## 6. Requirement: design for the switch now
 
@@ -98,7 +101,7 @@ The re-implementation must keep the K/V store a drop-in change. Four rules apply
 
    Listing with filters and pagination goes through a separate query port. In both worlds the ledger metadata index backs it, unless the K/V store offers scans.
 2. **Versions are explicit integers.** Every mutable entity carries a monotonic version. The content hash (`revision`) stays as the identity of a rule configuration in captures. The API exposes the version as an `ETag`. `PATCH /rules/{id}` and the alert actions accept `If-Match` and answer `409 Conflict` on a stale version. Today a lost race answers `500`.
-3. **Ledger details stay in the adapter.** Account addresses, assets, Numscript programs, markers and idempotency-key formats never reach the service. The Ledger v3 adapter maps a precondition to a guarded token move (`ver:{entity}:{n}` to `ver:{entity}:{n+1}`, or the alert marker), an absent key to a transaction `reference` on the entity's generation, a write to account metadata and a record to transaction metadata, all in one `ApplyBatch`. The K/V adapter maps preconditions and writes to K/V compare-and-swap operations and keeps records as ledger transactions.
+3. **Ledger details stay in the adapter.** Account addresses, assets, Numscript programs, markers and idempotency-key formats never reach the service. The Ledger v3 adapter maps a precondition to a transaction that posts one unit to the entity's single account under the reference `{kind}:{id}:v{n+1}` (an absent key takes `v1`), a write to account metadata in that transaction, and a record to transaction metadata, all in one `ApplyBatch`. A stale writer gets `AlreadyExists`. This replaces the prototype's token moved across one account per version (`ver:{entity}:{n}` to `ver:{entity}:{n+1}`), which created an account on every write (RFC 0022, `536fd9a`). A K/V adapter keeps that reference guard, because the draft store has no compare-and-swap, and moves large values to K/V `Put` in the same `Apply`. Records stay ledger transactions.
 4. **One contract test suite runs against every adapter.** It covers the three reproduced races, a conflict followed by a retry with a fresh key, a replay inside the TTL, and an evaluation batch that fails as a whole.
 
 With these rules, the K/V migration changes the adapter and its tests. The service, the API and the evaluation planner stay as they are.
@@ -120,3 +123,12 @@ Reconciliation on Ledger v3 is pre-GA, so the switch is a refactor of the storag
 4. **Reads.** Are there prefix or range scans, secondary indexes and ordering? Without them, reconciliation keeps the ledger metadata index for lists.
 5. **Audit.** Are K/V writes signed and covered by the audit chain like transactions? Reconciliation's audit story depends on the answer.
 6. **Retention.** Do keys expire, or do they follow the ledger retention?
+
+**Answers from the draft #2487 (2026-11-27, not merged):**
+
+1. Yes. `Put` and `Delete` run inside `Apply`, atomically with transactions (this is EN-2772).
+2. No compare-and-swap, no create-if-absent, no delete-if-version. `Put` replaces; deleting a missing key succeeds.
+3. Opaque bytes up to 1 MiB, keys of 1 to 256 UTF-8 bytes, no typing.
+4. Point reads only: no listing, no scan, no index. Lists stay on the ledger metadata index.
+5. Yes: audited like other orders, and verified by `CheckStore`.
+6. No expiration. Keys stay until deleted or until the ledger is deleted.

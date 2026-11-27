@@ -21,6 +21,10 @@ flowchart LR
     Resolver --> Data["data ledgers A, B, C, ..."]
 ```
 
+> **Prototype, not the v3 design.** This page describes the prototype on this branch. The
+> re-implementation (RFC 0022 at `536fd9a`, epic [EN-2746](https://formance-team.atlassian.net/browse/EN-2746))
+> changes the layout; see [What the v3 re-implementation changes](#what-the-v3-re-implementation-changes).
+
 ## Executable sources of truth
 
 The persisted model is defined by code. When this document and code disagree, these files are
@@ -320,3 +324,27 @@ Storage changes should exercise:
 - a live create, evaluate, alert action, timeline read, and delete flow;
 - restart provisioning against the same control ledger to verify additive idempotency and index
   readiness behavior.
+
+## What the v3 re-implementation changes
+
+Re-checked on 2026-11-27 against Ledger `main` at `60ea68347` and recorded in RFC 0022
+(`536fd9a`, sections "Control ledger data model" and "Storage abstraction"). The prototype above
+stays as it is; the re-implementation behind the `ControlState` port uses this layout instead.
+
+| Prototype | v3 re-implementation | Why |
+|---|---|---|
+| `internal/controlstate/ledgerstate` moves a version token to a new account per version, `cs:v:{kind}:{id}:{n}` | One account per entity. A write posts one unit to it under the transaction reference `{kind}:{id}:v{n+1}`; a stale writer gets `AlreadyExists`. The balance equals the version | No account per write. Ledger ADR 0004 (base runs, `main`): about 55,000 tx/s when every transaction creates two accounts, about 120,000 when it reuses them. The Ledger checks a reference in the primary store before staging any write, whether or not the reference index exists (`internal/domain/processing/processor_transaction.go`) |
+| A per-rule evaluation token, moved by its own transaction | The capture claims the next version of the rule's evaluation counter | One transaction fewer per evaluation |
+| `alert:st:{open\|ack}:…` `EPHEMERAL` markers | No marker and no `EPHEMERAL` type. Status is indexed metadata; each alert account holds one unit, and `AggregateVolumes` filtered on `metadata[status]` and grouped by rule prefix counts alerts | Independent of how and when the Ledger purges drained accounts (EN-2036; Ledger ADR 0004 rejected the inventory purge on 2026-10-23) |
+| `ledgerstate` encodes an identifier with `:` as one hex segment | Addresses keep labelled segments (`alert:rule:{ruleId}:per:{period}:fp:{fpHash}`) | Prefix aggregation per rule and per `(rule, period)` keeps working |
+| `ledgerstate` stores every field in one JSON value, `cs_fields` | Fields that lists filter on are typed, indexed keys of their own; the rest is one encoded value | Lists stay ledger queries |
+| Chart enforcement `AUDIT`, `cs:*` undeclared | Every pattern declared with segment constraints, enforcement `STRICT` (the Ledger default) | Malformed addresses are rejected by the Ledger |
+| `Load` calls `GetAccount` once per key | One `ListAccounts` on an `or` of exact addresses | One call and one snapshot per unit of work (cost to measure) |
+
+Metadata limits on `main` apply per command (`internal/domain/metadata_limits.go`): 16 KiB per value,
+64 KiB and 128 keys per account or transaction, 1 MiB per batch. Capture evidence can therefore
+spread over several keys before it is truncated.
+
+Still open, decided by the contract suite: a precondition without a write (prove "still at version n"
+without taking n+1), either with a stored Numscript guard on `balance()` or with the prototype's
+move of a token onto itself.
