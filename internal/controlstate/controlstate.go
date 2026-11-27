@@ -2,9 +2,13 @@
 // control state: rule definitions, alert state and evaluation tokens.
 //
 // The service builds a UnitOfWork and an adapter commits it in one atomic
-// call. The Ledger v3 adapter maps it to one ApplyBatch; a future Ledger
-// key-value store maps it to compare-and-swap operations. Moving between the
-// two replaces an adapter and leaves the service untouched (RFC 0022,
+// call. The Ledger v3 adapter maps it to one ApplyBatch. The draft Ledger
+// key-value store (ledger PR #2487) has no compare-and-swap and no listing,
+// so a key-value adapter keeps preconditions, moves and bumps on ledger
+// accounts and only moves Fields and Live values to Put, in the same Apply.
+// That adapter must store the version inside each value, so that a Load
+// which reads accounts and values separately can detect a torn read. The
+// switch replaces an adapter and leaves the service untouched (RFC 0022,
 // docs/drafts/rfc-kv-store-control-state.md).
 //
 // Every adapter must pass the contract suite in package controlstatetest.
@@ -178,10 +182,15 @@ func (u UnitOfWork) Validate() error {
 			}
 		}
 	}
+	bumped := make(map[Key]bool, len(u.Bumps))
 	for _, b := range u.Bumps {
 		if err := validKey(b.Key); err != nil {
 			return err
 		}
+		if bumped[b.Key] {
+			return fmt.Errorf("%w: two bumps of %s", ErrInvalid, b.Key)
+		}
+		bumped[b.Key] = true
 		if len(b.Add) == 0 {
 			return fmt.Errorf("%w: bump of %s adds nothing", ErrInvalid, b.Key)
 		}
@@ -228,14 +237,18 @@ func (u UnitOfWork) Versions() Versions {
 	return out
 }
 
-// VersionAsset is the asset a Ledger adapter counts versions in. It cannot
-// be moved or bumped directly.
-const VersionAsset = "V"
+// VersionAsset is the asset a Ledger adapter counts versions in, and
+// RecordAsset the one its record transactions post. Neither can be moved or
+// bumped directly.
+const (
+	VersionAsset = "V"
+	RecordAsset  = "CSR"
+)
 
 // validAsset accepts a Ledger asset name without precision, other than the
 // version asset: [A-Z][A-Z0-9]{0,16}.
 func validAsset(a string) error {
-	if a == VersionAsset || len(a) == 0 || len(a) > 17 || a[0] < 'A' || a[0] > 'Z' {
+	if a == VersionAsset || a == RecordAsset || len(a) == 0 || len(a) > 17 || a[0] < 'A' || a[0] > 'Z' {
 		return fmt.Errorf("%w: asset %q", ErrInvalid, a)
 	}
 	for _, c := range a[1:] {

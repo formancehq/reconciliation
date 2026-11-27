@@ -50,7 +50,7 @@ import (
 
 const (
 	assetVersion = controlstate.VersionAsset
-	assetRecord  = "CSR"
+	assetRecord  = controlstate.RecordAsset
 
 	metaFields        = "cs_fields"
 	metaSubject       = "cs_subject"
@@ -179,12 +179,15 @@ func (s *Store) Load(ctx context.Context, keys ...controlstate.Key) (controlstat
 func entryOf(k controlstate.Key, acct *commonpb.Account) (controlstate.Entry, error) {
 	e := controlstate.Entry{Key: k}
 	for _, v := range acct.GetVolumes() {
-		if v.GetColor() != "" || v.GetAsset() == assetRecord {
+		if v.GetColor() != "" {
 			continue
 		}
 		b, err := balanceOf(v.GetVolumes())
-		if err != nil || !b.IsInt64() {
-			return e, fmt.Errorf("load %s: balance of %s: %v", k, v.GetAsset(), err)
+		if err != nil {
+			return e, fmt.Errorf("load %s: balance of %s: %w", k, v.GetAsset(), err)
+		}
+		if !b.IsInt64() {
+			return e, fmt.Errorf("load %s: balance of %s out of range: %s", k, v.GetAsset(), b)
 		}
 		switch {
 		case v.GetAsset() == assetVersion:
@@ -218,11 +221,11 @@ func (s *Store) Commit(ctx context.Context, uow controlstate.UnitOfWork) (contro
 	if err := uow.Validate(); err != nil {
 		return nil, err
 	}
-	requests, err := s.requests(uow)
+	sum := sha256.Sum256([]byte(uow.IdempotencyKey))
+	requests, err := s.requests(uow, idempotencyPrefix+hex.EncodeToString(sum[:]))
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256([]byte(uow.IdempotencyKey))
 	if _, err := s.client.ApplyIdempotent(ctx, idempotencyPrefix+hex.EncodeToString(sum[:]), requests...); err != nil {
 		return nil, mapError(err)
 	}
@@ -236,7 +239,13 @@ func byKey(a, b controlstate.Key) int {
 // requests builds the batch: one transaction per precondition, in key order,
 // then one per bump, in key order, then one per record not merged into its
 // subject's write, in the order given.
-func (s *Store) requests(uow controlstate.UnitOfWork) ([]*servicepb.Request, error) {
+//
+// Bumps and records carry a reference derived from the unit of work's key.
+// A replay inside the ledger's idempotency window returns the first outcome;
+// a replay after it hits the reference and fails with ErrConflict instead of
+// adding the counter or the record twice.
+func (s *Store) requests(uow controlstate.UnitOfWork, uowRef string) ([]*servicepb.Request, error) {
+	extra := 0
 	writes := make(map[controlstate.Key]controlstate.Write, len(uow.Put))
 	for _, w := range uow.Put {
 		writes[w.Key] = w
@@ -276,10 +285,10 @@ func (s *Store) requests(uow controlstate.UnitOfWork) ([]*servicepb.Request, err
 			return nil, fmt.Errorf("write %s: %w", p.Key, err)
 		}
 		acctMeta := map[string]string{metaFields: encoded}
+		// Every projected key is written, empty when the field is absent, so a
+		// list filter never matches a value the entity no longer has.
 		for _, f := range s.layout.Projected(p.Key.Kind) {
-			if v, ok := w.Fields[f]; ok {
-				acctMeta[f] = v
-			}
+			acctMeta[f] = w.Fields[f]
 		}
 		if i, ok := merged[p.Key]; ok {
 			if err := addRecord(txMeta, uow.Records[i]); err != nil {
@@ -308,9 +317,11 @@ func (s *Store) requests(uow controlstate.UnitOfWork) ([]*servicepb.Request, err
 			live[liveMetaPrefix+k] = v
 		}
 		payload := &servicepb.CreateTransactionPayload{
-			Script:   &commonpb.Script{Plain: bumpScript(addr, gauge, b.Add)},
-			Metadata: commonpb.MetadataFromMap(s.txMeta(b.Key)),
+			Script:    &commonpb.Script{Plain: bumpScript(addr, gauge, b.Add)},
+			Reference: fmt.Sprintf("%s:%d", uowRef, extra),
+			Metadata:  commonpb.MetadataFromMap(s.txMeta(b.Key)),
 		}
+		extra++
 		if len(live) > 0 {
 			payload.AccountMetadata = map[string]*commonpb.MetadataMap{addr: {Values: commonpb.MetadataFromMap(live)}}
 		}
@@ -330,9 +341,11 @@ func (s *Store) requests(uow controlstate.UnitOfWork) ([]*servicepb.Request, err
 			return nil, err
 		}
 		out = append(out, s.apply(&servicepb.CreateTransactionPayload{
-			Script:   &commonpb.Script{Plain: send(assetRecord, 1, gauge+" allowing unbounded overdraft", gauge)},
-			Metadata: commonpb.MetadataFromMap(txMeta),
+			Script:    &commonpb.Script{Plain: send(assetRecord, 1, gauge+" allowing unbounded overdraft", gauge)},
+			Reference: fmt.Sprintf("%s:%d", uowRef, extra),
+			Metadata:  commonpb.MetadataFromMap(txMeta),
 		}))
+		extra++
 	}
 	return out, nil
 }

@@ -51,6 +51,7 @@ That makes 12,100 commits per layout.
 |---|---|---|---|---|
 | Prototype: one account per version | 439 | 18.4 / 23.7 / 26.4 ms | 20,401 | 204 |
 | RFC 0022: one account per entity | **577** (+31 %) | 17.7 / 21.8 / 24.2 ms | **2,300** | **23** |
+| Second run, after the review fixes: prototype / RFC 0022 | 420 / **565** (+35 %) | 18.1 / 22.0 / 24.4 ms (RFC 0022) | 20,401 / 2,300 | 204 / 23 |
 
 The new layout keeps one gauge, one rule, one counter and one alert account per (rule, period) that failed. The prototype adds one account per version written, about 10 per evaluation cycle, and the gap grows with every run. Commit latency is set by the Raft commit on both layouts. The throughput gain comes from creating fewer accounts. This matches Ledger ADR 0004, which measured about 55k tx/s when transactions create accounts against about 120k when they reuse them.
 
@@ -72,6 +73,34 @@ Reading the numbers:
 - **About 10 ms is the floor of any read on this node.** It is the linearizable read barrier, so a single call costs the same whatever it reads. That is why one `ListAccounts` on 3 addresses is three times faster than 3 `GetAccount`.
 - **The aggregation rule is confirmed.** Without a `status` filter, `AggregateVolumes` visits every alert account, resolved history included, and doubles its cost at 2,000 alerts. That cost grows with the history. With the filter, or with the gauges, the cost stays at the floor.
 - The gauge read is one point read per rule, and needs neither a scan nor the read index.
+
+## Review fixes
+
+An independent review of the spike commit found the following. The fixes are in the adapter and the port.
+
+| Finding | Fix |
+|---|---|
+| A projected metadata key that a write dropped stayed on the account, so a list filter could match a stale value. | Every projected key is written on every write, empty when absent. `TestIntegration_ReconChart` checks it. |
+| `Load` hid the record asset `CSR`, while the port accepted it in a move. | `CSR` is reserved in the port next to `V`, and `Load` hides nothing. |
+| A key outside the reconciliation chart reached the ledger and consumed the idempotency key of the rejected batch. | `Recon.Address` validates the UUID, the period and the hex fingerprint first, and returns `ErrInvalid`. The ledger's STRICT chart stays as the second line. |
+| A bump or record replayed after the 24-hour idempotency window would apply twice. | Bump and record transactions carry a reference derived from the unit of work's key. A late replay fails with `ErrConflict` instead. |
+| `Validate` accepted two bumps of one key. | Rejected as `ErrInvalid`. |
+
+Checked and fine: byte-equal replay (the ledger hashes the batch deterministically), the replayed rejection reason, the soundness of the guard without a write, and atomicity. Nothing outside `internal/controlstate` imports the port. The full `-tags it` suite of the prototype (ledger client, `ledgerstore`, resolver, API) passes on Ledger `main`.
+
+Left as known risks:
+- `Load` has no explicit barrier. Address filters read the main store, so this is low risk.
+- The global `guard:a` and `guard:b` accounts are TRANSIENT and never persisted. The ledger applies serially anyway.
+- Metadata limits (16 KiB per value, 128 keys per entity per command) are not checked before the commit.
+
+## Migrating to the key-value store
+
+The draft store of formancehq/ledger#2487 offers Get, Put and Delete inside `Apply`, with no compare-and-swap and no listing. A key-value adapter therefore keeps:
+
+- preconditions, `Move` and `Bump` on ledger accounts, because they need the reference, insufficient funds and commutative adds;
+- the projected metadata on the ledger, because the store cannot list.
+
+Only `Fields` and `Live` move to `Put`, in the same batch, with `Live` under a key of its own so that a bump never overwrites a concurrent write. Because `Load` would read accounts and values separately, the value must carry its version so that a torn read is detected. The port's interface does not change: the switch is a new adapter that reuses the layout and the contract suite.
 
 ## Limits
 

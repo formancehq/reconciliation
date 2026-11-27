@@ -12,6 +12,7 @@ import (
 	"github.com/formancehq/reconciliation/internal/controlstate/ledgerstate"
 	"github.com/formancehq/reconciliation/internal/ledger"
 	"github.com/formancehq/reconciliation/internal/ledgerpb/commonpb"
+	"github.com/formancehq/reconciliation/internal/ledgerpb/servicepb"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -111,7 +112,7 @@ func TestIntegration_ReconChart(t *testing.T) {
 	require.NoError(t, err)
 	md := commonpb.MetadataToMap(acct.GetMetadata())
 	assert.Equal(t, "ack", md["status"], "status is projected for list filters")
-	assert.Equal(t, "2026-11", md["period"])
+	assert.Equal(t, "", md["period"], "a projected field the write dropped is cleared, not left stale")
 
 	// STRICT: an address outside the chart is refused.
 	bad := controlstate.Key{Kind: ledgerstate.KindAlert, ID: ledgerstate.AlertID(rid, "2026_11", "9c4e")}
@@ -120,7 +121,16 @@ func TestIntegration_ReconChart(t *testing.T) {
 		Expect:         []controlstate.Precondition{controlstate.ExpectAbsent(bad)},
 		Put:            []controlstate.Write{{Key: bad, Fields: map[string]string{"status": "open"}}},
 	})
-	require.Error(t, err, "period with '_' and a 4-hex fingerprint are not in the chart")
-	require.NotErrorIs(t, err, controlstate.ErrConflict, "a chart refusal is not a conflict to retry")
+	require.ErrorIs(t, err, controlstate.ErrInvalid, "the layout refuses a key outside the chart before the ledger sees it")
+
+	// The ledger's STRICT chart is the second line: an address the layout let
+	// through by mistake is refused, and not reported as a conflict.
+	_, err = client.ApplyIdempotent(ctx, uuid.NewString(), &servicepb.Request{Type: &servicepb.Request_Apply{Apply: &servicepb.LedgerApplyRequest{
+		Ledger: name,
+		Action: &servicepb.LedgerAction{Data: &servicepb.LedgerAction_CreateTransaction{CreateTransaction: &servicepb.CreateTransactionPayload{
+			Script: &commonpb.Script{Plain: "send [V 1] (\n\tsource = @pool:rule:" + rid + " allowing unbounded overdraft\n\tdestination = @alert:rule:" + rid + ":per:2026_11:fp:9c4e\n)\n"},
+		}}},
+	}}})
+	require.ErrorContains(t, err, "account not matching type")
 	t.Logf("refused: %v", err)
 }

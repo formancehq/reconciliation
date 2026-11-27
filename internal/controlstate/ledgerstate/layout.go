@@ -110,16 +110,32 @@ func (Recon) rule(k controlstate.Key) (string, error) {
 	}
 }
 
+var (
+	reconUUID   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	reconPeriod = regexp.MustCompile(`^[0-9A-Za-z-]+$`)
+	reconFP     = regexp.MustCompile(`^([0-9a-f]{2})+$`)
+)
+
+// Address validates each segment against the chart before the ledger sees it,
+// so a malformed key fails with ErrInvalid and does not consume the
+// idempotency key of a rejected batch.
 func (r Recon) Address(k controlstate.Key) (string, error) {
+	invalid := func() (string, error) {
+		return "", fmt.Errorf("%w: %s is outside the reconciliation chart", controlstate.ErrInvalid, k)
+	}
 	switch k.Kind {
-	case KindRule:
-		return "rule:" + k.ID, nil
-	case KindEval:
+	case KindRule, KindEval:
+		if !reconUUID.MatchString(k.ID) {
+			return invalid()
+		}
+		if k.Kind == KindRule {
+			return "rule:" + k.ID, nil
+		}
 		return "eval:rule:" + k.ID, nil
 	case KindAlert:
 		p := strings.Split(k.ID, ":")
-		if len(p) != 3 {
-			return "", fmt.Errorf("%w: alert id %q is not rule:period:fp", controlstate.ErrInvalid, k.ID)
+		if len(p) != 3 || !reconUUID.MatchString(p[0]) || !reconPeriod.MatchString(p[1]) || !reconFP.MatchString(p[2]) {
+			return invalid()
 		}
 		return fmt.Sprintf("alert:rule:%s:per:%s:fp:%s", p[0], p[1], p[2]), nil
 	}
@@ -128,10 +144,10 @@ func (r Recon) Address(k controlstate.Key) (string, error) {
 }
 
 func (r Recon) Gauge(k controlstate.Key) (string, error) {
-	rule, err := r.rule(k)
-	if err != nil {
+	if _, err := r.Address(k); err != nil {
 		return "", err
 	}
+	rule, _ := r.rule(k)
 	return "pool:rule:" + rule, nil
 }
 
