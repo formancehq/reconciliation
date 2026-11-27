@@ -22,7 +22,7 @@ flowchart LR
 ```
 
 > **Prototype, not the v3 design.** This page describes the prototype on this branch. The
-> re-implementation (RFC 0022 at `536fd9a`, epic [EN-2746](https://formance-team.atlassian.net/browse/EN-2746))
+> re-implementation (RFC 0022 at `1ba7e0b`, epic [EN-2746](https://formance-team.atlassian.net/browse/EN-2746))
 > changes the layout; see [What the v3 re-implementation changes](#what-the-v3-re-implementation-changes).
 
 ## Executable sources of truth
@@ -328,25 +328,33 @@ Storage changes should exercise:
 ## What the v3 re-implementation changes
 
 Re-checked on 2026-11-27 against Ledger `main` at `60ea68347` and recorded in RFC 0022
-(`536fd9a`, sections "Control ledger data model" and "Storage abstraction"). The prototype above
+(`1ba7e0b`, sections "Control ledger data model", "Storage abstraction" and "Every alert write proves
+ the current state"). The prototype above
 stays as it is; the re-implementation behind the `ControlState` port uses this layout instead.
 
 | Prototype | v3 re-implementation | Why |
 |---|---|---|
 | `internal/controlstate/ledgerstate` moves a version token to a new account per version, `cs:v:{kind}:{id}:{n}` | One account per entity. A write posts one unit to it under the transaction reference `{kind}:{id}:v{n+1}`; a stale writer gets `AlreadyExists`. The balance equals the version | No account per write. Ledger ADR 0004 (base runs, `main`): about 55,000 tx/s when every transaction creates two accounts, about 120,000 when it reuses them. The Ledger checks a reference in the primary store before staging any write, whether or not the reference index exists (`internal/domain/processing/processor_transaction.go`) |
-| A per-rule evaluation token, moved by its own transaction | The capture claims the next version of the rule's evaluation counter | One transaction fewer per evaluation |
+| A per-rule evaluation token, moved by its own transaction | The capture claims the next version of the rule's evaluation counter, `eval:rule:{ruleId}`, which is the rule's sequence | One transaction fewer per evaluation |
+| A rule update overwrites the rule's metadata; nothing ties it to the evaluations around it | **Option B:** a rule change (create, update, enable, delete) writes the rule and also claims the next version of the rule's sequence, in one transaction. A `PATCH` that lost only the sequence to an evaluation is retried by the server, without `409` | An evaluation planned on the old rule conflicts and re-plans, so no capture uses a replaced configuration, and evaluations need no guard on the rule. The sequence is the rule's ordered, gapless audit trail: captures and changes interleaved, each change with its actor and diff. Option A, a TRANSIENT guard on the rule in every evaluation, would cost one more transaction per evaluation |
 | `alert:st:{open\|ack}:…` `EPHEMERAL` markers | No marker and no `EPHEMERAL` type. The alert account holds 1 unit of the asset of its status (`OPEN`, `ACK`, `ACCEPTED`, none once resolved), moved by each transition, and 1 `OCC` per failing run; `status` stays as indexed metadata for lists | The move is also a state guard; `occurrenceCount` is a balance, not a scan of captures; independent of EN-2036 (Ledger ADR 0004 rejected the inventory purge on 2026-10-23) |
 | Three pools per rule (`alert:pool:`, `capture:pool:`, `activity:pool:`) | One gauge per rule, `pool:rule:{ruleId}`, the overdraft source of every posting of that rule | Its negative balances are the rule's open, acknowledged and accepted alerts and total occurrences: one `GetAccount`, or one `ListAccounts` on `pool:rule:` for a page of rules, with no scan and no read-index wait. `AggregateVolumes` sums every asset of every selected account, so counts over alert accounts filter on `status` to skip resolved history |
 | Captures and timeline listed through the transaction address index | Every transaction carries `rule` and `kind`, captures also `period`, as indexed transaction metadata | A rule's timeline is one filter; the last capture of a (rule, period) is one newest-first read of page size 1; the address index becomes optional |
 | `ledgerstate` encodes an identifier with `:` as one hex segment | Addresses keep labelled segments (`alert:rule:{ruleId}:per:{period}:fp:{fpHash}`) | Prefix aggregation per rule and per `(rule, period)` keeps working |
 | `ledgerstate` stores every field in one JSON value, `cs_fields` | Fields that lists filter on are typed, indexed keys of their own; the rest is one encoded value | Lists stay ledger queries |
 | Chart enforcement `AUDIT`, `cs:*` undeclared | Every pattern declared with segment constraints, enforcement `STRICT` (the Ledger default) | Malformed addresses are rejected by the Ledger |
-| `Load` calls `GetAccount` once per key | One `ListAccounts` on an `or` of exact addresses | One call and one snapshot per unit of work (cost to measure) |
+| `Load` calls `GetAccount` once per key | One `ListAccounts` on an `or` of exact addresses | One call and one snapshot per unit of work: 10.5 ms against 31.4 ms for three `GetAccount` in the spike |
 
 Metadata limits on `main` apply per command (`internal/domain/metadata_limits.go`): 16 KiB per value,
 64 KiB and 128 keys per account or transaction, 1 MiB per batch. Capture evidence can therefore
 spread over several keys before it is truncated.
 
-Still open, decided by the contract suite: a precondition without a write (prove "still at version n"
-without taking n+1), either with a stored Numscript guard on `balance()` or with the prototype's
-move of a token onto itself.
+A precondition without a write (prove "still at version n" without taking n+1) uses two TRANSIENT
+accounts. It moves n units of `V` to the first, moves the rest of the balance to the second, then
+moves the n units back. A later version leaves a balance on the second account, and the Ledger
+rejects the batch with `TRANSIENT_ACCOUNT_NON_ZERO`. With option B no evaluation needs this guard,
+so it stays for rare cases only.
+
+The spike branch `spike/control-ledger-layout` implements all of the above and passes 19 contract
+scenarios on Ledger `main`, including the two option B races. Benchmark results:
+`docs/technical/control-ledger-layout-spike.md` on that branch.
