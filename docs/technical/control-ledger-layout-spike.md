@@ -25,7 +25,7 @@ Fact checked against this Ledger: an index needs its field declared in the metad
 
 ## Tests
 
-- `TestIntegration_ControlStateContract`: 17 of 17 scenarios pass on Ledger `main`, including the three reproduced races, the guard without a write, the status move and the bump.
+- `TestIntegration_ControlStateContract`: 19 of 19 scenarios pass on Ledger `main`. They include the three reproduced races, the guard without a write, the status move and the bump. They also include the two rule-change scenarios of option B. In the first, a rule change claims the rule's sequence, so an evaluation planned on the old rule conflicts and re-plans. In the second, a rule change that loses the sequence to an evaluation retries with the same rule version, without a `409`.
 - `TestIntegration_ReconChart`: one alert's life on the reconciliation chart in STRICT mode. The test checks the gauge balances at each step (`V -4, OPEN -1, OCC -1`, then `V -5, ACK -1, OCC -2`) and the projected `status` metadata. It also checks that an address outside the chart is refused, and that the refusal is not a conflict.
 
 Run them with `RECON_LEDGER_ADDR=<ledger> go test -tags it -run 'TestIntegration_(ControlStateContract|ReconChart)' ./internal/controlstate/ledgerstate/`.
@@ -73,6 +73,10 @@ Reading the numbers:
 - **About 10 ms is the floor of any read on this node.** It is the linearizable read barrier, so a single call costs the same whatever it reads. That is why one `ListAccounts` on 3 addresses is three times faster than 3 `GetAccount`.
 - **The aggregation rule is confirmed.** Without a `status` filter, `AggregateVolumes` visits every alert account, resolved history included, and doubles its cost at 2,000 alerts. That cost grows with the history. With the filter, or with the gauges, the cost stays at the floor.
 - The gauge read is one point read per rule, and needs neither a scan nor the read index.
+
+## Rule changes: option B
+
+A rule change writes the rule and also claims the next version of the rule's sequence (`eval:rule:{id}`), in one transaction. Evaluations need no guard on the rule, so the hot path keeps one transaction per evaluation. The sequence becomes the rule's ordered, gapless audit trail: every capture sits after the configuration it used, and every change sits between two evaluations, with its actor and diff. The alternative, a TRANSIENT guard on the rule in every evaluation, would have added one transaction to each evaluation. The guard stays available for rare cases. RFC 0022 records the choice.
 
 ## Review fixes
 

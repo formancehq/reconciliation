@@ -62,6 +62,8 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"CommitReturnsNewVersions", testCommitReturnsNewVersions},
 		{"StatusMoveGuardsTheStatus", testStatusMoveGuardsTheStatus},
 		{"BumpKeepsTheVersion", testBumpKeepsTheVersion},
+		{"RuleChangeInvalidatesEvaluation", testRuleChangeInvalidatesEvaluation},
+		{"RuleChangeRetriesPastEvaluation", testRuleChangeRetriesPastEvaluation},
 	} {
 		t.Run(tc.name, func(t *testing.T) { tc.run(t, newStore(t)) })
 	}
@@ -526,4 +528,72 @@ func testBumpKeepsTheVersion(t *testing.T, s Store) {
 	assert.Equal(t, controlstate.Version(2), got.Version)
 	assert.Equal(t, map[string]int64{"OCC": 2}, got.Balances, "a write keeps the counters")
 	assert.Equal(t, "1", got.Live["lastSeenAt"], "a write keeps the live fields")
+}
+
+// ruleChange is the unit of work of a rule update (RFC 0022, option B): it
+// writes the rule and also takes the next version of the rule's sequence, the
+// counter every evaluation claims, so the change has its place among the
+// evaluations and an evaluation planned on the old rule cannot commit.
+func ruleChange(rule, seq controlstate.Entry, fields map[string]string) controlstate.UnitOfWork {
+	return controlstate.UnitOfWork{
+		IdempotencyKey: newIdemKey(),
+		Expect:         []controlstate.Precondition{controlstate.Expect(rule), controlstate.Expect(seq)},
+		Put: []controlstate.Write{
+			{Key: rule.Key, Fields: fields},
+			{Key: seq.Key, Fields: map[string]string{"last": "rule.updated"}},
+		},
+		Records: []controlstate.Record{{Kind: "activity", Subject: seq.Key, Fields: map[string]string{"action": "rule.updated", "threshold": fields["threshold"]}}},
+	}
+}
+
+func evaluation(seq controlstate.Entry, verdict string) controlstate.UnitOfWork {
+	return controlstate.UnitOfWork{
+		IdempotencyKey: newIdemKey(),
+		Expect:         []controlstate.Precondition{controlstate.Expect(seq)},
+		Put:            []controlstate.Write{{Key: seq.Key, Fields: map[string]string{"last": "capture"}}},
+		Records:        []controlstate.Record{{Kind: "capture", Subject: seq.Key, Fields: map[string]string{"verdict": verdict}}},
+	}
+}
+
+// Race: an evaluation reads the rule, the rule changes, then the evaluation
+// commits a capture computed on the old rule. The rule change took the next
+// version of the sequence, so the evaluation fails and re-plans.
+func testRuleChangeInvalidatesEvaluation(t *testing.T, s Store) {
+	id := uuid.NewString()
+	rule, seq := controlstate.Key{Kind: "rule", ID: id}, controlstate.Key{Kind: "eval", ID: id}
+	create(t, s, rule, map[string]string{"threshold": "1000"})
+	create(t, s, seq, map[string]string{"last": "created"})
+
+	planned := load(t, s, seq) // the evaluation reads the rule and the sequence
+	require.NoError(t, commitErr(t.Context(), s, ruleChange(load(t, s, rule), load(t, s, seq), map[string]string{"threshold": "2000"})))
+
+	require.ErrorIs(t, commitErr(t.Context(), s, evaluation(planned, "fail")), controlstate.ErrConflict, "a capture computed on the old rule cannot commit")
+
+	// Re-planned on the new rule, it commits after the change.
+	require.NoError(t, commitErr(t.Context(), s, evaluation(load(t, s, seq), "pass")))
+	rs := records(t, s, seq)
+	require.Len(t, rs, 2)
+	assert.Equal(t, "rule.updated", rs[0].Fields["action"], "the change has its place in the rule's sequence")
+	assert.Equal(t, "pass", rs[1].Fields["verdict"])
+	assert.Equal(t, controlstate.Version(3), load(t, s, seq).Version)
+}
+
+// Race: an evaluation commits between the rule change's read and its commit.
+// The change conflicts on the sequence only; the rule itself did not move,
+// so the API re-reads the sequence and retries instead of answering 409.
+func testRuleChangeRetriesPastEvaluation(t *testing.T, s Store) {
+	id := uuid.NewString()
+	rule, seq := controlstate.Key{Kind: "rule", ID: id}, controlstate.Key{Kind: "eval", ID: id}
+	readRule := create(t, s, rule, map[string]string{"threshold": "1000"})
+	staleSeq := create(t, s, seq, map[string]string{"last": "created"})
+
+	require.NoError(t, commitErr(t.Context(), s, evaluation(staleSeq, "fail")))
+	require.ErrorIs(t, commitErr(t.Context(), s, ruleChange(readRule, staleSeq, map[string]string{"threshold": "2000"})), controlstate.ErrConflict)
+
+	// The If-Match on the rule still holds: same rule version, fresh sequence.
+	require.Equal(t, readRule.Version, load(t, s, rule).Version)
+	require.NoError(t, commitErr(t.Context(), s, ruleChange(readRule, load(t, s, seq), map[string]string{"threshold": "2000"})))
+	assert.Equal(t, "2000", load(t, s, rule).Fields["threshold"])
+	assert.Equal(t, controlstate.Version(2), load(t, s, rule).Version)
+	assert.Equal(t, controlstate.Version(3), load(t, s, seq).Version)
 }
