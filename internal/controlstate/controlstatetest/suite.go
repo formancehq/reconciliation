@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/formancehq/reconciliation/internal/controlstate"
+	"github.com/formancehq/reconciliation/internal/controlstate/tick"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,6 +65,8 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"BumpKeepsTheVersion", testBumpKeepsTheVersion},
 		{"RuleChangeInvalidatesEvaluation", testRuleChangeInvalidatesEvaluation},
 		{"RuleChangeRetriesPastEvaluation", testRuleChangeRetriesPastEvaluation},
+		{"TwoSchedulersCommitATickOnce", testTwoSchedulersCommitATickOnce},
+		{"OlderTickStopsAfterANewerOne", testOlderTickStopsAfterANewerOne},
 	} {
 		t.Run(tc.name, func(t *testing.T) { tc.run(t, newStore(t)) })
 	}
@@ -596,4 +599,96 @@ func testRuleChangeRetriesPastEvaluation(t *testing.T, s Store) {
 	assert.Equal(t, "2000", load(t, s, rule).Fields["threshold"])
 	assert.Equal(t, controlstate.Version(2), load(t, s, rule).Version)
 	assert.Equal(t, controlstate.Version(3), load(t, s, seq).Version)
+}
+
+// tickPlan builds a scheduled capture of tk, and counts how many times the
+// sources were read (one plan = one read of the sources).
+func tickPlan(tk string, reads *int, mu *sync.Mutex) tick.Plan {
+	return func(_ context.Context, seq controlstate.Entry) (controlstate.UnitOfWork, error) {
+		mu.Lock()
+		*reads++
+		mu.Unlock()
+		return controlstate.UnitOfWork{
+			Expect:  []controlstate.Precondition{controlstate.Expect(seq)},
+			Put:     []controlstate.Write{{Key: seq.Key, Fields: map[string]string{"last": "capture", tick.Field: tk}}},
+			Records: []controlstate.Record{{Kind: "capture", Subject: seq.Key, Fields: map[string]string{"tick": tk}}},
+		}, nil
+	}
+}
+
+// Race (RFC 0022, Unresolved Question 8): two scheduler replicas run the same
+// tick, for example during a lease handover. Both read the sources, but only
+// one capture claims the next version of the rule's sequence; the other gets
+// a conflict, re-reads the sequence, finds its tick and stops. One capture,
+// one version step, and no error on either side.
+func testTwoSchedulersCommitATickOnce(t *testing.T, s Store) {
+	seq := controlstate.Key{Kind: "eval", ID: uuid.NewString()}
+	create(t, s, seq, map[string]string{"last": "created"})
+	const tk = "2026-11-27T15:15:00Z"
+
+	var (
+		mu    sync.Mutex
+		reads int
+		// Both replicas load before either commits, so both plan on v1.
+		loaded sync.WaitGroup
+		wg     sync.WaitGroup
+	)
+	loaded.Add(2)
+	outcomes := make([]tick.Outcome, 2)
+	errs := make([]error, 2)
+	for i := range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			base := tickPlan(tk, &reads, &mu)
+			first := true
+			plan := func(ctx context.Context, e controlstate.Entry) (controlstate.UnitOfWork, error) {
+				if first {
+					first = false
+					loaded.Done()
+					loaded.Wait()
+				}
+				return base(ctx, e)
+			}
+			outcomes[i], errs[i] = tick.Commit(t.Context(), s, seq, tk, "replica-"+strconv.Itoa(i), plan, 3)
+		}()
+	}
+	wg.Wait()
+
+	require.NoError(t, errs[0])
+	require.NoError(t, errs[1])
+	assert.ElementsMatch(t, []tick.Outcome{tick.Committed, tick.AlreadyDone}, outcomes, "one replica commits, the other stops")
+	assert.Equal(t, 2, reads, "the loser read the sources once and did not plan again")
+
+	e := load(t, s, seq)
+	assert.Equal(t, controlstate.Version(2), e.Version, "one step of the sequence for the tick")
+	assert.Equal(t, tk, e.Fields[tick.Field])
+	captures := 0
+	for _, r := range records(t, s, seq) {
+		if r.Kind == "capture" {
+			captures++
+			assert.Equal(t, tk, r.Fields["tick"])
+		}
+	}
+	assert.Equal(t, 1, captures, "one capture for the tick")
+}
+
+// A replica that wakes up late, after a newer tick was captured, does not
+// capture the older one: the sequence already moved past it.
+func testOlderTickStopsAfterANewerOne(t *testing.T, s Store) {
+	seq := controlstate.Key{Kind: "eval", ID: uuid.NewString()}
+	create(t, s, seq, map[string]string{"last": "created"})
+	var (
+		mu    sync.Mutex
+		reads int
+	)
+	got, err := tick.Commit(t.Context(), s, seq, "2026-11-27T15:30:00Z", "replica-a", tickPlan("2026-11-27T15:30:00Z", &reads, &mu), 3)
+	require.NoError(t, err)
+	require.Equal(t, tick.Committed, got)
+
+	got, err = tick.Commit(t.Context(), s, seq, "2026-11-27T15:15:00Z", "replica-b", tickPlan("2026-11-27T15:15:00Z", &reads, &mu), 3)
+	require.NoError(t, err)
+	assert.Equal(t, tick.AlreadyDone, got)
+	assert.Equal(t, 1, reads, "the late replica did not read the sources")
+	assert.Equal(t, controlstate.Version(2), load(t, s, seq).Version)
 }
